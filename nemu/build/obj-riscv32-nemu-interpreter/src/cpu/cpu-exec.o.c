@@ -9885,6 +9885,7 @@ static inline void exec_lui (Decode *s)
 
 static inline void exec_addi (Decode *s)
 {
+
     rtl_li(s, (tmp_reg), (&(s->src2))->imm);
     rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
 
@@ -9955,11 +9956,15 @@ static inline void exec_jal (Decode *s)
 
 
     rtl_li(s, (tmp_reg), (&(s->src1))->imm);
-    rtl_add(s, (tmp_reg), (tmp_reg), &s->pc);
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 21 - 1);
+
+
+    rtl_add(s, (tmp_reg), &s->pc, (tmp_reg));
+
 
     rtl_jr(s, (tmp_reg));
 }
-# 26 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/control-transfer.h"
+# 30 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/control-transfer.h"
 static inline void exec_jalr (Decode *s)
 {
 
@@ -9977,9 +9982,15 @@ static inline void exec_jalr (Decode *s)
     rtl_add(s, (tmp_reg), (tmp_reg), ((&(s->src1))->preg));
 
 
+    rtl_srli(s, (tmp_reg), (tmp_reg), 1);
+    rtl_slli(s, (tmp_reg), (tmp_reg), 1);
+
+
     rtl_jr(s, (tmp_reg));
 }
 # 5 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-exec.h" 2
+# 1 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/condiction.h" 1
+# 6 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-exec.h" 2
 # 50 "src/cpu/cpu-exec.c" 2
 
 #define FILL_EXEC_TABLE(name) [concat(EXEC_ID_, name)] = concat(exec_, name),
