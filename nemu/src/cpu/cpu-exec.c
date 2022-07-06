@@ -16,7 +16,7 @@ uint64_t g_nr_guest_instr = 0;
 static uint64_t g_timer = 0; // unit: us
 static bool g_print_step = false;
 const rtlreg_t rzero = 0;
-rtlreg_t tmp_reg[4];
+rtlreg_t tmp_reg[6];
 
 void device_update();
 void fetch_decode(Decode *s, vaddr_t pc);

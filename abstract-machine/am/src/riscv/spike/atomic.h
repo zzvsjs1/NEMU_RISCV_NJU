@@ -51,8 +51,8 @@ static inline void spinlock_lock(spinlock_t* lock)
 {
   do
   {
-    while (atomic_read(&lock->lock))
-      ;
+	while (atomic_read(&lock->lock))
+	  ;
   } while (spinlock_trylock(lock));
 }
 

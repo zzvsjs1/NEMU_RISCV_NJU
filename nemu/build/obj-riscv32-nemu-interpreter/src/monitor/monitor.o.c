@@ -7353,7 +7353,7 @@ static void welcome()
     do { printf("\33[1;34m" "[%s:%d %s] " "If trace is enabled, a log file will be generated " "to record the trace. This may lead to a large log file. " "If it is not necessary, you can disable it in menuconfig" "\33[0m" "\n", "src/monitor/monitor.c", 16, __func__); do { extern FILE* log_fp; extern bool log_enable(); if (log_fp && log_enable()) { fprintf(log_fp, "\33[1;34m" "[%s:%d %s] " "If trace is enabled, a log file will be generated " "to record the trace. This may lead to a large log file. " "If it is not necessary, you can disable it in menuconfig" "\33[0m" "\n", "src/monitor/monitor.c", 16, __func__); fflush(log_fp); } } while (0); } while (0)
 
                                                                             ;
-    do { printf("\33[1;34m" "[%s:%d %s] " "Build time: %s, %s" "\33[0m" "\n", "src/monitor/monitor.c", 19, __func__, "10:28:51", "Jul  6 2022"); do { extern FILE* log_fp; extern bool log_enable(); if (log_fp && log_enable()) { fprintf(log_fp, "\33[1;34m" "[%s:%d %s] " "Build time: %s, %s" "\33[0m" "\n", "src/monitor/monitor.c", 19, __func__, "10:28:51", "Jul  6 2022"); fflush(log_fp); } } while (0); } while (0);
+    do { printf("\33[1;34m" "[%s:%d %s] " "Build time: %s, %s" "\33[0m" "\n", "src/monitor/monitor.c", 19, __func__, "23:59:38", "Jul  6 2022"); do { extern FILE* log_fp; extern bool log_enable(); if (log_fp && log_enable()) { fprintf(log_fp, "\33[1;34m" "[%s:%d %s] " "Build time: %s, %s" "\33[0m" "\n", "src/monitor/monitor.c", 19, __func__, "23:59:38", "Jul  6 2022"); fflush(log_fp); } } while (0); } while (0);
     printf("Welcome to %s-NEMU!\n", "\33[1;33m" "\33[1;41m" "riscv32" "\33[0m");
     printf("For help, type \"help\"\n");
 }

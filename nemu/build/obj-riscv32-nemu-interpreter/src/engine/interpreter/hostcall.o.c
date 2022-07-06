@@ -9092,7 +9092,7 @@ finish:
 # 5 "/home/zz/github/ics2021/nemu/include/rtl/rtl.h" 2
 
 extern const rtlreg_t rzero;
-extern rtlreg_t tmp_reg[4];
+extern rtlreg_t tmp_reg[6];
 
 #define dsrc1 (id_src1->preg)
 #define dsrc2 (id_src2->preg)
@@ -9101,6 +9101,8 @@ extern rtlreg_t tmp_reg[4];
 #define s1 (tmp_reg + 1)
 #define s2 (tmp_reg + 2)
 #define t0 (tmp_reg + 3)
+#define t1 (tmp_reg + 4)
+#define t2 (tmp_reg + 5)
 #define rz (&rzero)
 
 #define def_rtl(name,...) void concat(rtl_, name)(Decode *s, __VA_ARGS__)
@@ -9169,41 +9171,43 @@ void rtl_hostcall(Decode *s, uint32_t id, rtlreg_t *dest, const rtlreg_t *src1, 
 #define c_divs_q(a,b) ((sword_t)(a) / (sword_t)(b))
 #define c_divs_r(a,b) ((sword_t)(a) % (sword_t)(b))
 
-static inline bool interpret_relop(uint32_t relop, const rtlreg_t src1, const rtlreg_t src2) {
-  switch (relop) {
-    case RELOP_FALSE: return false;
-    case RELOP_TRUE: return true;
-    case RELOP_EQ: return src1 == src2;
-    case RELOP_NE: return src1 != src2;
-    case RELOP_LT: return (sword_t)src1 < (sword_t)src2;
-    case RELOP_LE: return (sword_t)src1 <= (sword_t)src2;
-    case RELOP_GT: return (sword_t)src1 > (sword_t)src2;
-    case RELOP_GE: return (sword_t)src1 >= (sword_t)src2;
-    case RELOP_LTU: return src1 < src2;
-    case RELOP_LEU: return src1 <= src2;
-    case RELOP_GTU: return src1 > src2;
-    case RELOP_GEU: return src1 >= src2;
-    default: do { if (!(0)) { (fflush(
-# 59 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
-            stdout
-# 59 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
-            ), fprintf(
-# 59 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
-            stderr
-# 59 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
-            , "\33[1;31m" "unsupport relop = %d" "\33[0m" "\n", relop)); extern void assert_fail_msg(); assert_fail_msg(); 
-# 59 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
-            (static_cast <bool> (
-# 59 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
-            0
-# 59 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
-            ) ? void (0) : __assert_fail (
-# 59 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
-            "0"
-# 59 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
-            , "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h", 59, __extension__ __PRETTY_FUNCTION__))
-# 59 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
-            ; } } while (0);
+static inline bool interpret_relop(uint32_t relop, const rtlreg_t src1, const rtlreg_t src2)
+{
+  switch (relop)
+  {
+ case RELOP_FALSE: return false;
+ case RELOP_TRUE: return true;
+ case RELOP_EQ: return src1 == src2;
+ case RELOP_NE: return src1 != src2;
+ case RELOP_LT: return (sword_t)src1 < (sword_t)src2;
+ case RELOP_LE: return (sword_t)src1 <= (sword_t)src2;
+ case RELOP_GT: return (sword_t)src1 > (sword_t)src2;
+ case RELOP_GE: return (sword_t)src1 >= (sword_t)src2;
+ case RELOP_LTU: return src1 < src2;
+ case RELOP_LEU: return src1 <= src2;
+ case RELOP_GTU: return src1 > src2;
+ case RELOP_GEU: return src1 >= src2;
+ default: do { if (!(0)) { (fflush(
+# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
+         stdout
+# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
+         ), fprintf(
+# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
+         stderr
+# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
+         , "\33[1;31m" "unsupport relop = %d" "\33[0m" "\n", relop)); extern void assert_fail_msg(); assert_fail_msg(); 
+# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
+         (static_cast <bool> (
+# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
+         0
+# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
+         ) ? void (0) : __assert_fail (
+# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
+         "0"
+# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
+         , "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h", 61, __extension__ __PRETTY_FUNCTION__))
+# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
+         ; } } while (0);
   }
 }
 # 5 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 2
@@ -9381,7 +9385,7 @@ static inline void rtl_jrelop(Decode *s, uint32_t relop, const rtlreg_t *src1, c
     bool is_jmp = interpret_relop(relop, *src1, *src2);
     rtl_j(s, (is_jmp ? target : s->snpc));
 }
-# 53 "/home/zz/github/ics2021/nemu/include/rtl/rtl.h" 2
+# 55 "/home/zz/github/ics2021/nemu/include/rtl/rtl.h" 2
 # 1 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 1
 
 #define __RTL_PSEUDO_H__ 
@@ -9394,150 +9398,116 @@ static inline void rtl_jrelop(Decode *s, uint32_t relop, const rtlreg_t *src1, c
 
 static inline void rtl_li(Decode *s, rtlreg_t* dest, const rtlreg_t imm)
 {
-    rtl_addi(s, dest, (&rzero), imm);
+ rtl_addi(s, dest, (&rzero), imm);
 }
 
 static inline void rtl_mv(Decode *s, rtlreg_t* dest, const rtlreg_t *src1)
 {
-    rtl_addi(s, dest, src1, 0);
+ rtl_addi(s, dest, src1, 0);
 }
 
 static inline void rtl_not(Decode *s, rtlreg_t *dest, const rtlreg_t* src1)
 {
-    *dest = ~*src1;
+ *dest = ~*src1;
 }
 
 static inline void rtl_neg(Decode *s, rtlreg_t *dest, const rtlreg_t* src1)
 {
 
-    *dest = -*src1;
-}
-
-
-static inline void rtl_sext(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, int width)
-{
-
-
-
-
-
-
-
-    do { if (!(0)) { (fflush(
-# 41 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   stdout
-# 41 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   ), fprintf(
-# 41 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   stderr
-# 41 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   , "\33[1;31m" "please implement me" "\33[0m" "\n")); extern void assert_fail_msg(); assert_fail_msg(); 
-# 41 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   (static_cast <bool> (
-# 41 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   0
-# 41 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   ) ? void (0) : __assert_fail (
-# 41 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   "0"
-# 41 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   , "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h", 41, __extension__ __PRETTY_FUNCTION__))
-# 41 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   ; } } while (0);
+ *dest = -*src1;
 }
 
 static inline void rtl_sign_ext_pos(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const size_t pos)
 {
-    do { if (!(pos < sizeof(rtlreg_t) * 8)) { (fflush(
-# 46 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   stdout
-# 46 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   ), fprintf(
-# 46 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   stderr
-# 46 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   , "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8)); extern void assert_fail_msg(); assert_fail_msg(); 
-# 46 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   (static_cast <bool> (
-# 46 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   pos < sizeof(rtlreg_t) * 8
-# 46 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   ) ? void (0) : __assert_fail (
-# 46 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   "pos < sizeof(rtlreg_t) * 8"
-# 46 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   , "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h", 46, __extension__ __PRETTY_FUNCTION__))
-# 46 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   ; } } while (0);
+ do { if (!(pos < sizeof(rtlreg_t) * 8)) { (fflush(
+# 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
+stdout
+# 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
+), fprintf(
+# 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
+stderr
+# 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
+, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8)); extern void assert_fail_msg(); assert_fail_msg(); 
+# 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
+(static_cast <bool> (
+# 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
+pos < sizeof(rtlreg_t) * 8
+# 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
+) ? void (0) : __assert_fail (
+# 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
+"pos < sizeof(rtlreg_t) * 8"
+# 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
+, "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h", 33, __extension__ __PRETTY_FUNCTION__))
+# 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
+; } } while (0);
 
-    rtlreg_t temp = *src1;
-    rtlreg_t mask = 1 << pos;
-    if (temp & mask)
-    {
-        mask -= 1;
-        mask = ~mask;
-        temp |= mask;
-    }
+ rtlreg_t temp = *src1;
+ rtlreg_t mask = 1 << pos;
+ if (temp & mask)
+ {
+  mask -= 1;
+  mask = ~mask;
+  temp |= mask;
+ }
 
-    *dest = temp;
+ *dest = temp;
+}
+
+static inline void rtl_sext(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, int width)
+{
+
+ rtl_sign_ext_pos(s, dest, src1, width * 8 - 1);
+}
+
+static inline void rtl_zero_ext_pos(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const size_t pos)
+{
+ do { if (!(pos < sizeof(rtlreg_t) * 8)) { (fflush(
+# 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
+stdout
+# 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
+), fprintf(
+# 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
+stderr
+# 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
+, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8)); extern void assert_fail_msg(); assert_fail_msg(); 
+# 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
+(static_cast <bool> (
+# 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
+pos < sizeof(rtlreg_t) * 8
+# 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
+) ? void (0) : __assert_fail (
+# 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
+"pos < sizeof(rtlreg_t) * 8"
+# 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
+, "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h", 55, __extension__ __PRETTY_FUNCTION__))
+# 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
+; } } while (0);
+
+ rtlreg_t temp = *src1;
+ rtlreg_t mask = 1 << pos;
+
+ mask -= 1;
+ mask = ~mask;
+ mask |= 1 << pos;
+ temp &= mask;
+
+ *dest = temp;
 }
 
 static inline void rtl_zext(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, int width)
 {
 
-    do { if (!(0)) { (fflush(
-# 63 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   stdout
-# 63 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   ), fprintf(
-# 63 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   stderr
-# 63 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   , "\33[1;31m" "please implement me" "\33[0m" "\n")); extern void assert_fail_msg(); assert_fail_msg(); 
-# 63 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   (static_cast <bool> (
-# 63 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   0
-# 63 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   ) ? void (0) : __assert_fail (
-# 63 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   "0"
-# 63 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   , "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h", 63, __extension__ __PRETTY_FUNCTION__))
-# 63 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   ; } } while (0);
-
-
+ rtl_zero_ext_pos(s, dest, src1, width * 8 - 1);
 }
 
 static inline void rtl_msb(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, int width)
 {
 
-    do { if (!(0)) { (fflush(
-# 71 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   stdout
-# 71 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   ), fprintf(
-# 71 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   stderr
-# 71 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   , "\33[1;31m" "please implement me" "\33[0m" "\n")); extern void assert_fail_msg(); assert_fail_msg(); 
-# 71 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   (static_cast <bool> (
-# 71 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   0
-# 71 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   ) ? void (0) : __assert_fail (
-# 71 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   "0"
-# 71 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
-   , "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h", 71, __extension__ __PRETTY_FUNCTION__))
-# 71 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-   ; } } while (0);
 
 
+ *dest = *src1 & (width * 8 - 1);
 }
-# 54 "/home/zz/github/ics2021/nemu/include/rtl/rtl.h" 2
+# 56 "/home/zz/github/ics2021/nemu/include/rtl/rtl.h" 2
 # 4 "src/engine/interpreter/hostcall.c" 2
 # 1 "/home/zz/github/ics2021/nemu/include/cpu/difftest.h" 1
 

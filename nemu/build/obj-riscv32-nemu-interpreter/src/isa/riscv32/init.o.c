@@ -7324,24 +7324,26 @@ void paddr_write(paddr_t addr, int len, word_t data);
 
 
 static const uint32_t img [] = {
-  0x800002b7,
-  0x0002a023,
-  0x0002a503,
-  0x0000006b,
+    0x800002b7,
+    0x0002a023,
+    0x0002a503,
+    0x0000006b,
 };
 
-static void restart() {
+static void restart()
+{
 
-  cpu.pc = (0x80000000 + 0x0);
+    cpu.pc = (0x80000000 + 0x0);
 
 
-  cpu.gpr[0]._32 = 0;
+    cpu.gpr[0]._32 = 0;
 }
 
-void init_isa() {
+void init_isa()
+{
 
-  memcpy(guest_to_host((0x80000000 + 0x0)), img, sizeof(img));
+    memcpy(guest_to_host((0x80000000 + 0x0)), img, sizeof(img));
 
 
-  restart();
+    restart();
 }
