@@ -4,20 +4,20 @@
 // jump instruction to form the jump target address
 def_EHelper(jal)
 {
-    // Save next instuctions address to rd, and set new insturction address to pc.
+	// Save next instuctions address to rd, and set new insturction address to pc.
 
-    // Store next inst to ddest.
-    rtl_addi(s, ddest, &s->pc, sizeof(rtlreg_t));
+	// Store next inst to ddest.
+	rtl_addi(s, ddest, &s->pc, sizeof(rtlreg_t));
 
-    // Sign Extend.
-    rtl_li(s, s0, id_src1->imm);    
-    rtl_sign_ext_pos(s, s0, s0, 20);
+	// Sign Extend.
+	rtl_li(s, s0, id_src1->imm);
+	rtl_sign_ext_pos(s, s0, s0, 20);
 
-    // Compute the inst address jump to.
-    rtl_add(s, s0, &s->pc, s0);
+	// Compute the inst address jump to.
+	rtl_add(s, s0, &s->pc, s0);
 
-    // Jump *s0
-    rtl_jr(s, s0);
+	// Jump *s0
+	rtl_jr(s, s0);
 }
 
 // Jump and link register
@@ -29,24 +29,24 @@ def_EHelper(jal)
 // required.
 def_EHelper(jalr)
 {
-    // Store the next instuction(pc + 4) to ddest(rd).
-    rtl_addi(s, ddest, &s->pc, sizeof(rtlreg_t));
+	// Store the next instuction(pc + 4) to ddest(rd).
+	rtl_addi(s, ddest, &s->pc, sizeof(rtlreg_t));
 
-    // Adding sign-extended 12-bit I-immediate to the register rs1.
-    
-    // s0 = imm[0:11].
-    rtl_li(s, s0, id_src2->imm);
+	// Adding sign-extended 12-bit I-immediate to the register rs1.
+	
+	// s0 = imm[11:0].
+	rtl_li(s, s0, id_src2->imm);
 
-    // sign ext imm[11:0] in s0.
-    rtl_sign_ext_pos(s, s0, s0, 11);
+	// sign ext imm[11:0] in s0.
+	rtl_sign_ext_pos(s, s0, s0, 11);
 
-    // rd = src_1(rs1) (NOTE: The original register!) + s0(imm[11:0])
-    rtl_add(s, s0, s0, dsrc1);
+	// rd = src_1(rs1) (NOTE: The original register!) + s0(imm[11:0])
+	rtl_add(s, s0, s0, dsrc1);
 
-    // setting the least-significant bit of the result to zero
-    rtl_srli(s, s0, s0, 1);
-    rtl_slli(s, s0, s0, 1);
+	// setting the least-significant bit of the result to zero
+	rtl_srli(s, s0, s0, 1);
+	rtl_slli(s, s0, s0, 1);
 
-    // Jump to *s0.
-    rtl_jr(s, s0);
+	// Jump to *s0.
+	rtl_jr(s, s0);
 }

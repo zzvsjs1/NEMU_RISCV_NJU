@@ -43,12 +43,12 @@ int    vsnprintf (char *str, size_t size, const char *format, va_list ap);
   #define assert(ignore) ((void)0)
 #else
   #define assert(cond) \
-    do { \
-      if (!(cond)) { \
-        printf("Assertion fail at %s:%d\n", __FILE__, __LINE__); \
-        halt(1); \
-      } \
-    } while (0)
+	do { \
+	  if (!(cond)) { \
+		printf("Assertion fail at %s:%d\n", __FILE__, __LINE__); \
+		halt(1); \
+	  } \
+	} while (0)
 #endif
 
 #ifdef __cplusplus
