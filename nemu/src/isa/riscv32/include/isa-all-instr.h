@@ -16,6 +16,7 @@
     f(slti) \
     f(sltiu) \
     f(beq) \
+    f(bne) \
     f(nemu_trap)
 
 def_all_EXEC_ID();

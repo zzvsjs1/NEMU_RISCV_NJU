@@ -90,11 +90,13 @@ int strcmp(const char *s1, const char *s2)
 	// Zero if lhs and rhs compare equal.
 	// Positive value if lhs appears after rhs in lexicographical order.
 
-	char* str1 = s1;
-	char* str2 = s2;
+	const char* str1 = s1;
+	const char* str2 = s2;
 
 	const size_t len1 = strlen(s1);
 	const size_t len2 = strlen(s2);
+
+	(void)len1;(void)len2;
 
 	for (; *str1 && *str2; ++str1, ++str2)
 	{

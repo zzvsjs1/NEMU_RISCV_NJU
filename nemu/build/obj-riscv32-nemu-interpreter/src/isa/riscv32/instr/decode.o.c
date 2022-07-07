@@ -9144,7 +9144,7 @@ extern rtlreg_t tmp_reg[6];
 #define def_rtl(name,...) void concat(rtl_, name)(Decode *s, __VA_ARGS__)
 
 
-enum {
+typedef enum {
 
 
 
@@ -9164,7 +9164,7 @@ enum {
   RELOP_LEU = 8 | 0 | 2 | 0,
   RELOP_GTU = 8 | 0 | 2 | 1,
   RELOP_GEU = 8 | 0 | 0 | 1,
-};
+} RELOP_TYPE;
 
 enum {
   HOSTCALL_EXIT,
@@ -9207,7 +9207,7 @@ void rtl_hostcall(Decode *s, uint32_t id, rtlreg_t *dest, const rtlreg_t *src1, 
 #define c_divs_q(a,b) ((sword_t)(a) / (sword_t)(b))
 #define c_divs_r(a,b) ((sword_t)(a) % (sword_t)(b))
 
-static inline bool interpret_relop(uint32_t relop, const rtlreg_t src1, const rtlreg_t src2)
+static inline bool interpret_relop(const RELOP_TYPE relop, const rtlreg_t src1, const rtlreg_t src2)
 {
   switch (relop)
   {
@@ -9245,6 +9245,21 @@ static inline bool interpret_relop(uint32_t relop, const rtlreg_t src1, const rt
 # 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
          ; } } while (0);
   }
+}
+
+static inline bool compareRegister(const RELOP_TYPE relop, const rtlreg_t* rs1, const rtlreg_t* rs2)
+{
+ return interpret_relop(relop, *rs1, *rs2);
+}
+
+static inline bool compareRegisterI(const RELOP_TYPE relop, const rtlreg_t* rs, const rtlreg_t i)
+{
+ return interpret_relop(relop, *rs, i);
+}
+
+static inline bool compareIRegister(const RELOP_TYPE relop, const rtlreg_t i, const rtlreg_t* rs)
+{
+ return interpret_relop(relop, i, *rs);
 }
 # 5 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 2
 
@@ -9542,13 +9557,13 @@ static inline void rtl_msb(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, int 
 # 3 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h" 2
 
 
-#define INSTR_LIST(f) f(lui) f(lw) f(sw) f(inv) f(addi) f(auipc) f(jal) f(jalr) f(add) f(sub) f(slti) f(sltiu) f(nemu_trap)
-# 20 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h"
-enum { EXEC_ID_lui, EXEC_ID_lw, EXEC_ID_sw, EXEC_ID_inv, EXEC_ID_addi, EXEC_ID_auipc, EXEC_ID_jal, EXEC_ID_jalr, EXEC_ID_add, EXEC_ID_sub, EXEC_ID_slti, EXEC_ID_sltiu, EXEC_ID_nemu_trap, TOTAL_INSTR };
+#define INSTR_LIST(f) f(lui) f(lw) f(sw) f(inv) f(addi) f(auipc) f(jal) f(jalr) f(add) f(sub) f(slti) f(sltiu) f(beq) f(bne) f(nemu_trap)
+# 22 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h"
+enum { EXEC_ID_lui, EXEC_ID_lw, EXEC_ID_sw, EXEC_ID_inv, EXEC_ID_addi, EXEC_ID_auipc, EXEC_ID_jal, EXEC_ID_jalr, EXEC_ID_add, EXEC_ID_sub, EXEC_ID_slti, EXEC_ID_sltiu, EXEC_ID_beq, EXEC_ID_bne, EXEC_ID_nemu_trap, TOTAL_INSTR };
 # 4 "src/isa/riscv32/instr/decode.c" 2
 
 
-static inline int table_lui (Decode *s) { return EXEC_ID_lui; } static inline int table_lw (Decode *s) { return EXEC_ID_lw; } static inline int table_sw (Decode *s) { return EXEC_ID_sw; } static inline int table_inv (Decode *s) { return EXEC_ID_inv; } static inline int table_addi (Decode *s) { return EXEC_ID_addi; } static inline int table_auipc (Decode *s) { return EXEC_ID_auipc; } static inline int table_jal (Decode *s) { return EXEC_ID_jal; } static inline int table_jalr (Decode *s) { return EXEC_ID_jalr; } static inline int table_add (Decode *s) { return EXEC_ID_add; } static inline int table_sub (Decode *s) { return EXEC_ID_sub; } static inline int table_slti (Decode *s) { return EXEC_ID_slti; } static inline int table_sltiu (Decode *s) { return EXEC_ID_sltiu; } static inline int table_nemu_trap (Decode *s) { return EXEC_ID_nemu_trap; };
+static inline int table_lui (Decode *s) { return EXEC_ID_lui; } static inline int table_lw (Decode *s) { return EXEC_ID_lw; } static inline int table_sw (Decode *s) { return EXEC_ID_sw; } static inline int table_inv (Decode *s) { return EXEC_ID_inv; } static inline int table_addi (Decode *s) { return EXEC_ID_addi; } static inline int table_auipc (Decode *s) { return EXEC_ID_auipc; } static inline int table_jal (Decode *s) { return EXEC_ID_jal; } static inline int table_jalr (Decode *s) { return EXEC_ID_jalr; } static inline int table_add (Decode *s) { return EXEC_ID_add; } static inline int table_sub (Decode *s) { return EXEC_ID_sub; } static inline int table_slti (Decode *s) { return EXEC_ID_slti; } static inline int table_sltiu (Decode *s) { return EXEC_ID_sltiu; } static inline int table_beq (Decode *s) { return EXEC_ID_beq; } static inline int table_bne (Decode *s) { return EXEC_ID_bne; } static inline int table_nemu_trap (Decode *s) { return EXEC_ID_nemu_trap; };
 
 static uint32_t get_instr(Decode *s)
 {
@@ -9598,10 +9613,22 @@ static void decode_S (Decode *s, int width)
     decode_op_r(s, (&(s->dest)), s->isa.instr.s.rs2, false);
 }
 
+static void decode_B (Decode *s, int width)
+{
+
+    decode_op_r(s, (&(s->src1)), s->isa.instr.b.rs1, false);
 
 
+    decode_op_r(s, (&(s->src2)), s->isa.instr.b.rs2, false);
+
+    word_t simm = s->isa.instr.b.imm4_1 << 1
+                    | s->isa.instr.b.imm10_5 << 5
+                    | s->isa.instr.b.imm11 << 11
+                    | s->isa.instr.b.simm12 << 12;
 
 
+    rtl_li(s, (tmp_reg), simm);
+}
 
 static void decode_U (Decode *s, int width)
 {
@@ -9623,7 +9650,7 @@ static void decode_J (Decode *s, int width)
     decode_op_i(s, (&(s->src1)), cur_imm, false);
     decode_op_r(s, (&(s->dest)), s->isa.instr.j.rd, true);
 }
-# 96 "src/isa/riscv32/instr/decode.c"
+# 108 "src/isa/riscv32/instr/decode.c"
 static inline int table_load (Decode *s)
 {
 
@@ -9669,7 +9696,7 @@ static inline int table_OP_IMM (Decode *s)
 
 
     do { uint32_t key, mask, shift; pattern_decode("??????? ????? ????? 011 ????? ????? ??", (sizeof("??????? ????? ????? 011 ????? ????? ??") - 1), &key, &mask, &shift); if (((get_instr(s) >> shift) & mask) == key) { { decode_empty(s, 0); return table_sltiu(s); }; } } while (0);
-# 160 "src/isa/riscv32/instr/decode.c"
+# 172 "src/isa/riscv32/instr/decode.c"
     return EXEC_ID_inv;
 }
 
@@ -9690,7 +9717,19 @@ static inline int table_OP (Decode *s)
 
 
     do { uint32_t key, mask, shift; pattern_decode("0100000 ????? ????? 000 ????? ????? ??", (sizeof("0100000 ????? ????? 000 ????? ????? ??") - 1), &key, &mask, &shift); if (((get_instr(s) >> shift) & mask) == key) { { decode_empty(s, 0); return table_sub(s); }; } } while (0);
+# 217 "src/isa/riscv32/instr/decode.c"
+    return EXEC_ID_inv;
+}
 
+
+static inline int table_BRANCH (Decode *s)
+{
+
+    do { uint32_t key, mask, shift; pattern_decode("??????? ????? ????? 000 ????? ????? ??", (sizeof("??????? ????? ????? 000 ????? ????? ??") - 1), &key, &mask, &shift); if (((get_instr(s) >> shift) & mask) == key) { { decode_empty(s, 0); return table_beq(s); }; } } while (0);
+
+
+    do { uint32_t key, mask, shift; pattern_decode("??????? ????? ????? 001 ????? ????? ??", (sizeof("??????? ????? ????? 001 ????? ????? ??") - 1), &key, &mask, &shift); if (((get_instr(s) >> shift) & mask) == key) { { decode_empty(s, 0); return table_bne(s); }; } } while (0);
+# 241 "src/isa/riscv32/instr/decode.c"
     return EXEC_ID_inv;
 }
 
@@ -9707,7 +9746,7 @@ static inline int table_main (Decode *s)
 
     do { uint32_t key, mask, shift; pattern_decode("??????? ????? ????? ??? ????? 00000 11", (sizeof("??????? ????? ????? ??? ????? 00000 11") - 1), &key, &mask, &shift); if (((get_instr(s) >> shift) & mask) == key) { { decode_I(s, 0); return table_load(s); }; } } while (0);
     do { uint32_t key, mask, shift; pattern_decode("??????? ????? ????? ??? ????? 01000 11", (sizeof("??????? ????? ????? ??? ????? 01000 11") - 1), &key, &mask, &shift); if (((get_instr(s) >> shift) & mask) == key) { { decode_S(s, 0); return table_store(s); }; } } while (0);
-# 205 "src/isa/riscv32/instr/decode.c"
+# 265 "src/isa/riscv32/instr/decode.c"
     do { uint32_t key, mask, shift; pattern_decode("??????? ????? ????? ??? ????? 00100 11", (sizeof("??????? ????? ????? ??? ????? 00100 11") - 1), &key, &mask, &shift); if (((get_instr(s) >> shift) & mask) == key) { { decode_I(s, 0); return table_OP_IMM(s); }; } } while (0);
 
 
@@ -9720,7 +9759,10 @@ static inline int table_main (Decode *s)
 
 
     do { uint32_t key, mask, shift; pattern_decode("??????? ????? ????? ??? ????? 01100 11", (sizeof("??????? ????? ????? ??? ????? 01100 11") - 1), &key, &mask, &shift); if (((get_instr(s) >> shift) & mask) == key) { { decode_R(s, 0); return table_OP(s); }; } } while (0);
-# 225 "src/isa/riscv32/instr/decode.c"
+
+
+    do { uint32_t key, mask, shift; pattern_decode("??????? ????? ????? ??? ????? 11000 11", (sizeof("??????? ????? ????? ??? ????? 11000 11") - 1), &key, &mask, &shift); if (((get_instr(s) >> shift) & mask) == key) { { decode_B(s, 0); return table_BRANCH(s); }; } } while (0);
+# 290 "src/isa/riscv32/instr/decode.c"
     do { uint32_t key, mask, shift; pattern_decode("??????? ????? ????? ??? ????? 11011 11", (sizeof("??????? ????? ????? ??? ????? 11011 11") - 1), &key, &mask, &shift); if (((get_instr(s) >> shift) & mask) == key) { { decode_J(s, 0); return table_jal(s); }; } } while (0);
 
 

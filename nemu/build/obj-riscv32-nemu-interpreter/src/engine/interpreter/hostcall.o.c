@@ -9108,7 +9108,7 @@ extern rtlreg_t tmp_reg[6];
 #define def_rtl(name,...) void concat(rtl_, name)(Decode *s, __VA_ARGS__)
 
 
-enum {
+typedef enum {
 
 
 
@@ -9128,7 +9128,7 @@ enum {
   RELOP_LEU = 8 | 0 | 2 | 0,
   RELOP_GTU = 8 | 0 | 2 | 1,
   RELOP_GEU = 8 | 0 | 0 | 1,
-};
+} RELOP_TYPE;
 
 enum {
   HOSTCALL_EXIT,
@@ -9171,7 +9171,7 @@ void rtl_hostcall(Decode *s, uint32_t id, rtlreg_t *dest, const rtlreg_t *src1, 
 #define c_divs_q(a,b) ((sword_t)(a) / (sword_t)(b))
 #define c_divs_r(a,b) ((sword_t)(a) % (sword_t)(b))
 
-static inline bool interpret_relop(uint32_t relop, const rtlreg_t src1, const rtlreg_t src2)
+static inline bool interpret_relop(const RELOP_TYPE relop, const rtlreg_t src1, const rtlreg_t src2)
 {
   switch (relop)
   {
@@ -9209,6 +9209,21 @@ static inline bool interpret_relop(uint32_t relop, const rtlreg_t src1, const rt
 # 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
          ; } } while (0);
   }
+}
+
+static inline bool compareRegister(const RELOP_TYPE relop, const rtlreg_t* rs1, const rtlreg_t* rs2)
+{
+ return interpret_relop(relop, *rs1, *rs2);
+}
+
+static inline bool compareRegisterI(const RELOP_TYPE relop, const rtlreg_t* rs, const rtlreg_t i)
+{
+ return interpret_relop(relop, *rs, i);
+}
+
+static inline bool compareIRegister(const RELOP_TYPE relop, const rtlreg_t i, const rtlreg_t* rs)
+{
+ return interpret_relop(relop, i, *rs);
 }
 # 5 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 2
 

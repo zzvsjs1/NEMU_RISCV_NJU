@@ -9179,7 +9179,7 @@ extern rtlreg_t tmp_reg[6];
 #define def_rtl(name,...) void concat(rtl_, name)(Decode *s, __VA_ARGS__)
 
 
-enum {
+typedef enum {
 
 
 
@@ -9199,7 +9199,7 @@ enum {
   RELOP_LEU = 8 | 0 | 2 | 0,
   RELOP_GTU = 8 | 0 | 2 | 1,
   RELOP_GEU = 8 | 0 | 0 | 1,
-};
+} RELOP_TYPE;
 
 enum {
   HOSTCALL_EXIT,
@@ -9242,7 +9242,7 @@ void rtl_hostcall(Decode *s, uint32_t id, rtlreg_t *dest, const rtlreg_t *src1, 
 #define c_divs_q(a,b) ((sword_t)(a) / (sword_t)(b))
 #define c_divs_r(a,b) ((sword_t)(a) % (sword_t)(b))
 
-static inline bool interpret_relop(uint32_t relop, const rtlreg_t src1, const rtlreg_t src2)
+static inline bool interpret_relop(const RELOP_TYPE relop, const rtlreg_t src1, const rtlreg_t src2)
 {
   switch (relop)
   {
@@ -9280,6 +9280,21 @@ static inline bool interpret_relop(uint32_t relop, const rtlreg_t src1, const rt
 # 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
          ; } } while (0);
   }
+}
+
+static inline bool compareRegister(const RELOP_TYPE relop, const rtlreg_t* rs1, const rtlreg_t* rs2)
+{
+ return interpret_relop(relop, *rs1, *rs2);
+}
+
+static inline bool compareRegisterI(const RELOP_TYPE relop, const rtlreg_t* rs, const rtlreg_t i)
+{
+ return interpret_relop(relop, *rs, i);
+}
+
+static inline bool compareIRegister(const RELOP_TYPE relop, const rtlreg_t i, const rtlreg_t* rs)
+{
+ return interpret_relop(relop, i, *rs);
 }
 # 5 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 2
 # 1 "/home/zz/github/ics2021/nemu/include/memory/vaddr.h" 1
@@ -9620,9 +9635,9 @@ static inline const char* reg_name(int idx, int width)
 # 3 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h" 2
 
 
-#define INSTR_LIST(f) f(lui) f(lw) f(sw) f(inv) f(addi) f(auipc) f(jal) f(jalr) f(add) f(sub) f(slti) f(sltiu) f(nemu_trap)
-# 20 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h"
-enum { EXEC_ID_lui, EXEC_ID_lw, EXEC_ID_sw, EXEC_ID_inv, EXEC_ID_addi, EXEC_ID_auipc, EXEC_ID_jal, EXEC_ID_jalr, EXEC_ID_add, EXEC_ID_sub, EXEC_ID_slti, EXEC_ID_sltiu, EXEC_ID_nemu_trap, TOTAL_INSTR };
+#define INSTR_LIST(f) f(lui) f(lw) f(sw) f(inv) f(addi) f(auipc) f(jal) f(jalr) f(add) f(sub) f(slti) f(sltiu) f(beq) f(bne) f(nemu_trap)
+# 22 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h"
+enum { EXEC_ID_lui, EXEC_ID_lw, EXEC_ID_sw, EXEC_ID_inv, EXEC_ID_addi, EXEC_ID_auipc, EXEC_ID_jal, EXEC_ID_jalr, EXEC_ID_add, EXEC_ID_sub, EXEC_ID_slti, EXEC_ID_sltiu, EXEC_ID_beq, EXEC_ID_bne, EXEC_ID_nemu_trap, TOTAL_INSTR };
 # 5 "src/cpu/cpu-exec.c" 2
 # 1 "/usr/include/locale.h" 1 3 4
 # 23 "/usr/include/locale.h" 3 4
@@ -9875,7 +9890,7 @@ static inline void exec_slti (Decode *s)
     rtl_li(s, (tmp_reg), (&(s->src2))->imm);
     rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
 
-    if ((sword_t) *((&(s->src1))->preg) < (sword_t) *(tmp_reg))
+    if (compareRegister(RELOP_LE, ((&(s->src1))->preg), ((&(s->src2))->preg)))
     {
         rtl_li(s, ((&(s->dest))->preg), 1);
         return;
@@ -9889,7 +9904,7 @@ static inline void exec_sltiu (Decode *s)
     rtl_li(s, (tmp_reg), (&(s->src2))->imm);
     rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
 
-    if ((word_t) *((&(s->src1))->preg) < (word_t) *(tmp_reg))
+    if (compareRegister(RELOP_LEU, ((&(s->src1))->preg), (tmp_reg)))
     {
         rtl_li(s, ((&(s->dest))->preg), 1);
         return;
@@ -9999,11 +10014,29 @@ static inline void exec_jalr (Decode *s)
 # 5 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-exec.h" 2
 # 1 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/condiction.h" 1
 # 6 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-exec.h" 2
+# 1 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/branch.h" 1
+
+
+
+static inline void exec_beq (Decode *s)
+{
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+    rtl_add(s, (tmp_reg), (tmp_reg), &s->pc);
+    rtl_jrelop(s, RELOP_EQ, ((&(s->src1))->preg), ((&(s->src2))->preg), *(tmp_reg));
+}
+
+static inline void exec_bne (Decode *s)
+{
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+    rtl_add(s, (tmp_reg), (tmp_reg), &s->pc);
+    rtl_jrelop(s, RELOP_NE, ((&(s->src1))->preg), ((&(s->src2))->preg), *(tmp_reg));
+}
+# 7 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-exec.h" 2
 # 50 "src/cpu/cpu-exec.c" 2
 
 #define FILL_EXEC_TABLE(name) [concat(EXEC_ID_, name)] = concat(exec_, name),
 static const void* g_exec_table[TOTAL_INSTR] = {
-    [EXEC_ID_lui] = exec_lui, [EXEC_ID_lw] = exec_lw, [EXEC_ID_sw] = exec_sw, [EXEC_ID_inv] = exec_inv, [EXEC_ID_addi] = exec_addi, [EXEC_ID_auipc] = exec_auipc, [EXEC_ID_jal] = exec_jal, [EXEC_ID_jalr] = exec_jalr, [EXEC_ID_add] = exec_add, [EXEC_ID_sub] = exec_sub, [EXEC_ID_slti] = exec_slti, [EXEC_ID_sltiu] = exec_sltiu, [EXEC_ID_nemu_trap] = exec_nemu_trap,
+    [EXEC_ID_lui] = exec_lui, [EXEC_ID_lw] = exec_lw, [EXEC_ID_sw] = exec_sw, [EXEC_ID_inv] = exec_inv, [EXEC_ID_addi] = exec_addi, [EXEC_ID_auipc] = exec_auipc, [EXEC_ID_jal] = exec_jal, [EXEC_ID_jalr] = exec_jalr, [EXEC_ID_add] = exec_add, [EXEC_ID_sub] = exec_sub, [EXEC_ID_slti] = exec_slti, [EXEC_ID_sltiu] = exec_sltiu, [EXEC_ID_beq] = exec_beq, [EXEC_ID_bne] = exec_bne, [EXEC_ID_nemu_trap] = exec_nemu_trap,
 };
 
 static void fetch_decode_exec_updatepc(Decode *s)

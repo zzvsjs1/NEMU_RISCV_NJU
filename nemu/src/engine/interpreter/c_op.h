@@ -42,7 +42,7 @@
 #define c_divs_q(a, b) ((sword_t)(a) / (sword_t)(b))
 #define c_divs_r(a, b)  ((sword_t)(a) % (sword_t)(b))
 
-static inline bool interpret_relop(uint32_t relop, const rtlreg_t src1, const rtlreg_t src2) 
+static inline bool interpret_relop(const RELOP_TYPE relop, const rtlreg_t src1, const rtlreg_t src2) 
 {
   switch (relop) 
   {
@@ -60,6 +60,21 @@ static inline bool interpret_relop(uint32_t relop, const rtlreg_t src1, const rt
 	case RELOP_GEU: return src1 >= src2;
 	default: panic("unsupport relop = %d", relop);
   }
+}
+
+static inline bool compareRegister(const RELOP_TYPE relop, const rtlreg_t* rs1, const rtlreg_t* rs2)
+{
+	return interpret_relop(relop, *rs1, *rs2);
+}
+
+static inline bool compareRegisterI(const RELOP_TYPE relop, const rtlreg_t* rs, const rtlreg_t i)
+{
+	return interpret_relop(relop, *rs, i);
+}
+
+static inline bool compareIRegister(const RELOP_TYPE relop, const rtlreg_t i, const rtlreg_t* rs)
+{
+	return interpret_relop(relop, i, *rs);
 }
 
 #endif
