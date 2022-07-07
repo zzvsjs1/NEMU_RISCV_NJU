@@ -11,6 +11,11 @@
     f(auipc) \
     f(jal) \
     f(jalr) \
+    f(add)  \
+    f(sub) \
+    f(slti) \
+    f(sltiu) \
+    f(beq) \
     f(nemu_trap)
 
 def_all_EXEC_ID();

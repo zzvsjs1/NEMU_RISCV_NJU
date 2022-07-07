@@ -30,7 +30,7 @@ static inline def_rtl(neg, rtlreg_t *dest, const rtlreg_t* src1)
 
 static inline def_rtl(sign_ext_pos, rtlreg_t* dest, const rtlreg_t* src1, const size_t pos)
 {
-	Assert(pos < sizeof(rtlreg_t) * 8, "%zu is more than %zu.\n", pos, sizeof(rtlreg_t) * 8);
+	Assert(pos < sizeof(rtlreg_t) * 8 - 1, "%zu is more than %zu.\n", pos, sizeof(rtlreg_t) * 8 - 1);
 
 	rtlreg_t temp = *src1;    
 	rtlreg_t mask = 1 << pos;
@@ -52,17 +52,9 @@ static inline def_rtl(sext, rtlreg_t* dest, const rtlreg_t* src1, int width)
 
 static inline def_rtl(zero_ext_pos, rtlreg_t* dest, const rtlreg_t* src1, const size_t pos)
 {
-	Assert(pos < sizeof(rtlreg_t) * 8, "%zu is more than %zu.\n", pos, sizeof(rtlreg_t) * 8);
+	Assert(pos < sizeof(rtlreg_t) * 8 - 1, "%zu is more than %zu.\n", pos, sizeof(rtlreg_t) * 8 - 1);
 
-	rtlreg_t temp = *src1;    
-	rtlreg_t mask = 1 << pos;
-	
-	mask -= 1;
-	mask = ~mask;
-	mask |= 1 << pos;
-	temp &= mask;
-
-	*dest = temp;
+	*dest = *src1;
 }
 
 static inline def_rtl(zext, rtlreg_t* dest, const rtlreg_t* src1, int width)
