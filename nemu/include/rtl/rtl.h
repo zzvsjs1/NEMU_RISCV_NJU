@@ -20,7 +20,7 @@ extern rtlreg_t tmp_reg[6];
 #define def_rtl(name, ...) void concat(rtl_, name)(Decode *s, __VA_ARGS__)
 
 // relation operation
-enum {
+typedef enum {
   //            +-- unsign
   //            |   +-- sign
   //            |   |   +-- equal
@@ -40,7 +40,7 @@ enum {
   RELOP_LEU   = 8 | 0 | 2 | 0,
   RELOP_GTU   = 8 | 0 | 2 | 1,
   RELOP_GEU   = 8 | 0 | 0 | 1,
-};
+} RELOP_TYPE;
 
 enum {
   HOSTCALL_EXIT,  // handling nemu_trap

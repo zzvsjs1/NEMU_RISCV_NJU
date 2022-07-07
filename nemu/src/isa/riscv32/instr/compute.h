@@ -42,7 +42,7 @@ def_EHelper(slti)
     rtl_li(s, s0, id_src2->imm);
     rtl_sign_ext_pos(s, s0, s0, 11);
 
-    if ((sword_t) *dsrc1 < (sword_t) *s0)
+    if (compareRegister(RELOP_LE, dsrc1, dsrc2))
     {
         rtl_li(s, ddest, 1);
         return;
@@ -56,7 +56,7 @@ def_EHelper(sltiu)
     rtl_li(s, s0, id_src2->imm);
     rtl_sign_ext_pos(s, s0, s0, 11);
 
-    if ((word_t) *dsrc1 < (word_t) *s0)
+    if (compareRegister(RELOP_LEU, dsrc1, s0))
     {
         rtl_li(s, ddest, 1);
         return;
