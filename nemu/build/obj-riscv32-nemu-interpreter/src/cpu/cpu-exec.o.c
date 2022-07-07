@@ -9518,7 +9518,7 @@ static inline void rtl_neg(Decode *s, rtlreg_t *dest, const rtlreg_t* src1)
 
 static inline void rtl_sign_ext_pos(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const size_t pos)
 {
- do { if (!(pos < sizeof(rtlreg_t) * 8 - 1)) { (fflush(
+ do { if (!(pos < sizeof(rtlreg_t) * 8)) { (fflush(
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 stdout
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
@@ -9526,15 +9526,15 @@ stdout
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 stderr
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8 - 1)); extern void assert_fail_msg(); assert_fail_msg(); 
+, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8)); extern void assert_fail_msg(); assert_fail_msg(); 
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 (static_cast <bool> (
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-pos < sizeof(rtlreg_t) * 8 - 1
+pos < sizeof(rtlreg_t) * 8
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 ) ? void (0) : __assert_fail (
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-"pos < sizeof(rtlreg_t) * 8 - 1"
+"pos < sizeof(rtlreg_t) * 8"
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 , "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h", 33, __extension__ __PRETTY_FUNCTION__))
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
@@ -9560,7 +9560,7 @@ static inline void rtl_sext(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, int
 
 static inline void rtl_zero_ext_pos(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const size_t pos)
 {
- do { if (!(pos < sizeof(rtlreg_t) * 8 - 1)) { (fflush(
+ do { if (!(pos < sizeof(rtlreg_t) * 8)) { (fflush(
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 stdout
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
@@ -9568,15 +9568,15 @@ stdout
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 stderr
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8 - 1)); extern void assert_fail_msg(); assert_fail_msg(); 
+, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8)); extern void assert_fail_msg(); assert_fail_msg(); 
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 (static_cast <bool> (
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-pos < sizeof(rtlreg_t) * 8 - 1
+pos < sizeof(rtlreg_t) * 8
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 ) ? void (0) : __assert_fail (
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-"pos < sizeof(rtlreg_t) * 8 - 1"
+"pos < sizeof(rtlreg_t) * 8"
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 , "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h", 55, __extension__ __PRETTY_FUNCTION__))
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
@@ -9635,9 +9635,9 @@ static inline const char* reg_name(int idx, int width)
 # 3 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h" 2
 
 
-#define INSTR_LIST(f) f(lui) f(lw) f(sw) f(inv) f(addi) f(auipc) f(jal) f(jalr) f(add) f(sub) f(slti) f(sltiu) f(beq) f(bne) f(nemu_trap)
-# 22 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h"
-enum { EXEC_ID_lui, EXEC_ID_lw, EXEC_ID_sw, EXEC_ID_inv, EXEC_ID_addi, EXEC_ID_auipc, EXEC_ID_jal, EXEC_ID_jalr, EXEC_ID_add, EXEC_ID_sub, EXEC_ID_slti, EXEC_ID_sltiu, EXEC_ID_beq, EXEC_ID_bne, EXEC_ID_nemu_trap, TOTAL_INSTR };
+#define INSTR_LIST(f) f(lui) f(lb) f(lh) f(lw) f(lbu) f(lhu) f(sb) f(sh) f(sw) f(inv) f(addi) f(slli) f(srli) f(srai) f(slti) f(sltiu) f(xori) f(ori) f(andi) f(auipc) f(jal) f(jalr) f(add) f(sub) f(sll) f(slt) f(sltu) f(xor) f(srl) f(sra) f(or) f(and) f(beq) f(bne) f(blt) f(bge) f(bltu) f(bgeu) f(nemu_trap)
+# 46 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h"
+enum { EXEC_ID_lui, EXEC_ID_lb, EXEC_ID_lh, EXEC_ID_lw, EXEC_ID_lbu, EXEC_ID_lhu, EXEC_ID_sb, EXEC_ID_sh, EXEC_ID_sw, EXEC_ID_inv, EXEC_ID_addi, EXEC_ID_slli, EXEC_ID_srli, EXEC_ID_srai, EXEC_ID_slti, EXEC_ID_sltiu, EXEC_ID_xori, EXEC_ID_ori, EXEC_ID_andi, EXEC_ID_auipc, EXEC_ID_jal, EXEC_ID_jalr, EXEC_ID_add, EXEC_ID_sub, EXEC_ID_sll, EXEC_ID_slt, EXEC_ID_sltu, EXEC_ID_xor, EXEC_ID_srl, EXEC_ID_sra, EXEC_ID_or, EXEC_ID_and, EXEC_ID_beq, EXEC_ID_bne, EXEC_ID_blt, EXEC_ID_bge, EXEC_ID_bltu, EXEC_ID_bgeu, EXEC_ID_nemu_trap, TOTAL_INSTR };
 # 5 "src/cpu/cpu-exec.c" 2
 # 1 "/usr/include/locale.h" 1 3 4
 # 23 "/usr/include/locale.h" 3 4
@@ -9875,6 +9875,73 @@ static inline void exec_addi (Decode *s)
 }
 
 
+static inline void exec_xori (Decode *s)
+{
+
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+
+
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+
+
+    rtl_xor(s, ((&(s->dest))->preg), ((&(s->src1))->preg), (tmp_reg));
+}
+
+
+static inline void exec_ori (Decode *s)
+{
+
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+
+
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+
+
+    rtl_or(s, ((&(s->dest))->preg), ((&(s->src1))->preg), (tmp_reg));
+}
+
+
+static inline void exec_andi (Decode *s)
+{
+
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+
+
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+
+
+    rtl_and(s, ((&(s->dest))->preg), ((&(s->src1))->preg), (tmp_reg));
+}
+
+
+static inline void exec_slli (Decode *s)
+{
+
+
+
+    rtl_mv(s, (tmp_reg), ((&(s->src1))->preg));
+
+    rtl_slli(s, ((&(s->dest))->preg), (tmp_reg), (&(s->src2))->imm & 0b11111);
+}
+
+static inline void exec_srli (Decode *s)
+{
+    rtl_mv(s, (tmp_reg), ((&(s->src1))->preg));
+
+    rtl_srli(s, ((&(s->dest))->preg), (tmp_reg), (&(s->src2))->imm & 0b11111);
+}
+
+static inline void exec_srai (Decode *s)
+{
+
+
+
+    rtl_mv(s, (tmp_reg), ((&(s->src1))->preg));
+
+    rtl_srai(s, ((&(s->dest))->preg), (tmp_reg), (&(s->src2))->imm & 0b11111);
+}
+
+
 
 
 
@@ -9884,19 +9951,16 @@ static inline void exec_auipc (Decode *s)
 
     rtl_addi(s, ((&(s->dest))->preg), &s->pc, (&(s->src1))->simm);
 }
-# 40 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/compute.h"
+# 107 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/compute.h"
 static inline void exec_slti (Decode *s)
 {
     rtl_li(s, (tmp_reg), (&(s->src2))->imm);
     rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
 
-    if (compareRegister(RELOP_LE, ((&(s->src1))->preg), ((&(s->src2))->preg)))
-    {
-        rtl_li(s, ((&(s->dest))->preg), 1);
-        return;
-    }
 
-    rtl_li(s, ((&(s->dest))->preg), 0);
+
+
+    rtl_setrelop(s, RELOP_LT, ((&(s->dest))->preg), ((&(s->src1))->preg), (tmp_reg));
 }
 
 static inline void exec_sltiu (Decode *s)
@@ -9904,13 +9968,10 @@ static inline void exec_sltiu (Decode *s)
     rtl_li(s, (tmp_reg), (&(s->src2))->imm);
     rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
 
-    if (compareRegister(RELOP_LEU, ((&(s->src1))->preg), (tmp_reg)))
-    {
-        rtl_li(s, ((&(s->dest))->preg), 1);
-        return;
-    }
 
-    rtl_li(s, ((&(s->dest))->preg), 0);
+
+
+    rtl_setrelop(s, RELOP_LTU, ((&(s->dest))->preg), ((&(s->src1))->preg), (tmp_reg));
 }
 
 static inline void exec_add (Decode *s)
@@ -9922,16 +9983,130 @@ static inline void exec_sub (Decode *s)
 {
     rtl_sub(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
 }
+
+static inline void exec_sll (Decode *s)
+{
+    rtl_mv(s, (tmp_reg), ((&(s->src2))->preg));
+    rtl_andi(s, (tmp_reg), (tmp_reg), 0b11111);
+    rtl_sll(s, ((&(s->dest))->preg), ((&(s->src1))->preg), (tmp_reg));
+}
+
+
+
+
+
+
+
+static inline void exec_slt (Decode *s)
+{
+    rtl_setrelop(s, RELOP_LT, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
+
+static inline void exec_sltu (Decode *s)
+{
+    rtl_setrelop(s, RELOP_LTU, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
+
+
+static inline void exec_xor (Decode *s)
+{
+    rtl_xor(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
+
+static inline void exec_srl (Decode *s)
+{
+    rtl_mv(s, (tmp_reg), ((&(s->src2))->preg));
+    rtl_andi(s, (tmp_reg), (tmp_reg), 0b11111);
+    rtl_srl(s, ((&(s->dest))->preg), ((&(s->src1))->preg), (tmp_reg));
+}
+
+static inline void exec_sra (Decode *s)
+{
+    rtl_mv(s, (tmp_reg), ((&(s->src2))->preg));
+    rtl_andi(s, (tmp_reg), (tmp_reg), 0b11111);
+    rtl_sra(s, ((&(s->dest))->preg), ((&(s->src1))->preg), (tmp_reg));
+}
+
+static inline void exec_or (Decode *s)
+{
+    rtl_or(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
+
+static inline void exec_and (Decode *s)
+{
+    rtl_and(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
 # 2 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-exec.h" 2
 # 1 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/ldst.h" 1
+# 11 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/ldst.h"
+static inline void exec_lb (Decode *s)
+{
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+
+    rtl_lm(s, ((&(s->dest))->preg), ((&(s->src1))->preg), *(tmp_reg), 1);
+    rtl_sext(s, ((&(s->dest))->preg), ((&(s->dest))->preg), 1);
+}
+
+static inline void exec_lh (Decode *s)
+{
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+
+    rtl_lm(s, ((&(s->dest))->preg), ((&(s->src1))->preg), *(tmp_reg), 2);
+    rtl_sext(s, ((&(s->dest))->preg), ((&(s->dest))->preg), 2);
+}
+
 static inline void exec_lw (Decode *s)
 {
-    rtl_lm(s, ((&(s->dest))->preg), ((&(s->src1))->preg), (&(s->src2))->imm, 4);
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+    rtl_lm(s, ((&(s->dest))->preg), ((&(s->src1))->preg), *(tmp_reg), 4);
+}
+
+static inline void exec_lbu (Decode *s)
+{
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+
+    rtl_lm(s, ((&(s->dest))->preg), ((&(s->src1))->preg), *(tmp_reg), 1);
+    rtl_zext(s, ((&(s->dest))->preg), ((&(s->dest))->preg), 1);
+}
+
+static inline void exec_lhu (Decode *s)
+{
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+
+    rtl_lm(s, ((&(s->dest))->preg), ((&(s->src1))->preg), *(tmp_reg), 2);
+    rtl_zext(s, ((&(s->dest))->preg), ((&(s->dest))->preg), 2);
+}
+
+
+
+
+static inline void exec_sb (Decode *s)
+{
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+
+    rtl_sm(s, ((&(s->dest))->preg), ((&(s->src1))->preg), *(tmp_reg), 1);
+}
+
+static inline void exec_sh (Decode *s)
+{
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+
+    rtl_sm(s, ((&(s->dest))->preg), ((&(s->src1))->preg), *(tmp_reg), 2);
 }
 
 static inline void exec_sw (Decode *s)
 {
-    rtl_sm(s, ((&(s->dest))->preg), ((&(s->src1))->preg), (&(s->src2))->imm, 4);
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+
+    rtl_sm(s, ((&(s->dest))->preg), ((&(s->src1))->preg), *(tmp_reg), 4);
 }
 # 3 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-exec.h" 2
 # 1 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/special.h" 1
@@ -10031,12 +10206,44 @@ static inline void exec_bne (Decode *s)
     rtl_add(s, (tmp_reg), (tmp_reg), &s->pc);
     rtl_jrelop(s, RELOP_NE, ((&(s->src1))->preg), ((&(s->src2))->preg), *(tmp_reg));
 }
+
+
+
+static inline void exec_blt (Decode *s)
+{
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+    rtl_add(s, (tmp_reg), (tmp_reg), &s->pc);
+    rtl_jrelop(s, RELOP_LT, ((&(s->src1))->preg), ((&(s->src2))->preg), *(tmp_reg));
+}
+
+static inline void exec_bltu (Decode *s)
+{
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+    rtl_add(s, (tmp_reg), (tmp_reg), &s->pc);
+    rtl_jrelop(s, RELOP_LTU, ((&(s->src1))->preg), ((&(s->src2))->preg), *(tmp_reg));
+}
+
+
+
+static inline void exec_bge (Decode *s)
+{
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+    rtl_add(s, (tmp_reg), (tmp_reg), &s->pc);
+    rtl_jrelop(s, RELOP_GE, ((&(s->src1))->preg), ((&(s->src2))->preg), *(tmp_reg));
+}
+
+static inline void exec_bgeu (Decode *s)
+{
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+    rtl_add(s, (tmp_reg), (tmp_reg), &s->pc);
+    rtl_jrelop(s, RELOP_GEU, ((&(s->src1))->preg), ((&(s->src2))->preg), *(tmp_reg));
+}
 # 7 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-exec.h" 2
 # 50 "src/cpu/cpu-exec.c" 2
 
 #define FILL_EXEC_TABLE(name) [concat(EXEC_ID_, name)] = concat(exec_, name),
 static const void* g_exec_table[TOTAL_INSTR] = {
-    [EXEC_ID_lui] = exec_lui, [EXEC_ID_lw] = exec_lw, [EXEC_ID_sw] = exec_sw, [EXEC_ID_inv] = exec_inv, [EXEC_ID_addi] = exec_addi, [EXEC_ID_auipc] = exec_auipc, [EXEC_ID_jal] = exec_jal, [EXEC_ID_jalr] = exec_jalr, [EXEC_ID_add] = exec_add, [EXEC_ID_sub] = exec_sub, [EXEC_ID_slti] = exec_slti, [EXEC_ID_sltiu] = exec_sltiu, [EXEC_ID_beq] = exec_beq, [EXEC_ID_bne] = exec_bne, [EXEC_ID_nemu_trap] = exec_nemu_trap,
+    [EXEC_ID_lui] = exec_lui, [EXEC_ID_lb] = exec_lb, [EXEC_ID_lh] = exec_lh, [EXEC_ID_lw] = exec_lw, [EXEC_ID_lbu] = exec_lbu, [EXEC_ID_lhu] = exec_lhu, [EXEC_ID_sb] = exec_sb, [EXEC_ID_sh] = exec_sh, [EXEC_ID_sw] = exec_sw, [EXEC_ID_inv] = exec_inv, [EXEC_ID_addi] = exec_addi, [EXEC_ID_slli] = exec_slli, [EXEC_ID_srli] = exec_srli, [EXEC_ID_srai] = exec_srai, [EXEC_ID_slti] = exec_slti, [EXEC_ID_sltiu] = exec_sltiu, [EXEC_ID_xori] = exec_xori, [EXEC_ID_ori] = exec_ori, [EXEC_ID_andi] = exec_andi, [EXEC_ID_auipc] = exec_auipc, [EXEC_ID_jal] = exec_jal, [EXEC_ID_jalr] = exec_jalr, [EXEC_ID_add] = exec_add, [EXEC_ID_sub] = exec_sub, [EXEC_ID_sll] = exec_sll, [EXEC_ID_slt] = exec_slt, [EXEC_ID_sltu] = exec_sltu, [EXEC_ID_xor] = exec_xor, [EXEC_ID_srl] = exec_srl, [EXEC_ID_sra] = exec_sra, [EXEC_ID_or] = exec_or, [EXEC_ID_and] = exec_and, [EXEC_ID_beq] = exec_beq, [EXEC_ID_bne] = exec_bne, [EXEC_ID_blt] = exec_blt, [EXEC_ID_bge] = exec_bge, [EXEC_ID_bltu] = exec_bltu, [EXEC_ID_bgeu] = exec_bgeu, [EXEC_ID_nemu_trap] = exec_nemu_trap,
 };
 
 static void fetch_decode_exec_updatepc(Decode *s)

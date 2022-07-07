@@ -9434,7 +9434,7 @@ static inline void rtl_neg(Decode *s, rtlreg_t *dest, const rtlreg_t* src1)
 
 static inline void rtl_sign_ext_pos(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const size_t pos)
 {
- do { if (!(pos < sizeof(rtlreg_t) * 8 - 1)) { (fflush(
+ do { if (!(pos < sizeof(rtlreg_t) * 8)) { (fflush(
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 stdout
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
@@ -9442,15 +9442,15 @@ stdout
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 stderr
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8 - 1)); extern void assert_fail_msg(); assert_fail_msg(); 
+, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8)); extern void assert_fail_msg(); assert_fail_msg(); 
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 (static_cast <bool> (
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-pos < sizeof(rtlreg_t) * 8 - 1
+pos < sizeof(rtlreg_t) * 8
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 ) ? void (0) : __assert_fail (
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-"pos < sizeof(rtlreg_t) * 8 - 1"
+"pos < sizeof(rtlreg_t) * 8"
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 , "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h", 33, __extension__ __PRETTY_FUNCTION__))
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
@@ -9476,7 +9476,7 @@ static inline void rtl_sext(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, int
 
 static inline void rtl_zero_ext_pos(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const size_t pos)
 {
- do { if (!(pos < sizeof(rtlreg_t) * 8 - 1)) { (fflush(
+ do { if (!(pos < sizeof(rtlreg_t) * 8)) { (fflush(
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 stdout
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
@@ -9484,15 +9484,15 @@ stdout
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 stderr
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8 - 1)); extern void assert_fail_msg(); assert_fail_msg(); 
+, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8)); extern void assert_fail_msg(); assert_fail_msg(); 
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 (static_cast <bool> (
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-pos < sizeof(rtlreg_t) * 8 - 1
+pos < sizeof(rtlreg_t) * 8
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 ) ? void (0) : __assert_fail (
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-"pos < sizeof(rtlreg_t) * 8 - 1"
+"pos < sizeof(rtlreg_t) * 8"
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 , "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h", 55, __extension__ __PRETTY_FUNCTION__))
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
