@@ -9635,9 +9635,9 @@ static inline const char* reg_name(int idx, int width)
 # 3 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h" 2
 
 
-#define INSTR_LIST(f) f(lui) f(lb) f(lh) f(lw) f(lbu) f(lhu) f(sb) f(sh) f(sw) f(inv) f(addi) f(slli) f(srli) f(srai) f(slti) f(sltiu) f(xori) f(ori) f(andi) f(auipc) f(jal) f(jalr) f(add) f(sub) f(sll) f(slt) f(sltu) f(xor) f(srl) f(sra) f(or) f(and) f(beq) f(bne) f(blt) f(bge) f(bltu) f(bgeu) f(nemu_trap)
-# 46 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h"
-enum { EXEC_ID_lui, EXEC_ID_lb, EXEC_ID_lh, EXEC_ID_lw, EXEC_ID_lbu, EXEC_ID_lhu, EXEC_ID_sb, EXEC_ID_sh, EXEC_ID_sw, EXEC_ID_inv, EXEC_ID_addi, EXEC_ID_slli, EXEC_ID_srli, EXEC_ID_srai, EXEC_ID_slti, EXEC_ID_sltiu, EXEC_ID_xori, EXEC_ID_ori, EXEC_ID_andi, EXEC_ID_auipc, EXEC_ID_jal, EXEC_ID_jalr, EXEC_ID_add, EXEC_ID_sub, EXEC_ID_sll, EXEC_ID_slt, EXEC_ID_sltu, EXEC_ID_xor, EXEC_ID_srl, EXEC_ID_sra, EXEC_ID_or, EXEC_ID_and, EXEC_ID_beq, EXEC_ID_bne, EXEC_ID_blt, EXEC_ID_bge, EXEC_ID_bltu, EXEC_ID_bgeu, EXEC_ID_nemu_trap, TOTAL_INSTR };
+#define INSTR_LIST(f) f(lui) f(lb) f(lh) f(lw) f(lbu) f(lhu) f(sb) f(sh) f(sw) f(inv) f(addi) f(slli) f(srli) f(srai) f(slti) f(sltiu) f(xori) f(ori) f(andi) f(auipc) f(jal) f(jalr) f(add) f(sub) f(sll) f(slt) f(sltu) f(xor) f(srl) f(sra) f(or) f(and) f(mul) f(mulh) f(mulhsu) f(mulhu) f(div) f(divu) f(rem) f(remu) f(beq) f(bne) f(blt) f(bge) f(bltu) f(bgeu) f(nemu_trap)
+# 54 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h"
+enum { EXEC_ID_lui, EXEC_ID_lb, EXEC_ID_lh, EXEC_ID_lw, EXEC_ID_lbu, EXEC_ID_lhu, EXEC_ID_sb, EXEC_ID_sh, EXEC_ID_sw, EXEC_ID_inv, EXEC_ID_addi, EXEC_ID_slli, EXEC_ID_srli, EXEC_ID_srai, EXEC_ID_slti, EXEC_ID_sltiu, EXEC_ID_xori, EXEC_ID_ori, EXEC_ID_andi, EXEC_ID_auipc, EXEC_ID_jal, EXEC_ID_jalr, EXEC_ID_add, EXEC_ID_sub, EXEC_ID_sll, EXEC_ID_slt, EXEC_ID_sltu, EXEC_ID_xor, EXEC_ID_srl, EXEC_ID_sra, EXEC_ID_or, EXEC_ID_and, EXEC_ID_mul, EXEC_ID_mulh, EXEC_ID_mulhsu, EXEC_ID_mulhu, EXEC_ID_div, EXEC_ID_divu, EXEC_ID_rem, EXEC_ID_remu, EXEC_ID_beq, EXEC_ID_bne, EXEC_ID_blt, EXEC_ID_bge, EXEC_ID_bltu, EXEC_ID_bgeu, EXEC_ID_nemu_trap, TOTAL_INSTR };
 # 5 "src/cpu/cpu-exec.c" 2
 # 1 "/usr/include/locale.h" 1 3 4
 # 23 "/usr/include/locale.h" 3 4
@@ -10036,6 +10036,49 @@ static inline void exec_and (Decode *s)
 {
     rtl_and(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
 }
+
+
+
+static inline void exec_mul (Decode *s)
+{
+    rtl_mulu_lo(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
+
+static inline void exec_mulh (Decode *s)
+{
+    rtl_muls_hi(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
+
+static inline void exec_mulhsu (Decode *s)
+{
+
+    rtl_mulu_hi(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
+
+static inline void exec_mulhu (Decode *s)
+{
+    rtl_mulu_hi(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
+
+static inline void exec_div (Decode *s)
+{
+    rtl_divs_q(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
+
+static inline void exec_divu (Decode *s)
+{
+    rtl_divu_q(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
+
+static inline void exec_rem (Decode *s)
+{
+    rtl_divs_r(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
+
+static inline void exec_remu (Decode *s)
+{
+    rtl_divu_r(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
 # 2 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-exec.h" 2
 # 1 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/ldst.h" 1
 # 11 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/ldst.h"
@@ -10243,7 +10286,7 @@ static inline void exec_bgeu (Decode *s)
 
 #define FILL_EXEC_TABLE(name) [concat(EXEC_ID_, name)] = concat(exec_, name),
 static const void* g_exec_table[TOTAL_INSTR] = {
-    [EXEC_ID_lui] = exec_lui, [EXEC_ID_lb] = exec_lb, [EXEC_ID_lh] = exec_lh, [EXEC_ID_lw] = exec_lw, [EXEC_ID_lbu] = exec_lbu, [EXEC_ID_lhu] = exec_lhu, [EXEC_ID_sb] = exec_sb, [EXEC_ID_sh] = exec_sh, [EXEC_ID_sw] = exec_sw, [EXEC_ID_inv] = exec_inv, [EXEC_ID_addi] = exec_addi, [EXEC_ID_slli] = exec_slli, [EXEC_ID_srli] = exec_srli, [EXEC_ID_srai] = exec_srai, [EXEC_ID_slti] = exec_slti, [EXEC_ID_sltiu] = exec_sltiu, [EXEC_ID_xori] = exec_xori, [EXEC_ID_ori] = exec_ori, [EXEC_ID_andi] = exec_andi, [EXEC_ID_auipc] = exec_auipc, [EXEC_ID_jal] = exec_jal, [EXEC_ID_jalr] = exec_jalr, [EXEC_ID_add] = exec_add, [EXEC_ID_sub] = exec_sub, [EXEC_ID_sll] = exec_sll, [EXEC_ID_slt] = exec_slt, [EXEC_ID_sltu] = exec_sltu, [EXEC_ID_xor] = exec_xor, [EXEC_ID_srl] = exec_srl, [EXEC_ID_sra] = exec_sra, [EXEC_ID_or] = exec_or, [EXEC_ID_and] = exec_and, [EXEC_ID_beq] = exec_beq, [EXEC_ID_bne] = exec_bne, [EXEC_ID_blt] = exec_blt, [EXEC_ID_bge] = exec_bge, [EXEC_ID_bltu] = exec_bltu, [EXEC_ID_bgeu] = exec_bgeu, [EXEC_ID_nemu_trap] = exec_nemu_trap,
+    [EXEC_ID_lui] = exec_lui, [EXEC_ID_lb] = exec_lb, [EXEC_ID_lh] = exec_lh, [EXEC_ID_lw] = exec_lw, [EXEC_ID_lbu] = exec_lbu, [EXEC_ID_lhu] = exec_lhu, [EXEC_ID_sb] = exec_sb, [EXEC_ID_sh] = exec_sh, [EXEC_ID_sw] = exec_sw, [EXEC_ID_inv] = exec_inv, [EXEC_ID_addi] = exec_addi, [EXEC_ID_slli] = exec_slli, [EXEC_ID_srli] = exec_srli, [EXEC_ID_srai] = exec_srai, [EXEC_ID_slti] = exec_slti, [EXEC_ID_sltiu] = exec_sltiu, [EXEC_ID_xori] = exec_xori, [EXEC_ID_ori] = exec_ori, [EXEC_ID_andi] = exec_andi, [EXEC_ID_auipc] = exec_auipc, [EXEC_ID_jal] = exec_jal, [EXEC_ID_jalr] = exec_jalr, [EXEC_ID_add] = exec_add, [EXEC_ID_sub] = exec_sub, [EXEC_ID_sll] = exec_sll, [EXEC_ID_slt] = exec_slt, [EXEC_ID_sltu] = exec_sltu, [EXEC_ID_xor] = exec_xor, [EXEC_ID_srl] = exec_srl, [EXEC_ID_sra] = exec_sra, [EXEC_ID_or] = exec_or, [EXEC_ID_and] = exec_and, [EXEC_ID_mul] = exec_mul, [EXEC_ID_mulh] = exec_mulh, [EXEC_ID_mulhsu] = exec_mulhsu, [EXEC_ID_mulhu] = exec_mulhu, [EXEC_ID_div] = exec_div, [EXEC_ID_divu] = exec_divu, [EXEC_ID_rem] = exec_rem, [EXEC_ID_remu] = exec_remu, [EXEC_ID_beq] = exec_beq, [EXEC_ID_bne] = exec_bne, [EXEC_ID_blt] = exec_blt, [EXEC_ID_bge] = exec_bge, [EXEC_ID_bltu] = exec_bltu, [EXEC_ID_bgeu] = exec_bgeu, [EXEC_ID_nemu_trap] = exec_nemu_trap,
 };
 
 static void fetch_decode_exec_updatepc(Decode *s)
