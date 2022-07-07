@@ -9164,6 +9164,7 @@ void rtl_hostcall(Decode *s, uint32_t id, rtlreg_t *dest, const rtlreg_t *src1, 
 # 36 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
 #define c_mulu_hi(a,b) (((uint64_t)(a) * (uint64_t)(b)) >> 32)
 #define c_muls_hi(a,b) (((int64_t)(sword_t)(a) * (int64_t)(sword_t)(b)) >> 32)
+#define c_mulsu_hi(a,b) ((uint64_t)((int64_t)(sword_t)(a) * (uint64_t)(b)) >> 32)
 
 
 #define c_divu_q(a,b) ((a) / (b))
@@ -9188,25 +9189,25 @@ static inline bool interpret_relop(const RELOP_TYPE relop, const rtlreg_t src1, 
  case RELOP_GTU: return src1 > src2;
  case RELOP_GEU: return src1 >= src2;
  default: do { if (!(0)) { (fflush(
-# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
+# 62 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
          stdout
-# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
+# 62 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
          ), fprintf(
-# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
+# 62 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
          stderr
-# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
+# 62 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
          , "\33[1;31m" "unsupport relop = %d" "\33[0m" "\n", relop)); extern void assert_fail_msg(); assert_fail_msg(); 
-# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
+# 62 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
          (static_cast <bool> (
-# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
+# 62 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
          0
-# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
+# 62 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
          ) ? void (0) : __assert_fail (
-# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
+# 62 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
          "0"
-# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
-         , "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h", 61, __extension__ __PRETTY_FUNCTION__))
-# 61 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
+# 62 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h" 3 4
+         , "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h", 62, __extension__ __PRETTY_FUNCTION__))
+# 62 "/home/zz/github/ics2021/nemu/src/engine/interpreter/c_op.h"
          ; } } while (0);
   }
 }
@@ -9269,11 +9270,12 @@ static inline void rtl_setrelopi(Decode *s, uint32_t relop, rtlreg_t *dest, cons
 static inline void rtl_mulu_lo(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const rtlreg_t* src2) { *dest = ((*src1) * (*src2)); }
 static inline void rtl_mulu_hi(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const rtlreg_t* src2) { *dest = (((uint64_t)(*src1) * (uint64_t)(*src2)) >> 32); }
 static inline void rtl_muls_hi(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const rtlreg_t* src2) { *dest = (((int64_t)(sword_t)(*src1) * (int64_t)(sword_t)(*src2)) >> 32); }
+static inline void rtl_mulsu_hi(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const rtlreg_t* src2) { *dest = ((uint64_t)((int64_t)(sword_t)(*src1) * (uint64_t)(*src2)) >> 32); }
 static inline void rtl_divu_q(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const rtlreg_t* src2) { *dest = ((*src1) / (*src2)); }
 static inline void rtl_divu_r(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const rtlreg_t* src2) { *dest = ((*src1) % (*src2)); }
 static inline void rtl_divs_q(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const rtlreg_t* src2) { *dest = ((sword_t)(*src1) / (sword_t)(*src2)); }
 static inline void rtl_divs_r(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const rtlreg_t* src2) { *dest = ((sword_t)(*src1) % (sword_t)(*src2)); }
-# 73 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
+# 74 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
 static inline void rtl_div64u_q(Decode *s, rtlreg_t* dest, const rtlreg_t* src1_hi, const rtlreg_t* src1_lo, const rtlreg_t* src2)
                                                                             {
   uint64_t dividend = ((uint64_t)(*src1_hi) << 32) | (*src1_lo);
@@ -9319,17 +9321,17 @@ static inline void rtl_lms(Decode *s, rtlreg_t *dest, const rtlreg_t* addr, word
     case 2: *dest = (sword_t)(int16_t)val; return;
     ;
     default: 
-# 117 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
+# 118 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
    (static_cast <bool> (
-# 117 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
+# 118 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
    0
-# 117 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
+# 118 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
    ) ? void (0) : __assert_fail (
-# 117 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
+# 118 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
    "0"
-# 117 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
-   , "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h", 117, __extension__ __PRETTY_FUNCTION__))
-# 117 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
+# 118 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
+   , "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h", 118, __extension__ __PRETTY_FUNCTION__))
+# 118 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
                                              ;
   }
 }
@@ -9341,17 +9343,17 @@ static inline void rtl_host_lm(Decode *s, rtlreg_t* dest, const void *addr, int 
     case 2: *dest = *(uint16_t *)addr; return;
     ;
     default: 
-# 127 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
+# 128 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
    (static_cast <bool> (
-# 127 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
+# 128 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
    0
-# 127 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
+# 128 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
    ) ? void (0) : __assert_fail (
-# 127 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
+# 128 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
    "0"
-# 127 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
-   , "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h", 127, __extension__ __PRETTY_FUNCTION__))
-# 127 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
+# 128 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
+   , "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h", 128, __extension__ __PRETTY_FUNCTION__))
+# 128 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
                                              ;
   }
 }
@@ -9363,17 +9365,17 @@ static inline void rtl_host_sm(Decode *s, void *addr, const rtlreg_t *src1, int 
     case 2: *(uint16_t *)addr = *src1; return;
     ;
     default: 
-# 137 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
+# 138 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
    (static_cast <bool> (
-# 137 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
+# 138 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
    0
-# 137 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
+# 138 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
    ) ? void (0) : __assert_fail (
-# 137 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
+# 138 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
    "0"
-# 137 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
-   , "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h", 137, __extension__ __PRETTY_FUNCTION__))
-# 137 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
+# 138 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h" 3 4
+   , "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h", 138, __extension__ __PRETTY_FUNCTION__))
+# 138 "/home/zz/github/ics2021/nemu/src/engine/interpreter/rtl-basic.h"
                                              ;
   }
 }
