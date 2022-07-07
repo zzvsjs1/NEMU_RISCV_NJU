@@ -203,8 +203,7 @@ def_EHelper(mulh)
 
 def_EHelper(mulhsu)
 {
-    // TODO: How to implement signed * unsigned.
-    rtl_mulu_hi(s, ddest, dsrc1, dsrc2);
+    rtl_mulsu_hi(s, ddest, dsrc1, dsrc2);
 }
 
 def_EHelper(mulhu)

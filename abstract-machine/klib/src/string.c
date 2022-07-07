@@ -112,8 +112,21 @@ int strcmp(const char *s1, const char *s2)
 		return 0;
 	}
 
-	// TODO: Not finished.
-	return -1;
+	if (!*str1 && *str2)
+	{
+		return 1;
+	}
+	else if (*str1 && !*str2)
+	{
+		return -1
+	}
+
+	if (*str1 < *str2)
+	{
+		return -1;
+	}
+	
+	return 1;
 }
 
 int strncmp(const char *s1, const char *s2, size_t n)
