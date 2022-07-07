@@ -9503,7 +9503,7 @@ static inline void rtl_neg(Decode *s, rtlreg_t *dest, const rtlreg_t* src1)
 
 static inline void rtl_sign_ext_pos(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const size_t pos)
 {
- do { if (!(pos < sizeof(rtlreg_t) * 8)) { (fflush(
+ do { if (!(pos < sizeof(rtlreg_t) * 8 - 1)) { (fflush(
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 stdout
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
@@ -9511,15 +9511,15 @@ stdout
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 stderr
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8)); extern void assert_fail_msg(); assert_fail_msg(); 
+, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8 - 1)); extern void assert_fail_msg(); assert_fail_msg(); 
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 (static_cast <bool> (
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-pos < sizeof(rtlreg_t) * 8
+pos < sizeof(rtlreg_t) * 8 - 1
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 ) ? void (0) : __assert_fail (
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-"pos < sizeof(rtlreg_t) * 8"
+"pos < sizeof(rtlreg_t) * 8 - 1"
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 , "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h", 33, __extension__ __PRETTY_FUNCTION__))
 # 33 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
@@ -9545,7 +9545,7 @@ static inline void rtl_sext(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, int
 
 static inline void rtl_zero_ext_pos(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, const size_t pos)
 {
- do { if (!(pos < sizeof(rtlreg_t) * 8)) { (fflush(
+ do { if (!(pos < sizeof(rtlreg_t) * 8 - 1)) { (fflush(
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 stdout
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
@@ -9553,29 +9553,21 @@ stdout
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 stderr
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8)); extern void assert_fail_msg(); assert_fail_msg(); 
+, "\33[1;31m" "%zu is more than %zu.\n" "\33[0m" "\n", pos, sizeof(rtlreg_t) * 8 - 1)); extern void assert_fail_msg(); assert_fail_msg(); 
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 (static_cast <bool> (
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-pos < sizeof(rtlreg_t) * 8
+pos < sizeof(rtlreg_t) * 8 - 1
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 ) ? void (0) : __assert_fail (
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
-"pos < sizeof(rtlreg_t) * 8"
+"pos < sizeof(rtlreg_t) * 8 - 1"
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h" 3 4
 , "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h", 55, __extension__ __PRETTY_FUNCTION__))
 # 55 "/home/zz/github/ics2021/nemu/include/rtl/pseudo.h"
 ; } } while (0);
 
- rtlreg_t temp = *src1;
- rtlreg_t mask = 1 << pos;
-
- mask -= 1;
- mask = ~mask;
- mask |= 1 << pos;
- temp &= mask;
-
- *dest = temp;
+ *dest = *src1;
 }
 
 static inline void rtl_zext(Decode *s, rtlreg_t* dest, const rtlreg_t* src1, int width)
@@ -9628,9 +9620,9 @@ static inline const char* reg_name(int idx, int width)
 # 3 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h" 2
 
 
-#define INSTR_LIST(f) f(lui) f(lw) f(sw) f(inv) f(addi) f(auipc) f(jal) f(jalr) f(nemu_trap)
-# 16 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h"
-enum { EXEC_ID_lui, EXEC_ID_lw, EXEC_ID_sw, EXEC_ID_inv, EXEC_ID_addi, EXEC_ID_auipc, EXEC_ID_jal, EXEC_ID_jalr, EXEC_ID_nemu_trap, TOTAL_INSTR };
+#define INSTR_LIST(f) f(lui) f(lw) f(sw) f(inv) f(addi) f(auipc) f(jal) f(jalr) f(add) f(sub) f(slti) f(sltiu) f(nemu_trap)
+# 20 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-all-instr.h"
+enum { EXEC_ID_lui, EXEC_ID_lw, EXEC_ID_sw, EXEC_ID_inv, EXEC_ID_addi, EXEC_ID_auipc, EXEC_ID_jal, EXEC_ID_jalr, EXEC_ID_add, EXEC_ID_sub, EXEC_ID_slti, EXEC_ID_sltiu, EXEC_ID_nemu_trap, TOTAL_INSTR };
 # 5 "src/cpu/cpu-exec.c" 2
 # 1 "/usr/include/locale.h" 1 3 4
 # 23 "/usr/include/locale.h" 3 4
@@ -9877,6 +9869,44 @@ static inline void exec_auipc (Decode *s)
 
     rtl_addi(s, ((&(s->dest))->preg), &s->pc, (&(s->src1))->simm);
 }
+# 40 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/compute.h"
+static inline void exec_slti (Decode *s)
+{
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+
+    if ((sword_t) *((&(s->src1))->preg) < (sword_t) *(tmp_reg))
+    {
+        rtl_li(s, ((&(s->dest))->preg), 1);
+        return;
+    }
+
+    rtl_li(s, ((&(s->dest))->preg), 0);
+}
+
+static inline void exec_sltiu (Decode *s)
+{
+    rtl_li(s, (tmp_reg), (&(s->src2))->imm);
+    rtl_sign_ext_pos(s, (tmp_reg), (tmp_reg), 11);
+
+    if ((word_t) *((&(s->src1))->preg) < (word_t) *(tmp_reg))
+    {
+        rtl_li(s, ((&(s->dest))->preg), 1);
+        return;
+    }
+
+    rtl_li(s, ((&(s->dest))->preg), 0);
+}
+
+static inline void exec_add (Decode *s)
+{
+    rtl_add(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
+
+static inline void exec_sub (Decode *s)
+{
+    rtl_sub(s, ((&(s->dest))->preg), ((&(s->src1))->preg), ((&(s->src2))->preg));
+}
 # 2 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/isa-exec.h" 2
 # 1 "/home/zz/github/ics2021/nemu/src/isa/riscv32/include/../instr/ldst.h" 1
 static inline void exec_lw (Decode *s)
@@ -9973,7 +10003,7 @@ static inline void exec_jalr (Decode *s)
 
 #define FILL_EXEC_TABLE(name) [concat(EXEC_ID_, name)] = concat(exec_, name),
 static const void* g_exec_table[TOTAL_INSTR] = {
-    [EXEC_ID_lui] = exec_lui, [EXEC_ID_lw] = exec_lw, [EXEC_ID_sw] = exec_sw, [EXEC_ID_inv] = exec_inv, [EXEC_ID_addi] = exec_addi, [EXEC_ID_auipc] = exec_auipc, [EXEC_ID_jal] = exec_jal, [EXEC_ID_jalr] = exec_jalr, [EXEC_ID_nemu_trap] = exec_nemu_trap,
+    [EXEC_ID_lui] = exec_lui, [EXEC_ID_lw] = exec_lw, [EXEC_ID_sw] = exec_sw, [EXEC_ID_inv] = exec_inv, [EXEC_ID_addi] = exec_addi, [EXEC_ID_auipc] = exec_auipc, [EXEC_ID_jal] = exec_jal, [EXEC_ID_jalr] = exec_jalr, [EXEC_ID_add] = exec_add, [EXEC_ID_sub] = exec_sub, [EXEC_ID_slti] = exec_slti, [EXEC_ID_sltiu] = exec_sltiu, [EXEC_ID_nemu_trap] = exec_nemu_trap,
 };
 
 static void fetch_decode_exec_updatepc(Decode *s)
