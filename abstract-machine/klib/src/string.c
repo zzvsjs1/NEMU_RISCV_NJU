@@ -7,10 +7,7 @@
 size_t strlen(const char *s)
 {
 	size_t i = 0;
-	for (; *s; ++s)
-	{
-		++i;
-	}
+	for (; s[i]; ++i) { }
 
 	return i;	
 }
@@ -93,11 +90,6 @@ int strcmp(const char *s1, const char *s2)
 	const char* str1 = s1;
 	const char* str2 = s2;
 
-	const size_t len1 = strlen(s1);
-	const size_t len2 = strlen(s2);
-
-	(void)len1;(void)len2;
-
 	for (; *str1 && *str2; ++str1, ++str2)
 	{
 		if (*str1 != *str2)
@@ -112,21 +104,17 @@ int strcmp(const char *s1, const char *s2)
 		return 0;
 	}
 
+	// One reach end, but other not. The chara before are all equal.
 	if (!*str1 && *str2)
 	{
 		return 1;
 	}
 	else if (*str1 && !*str2)
 	{
-		return -1
-	}
-
-	if (*str1 < *str2)
-	{
 		return -1;
 	}
-	
-	return 1;
+
+	return *str1 - *str2;
 }
 
 int strncmp(const char *s1, const char *s2, size_t n)
@@ -136,7 +124,15 @@ int strncmp(const char *s1, const char *s2, size_t n)
 
 void *memset(void *s, int c, size_t n)
 {
-	panic("Not implemented");
+	const unsigned char val = (unsigned char) c;
+	unsigned char* p = (unsigned char*) s;
+
+	for (size_t i = 0; i < n; ++i, ++p)
+	{
+		*p = val;
+	}
+
+	return s;
 }
 
 void *memmove(void *dst, const void *src, size_t n)
@@ -151,7 +147,18 @@ void *memcpy(void *out, const void *in, size_t n)
 
 int memcmp(const void *s1, const void *s2, size_t n)
 {
-	panic("Not implemented");
+	const unsigned char* one = (const unsigned char*)s1;
+	const unsigned char* two = (const unsigned char*)s2;
+
+	for (size_t i = 0; i < n; ++i)
+	{
+		if (one[i] != two[i])
+		{
+			return one[i] - two[i];
+		}
+	}
+
+	return 0;
 }
 
 #endif
