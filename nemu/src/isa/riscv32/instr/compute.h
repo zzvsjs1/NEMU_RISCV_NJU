@@ -28,7 +28,6 @@ def_EHelper(xori)
     // Extend imm[11:0] in s0.
     rtl_sign_ext_pos(s, s0, s0, 11);
 
-    // Add s0 and the original src register value to ddest.
     rtl_xor(s, ddest, dsrc1, s0);
 }
 
@@ -41,7 +40,6 @@ def_EHelper(ori)
     // Extend imm[11:0] in s0.
     rtl_sign_ext_pos(s, s0, s0, 11);
 
-    // Add s0 and the original src register value to ddest.
     rtl_or(s, ddest, dsrc1, s0);
 }
 
@@ -54,7 +52,6 @@ def_EHelper(andi)
     // Extend imm[11:0] in s0.
     rtl_sign_ext_pos(s, s0, s0, 11);
 
-    // Add s0 and the original src register value to ddest.
     rtl_and(s, ddest, dsrc1, s0);
 }
 
@@ -78,9 +75,6 @@ def_EHelper(srli)
 
 def_EHelper(srai)
 {
-    // [11:0]
-    // We need the imm[4:0]
-
     rtl_mv(s, s0, dsrc1);
 
     rtl_srai(s, ddest, s0, id_src2->imm & 0b11111);
@@ -138,9 +132,20 @@ def_EHelper(sub)
 
 def_EHelper(sll)
 {
-    rtl_mv(s, s0, dsrc2);
-    rtl_andi(s, s0, s0, 0b11111);
+    rtl_andi(s, s0, dsrc2, 0b11111);
     rtl_sll(s, ddest, dsrc1, s0);
+}
+
+def_EHelper(srl)
+{
+    rtl_andi(s, s0, dsrc2, 0b11111);
+    rtl_srl(s, ddest, dsrc1, s0);
+}
+
+def_EHelper(sra)
+{
+    rtl_andi(s, s0, dsrc2, 0b11111);
+    rtl_sra(s, ddest, dsrc1, s0);
 }
 
 // SLT and SLTU
@@ -163,20 +168,6 @@ def_EHelper(sltu)
 def_EHelper(xor)
 {
     rtl_xor(s, ddest, dsrc1, dsrc2);
-}
-
-def_EHelper(srl)
-{
-    rtl_mv(s, s0, dsrc2);
-    rtl_andi(s, s0, s0, 0b11111);
-    rtl_srl(s, ddest, dsrc1, s0);
-}
-
-def_EHelper(sra)
-{
-    rtl_mv(s, s0, dsrc2);
-    rtl_andi(s, s0, s0, 0b11111);
-    rtl_sra(s, ddest, dsrc1, s0);
 }
 
 def_EHelper(or)

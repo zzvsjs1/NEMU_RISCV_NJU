@@ -10,7 +10,7 @@ const char *reggs[] = {
   "pc"
 };
 
-#define REG_FMT ("%-5s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "\n")
+#define REG_FMT ("%-5s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n")
 
 bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc) 
 {
@@ -22,7 +22,15 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
 		PRI_ERR_E("Correct:\n");
 		for (size_t i = 0, end = sizeof cpu / sizeof(word_t); i < end; ++i)
 		{
-			printf(REG_FMT, reggs[i], p[i], " ", p[i], " ", (sword_t) p[i]);
+			if (((word_t*)&cpu)[i] != p[i])
+			{
+				PRI_ERR("%-5s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN 
+				"     Original: " FMT_WORD "\n", reggs[i], p[i], " ", p[i], " ", (sword_t) p[i], ((word_t*)&cpu)[i]);
+			}
+			else
+			{
+				printf(REG_FMT, reggs[i], p[i], " ", p[i], " ", (sword_t) p[i], ((word_t*)&cpu)[i]);
+			}
 		}
 
 		printf("\n\n");

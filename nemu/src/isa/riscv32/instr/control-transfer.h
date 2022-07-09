@@ -7,7 +7,7 @@ def_EHelper(jal)
 	// Save next instuctions address to rd, and set new insturction address to pc.
 
 	// Store next inst to ddest.
-	rtl_addi(s, ddest, &s->pc, sizeof(rtlreg_t));
+	rtl_addi(s, ddest, &s->pc, 4);
 
 	// Sign Extend.
 	rtl_li(s, s0, id_src1->imm);
@@ -30,7 +30,7 @@ def_EHelper(jal)
 def_EHelper(jalr)
 {
 	// Store the next instuction(pc + 4) to ddest(rd).
-	rtl_addi(s, ddest, &s->pc, sizeof(rtlreg_t));
+	rtl_addi(s, ddest, &s->pc, 4);
 
 	// Adding sign-extended 12-bit I-immediate to the register rs1.
 	

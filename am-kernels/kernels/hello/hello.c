@@ -1,13 +1,15 @@
 #include <am.h>
+#include <stdio.h>
+#include <string.h>
 #include <klib-macros.h>
 
-int main(const char *args) {
-  const char *fmt =
-    "Hello, AbstractMachine!\n"
-    "mainargs = '%'.\n";
+int main(const char *args) 
+{
+	const char *fmt =
+		"Hello, AbstractMachine!\n"
+		"mainargs = \"%s\".\n";
 
-  for (const char *p = fmt; *p; p++) {
-    (*p == '%') ? putstr(args) : putch(*p);
-  }
-  return 0;
+	printf(fmt, args ? (strlen(args) == 0 ? "Empty String" : args) : "No args.");
+
+	return 0;
 }

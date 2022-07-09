@@ -181,7 +181,7 @@ ee_u16 core_bench_list(core_results *res, ee_s16 finder_idx) {
 		finder=finder->next;
 	}
 #if CORE_DEBUG
-	ee_printf("List sort 1: %04x\n",retval);
+	ee_printf("List sort 1: %x\n",retval);
 #endif
 	remover=core_list_undo_remove(remover,list->next);
 	/* sort the list by index, in effect returning the list to original state */
@@ -193,7 +193,7 @@ ee_u16 core_bench_list(core_results *res, ee_s16 finder_idx) {
 		finder=finder->next;
 	}
 #if CORE_DEBUG
-	ee_printf("List sort 2: %04x\n",retval);
+	ee_printf("List sort 2: %x\n",retval);
 #endif
 	return retval;
 }
@@ -257,7 +257,7 @@ list_head *core_list_init(ee_u32 blksize, list_head *memblock, ee_s16 seed) {
 	ee_printf("Initialized list:\n");
 	finder=list;
 	while (finder) {
-		ee_printf("[%04x,%04x]",finder->info->idx,(ee_u16)finder->info->data16);
+		ee_printf("[%x,%x]",finder->info->idx,(ee_u16)finder->info->data16);
 		finder=finder->next;
 	}
 	ee_printf("\n");
