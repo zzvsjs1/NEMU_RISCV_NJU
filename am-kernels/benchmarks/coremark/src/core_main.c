@@ -271,17 +271,17 @@ MAIN_RETURN_TYPE main(int argc, char *argv[]) {
 			results[i].err=0;
 			if ((results[i].execs & ID_LIST) &&
 				(results[i].crclist!=list_known_crc[known_id])) {
-				ee_printf("[%u]ERROR! list crc 0x%04x - should be 0x%04x\n",i,results[i].crclist,list_known_crc[known_id]);
+				ee_printf("[%u]ERROR! list crc 0x%x - should be 0x%04x\n",i,results[i].crclist,list_known_crc[known_id]);
 				results[i].err++;
 			}
 			if ((results[i].execs & ID_MATRIX) &&
 				(results[i].crcmatrix!=matrix_known_crc[known_id])) {
-				ee_printf("[%u]ERROR! matrix crc 0x%04x - should be 0x%04x\n",i,results[i].crcmatrix,matrix_known_crc[known_id]);
+				ee_printf("[%u]ERROR! matrix crc 0x%x - should be 0x%04x\n",i,results[i].crcmatrix,matrix_known_crc[known_id]);
 				results[i].err++;
 			}
 			if ((results[i].execs & ID_STATE) &&
 				(results[i].crcstate!=state_known_crc[known_id])) {
-				ee_printf("[%u]ERROR! state crc 0x%04x - should be 0x%04x\n",i,results[i].crcstate,state_known_crc[known_id]);
+				ee_printf("[%u]ERROR! state crc 0x%x - should be 0x%04x\n",i,results[i].crcstate,state_known_crc[known_id]);
 				results[i].err++;
 			}
 			total_errors+=results[i].err;
@@ -303,18 +303,18 @@ MAIN_RETURN_TYPE main(int argc, char *argv[]) {
 	ee_printf("Parallel %s : %d\n",PARALLEL_METHOD,default_num_contexts);
 #endif
 	/* output for verification */
-	ee_printf("seedcrc          : 0x%04x\n",seedcrc);
+	ee_printf("seedcrc          : 0x%x\n",seedcrc);
 	if (results[0].execs & ID_LIST)
 		for (i=0 ; i<default_num_contexts; i++)
-			ee_printf("[%d]crclist       : 0x%04x\n",i,results[i].crclist);
+			ee_printf("[%d]crclist       : 0x%x\n",i,results[i].crclist);
 	if (results[0].execs & ID_MATRIX)
 		for (i=0 ; i<default_num_contexts; i++)
-			ee_printf("[%d]crcmatrix     : 0x%04x\n",i,results[i].crcmatrix);
+			ee_printf("[%d]crcmatrix     : 0x%x\n",i,results[i].crcmatrix);
 	if (results[0].execs & ID_STATE)
 		for (i=0 ; i<default_num_contexts; i++)
-			ee_printf("[%d]crcstate      : 0x%04x\n",i,results[i].crcstate);
+			ee_printf("[%d]crcstate      : 0x%x\n",i,results[i].crcstate);
 	for (i=0 ; i<default_num_contexts; i++)
-		ee_printf("[%d]crcfinal      : 0x%04x\n",i,results[i].crc);
+		ee_printf("[%d]crcfinal      : 0x%x\n",i,results[i].crc);
   ee_printf("Finised in %d ms.\n", (int)total_time);
 	if (total_errors==0) {
     ee_printf("==================================================\n");

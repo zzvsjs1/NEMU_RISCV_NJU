@@ -68,10 +68,10 @@ static def_DHelper(B)
     // rs2
     decode_op_r(s, id_src2, s->isa.instr.b.rs2, false);
 
-    word_t simm = s->isa.instr.b.imm4_1 << 1
-                    | s->isa.instr.b.imm10_5 << 5
-                    | s->isa.instr.b.imm11 << 11
-                    | s->isa.instr.b.simm12 << 12;
+    word_t simm = (s->isa.instr.b.imm4_1 << 1)
+                    | (s->isa.instr.b.imm10_5 << 5)
+                    | (s->isa.instr.b.imm11 << 11)
+                    | (s->isa.instr.b.simm12 << 12);
 
     // imm
     rtl_li(s, s0, simm);

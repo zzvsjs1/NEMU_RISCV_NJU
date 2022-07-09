@@ -2,5 +2,4 @@
 #include "../instr/ldst.h"
 #include "../instr/special.h"
 #include "../instr/control-transfer.h"
-#include "../instr/condiction.h"
 #include "../instr/branch.h"
