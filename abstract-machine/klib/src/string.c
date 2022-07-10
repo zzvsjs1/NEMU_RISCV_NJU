@@ -104,22 +104,51 @@ int strcmp(const char *s1, const char *s2)
 		return 0;
 	}
 
-	// One reach end, but other not. The chara before are all equal.
+	// One reach end, but other not. The chars before are all equal.
 	if (!*str1 && *str2)
-	{
-		return 1;
-	}
-	else if (*str1 && !*str2)
 	{
 		return -1;
 	}
 
-	return *str1 - *str2;
+	if (*str1 && !*str2)
+	{
+		return 1;
+	}
+
+	return *str1 - *str2 < 0 ? -1 : 1;
 }
 
 int strncmp(const char *s1, const char *s2, size_t n)
 {
-	panic("Not implemented");
+	const char* str1 = s1;
+	const char* str2 = s2;
+
+	for (; *str1 && *str2 && n; ++str1, ++str2, --n)
+	{
+		if (*str1 != *str2)
+		{
+			break;
+		}
+	}
+
+	// Reach end.
+	if (!*str1 && !*str2)
+	{
+		return 0;
+	}
+
+	// One reach end, but other not. The chars before are all equal.
+	if (!*str1 && *str2)
+	{
+		return -1;
+	}
+
+	if (*str1 && !*str2)
+	{
+		return 1;
+	}
+
+	return *str1 - *str2 < 0 ? -1 : 1;
 }
 
 void *memset(void *s, int c, size_t n)
@@ -137,12 +166,22 @@ void *memset(void *s, int c, size_t n)
 
 void *memmove(void *dst, const void *src, size_t n)
 {
-	panic("Not implemented");
+	panic("Not implement");
+
+	return dst;
 }
 
 void *memcpy(void *out, const void *in, size_t n)
 {
-	panic("Not implemented");
+	unsigned char* po = (unsigned char*)out;
+	unsigned char* pi = (unsigned char*)in;
+
+	for (; n; --n, ++po, ++pi)
+	{
+		*po = *pi;
+	}
+	
+	return out;
 }
 
 int memcmp(const void *s1, const void *s2, size_t n)
@@ -154,7 +193,7 @@ int memcmp(const void *s1, const void *s2, size_t n)
 	{
 		if (one[i] != two[i])
 		{
-			return one[i] - two[i];
+			return one[i] - two[i] < 0 ? -1 : 1;
 		}
 	}
 

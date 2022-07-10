@@ -254,7 +254,7 @@ void unsignedConvert(Parser* argsParser, va_list* vargs, const unsigned int base
 		}
 	default:
 		{
-			assert(0);
+			panic("Unknown type");
 		}
 	}
 }
@@ -295,7 +295,7 @@ void signedConvert(Parser* argsParser, va_list* vargs, const unsigned int base)
 		}
 	default:
 		{
-			assert(0);
+			panic("Unknown type");
 		}
 	}
 }
@@ -414,11 +414,11 @@ void setValueToString(Parser* argsParser, va_list* vargs)
 	case 'g':
 	case 'G':
 		{
-			assert(0);
+			panic("Floating unsupport.");
 		}
 	default:
 		{
-			assert(0);
+			//panic("Unknown type");
 		}
 	}
 }
@@ -447,7 +447,7 @@ int printf(const char *fmt, ...)
 		{
 			if ((unsigned char)*fmt > 127)
 			{
-				assert(0);
+				panic("No ASCII char.");
 			}
 
 			fmt = formatByToken(fmt, &va);

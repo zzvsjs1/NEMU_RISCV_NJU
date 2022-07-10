@@ -46,4 +46,3 @@ def_EHelper(bgeu)
     rtl_add(s, s0, s0, &s->pc);
     rtl_jrelop(s, RELOP_GEU, dsrc1, dsrc2, *s0);
 }
-
