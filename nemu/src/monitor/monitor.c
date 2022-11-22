@@ -17,7 +17,7 @@ static void welcome()
                 "to record the trace. This may lead to a large log file. "
                 "If it is not necessary, you can disable it in menuconfig"));
     Log("Build time: %s, %s", __TIME__, __DATE__);
-    printf("Welcome to %s-NEMU!\n", ASNI_FMT(str(__GUEST_ISA__), ASNI_FG_YELLOW ASNI_BG_RED));
+    printf("Welcome to %s-NEMU!\n", ASNI_FMT(str(__GUEST_ISA__), ASNI_FG_RED));
     printf("For help, type \"help\"\n");
 }
 
@@ -35,7 +35,7 @@ static char* expr_test_file = NULL;
 static long load_img()
 {
     if (img_file == NULL)
-{
+    {
         Log("No image is given. Use the default build-in image.");
         return 4096; // built-in image size
     }
@@ -147,6 +147,7 @@ static void exprTest()
 	}
 
 error:
+
 	fclose(f);
     free(str);
     free(otherBuffer);
