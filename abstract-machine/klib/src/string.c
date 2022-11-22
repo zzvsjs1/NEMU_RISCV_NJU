@@ -153,12 +153,10 @@ int strncmp(const char *s1, const char *s2, size_t n)
 
 void *memset(void *s, int c, size_t n)
 {
-	const unsigned char val = (unsigned char) c;
 	unsigned char* p = (unsigned char*) s;
-
-	for (size_t i = 0; i < n; ++i, ++p)
+	for (; n; --n, ++p)
 	{
-		*p = val;
+		*p = (unsigned char) c;
 	}
 
 	return s;
@@ -166,15 +164,34 @@ void *memset(void *s, int c, size_t n)
 
 void *memmove(void *dst, const void *src, size_t n)
 {
-	panic("Not implement");
-
+	char *dest = dst;
+	const char *srcBackup = src;
+  
+  	if (dest < srcBackup)
+	{
+		for (; n; --n, ++dest, ++srcBackup)
+		{
+			*dest = *srcBackup;
+		}
+  	}
+  	else
+  	{
+		const char *lastSrc = srcBackup + n - 1;
+		char *lastDest = dest + n - 1;
+	
+		for (; n; --n, --lastDest, --lastSrc)
+		{
+			*lastDest = *lastSrc;
+		}
+  	}
+	
 	return dst;
 }
 
 void *memcpy(void *out, const void *in, size_t n)
 {
-	unsigned char* po = (unsigned char*)out;
-	unsigned char* pi = (unsigned char*)in;
+	char* po = (char*)out;
+	const char* pi = (const char*)in;
 
 	for (; n; --n, ++po, ++pi)
 	{
