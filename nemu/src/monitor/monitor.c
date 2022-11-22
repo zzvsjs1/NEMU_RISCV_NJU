@@ -127,7 +127,7 @@ static void exprTest()
         const word_t res = expr(otherBuffer, &success);
         if (!success)       
         {
-            printf(ASNI_FMT("Calulate failed for " FMT_DECIMAL_WORD " %s\n", ASNI_FG_RED), a, otherBuffer);
+            printf(ASNI_FMT("Calculate failed for " FMT_DECIMAL_WORD " %s\n", ASNI_FG_RED), a, otherBuffer);
         }
         else if (res != a)            
         {
