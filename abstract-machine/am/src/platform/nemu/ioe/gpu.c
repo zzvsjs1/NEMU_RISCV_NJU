@@ -28,7 +28,6 @@ void __am_gpu_config(AM_GPU_CONFIG_T *cfg)
 void __am_gpu_fbdraw(AM_GPU_FBDRAW_T *ctl) 
 {
 	const uint32_t* pixel = (uint32_t*)ctl->pixels;
-	uint32_t* base = (uint32_t*)(uintptr_t)FB_ADDR;
 
 	for (int i = 0; i < ctl->h; ++i)
 	{
@@ -36,7 +35,7 @@ void __am_gpu_fbdraw(AM_GPU_FBDRAW_T *ctl)
 		{
 			const uint32_t pOffset = i * ctl->w + j;
 			const uint32_t baseOffset = ((ctl->y + i) * W + (ctl->x + j));
-			base[baseOffset] = pixel[pOffset];
+			outl(FB_ADDR + baseOffset * sizeof(uint32_t), pixel[pOffset]);
 		}
 	}
 	
