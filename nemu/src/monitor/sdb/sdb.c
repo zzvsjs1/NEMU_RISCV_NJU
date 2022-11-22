@@ -54,7 +54,7 @@ static int cmd_expr(char* args);
 
 static int cmd_print_program_info(char* args);
 
-static int cmd_excu_n_insturctions(char* args);
+static int cmd_excu_n_instructions(char* args);
 
 static int cmd_scan_memory(char* args);
 
@@ -74,11 +74,11 @@ static struct {
 	{ "c", "Continue the execution of the program", cmd_c },
 	{ "q", "Exit NEMU", cmd_q },
 
-	{ "si" , "Excute [N] instructions. The empty n will excute 1 instruction.", cmd_excu_n_insturctions },
+	{ "si" , "Execute [N] instructions. The empty n will execute 1 instruction.", cmd_excu_n_instructions },
 	{ "info" , "Print the register or break point informations", cmd_print_program_info },
 	{ "x", "x N EXPR. Scan the memory with the base address EXPR.", cmd_scan_memory },
 	{ "p", "Print the result by a expression", cmd_expr },
-	{ "w", "w expr. Add a watch point. The result will caculate by expression.", cmd_add_wp },
+	{ "w", "w expr. Add a watch point. The result will calculate by expression.", cmd_add_wp },
 	{ "d", "d [i]. Delete the no.i watch point", cmd_del_wp },
 	{ "set", "set reg_name val. Set a register to specific value.", cmd_set_register_val },
 
@@ -87,7 +87,7 @@ static struct {
 #define NR_CMD ARRLEN(cmd_table)
 
 // ZZ
-static int cmd_excu_n_insturctions(char* args)
+static int cmd_excu_n_instructions(char* args)
 {
 	uint64_t n;
 
@@ -254,7 +254,7 @@ static int cmd_expr(char* args)
 	const word_t retVal = expr(args, &success);
 	if (!success)
 	{
-		PRI_ERR_E("Invalid expreassion\n");
+		PRI_ERR_E("Invalid expression\n");
 		return 0;
 	}
 
@@ -386,6 +386,6 @@ void init_sdb()
 	/* Compile the regular expressions. */
 	init_regex();
 
-	/* Initialize the watchpoint pool. */
+	/* Initialize the watch point pool. */
 	init_wp_pool();
 }

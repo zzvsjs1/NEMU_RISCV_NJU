@@ -491,7 +491,7 @@ static int getNextMatchParenthesesFromLeft(int start, int end)
 	return -1;
 }
 
-static int getNextMatchParenthessFromRight(int start, int end)
+static int getNextMatchParenthesesFromRight(int start, int end)
 {
 	assert(start <= end);
 
@@ -582,7 +582,7 @@ static word_t eval(int start, int end, bool* success)
 	
 	if (tokens[start].type == TK_L_BRACKET)
 	{
-		if (getNextMatchParenthessFromRight(start, end) == end)
+		if (getNextMatchParenthesesFromRight(start, end) == end)
 		{
 			return eval(start + 1, end - 1, success);	
 		}
@@ -618,7 +618,7 @@ static word_t eval(int start, int end, bool* success)
 		return unaryOperation(tokens[start].type, rVal, success);
 	}
 
-	// Do Binary Operation. We make sure i not eqaul to -1.
+	// Do Binary Operation. We make sure i not equal to -1.
 	assert(mainOpIndex != -1);
 
 	const word_t left = eval(start, mainOpIndex - 1, success);
@@ -713,7 +713,7 @@ static void preProcess()
 	}
 }
 
-static word_t calcute(bool* success)
+static word_t calculate(bool* success)
 {
 	assert(numOfTokens != 0);
 
@@ -741,7 +741,7 @@ static word_t calcute(bool* success)
 	*success = isAllParenthesesMatch(0, numOfTokens - 1);
 	if (!*success)
 	{
-		PRI_ERR_E("Bad expression: unmatch parentheses.\n");
+		PRI_ERR_E("Bad expression: unmatched parentheses.\n");
 		return -1;
 	}
 
@@ -801,5 +801,5 @@ word_t expr(char *e, bool *success)
 	}
 	
 	*success = true;
-	return calcute(success);
+	return calculate(success);
 }
