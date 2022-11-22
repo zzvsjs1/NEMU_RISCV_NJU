@@ -172,17 +172,16 @@ void *memmove(void *dst, const void *src, size_t n)
 		{
 			*dest = *srcBackup;
 		}
+
+		return dst;
   	}
-  	else
-  	{
-		const char *lastSrc = srcBackup + n - 1;
-		char *lastDest = dest + n - 1;
-	
-		for (; n; --n, --lastDest, --lastSrc)
-		{
-			*lastDest = *lastSrc;
-		}
-  	}
+
+	const char *lastSrc = srcBackup + n - 1;
+	char *lastDest = dest + n - 1;
+	for (; n; --n, --lastDest, --lastSrc)
+	{
+		*lastDest = *lastSrc;
+	}
 	
 	return dst;
 }
