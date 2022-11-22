@@ -201,14 +201,14 @@ void *memcpy(void *out, const void *in, size_t n)
 
 int memcmp(const void *s1, const void *s2, size_t n)
 {
-	const unsigned char* one = (const unsigned char*)s1;
-	const unsigned char* two = (const unsigned char*)s2;
+	const unsigned char* first = (const unsigned char*)s1;
+	const unsigned char* second = (const unsigned char*)s2;
 
 	for (size_t i = 0; i < n; ++i)
 	{
-		if (one[i] != two[i])
+		if (first[i] != second[i])
 		{
-			return one[i] - two[i] < 0 ? -1 : 1;
+			return first[i] - second[i] < 0 ? -1 : 1;
 		}
 	}
 

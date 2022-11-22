@@ -140,29 +140,38 @@ void fillBasePrefix(const unsigned int base)
 bool isSignedIntegerFlag(const char ch)
 {
 	const char* sv = "idID";
-	for (size_t i = 0; i < 4; ++i)
+	switch (ch)
 	{
-		if (sv[i] == ch)
-		{
+		case 'i':
+		case 'd':
+		case 'I':
+		case 'D':
 			return true;
-		}
+		default:
+			return false;
 	}
 
-	return false;
+	__builtin_unreachable();
 }
 
 bool isUnSignedIntegerFlag(const char ch)
 {
-	const char* sv = "oxubOXUB";
-	for (size_t i = 0; i < 8; ++i)
+	switch (ch)
 	{
-		if (sv[i] == ch)
-		{
+		case 'o':
+		case 'x':
+		case 'u':
+		case 'b':
+		case 'O':
+		case 'X':
+		case 'U':
+		case 'B':
 			return true;
-		}
+		default:
+			return false;
 	}
 
-	return false;
+	__builtin_unreachable();
 }
 
 bool isIntegerFlag(const char ch)
@@ -223,10 +232,6 @@ void unsignedConvert(Parser* argsParser, va_list* vargs, const unsigned int base
 	switch (argsParser->type)
 	{
 	case CHAR:
-		{
-			writeUnSignedInteger(va_arg(*vargs, int), base, argsParser);
-			break;
-		}
 	case SHORT:
 		{
 			writeUnSignedInteger(va_arg(*vargs, int), base, argsParser);
@@ -264,11 +269,8 @@ void signedConvert(Parser* argsParser, va_list* vargs, const unsigned int base)
 	switch (argsParser->type)
 	{
 	case CHAR:
-		{
-			writeSignedInteger(va_arg(*vargs, int), base, argsParser);
-			break;
-		}
 	case SHORT:
+	case INT:
 		{
 			writeSignedInteger(va_arg(*vargs, int), base, argsParser);
 			break;
@@ -286,11 +288,6 @@ void signedConvert(Parser* argsParser, va_list* vargs, const unsigned int base)
 	case SIZE_T:
 		{
 			writeSignedInteger(va_arg(*vargs, size_t), base, argsParser);
-			break;
-		}
-	case INT:
-		{
-			writeSignedInteger(va_arg(*vargs, int), base, argsParser);
 			break;
 		}
 	default:
@@ -389,7 +386,7 @@ void setValueToString(Parser* argsParser, va_list* vargs)
 			const int temp = va_arg(*vargs, int);
 			if (temp < 0 || temp > 127)
 			{
-				assert(0);
+				panic("Not an ascii character.");
 			}
 
 			WriteCharFunP((char)temp);
@@ -414,7 +411,7 @@ void setValueToString(Parser* argsParser, va_list* vargs)
 	case 'g':
 	case 'G':
 		{
-			panic("Floating unsupport.");
+			panic("Floating point is not support.");
 		}
 	default:
 		{
