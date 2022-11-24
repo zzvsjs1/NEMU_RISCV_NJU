@@ -139,7 +139,6 @@ void fillBasePrefix(const unsigned int base)
 
 bool isSignedIntegerFlag(const char ch)
 {
-	const char* sv = "idID";
 	switch (ch)
 	{
 		case 'i':
