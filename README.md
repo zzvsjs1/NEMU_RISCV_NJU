@@ -17,7 +17,7 @@ Run `init.sh` or set three environment variables.
 
 Also, you need some packages:
 
-- LLVM-18 (You may need to build this by your own and patch some files)
+- LLVM-11+ (Not include 11)
 - readline
 - libncurses
 - flex
