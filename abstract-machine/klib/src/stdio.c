@@ -11,502 +11,307 @@
 
 #define ARRAY_LEN(arr) (sizeof(arr) / sizeof(arr[0]))
 
-typedef enum BuildInType
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
+
+
+static int utoa_base(unsigned long value, char *buf, int base, int uppercase)
 {
-	UNSIGNED_CHAR,
-	CHAR,
-	UNSIGNED_SHORT,
-	SHORT,
-	UNSIGNED_INT,
-	INT,
-	UNSIGNED_LONG,
-	LONG,
-	UNSIGNED_LONG_LONG,
-	LONG_LONG,
-	FLOAT,
-	DOUBLE,
-	LONG_DOUBLE,
-	SIZE_T,
-	PTRDIFF_T,
-	UNKNOWN
-} BuildInType;
+    static const char *digits_lc = "0123456789abcdef";
+    static const char *digits_uc = "0123456789ABCDEF";
+    const char *digits = uppercase ? digits_uc : digits_lc;
 
-typedef struct
-{
-	const char* f;
-	BuildInType type;
-} Parser;
+    if (base < 2 || base > 16) {
+        buf[0] = '\0';
+        return 0;
+    }
 
-#define BUFFER_SIZE (129)
+    char tmp[32];
+    int  pos = 0;
 
-char PUBLIC_BUFF[BUFFER_SIZE];
-size_t NumOfCharInBuf = 0;
-size_t TotalWrite = 0;
+    do {
+        tmp[pos++] = digits[value % base];
+        value = value / base;
+    } while (value != 0);
 
-#define MAX_BUFFER_LEN (BUFFER_SIZE - 1)
-
-char* CUR_BUFF = PUBLIC_BUFF;
-
-typedef void(*FflushFun)();
-
-typedef void(*WriteCharFun)(const char);
-
-void fflushStdioBuffer()
-{
-	assert(NumOfCharInBuf <= MAX_BUFFER_LEN);
-	CUR_BUFF[NumOfCharInBuf] = '\0';
-	putstr(CUR_BUFF);
-	NumOfCharInBuf = 0;
-}
-
-void fflushOuterBuffer()
-{
-	// Do nothing.
-}
-
-FflushFun FflushFunP = fflushStdioBuffer;
-
-void writeCharStdio(const char ch)
-{
-	if (NumOfCharInBuf == MAX_BUFFER_LEN)
+    for (int i = 0; i < pos; i++) 
 	{
-		FflushFunP();
-	}
+        buf[i] = tmp[pos - 1 - i];
+    }
 
-	CUR_BUFF[NumOfCharInBuf++] = ch;
-	++TotalWrite;
+    buf[pos] = '\0';
+
+    return pos;
 }
 
-void writeCharExternal(const char ch)
+static int ltoa_dec(long value, char *buf)
 {
-	CUR_BUFF[NumOfCharInBuf++] = ch;
-	++TotalWrite;
-}
+    if (value == 0) {
+        buf[0] = '0';
+        buf[1] = '\0';
+        return 1;
+    }
 
-void writeDummy(const char ch)
-{
-	(void)ch;
-	++NumOfCharInBuf;
-	++TotalWrite;
-}
+    unsigned long v;
+    int           neg = (value < 0);
+    if (neg) {
+        v = (unsigned long)(-value);
+    } else {
+        v = (unsigned long)(value);
+    }
 
-WriteCharFun WriteCharFunP = writeCharStdio;
+    char tmp[32];
+    int  pos = 0;
 
-void initBuffer(char* bufferPtr, FflushFun fflushFun, WriteCharFun wf)
-{
-	assert(bufferPtr && fflushFun && wf);
+    while (v > 0) {
+        tmp[pos++] = (char)('0' + (v % 10));
+        v /= 10;
+    }
+    if (neg) {
+        tmp[pos++] = '-';
+    }
 
-	CUR_BUFF = bufferPtr;
-	FflushFunP = fflushFun;
-	WriteCharFunP = wf;
-	NumOfCharInBuf = 0;
-	TotalWrite = 0;
-}
-
-void writeStrToGBuf(const char* s)
-{
-	assert(s);
-
-	for (; *s; ++s)
-	{
-		WriteCharFunP(*s);
-	}
-}
-
-void writeStrIterToGBuf(const char* first, const char* last)
-{
-	for (; first != last; ++first)
-	{
-		WriteCharFunP(*first);
-	}
-}
-
-void fillBasePrefix(const unsigned int base)
-{
-	if (base == 8)
-	{
-		writeStrToGBuf("0O");
-	}
-	else if (base == 16)
-	{
-		writeStrToGBuf("0x");
-	}
-	else if (base == 2)
-	{
-		writeStrToGBuf("0b");
-	}
-}
-
-bool isSignedIntegerFlag(const char ch)
-{
-	switch (ch)
-	{
-		case 'i':
-		case 'd':
-		case 'I':
-		case 'D':
-			return true;
-		default:
-			return false;
-	}
-
-	__builtin_unreachable();
-}
-
-bool isUnSignedIntegerFlag(const char ch)
-{
-	switch (ch)
-	{
-		case 'o':
-		case 'x':
-		case 'u':
-		case 'b':
-		case 'O':
-		case 'X':
-		case 'U':
-		case 'B':
-			return true;
-		default:
-			return false;
-	}
-
-	__builtin_unreachable();
-}
-
-bool isIntegerFlag(const char ch)
-{
-	return isSignedIntegerFlag(ch) || isUnSignedIntegerFlag(ch);
-}
-
-char* writeUnsignedToTemBuf(char* first, uint64_t val, unsigned int base)
-{
-	do
-	{
-		--first;
-
-		const uint64_t tem = val % base;
-		if (tem >= 10 && base > 10)
-		{
-			*first = (char)('a' + tem - 10);
-		}
-		else
-		{
-			*first = (char)('0' + tem);
-		}
-
-		val /= base;
-	} while (val != 0);
-
-	return first;
-}
-
-
-void writeUnSignedInteger(const uint64_t val, unsigned int base, Parser* parser)
-{
-	assert(base >= 2 && base <= 32);
-	fillBasePrefix(base);
-
-	char buf[65];
-	writeStrIterToGBuf(writeUnsignedToTemBuf(buf + 65, val, base), buf + 65);
-}
-
-void writeSignedInteger(const int64_t val, unsigned int base, Parser* parser)
-{
-	assert(base >= 2 && base <= 32);
-	fillBasePrefix(base);
-
-	char buf[65];
-
-	char* first = writeUnsignedToTemBuf(buf + 65, val < 0 ? -val : val, base);
-	if (val < 0)
-	{
-		*--first = '-';
-	}
-
-	writeStrIterToGBuf(first, buf + 65);
-}
-
-void unsignedConvert(Parser* argsParser, va_list* vargs, const unsigned int base)
-{
-	switch (argsParser->type)
-	{
-	case CHAR:
-	case SHORT:
-		{
-			writeUnSignedInteger(va_arg(*vargs, int), base, argsParser);
-			break;
-		}
-	case LONG:
-		{
-			writeUnSignedInteger(va_arg(*vargs, unsigned long), base, argsParser);
-			break;
-		}
-	case LONG_LONG:
-		{
-			writeUnSignedInteger(va_arg(*vargs, unsigned long long), base, argsParser);
-			break;
-		}
-	case SIZE_T:
-		{
-			writeUnSignedInteger(va_arg(*vargs, size_t), base, argsParser);
-			break;
-		}
-	case UNSIGNED_INT:
-		{
-			writeUnSignedInteger(va_arg(*vargs, unsigned int), base, argsParser);
-			break;
-		}
-	default:
-		{
-			panic("Unknown type");
-		}
-	}
-}
-
-void signedConvert(Parser* argsParser, va_list* vargs, const unsigned int base)
-{
-	switch (argsParser->type)
-	{
-	case CHAR:
-	case SHORT:
-	case INT:
-		{
-			writeSignedInteger(va_arg(*vargs, int), base, argsParser);
-			break;
-		}
-	case LONG:
-		{
-			writeSignedInteger(va_arg(*vargs, long), base, argsParser);
-			break;
-		}
-	case LONG_LONG:
-		{
-			writeSignedInteger(va_arg(*vargs, long long), base, argsParser);
-			break;
-		}
-	case SIZE_T:
-		{
-			writeSignedInteger(va_arg(*vargs, size_t), base, argsParser);
-			break;
-		}
-	default:
-		{
-			panic("Unknown type");
-		}
-	}
-}
-
-void preParseDataType(Parser* argsParser)
-{
-	// long or long long
-	if (*argsParser->f == 'l')
-	{
-		if (isSignedIntegerFlag(argsParser->f[1]))
-		{
-			argsParser->type = LONG;
-			++argsParser->f;
-		}
-		else if (argsParser->f[1] == 'l' && isIntegerFlag(argsParser->f[2]))
-		{
-			argsParser->type = LONG_LONG;
-			argsParser->f += 2;
-		}
-	}
-	// short or char
-	else if (*argsParser->f == 'h')
-	{
-		if (argsParser->f[1] == 'h')
-		{
-			argsParser->type = SHORT;
-			argsParser->f += 2;
-		}
-		else
-		{
-			argsParser->type = CHAR;
-			++argsParser->f;
-		}
-	}
-
-	// size_t
-	else if (*argsParser->f == 'z' && isIntegerFlag(argsParser->f[1]))
-	{
-		argsParser->type = SIZE_T;
-		++argsParser->f;
-	}
-	else if (isSignedIntegerFlag(*argsParser->f))
-	{
-		argsParser->type = INT;
-	}
-	else if (isUnSignedIntegerFlag(*argsParser->f))
-	{
-		argsParser->type = UNSIGNED_INT;
-	}
-}
-
-void setValueToString(Parser* argsParser, va_list* vargs)
-{
-	switch (*argsParser->f)
-	{
-	case '%':
-		{
-			WriteCharFunP('%');
-			break;
-		}
-	case 'i':
-	case 'd':
-		{
-			signedConvert(argsParser, vargs, 10);
-			break;
-		}
-	case 'o':
-		{
-			unsignedConvert(argsParser, vargs, 8);
-			break;
-		}
-	case 'x':
-	case 'X':
-		{
-			unsignedConvert(argsParser, vargs, 16);
-			break;
-		}
-	case 'b':
-	case 'B':
-		{
-			unsignedConvert(argsParser, vargs, 2);
-			break;
-		}
-	case 'u':
-		{
-			unsignedConvert(argsParser, vargs, 10);
-			break;
-		}
-	case 'c':
-		{
-			const int temp = va_arg(*vargs, int);
-			if (temp < 0 || temp > 127)
-			{
-				panic("Not an ascii character.");
-			}
-
-			WriteCharFunP((char)temp);
-			break;
-		}
-	case 's':
-		{
-			writeStrToGBuf(va_arg(*vargs, const char*));
-			break;
-		}
-	case 'p':
-		{
-			writeUnSignedInteger(va_arg(*vargs, size_t), 16, argsParser);
-			break;
-		}
-	case 'f':
-	case 'F':
-	case 'e':
-	case 'E':
-	case 'a':
-	case 'A':
-	case 'g':
-	case 'G':
-		{
-			panic("Floating point is not support.");
-		}
-	default:
-		{
-			//panic("Unknown type");
-		}
-	}
-}
-
-
-const char* formatByToken(const char* formatter, va_list* vargs)
-{
-	Parser p = { .f = formatter + 1, .type = UNKNOWN };
-	preParseDataType(&p);
-	setValueToString(&p, vargs);
-	return p.f + 1;
-}
-
-int printf(const char *fmt, ...)
-{
-	initBuffer(PUBLIC_BUFF, fflushStdioBuffer, writeCharStdio);
-
-	va_list va;
-	va_start(va, fmt);
-
-	size_t fmtStringSize = 0;
-
-	while (*fmt)
-	{
-		if (*fmt == '%')
-		{
-			if ((unsigned char)*fmt > 127)
-			{
-				panic("No ASCII char.");
-			}
-
-			fmt = formatByToken(fmt, &va);
-			continue;
-		}
-
-		WriteCharFunP(*fmt);
-		++fmt;
-		++fmtStringSize;
-	}
-
-	va_end(va);
-	FflushFunP();
-	return (int)(TotalWrite - fmtStringSize);
-}
-
-int vsprintf(char *out, const char *fmt, va_list ap)
-{
-	initBuffer(out, fflushOuterBuffer, writeCharExternal);
-
-	va_list tList;
-	va_copy(tList, ap);
-
-	while (*fmt)
-	{
-		if (*fmt == '%')
-		{
-			if ((unsigned char)*fmt > 127)
-			{
-				assert(0);
-			}
-
-			fmt = formatByToken(fmt, &tList);
-			continue;
-		}
-
-		WriteCharFunP(*fmt);
-		++fmt;
-	}
-
-	va_end(tList);
-
-	CUR_BUFF[TotalWrite] = '\0';
-	return (int) TotalWrite;
-}
-
-int sprintf(char *out, const char *fmt, ...)
-{
-	va_list va;
-	va_start(va, fmt);
-	const int ret = vsprintf(out, fmt, va);
-	va_end(va);
-	return ret;
-}
-
-int snprintf(char *out, size_t n, const char *fmt, ...)
-{
-	panic("Not implemented");
+    /* Reverse into buf */
+    for (int i = 0; i < pos; i++) {
+        buf[i] = tmp[pos - 1 - i];
+    }
+    buf[pos] = '\0';
+    return pos;
 }
 
 int vsnprintf(char *out, size_t n, const char *fmt, va_list ap)
 {
-	panic("Not implemented");
+    size_t total_written = 0;  /* how many chars have been generated (not truncated) */
+    size_t out_pos = 0;  /* next write position in 'out' */
+
+    if (out == NULL && n > 0) {
+        /* If 'out' is NULL with nonzero n, this is undefined behavior
+         * in real C libraries. We'll just make 'n' = 0 to avoid writing. */
+        n = 0;
+    }
+
+    while (*fmt) {
+        if (*fmt != '%') {
+            if (out_pos + 1 < n) 
+			{
+                out[out_pos] = *fmt;
+            }
+
+            out_pos++;
+            total_written++;
+            fmt++;
+            continue;
+        }
+
+        /* We have a '%' - parse the next character */
+        fmt++; /* skip '%' */
+
+        char spec = *fmt++;
+        if (!spec) 
+		{
+            /* string ended after '%', nothing to do */
+            break;
+        }
+
+        switch (spec) {
+        case 'c':
+        {
+            int c = va_arg(ap, int);
+            if (out_pos + 1 < n) 
+			{
+                out[out_pos] = (char)c;
+            }
+            out_pos++;
+            total_written++;
+            break;
+        }
+        case 's':
+        {
+            const char *s = va_arg(ap, const char*);
+            if (!s) 
+			{
+                s = "(null)";
+            }
+            while (*s) 
+			{
+                if (out_pos + 1 < n) 
+				{
+                    out[out_pos] = *s;
+                }
+                out_pos++;
+                total_written++;
+                s++;
+            }
+            break;
+        }
+        case 'd':
+        case 'i':
+        {
+            long val = (long)va_arg(ap, int);
+            char tmp[32];
+            ltoa_dec(val, tmp);
+            for (char *p = tmp; *p; p++) 
+			{
+                if (out_pos + 1 < n) 
+				{
+                    out[out_pos] = *p;
+                }
+                out_pos++;
+                total_written++;
+            }
+            break;
+        }
+        case 'u':
+        {
+            unsigned long val = (unsigned long)va_arg(ap, unsigned);
+            char tmp[32];
+            utoa_base(val, tmp, 10, 0);
+            for (char *p = tmp; *p; p++) 
+			{
+                if (out_pos + 1 < n) 
+				{
+                    out[out_pos] = *p;
+                }
+                out_pos++;
+                total_written++;
+            }
+            break;
+        }
+        case 'x':
+        case 'X':
+        {
+            unsigned long val = (unsigned long)va_arg(ap, unsigned);
+            char tmp[32];
+            utoa_base(val, tmp, 16, (spec == 'X'));
+            for (char *p = tmp; *p; p++) 
+			{
+                if (out_pos + 1 < n) 
+				{
+                    out[out_pos] = *p;
+                }
+
+                out_pos++;
+                total_written++;
+            }
+            break;
+        }
+        case 'p':
+        {
+            void *ptr = va_arg(ap, void*);
+            uintptr_t addr = (uintptr_t)ptr;
+            char      tmp[32];
+
+            /* Write '0x' */
+            if (out_pos + 1 < n) 
+			{
+                out[out_pos] = '0';
+            }
+            out_pos++;
+            total_written++;
+            if (out_pos + 1 < n) 
+			{
+                out[out_pos] = 'x';
+            }
+
+            out_pos++;
+            total_written++;
+
+            /* Now write the hex */
+            utoa_base(addr, tmp, 16, 0);
+            for (char *p = tmp; *p; p++) 
+			{
+                if (out_pos + 1 < n) 
+				{
+                    out[out_pos] = *p;
+                }
+
+                out_pos++;
+                total_written++;
+            }
+
+            break;
+        }
+        case '%':
+        {
+            /* Output a literal '%' */
+            if (out_pos + 1 < n) 
+			{
+                out[out_pos] = '%';
+            }
+
+            out_pos++;
+            total_written++;
+            break;
+        }
+        default:
+        {
+            /* Unknown specifier: just print it literally or skip. */
+            /* We'll print as "%?" */
+            if (out_pos + 1 < n) {
+                out[out_pos] = '%';
+            }
+            out_pos++;
+            total_written++;
+
+            if (spec) 
+			{
+                if (out_pos + 1 < n) 
+				{
+                    out[out_pos] = spec;
+                }
+                out_pos++;
+                total_written++;
+            }
+            break;
+        }
+        }
+    }
+
+    if (n > 0) 
+	{
+        if (out_pos < n) 
+		{
+            out[out_pos] = '\0';
+        } else 
+		{
+            out[n - 1] = '\0';
+        }
+    }
+
+    return (int)total_written;
+}
+
+int snprintf(char *out, size_t n, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int ret = vsnprintf(out, n, fmt, ap);
+    va_end(ap);
+    return ret;
+}
+
+int sprintf(char *out, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+
+    int ret = vsnprintf(out, (size_t) - 1, fmt, ap);
+    va_end(ap);
+    return ret;
+}
+
+int printf(const char *fmt, ...)
+{
+    char buffer[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    int ret = vsnprintf(buffer, sizeof(buffer), fmt, ap);
+    va_end(ap);
+
+    putstr(buffer);
+
+    return ret;
 }
 
 #endif
