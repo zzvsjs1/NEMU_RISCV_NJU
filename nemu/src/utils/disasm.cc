@@ -4,6 +4,7 @@
 #include "llvm/MC/MCInstPrinter.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 
 using namespace llvm;
 
