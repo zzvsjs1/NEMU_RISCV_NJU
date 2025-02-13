@@ -169,7 +169,7 @@ static word_t strToWordT(char* str, const size_t strLen, const word_t base)
 
 	size_t i = 0;
 
-	if (base == 2 || base == 8 || base == 16)
+	if (base == 2 || base == 8 ||  base == 16)
 	{
 		i += 2;
 	}

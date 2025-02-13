@@ -26,33 +26,19 @@ char *strcpy(char *dst, const char *src)
 char *strncpy(char *dst, const char *src, size_t n)
 {
 	size_t i = 0;
-	char* dest = dst;
-	for (; i < n && *src; ++i, ++dest, ++src)
+    // Copy characters from src until n characters have been copied or a null is encountered.
+    for (; i < n && src[i] != '\0'; i++)
 	{
-		*dest = *src;
-	}
+        dst[i] = src[i];
+    }
 
-	if (!*src)
+    // If we encountered a null in src, pad the remainder of dst with nulls.
+    for (; i < n; i++) 
 	{
-		// If count is reached before the entire string src was copied,
-		// the resulting character array is not null-terminated.
-		if (i == n)
-		{
-			return dst;
-		}
+        dst[i] = '\0';
+    }
 
-		// If, after copying the terminating null character from src, count is not reached, 
-		// additional null characters are written to dest until the total of 
-		// count characters have been written.
-		for (; i < n; ++i, ++dest)
-		{
-			*dest = '\0';
-		}
-	}
-
-	// Bug?
-	*dest = '\0';
-	return dst;
+    return dst;
 }
 
 char *strcat(char *dst, const char *src)
@@ -65,14 +51,24 @@ char *strcat(char *dst, const char *src)
 	// The behavior is undefined if the destination array is not large enough 
 	// for the contents of both src and dest and the terminating null character.
 
-	char* dest = dst + strlen(dst);
-	for (; *src; ++src, ++dest)
-	{
-		*dest = *src;
-	}	
+	// Find the end of the destination string.
+    // This is where we'll start appending the source string.
+    char *dest = dst + strlen(dst);
 
-	*dest = '\0';
-	return dst;
+    // Copy each character from src to the end of dst.
+    // The loop stops when we reach the null terminator in src.
+    while (*src != '\0') 
+	{
+        *dest = *src;
+        dest++;
+        src++;
+    }
+
+    // Append a null terminator to the concatenated string.
+    *dest = '\0';
+
+    // Return the original destination pointer.
+    return dst;
 }
 
 int strcmp(const char *s1, const char *s2)
@@ -163,27 +159,32 @@ void *memset(void *s, int c, size_t n)
 
 void *memmove(void *dst, const void *src, size_t n)
 {
-	char *dest = dst;
-	const char *srcBackup = src;
-  
-  	if (dest < srcBackup)
+    char *d = dst;
+    const char *s = (const char *)src;
+
+    // Check if the memory areas overlap in a way that requires backward copying.
+    if (d < s) 
 	{
-		for (; n; --n, ++dest, ++srcBackup)
+        // If destination is before source, it's safe to copy forward.
+        // Copy each byte from the beginning.
+        while (n--) 
 		{
-			*dest = *srcBackup;
-		}
-
-		return dst;
-  	}
-
-	const char *lastSrc = srcBackup + n - 1;
-	char *lastDest = dest + n - 1;
-	for (; n; --n, --lastDest, --lastSrc)
+            *d++ = *s++;
+        }
+    } else if (d > s) 
 	{
-		*lastDest = *lastSrc;
-	}
-	
-	return dst;
+        // If destination is after source, copy backwards.
+        // This prevents overwriting the source data before it's copied.
+        d += n;
+        s += n;
+        while (n--) 
+		{
+            *--d = *--s;
+        }
+    }
+
+    // If d == s, the source and destination are the same; nothing to do.
+    return dst;
 }
 
 void *memcpy(void *out, const void *in, size_t n)
