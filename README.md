@@ -7,7 +7,7 @@ I implemented the part of it that is used to emulate the RISC-V instruction set 
 
 # Build and run
 
-# Build
+## Build
 
 Run `init.sh` or set three environment variables. 
 
