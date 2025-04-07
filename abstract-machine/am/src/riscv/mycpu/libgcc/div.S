@@ -13,8 +13,9 @@ X:
 	.globl X;		\
 	X = Y
 
-
+#ifndef __riscv_xlen
 #define __riscv_xlen 64
+#endif
 
   .text
   .align 2
