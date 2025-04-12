@@ -1,44 +1,39 @@
-#include <am.h>
-#include <klib.h>
-#include <klib-macros.h>
+#include <amtest.h>
 
-void ant();
-void galton();
-void hanoi();
-void game_of_life();
-void aclock();
-void cmatrix();
-void donut();
-void bf();
+void (*entry)() = NULL; // mp entry
+
+static const char *tests[256] = {
+  ['h'] = "hello",
+  ['H'] = "display this help message",
+  ['i'] = "interrupt/yield test",
+  ['d'] = "scan devices",
+  ['m'] = "multiprocessor test",
+  ['t'] = "real-time clock test",
+  ['k'] = "readkey test",
+  ['v'] = "display test",
+  ['a'] = "audio test",
+  ['p'] = "x86 virtual memory test",
+};
 
 int main(const char *args) {
-  ioe_init();
-
   switch (args[0]) {
-    case '1': ant(); break;
-    case '2': galton(); break;
-    case '3': hanoi(); break;
-    case '4': game_of_life(); break;
-    case '5': aclock(); break;
-    case '6': cmatrix(); break;
-    case '7': donut(); break;
-    case '8': bf(); break;
+    CASE('h', hello);
+    CASE('i', hello_intr, IOE, CTE(simple_trap));
+    CASE('d', devscan, IOE);
+    CASE('m', mp_print, MPE);
+    CASE('t', rtc_test, IOE);
+    CASE('k', keyboard_test, IOE);
+    CASE('v', video_test, IOE);
+    CASE('a', audio_test, IOE);
+    CASE('p', vm_test, CTE(vm_handler), VME(simple_pgalloc, simple_pgfree));
+    case 'H':
     default:
       printf("Usage: make run mainargs=*\n");
-      printf("  1: ant\n");
-      printf("  2: galton\n");
-      printf("  3: hanoi\n");
-      printf("  4: game of life\n");
-      printf("  5: aclock\n");
-      printf("  6: cmatrix\n");
-      printf("  7: donut\n");
-      printf("  8: bf\n");
-  }
-
-  printf("Press Q to Exit\n");
-  while (1) {
-    AM_INPUT_KEYBRD_T ev = io_read(AM_INPUT_KEYBRD);
-    if (ev.keydown && ev.keycode == AM_KEY_Q) break;
+      for (int ch = 0; ch < 256; ch++) {
+        if (tests[ch]) {
+          printf("  %c: %s\n", ch, tests[ch]);
+        }
+      }
   }
   return 0;
 }

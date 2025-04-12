@@ -78,43 +78,10 @@ static void sdl_audio_callback(void *userdata, Uint8 *stream, int len)
     }
 }
 
-// Called by the AM layer (e.g., AM_AUDIO_PLAY)
-// Copies len bytes from src into the ring buffer, busy-waiting if there isn’t
-// enough space.
-void audio_play_data(const uint8_t *src, uint32_t len) 
-{
-    uint32_t written = 0;
-    while (written < len) 
-    {
-        // Wait until there is free space.
-        while (available_space() == 0) { }
-
-        uint32_t space = available_space();
-        uint32_t chunk = (len - written > space ? space : len - written);
-        // Handle possible wrap-around in the ring buffer.
-        uint32_t contiguous = CONFIG_SB_SIZE - sbugWrite;
-
-        if (contiguous < chunk) 
-        {
-            memcpy(sbuf + sbugWrite, src + written, contiguous);
-            sbugWrite = 0;
-            memcpy(sbuf, src + written + contiguous, chunk - contiguous);
-            sbugWrite = chunk - contiguous;
-        } 
-        else 
-        {
-            memcpy(sbuf + sbugWrite, src + written, chunk);
-            sbugWrite = (sbugWrite + chunk) % CONFIG_SB_SIZE;
-        }
-
-        written += chunk;
-    }
-}
-
 static void audio_io_handler(uint32_t offset, int len, bool is_write) 
 {
-    int reg = offset / sizeof(uint32_t);
-    Assert(reg < reg_freq || reg >= nr_reg,
+    const int reg = offset / sizeof(uint32_t);
+    Assert(reg >= reg_freq && reg < nr_reg,
             "The audio register is out size the bound. It should be %" PRIu32
             " and %" PRIu32 ", but the value is %" PRIu32 ".\n",
             reg_freq, nr_reg, reg);
