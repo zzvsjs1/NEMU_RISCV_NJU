@@ -12,12 +12,12 @@ void init_disasm(const char *triple);
 
 static void welcome()
 {
-    Log("Trace: %s", MUXDEF(CONFIG_TRACE, ASNI_FMT("ON", ASNI_FG_GREEN), ASNI_FMT("OFF", ASNI_FG_RED)));
+    Log("Trace: %s", MUXDEF(CONFIG_TRACE, ANSI_FMT("ON", ANSI_FG_GREEN), ANSI_FMT("OFF", ANSI_FG_RED)));
     IFDEF(CONFIG_TRACE, Log("If trace is enabled, a log file will be generated "
                 "to record the trace. This may lead to a large log file. "
                 "If it is not necessary, you can disable it in menuconfig"));
     Log("Build time: %s, %s", __TIME__, __DATE__);
-    printf("Welcome to %s-NEMU!\n", ASNI_FMT(str(__GUEST_ISA__), ASNI_FG_RED));
+    printf("Welcome to %s-NEMU!\n", ANSI_FMT(str(__GUEST_ISA__), ANSI_FG_RED));
     printf("For help, type \"help\"\n");
 }
 
@@ -127,13 +127,13 @@ static void exprTest()
         const word_t res = expr(otherBuffer, &success);
         if (!success)       
         {
-            printf(ASNI_FMT("Calculate failed for " FMT_DECIMAL_WORD " %s\n", ASNI_FG_RED), a, otherBuffer);
+            printf(ANSI_FMT("Calculate failed for " FMT_DECIMAL_WORD " %s\n", ANSI_FG_RED), a, otherBuffer);
         }
         else if (res != a)            
         {
-            printf(ASNI_FMT(
+            printf(ANSI_FMT(
                     "Cal failed Input: %u %s\n" 
-                    "The out is %u\n", ASNI_FG_RED),
+                    "The out is %u\n", ANSI_FG_RED),
                     a, otherBuffer, res
                 );
         }
@@ -152,7 +152,7 @@ error:
     free(str);
     free(otherBuffer);
 	f = NULL;
-    printf(ASNI_FMT("Check %zu expressions.\n\n", ASNI_FG_MAGENTA), count);
+    printf(ANSI_FMT("Check %zu expressions.\n\n", ANSI_FG_MAGENTA), count);
 }
 
 void init_monitor(int argc, char *argv[])
