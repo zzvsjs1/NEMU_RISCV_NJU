@@ -1,3 +1,19 @@
+/***************************************************************************************
+* Copyright (c) 2014-2022 Zihao Yu, Nanjing University
+*
+* NEMU is licensed under Mulan PSL v2.
+* You can use this software according to the terms and conditions of the Mulan PSL v2.
+* You may obtain a copy of Mulan PSL v2 at:
+*          http://license.coscl.org.cn/MulanPSL2
+*
+* THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+* EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+* MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+*
+* See the Mulan PSL v2 for more details.
+***************************************************************************************/
+
+#include "mmu.h"
 #include "sim.h"
 #include "../../include/common.h"
 #include <difftest-def.h>
@@ -14,11 +30,12 @@ static std::vector<std::pair<reg_t, mem_t*>> difftest_mem(
 static std::vector<int> difftest_hartids;
 static debug_module_config_t difftest_dm_config = {
   .progbufsize = 2,
-  .max_bus_master_bits = 0,
+  .max_sba_data_width = 0,
   .require_authentication = false,
   .abstract_rti = 0,
   .support_hasel = true,
   .support_abstract_csr_access = true,
+  .support_abstract_fpr_access = true,
   .support_haltgroups = true,
   .support_impebreak = true
 };
@@ -60,13 +77,13 @@ void sim_t::diff_set_regs(void* diff_context) {
 void sim_t::diff_memcpy(reg_t dest, void* src, size_t n) {
   mmu_t* mmu = p->get_mmu();
   for (size_t i = 0; i < n; i++) {
-    mmu->store_uint8(dest+i, *((uint8_t*)src+i));
+    mmu->store<uint8_t>(dest+i, *((uint8_t*)src+i));
   }
 }
 
 extern "C" {
 
-void difftest_memcpy(paddr_t addr, void *buf, size_t n, bool direction) {
+__EXPORT void difftest_memcpy(paddr_t addr, void *buf, size_t n, bool direction) {
   if (direction == DIFFTEST_TO_REF) {
     s->diff_memcpy(addr, buf, n);
   } else {
@@ -74,7 +91,7 @@ void difftest_memcpy(paddr_t addr, void *buf, size_t n, bool direction) {
   }
 }
 
-void difftest_regcpy(void* dut, bool direction) {
+__EXPORT void difftest_regcpy(void* dut, bool direction) {
   if (direction == DIFFTEST_TO_REF) {
     s->diff_set_regs(dut);
   } else {
@@ -82,20 +99,36 @@ void difftest_regcpy(void* dut, bool direction) {
   }
 }
 
-void difftest_exec(uint64_t n) {
+__EXPORT void difftest_exec(uint64_t n) {
   s->diff_step(n);
 }
 
-void difftest_init(int port) {
+__EXPORT void difftest_init(int port) {
   difftest_htif_args.push_back("");
-  s = new sim_t(DEFAULT_ISA, DEFAULT_PRIV, DEFAULT_VARCH, 1, false, false,
-      0, 0, NULL, reg_t(-1), difftest_mem, difftest_plugin_devices, difftest_htif_args,
-      std::move(difftest_hartids), difftest_dm_config, nullptr, false, NULL, true);
+  cfg_t cfg(/*default_initrd_bounds=*/std::make_pair((reg_t)0, (reg_t)0),
+            /*default_bootargs=*/nullptr,
+            /*default_isa=*/DEFAULT_ISA,
+            /*default_priv=*/DEFAULT_PRIV,
+            /*default_varch=*/DEFAULT_VARCH,
+            /*default_misaligned=*/false,
+            /*default_endianness*/endianness_little,
+            /*default_pmpregions=*/16,
+            /*default_mem_layout=*/std::vector<mem_cfg_t>(),
+            /*default_hartids=*/std::vector<size_t>(1),
+            /*default_real_time_clint=*/false,
+            /*default_trigger_count=*/4);
+  s = new sim_t(&cfg, false,
+      difftest_mem, difftest_plugin_devices, difftest_htif_args,
+      difftest_dm_config, nullptr, false, NULL,
+      false,
+      NULL,
+      true);
   s->diff_init(port);
 }
 
-void difftest_raise_intr(uint64_t NO) {
-  assert(0);
+__EXPORT void difftest_raise_intr(uint64_t NO) {
+  trap_t t(NO);
+  p->take_trap_public(t, state->pc);
 }
 
 }

@@ -200,9 +200,9 @@ static int cmd_scan_memory(char* args)
 		const vaddr_t curAddress = res + j * sizeof(word_t);
 		const word_t memData = vaddr_read(curAddress, sizeof(word_t));
 
-		printf(ASNI_FMT(FMT_WORD " ", ASNI_FG_CYAN), (word_t)(curAddress));	
-		printf(ASNI_FMT(FMT_WORD " ", ASNI_FG_MAGENTA), memData);
-		printf(ASNI_FMT(FMT_DECIMAL_WORD "\n", ASNI_FG_BLUE), memData);
+		printf(ANSI_FMT(FMT_WORD " ", ANSI_FG_CYAN), (word_t)(curAddress));	
+		printf(ANSI_FMT(FMT_WORD " ", ANSI_FG_MAGENTA), memData);
+		printf(ANSI_FMT(FMT_DECIMAL_WORD "\n", ANSI_FG_BLUE), memData);
 	}
 
 error:

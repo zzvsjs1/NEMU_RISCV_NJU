@@ -8,18 +8,17 @@ AM_SRCS := native/trm.c \
            native/ioe/input.c \
            native/ioe/timer.c \
            native/ioe/gpu.c \
+           native/ioe/uart.c \
            native/ioe/audio.c \
            native/ioe/disk.c \
 
-CFLAGS  += -fpie
+CFLAGS  += -fpie $(shell sdl2-config --cflags)
 ASFLAGS += -fpie -pie
-
-image:
-	@echo + LD "->" $(IMAGE_REL)
-	@g++ -pie -o $(IMAGE) -Wl,--whole-archive $(LINKAGE) -Wl,-no-whole-archive -lSDL2 -ldl
+comma = ,
+LDFLAGS_CXX = $(addprefix -Wl$(comma), $(LDFLAGS)) -pie -ldl $(shell sdl2-config --libs)
 
 run: image
-	$(IMAGE)
+	$(IMAGE).elf
 
 gdb: image
-	gdb -ex "handle SIGUSR1 SIGUSR2 SIGSEGV noprint nostop" $(IMAGE)
+	gdb -ex "handle SIGUSR1 SIGUSR2 SIGSEGV noprint nostop" $(IMAGE).elf
