@@ -51,7 +51,7 @@ static void sdl_audio_callback(void *userdata, Uint8 *stream, int len)
     int remaining = len;
     while (remaining > 0) 
     {
-        uint32_t data_avail = available_data();
+        const uint32_t data_avail = available_data();
         if (data_avail == 0) 
         {
             // No data available; clear the rest of the stream to prevent garbage
@@ -62,10 +62,14 @@ static void sdl_audio_callback(void *userdata, Uint8 *stream, int len)
 
         // Copy the smaller of what is available or what is needed.
         int chunk = (data_avail > remaining ? remaining : data_avail);
+
         // It might happen that the ring buffer wraps around; so copy the contiguous
         // part.
-        uint32_t contiguous = CONFIG_SB_SIZE - sbufRead;
-        if (contiguous < (uint32_t)chunk) chunk = contiguous;
+        const uint32_t contiguous = CONFIG_SB_SIZE - sbufRead;
+        if (contiguous < (uint32_t)chunk) 
+        {
+            chunk = contiguous;
+        }
 
         memcpy(stream, sbuf + sbufRead, chunk);
         sbufRead = (sbufRead + chunk) % CONFIG_SB_SIZE;
@@ -77,7 +81,8 @@ static void sdl_audio_callback(void *userdata, Uint8 *stream, int len)
 // Called by the AM layer (e.g., AM_AUDIO_PLAY)
 // Copies len bytes from src into the ring buffer, busy-waiting if there isn’t
 // enough space.
-void audio_play_data(const uint8_t *src, uint32_t len) {
+void audio_play_data(const uint8_t *src, uint32_t len) 
+{
     uint32_t written = 0;
     while (written < len) 
     {
@@ -117,7 +122,7 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
     if (is_write) 
     {
         // The value has already been written into the mapped memory.
-        uint32_t val = *(uint32_t *)(audio_base + reg);
+        const uint32_t val = *(uint32_t *)(audio_base + reg);
 
         switch (reg) 
         {
@@ -136,12 +141,13 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
                 break;
             }
 
+            // Do init and ignore write value.
             case reg_init: {
+                Assert(val == 1, "The write value is not 1 in audio init, please check Abstract Machine.");
+
                 // When the init register is written to, initialize the SDL audio
                 // subsystem.
-                SDL_AudioSpec spec;
-
-                memset(&spec, 0, sizeof(spec));
+                SDL_AudioSpec spec = {};
 
                 spec.freq = audioFreq;
                 spec.format = AUDIO_S16SYS;  // 16-bit signed samples in system byte order
@@ -179,7 +185,7 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
             }
         }
 
-            return;
+        return;
     }
 
     // Read operations for registers.
@@ -191,18 +197,19 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
         }
 
         case reg_count: {
-            uint32_t count = available_data();
+            const uint32_t count = available_data();
             *(uint32_t *)(audio_base + reg) = count;
             break;
         }
-        
+
         default: {
             break;
         }
     }
 }
 
-void init_audio() {
+void init_audio() 
+{
   uint32_t space_size = sizeof(uint32_t) * nr_reg;
   audio_base = (uint32_t *)new_space(space_size);
 
