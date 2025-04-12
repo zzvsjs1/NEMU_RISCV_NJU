@@ -6,12 +6,8 @@
 #include <klib-macros.h>
 
 __attribute__((noinline))
-void check(bool cond) 
-{
-	if (!cond)
-	{
-		halt(1);
-	}
+void check(bool cond) {
+  if (!cond) halt(1);
 }
 
 #endif
