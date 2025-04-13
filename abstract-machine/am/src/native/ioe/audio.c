@@ -6,6 +6,8 @@
 
 static int rfd = -1, wfd = -1;
 static volatile int count = 0;
+static SDL_AudioSpec s = {0};
+static SDL_AudioSpec sd = {0};
 
 void __am_audio_init() {
   int fds[2];
@@ -26,7 +28,7 @@ static void audio_play(void *userdata, uint8_t *stream, int len) {
 
   count -= nread;
   if (len > nread) {
-    memset(stream + nread, 0, len - nread);
+    SDL_memset(stream + nread, sd.silence, len - nread);
   }
 }
 
@@ -41,7 +43,6 @@ static void audio_write(uint8_t *buf, int len) {
 }
 
 void __am_audio_ctrl(AM_AUDIO_CTRL_T *ctrl) {
-  SDL_AudioSpec s = {};
   s.freq = ctrl->freq;
   s.format = AUDIO_S16SYS;
   s.channels = ctrl->channels;
@@ -52,7 +53,7 @@ void __am_audio_ctrl(AM_AUDIO_CTRL_T *ctrl) {
   count = 0;
   int ret = SDL_InitSubSystem(SDL_INIT_AUDIO);
   if (ret == 0) {
-    SDL_OpenAudio(&s, NULL);
+    SDL_OpenAudio(&s, &sd);
     SDL_PauseAudio(0);
   }
 }

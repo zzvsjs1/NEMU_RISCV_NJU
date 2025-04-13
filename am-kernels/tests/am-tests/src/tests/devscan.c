@@ -46,24 +46,24 @@ static void video_test() {
   io_write(AM_GPU_RENDER, 0);
 }
 
-static void storage_test() {
-  #define nbytes 512
-  static char buf[nbytes];
-  AM_DISK_CONFIG_T info = io_read(AM_DISK_CONFIG);
-  printf("Storage: %d blocks of %d size. Show first 512 bytes\n", info.blkcnt, info.blksz);
-  io_write(AM_DISK_BLKIO, false, buf, 0, nbytes / info.blksz);
-  for (uint32_t i = 0; i < nbytes; i += 2) {
-    printf("%02x%02x ", buf[i] & 0xff, buf[i+1] & 0xff);
-    if ((i+2) % 32 == 0) printf("\n");
-  }
-}
+// static void storage_test() {
+//   #define nbytes 512
+//   static char buf[nbytes];
+//   AM_DISK_CONFIG_T info = io_read(AM_DISK_CONFIG);
+//   printf("Storage: %d blocks of %d size. Show first 512 bytes\n", info.blkcnt, info.blksz);
+//   io_write(AM_DISK_BLKIO, false, buf, 0, nbytes / info.blksz);
+//   for (uint32_t i = 0; i < nbytes; i += 2) {
+//     printf("%02x%02x ", buf[i] & 0xff, buf[i+1] & 0xff);
+//     if ((i+2) % 32 == 0) printf("\n");
+//   }
+// }
 
 void devscan() {
   printf("heap = [%08x, %08x)\n", heap.start, heap.end);
   input_test();
   timer_test();
   video_test();
-  storage_test();
+  //storage_test();
   printf("Test End!\n");
   while (1);
 }

@@ -1,6 +1,8 @@
 #include <SDL2/SDL.h>
 #include <common.h>
 #include <debug.h>
+#include <stdbool.h>
+#include <math.h>
 #include <device/map.h>
 
 enum {
@@ -13,69 +15,44 @@ enum {
   nr_reg
 };
 
+#define MIN(a, b) (((a) > (b)) ? (b) : (a))
+
+static SDL_AudioSpec spec = {0};
+static SDL_AudioSpec specOut = {0};
+
 static uint8_t *sbuf = NULL;
 static uint32_t *audio_base = NULL;
 
-// These variables hold the current configuration parameters.
-static uint32_t audioFreq = 0;
-static uint32_t audioCannels = 0;
-static uint32_t audioSamples = 0;
-
-// Ring-buffer pointers for sbuf (in bytes).
-// They serve to track the available data (between write and read positions).
-static volatile uint32_t sbufRead = 0, sbugWrite = 0;
-
-// Helper functions to compute ring buffer status.
-static inline uint32_t available_data() 
-{
-    if (sbugWrite >= sbufRead) 
-    {
-        return sbugWrite - sbufRead;
-    } 
-    else 
-    {
-        return CONFIG_SB_SIZE - sbufRead + sbugWrite;
-    }
-}
-
-static inline uint32_t available_space() 
-{
-    return CONFIG_SB_SIZE - available_data();
-}
+static volatile int sbufReadIndex  = 0;
 
 // This is the callback function that SDL calls to get more audio samples.
 // It reads data from sbuf (the ring buffer) and copies it into the stream
-// buffer. If data runs out, the rest of the output is filled with zeros.
-static void sdl_audio_callback(void *userdata, Uint8 *stream, int len) 
+// buffer. If data runs out, the rest of the output is filled with silence's value.
+static void sdlAudioCallback(void *userdata, Uint8 *stream, int len) 
 {
-    int remaining = len;
-    while (remaining > 0) 
-    {
-        const uint32_t data_avail = available_data();
-        if (data_avail == 0) 
-        {
-            // No data available; clear the rest of the stream to prevent garbage
-            // noise.
-            memset(stream, 0, remaining);
-            break;
-        }
+    // Fill the stream buffer with silence.
+    SDL_memset(stream, specOut.silence, len);
 
-        // Copy the smaller of what is available or what is needed.
-        int chunk = (data_avail > remaining ? remaining : data_avail);
+    // Determine how many bytes we can copy from the audio buffer.
+    const uint32_t currentSizeOfData = audio_base[reg_count];
+    const uint32_t filledBytes = MIN((uint32_t)len, currentSizeOfData);
 
-        // It might happen that the ring buffer wraps around; so copy the contiguous
-        // part.
-        const uint32_t contiguous = CONFIG_SB_SIZE - sbufRead;
-        if (contiguous < (uint32_t)chunk) 
-        {
-            chunk = contiguous;
-        }
+    // Calculate new index with wrap-around logic.
+    const int endIndex = (sbufReadIndex + filledBytes) % CONFIG_SB_SIZE;
 
-        memcpy(stream, sbuf + sbufRead, chunk);
-        sbufRead = (sbufRead + chunk) % CONFIG_SB_SIZE;
-        stream += chunk;
-        remaining -= chunk;
-    }
+    // Determine how many bytes to copy before and after the buffer wrap.
+    const int firstHalfLen = (endIndex < sbufReadIndex) ? (CONFIG_SB_SIZE - sbufReadIndex) : filledBytes;
+    const int secondHalfLen = filledBytes - firstHalfLen;
+
+    Assert(sbufReadIndex < CONFIG_SB_SIZE && endIndex < CONFIG_SB_SIZE, "Index error");
+
+    // Copy data from the circular buffer into the stream.
+    SDL_memcpy(stream, sbuf + sbufReadIndex, firstHalfLen);
+    SDL_memcpy(stream + firstHalfLen, sbuf, secondHalfLen);
+
+    // Update the read index and the count of audio data.
+    sbufReadIndex = endIndex;
+    audio_base[reg_count] -= filledBytes;
 }
 
 static void audio_io_handler(uint32_t offset, int len, bool is_write) 
@@ -89,22 +66,25 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
     if (is_write) 
     {
         // The value has already been written into the mapped memory.
-        const uint32_t val = *(uint32_t *)(audio_base + reg);
+        const uint32_t val = audio_base[reg];
 
         switch (reg) 
         {
             case reg_freq: {
-                audioFreq = val;
                 break;
             }
 
             case reg_channels: {
-                audioCannels = val;
                 break;
             }
 
             case reg_samples: {
-                audioSamples = val;
+                break;
+            }
+
+            case reg_count: {
+                SDL_LockAudio();
+                SDL_UnlockAudio();
                 break;
             }
 
@@ -112,42 +92,27 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
             case reg_init: {
                 Assert(val == 1, "The write value is not 1 in audio init, please check Abstract Machine.");
 
-                // When the init register is written to, initialize the SDL audio
-                // subsystem.
-                SDL_AudioSpec spec = {};
-
-                spec.freq = audioFreq;
-                spec.format = AUDIO_S16SYS;  // 16-bit signed samples in system byte order
-                spec.channels = audioCannels;
-                spec.samples = audioSamples;
-                spec.callback = sdl_audio_callback;
+                spec.freq = audio_base[reg_freq];
+                spec.format = AUDIO_S16SYS;
+                spec.channels = audio_base[reg_channels];
+                spec.samples = audio_base[reg_samples];
+                spec.callback = sdlAudioCallback;
                 spec.userdata = NULL;
 
-                if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) 
-                {
-                    printf("SDL_InitSubSystem error: %s\n", SDL_GetError());
-                    exit(1);
-                }
-
-                if (SDL_OpenAudio(&spec, NULL) < 0) 
+                if (SDL_OpenAudio(&spec, &specOut) < 0) 
                 {
                     printf("SDL_OpenAudio error: %s\n", SDL_GetError());
                     exit(1);
                 }
 
                 // Unpause and start audio playback.
-                SDL_PauseAudio(0);  
+                SDL_PauseAudio(0);
 
-                // Reset the ring-buffer pointers.
-                sbufRead = 0;
-                sbugWrite = 0;
-
-                // Write out the stream buffer size to the register.
-                *(uint32_t *)(audio_base + reg_sbuf_size) = CONFIG_SB_SIZE;
                 break;
             }
 
             default: {
+                Assert(false, "Write to a wrong audio register, the value is %" PRIu32 ".\n", offset);
                 break;
             }
         }
@@ -159,13 +124,12 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
     switch (reg) 
     {
         case reg_sbuf_size: {
-            *(uint32_t *)(audio_base + reg) = CONFIG_SB_SIZE;
             break;
         }
 
         case reg_count: {
-            const uint32_t count = available_data();
-            *(uint32_t *)(audio_base + reg) = count;
+            SDL_LockAudio();
+            SDL_UnlockAudio();
             break;
         }
 
@@ -190,4 +154,15 @@ void init_audio()
 
   sbuf = (uint8_t *)new_space(CONFIG_SB_SIZE);
   add_mmio_map("audio-sbuf", CONFIG_SB_ADDR, sbuf, CONFIG_SB_SIZE, NULL);
+
+  // Write out the stream buffer size to the register.
+  // In AM, it will run as: init -> config -> ctrl.
+  audio_base[reg_sbuf_size] = CONFIG_SB_SIZE;
+
+  // Init subsystem in here before open device.
+  if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) 
+  {
+      printf("SDL_InitSubSystem error: %s\n", SDL_GetError());
+      exit(1);
+  }
 }
