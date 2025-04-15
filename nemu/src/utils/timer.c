@@ -8,7 +8,8 @@ IFDEF(CONFIG_TIMER_CLOCK_GETTIME,
 
 static uint64_t boot_time = 0;
 
-static uint64_t get_time_internal() {
+static uint64_t get_time_internal() 
+{
 #if defined(CONFIG_TARGET_AM)
   uint64_t us = io_read(AM_TIMER_UPTIME).us;
 #elif defined(CONFIG_TIMER_GETTIMEOFDAY)
@@ -23,8 +24,9 @@ static uint64_t get_time_internal() {
   return us;
 }
 
-uint64_t get_time() {
+uint64_t get_time() 
+{
   if (boot_time == 0) boot_time = get_time_internal();
-  uint64_t now = get_time_internal();
+  const uint64_t now = get_time_internal();
   return now - boot_time;
 }
