@@ -2,8 +2,7 @@
 
 char buf[128];
 
-int main() 
-{
+int main() {
 	sprintf(buf, "%s", "Hello world!\n");
 	check(strcmp(buf, "Hello world!\n") == 0);
 

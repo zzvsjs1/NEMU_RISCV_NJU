@@ -44,6 +44,8 @@ static void sdlAudioCallback(void *userdata, Uint8 *stream, int len)
     const int firstHalfLen = (endIndex < sbufReadIndex) ? (CONFIG_SB_SIZE - sbufReadIndex) : filledBytes;
     const int secondHalfLen = filledBytes - firstHalfLen;
 
+    // printf("Len%d datasize: %d\n", len, (int)filledBytes);
+
     Assert(sbufReadIndex < CONFIG_SB_SIZE && endIndex < CONFIG_SB_SIZE, "Index error");
 
     // Copy data from the circular buffer into the stream.

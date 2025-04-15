@@ -21,7 +21,7 @@ void audio_test() {
     io_write(AM_AUDIO_PLAY, sbuf);
     sbuf.start += len;
     nplay += len;
-    // printf("Already play %d/%d bytes of data\n", nplay, audio_len);
+    printf("Already play %d/%d bytes of data\n", nplay, audio_len);
   }
 
   // wait until the audio finishes
