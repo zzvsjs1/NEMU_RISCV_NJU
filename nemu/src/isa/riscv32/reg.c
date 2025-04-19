@@ -10,6 +10,53 @@ const char *regs[] = {
   "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"
 };
 
+const char *csrs[] = {
+	"mstatus", "mtvec", "mepc", "mcause"
+};
+
+word_t getCSRValue(const word_t address)
+{
+	return *getCSRAddress(address);
+}
+
+rtlreg_t* getCSRAddress(const word_t address)
+{
+	switch (address)
+	{
+	case 0x300: {
+		return &cpu.csr.mstatus;
+	}
+	
+	case 0x305: {
+		return &cpu.csr.mtvec;
+	}
+
+	case 0x341: {
+		return &cpu.csr.mepc;
+	}
+
+	case 0x342: {
+		return &cpu.csr.mcause;
+	}
+	
+	default:
+		Assert(false, "Invalid csr address: " FMT_WORD "\n", address);
+		break;
+	}
+
+	Assert(false, "Should not come here!\n");
+	return NULL;
+}
+
+bool isCSRWriteable(const word_t csrAddr)
+{
+	// Extract bits [11:10]
+	const int32_t access_type = (csrAddr >> 10) & 0b11;
+
+	// If bits are 0b11, it's read-only.
+	return access_type != 0b11;
+}
+
 void isa_reg_display() 
 {
 	printf("\n");
@@ -21,7 +68,17 @@ void isa_reg_display()
 
 	const word_t pc = ((riscv32_CPU_state*)&cpu)->pc;
 	printf(REG_FMT, "pc", pc, " ", pc, " ", (sword_t) pc);
-	printf("\n");
+	printf("\n\n");
+
+	// Print CSR.
+	uint32_t *csrp = (rtlreg_t*)&cpu.csr;
+	for (size_t i = 0; i < sizeof(cpu.csr) / sizeof(rtlreg_t); ++i)
+	{
+		const word_t temp = csrp[i];
+		printf(REG_FMT, csrs[i], temp, " ", temp, " ", (sword_t) temp);
+	}
+
+	printf("\n\n");
 }
 
 word_t isa_reg_str2val(const char *s, bool *success) 

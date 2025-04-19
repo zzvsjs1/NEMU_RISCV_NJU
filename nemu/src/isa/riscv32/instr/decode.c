@@ -2,7 +2,7 @@
 #include <cpu/ifetch.h>
 #include <isa-all-instr.h>
 
-/* Metaprogramming, FUCK YOU!!! */
+
 def_all_THelper();
 
 static uint32_t get_instr(Decode *s)
@@ -96,6 +96,18 @@ static def_DHelper(J)
     // rd -> id_dest.
     decode_op_i(s, id_src1, cur_imm, false);
     decode_op_r(s, id_dest, s->isa.instr.j.rd, true);
+}
+
+static def_DHelper(CSR)
+{
+    // rs1 to src1
+    decode_op_r(s, id_src1, s->isa.instr.CSR.rs1, false);
+
+    // CSR address -> src2.
+    decode_op_i(s, id_src2, s->isa.instr.CSR.csr, false);
+
+    // rd to dest.
+    decode_op_r(s, id_dest, s->isa.instr.CSR.rd, true);
 }
 
 /* End with Decode Helper functions */
@@ -258,6 +270,34 @@ def_THelper(BRANCH)
     return EXEC_ID_inv;
 }
 
+// Opcode SYSTEM == 1110011
+def_THelper(SYSTEM)
+{
+
+
+    // ECALL
+    def_INSTR_TAB("000000000000 00000 000 00000 1110011", ecall);
+
+    // Trap-Return Instructions
+    
+    // MRET
+    def_INSTR_TAB("0011000 00010 00000 000 00000 1110011", mret);
+
+    // END Trap-Return Instructions
+
+
+    // CSRRW
+    def_INSTR_TAB("???????????? ????? 001 ????? 1110011", csrrw);
+
+    // CSRRS
+    def_INSTR_TAB("???????????? ????? 010 ????? 1110011", csrrs);
+
+    // CSRRC
+    def_INSTR_TAB("???????????? ????? 011 ????? 1110011", csrrc);
+
+    return EXEC_ID_inv;
+}
+
 /* Edn table helper functions. */
 
 /* Decode start from here. */
@@ -305,6 +345,13 @@ def_THelper(main)
     def_INSTR_IDTAB("??????? ????? ????? ??? ????? 11001 11", I, JALR);
 
     /* End Control transfer */
+
+
+    /* CSR */
+
+    def_INSTR_IDTAB("??????? ????? ????? ??? ????? 11100 11", CSR, SYSTEM);
+
+    /* END CSR */
 
 
     /* Other */

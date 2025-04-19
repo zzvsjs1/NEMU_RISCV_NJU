@@ -11,6 +11,12 @@ static inline int check_reg_idx(int idx)
 
 #define gpr(idx) (cpu.gpr[check_reg_idx(idx)]._32)
 
+word_t getCSRValue(const word_t address);
+
+rtlreg_t* getCSRAddress(const word_t address);
+
+bool isCSRWriteable(const word_t address);
+
 static inline const char* reg_name(int idx, int width) 
 {
 	extern const char* regs[];

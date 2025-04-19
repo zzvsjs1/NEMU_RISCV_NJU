@@ -49,6 +49,11 @@
     f(bge) \
     f(bltu) \
     f(bgeu) \
+    f(csrrw) \
+    f(csrrs) \
+    f(csrrc) \
+    f(ecall) \
+    f(mret) \
     f(nemu_trap)
 
 def_all_EXEC_ID();

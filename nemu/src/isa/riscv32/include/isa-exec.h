@@ -3,3 +3,4 @@
 #include "../instr/special.h"
 #include "../instr/control-transfer.h"
 #include "../instr/branch.h"
+#include "../instr/csr.h"

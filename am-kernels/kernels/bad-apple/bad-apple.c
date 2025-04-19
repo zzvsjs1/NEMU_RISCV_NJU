@@ -61,19 +61,6 @@ int main() {
 
      if (has_audio) 
      {
-      //  int should_play = (AUDIO_FREQ / FPS) * sizeof(int16_t) * AUDIO_CHANNEL;
-      //  if (should_play > audio_left) should_play = audio_left;
-      //  while (should_play > 0) 
-      //  {
-      //    const int len = (should_play > 4096 ? 4096 : should_play);
-      //    sbuf.end = sbuf.start + len;
-      //    io_write(AM_AUDIO_PLAY, sbuf);
-      //    sbuf.start += len;
-      //    should_play -= len;
-      //  }
-       
-      //  audio_left -= should_play;
-
         int total_to_play = (AUDIO_FREQ / FPS) * sizeof(int16_t) * AUDIO_CHANNEL;
         if (total_to_play > audio_left) total_to_play = audio_left;
         int should_play = total_to_play;

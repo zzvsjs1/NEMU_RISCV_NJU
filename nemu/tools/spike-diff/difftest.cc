@@ -43,6 +43,7 @@ static debug_module_config_t difftest_dm_config = {
 struct diff_context_t {
   word_t gpr[32];
   word_t pc;
+  
 };
 
 static sim_t* s = NULL;
@@ -63,6 +64,7 @@ void sim_t::diff_get_regs(void* diff_context) {
   for (int i = 0; i < NXPR; i++) {
     ctx->gpr[i] = state->XPR[i];
   }
+
   ctx->pc = state->pc;
 }
 
