@@ -21,7 +21,7 @@ def_EHelper(jal)
 }
 
 // Jump and link register
-// Page: 
+//
 // The indirect jump instruction JALR (jump and link register) uses the I-type encoding. The target
 // address is obtained by adding the sign-extended 12-bit I-immediate to the register rs1, then setting
 // the least-significant bit of the result to zero. The address of the instruction following the jump
@@ -70,8 +70,12 @@ def_EHelper(mret)
     // mstatus.MPIE = bit 7
     // mstatus.MIE  = bit 3
 
+	rtlreg_t* mstatusPtr = &cpu.csr.mstatus;
+
 	// Step 1: Clear MPP (bits 12–11)
-	cpu.csr.mstatus &= ~(0b11 << 11);  // Clear both bits
+	// Clear both bits
+	// I am lazy, just use C......
+	cpu.csr.mstatus &= ~(0b11 << 11);
 
 	// Step 2: Set MIE (bit 3) = MPIE (bit 7)
 	const uint32_t mpie = (cpu.csr.mstatus >> 7) & 0x1;
@@ -80,5 +84,9 @@ def_EHelper(mret)
 	// Step 3: Set MPIE (bit 7) = 1
 	cpu.csr.mstatus |= (1 << 7);
 
+	cpu.csr.mepc += 4;
+
+	// PC <- mepc
+	// Just jump!
 	rtl_jr(s, &cpu.csr.mepc);
 }
