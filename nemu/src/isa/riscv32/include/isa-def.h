@@ -9,8 +9,27 @@ typedef struct
     {
         rtlreg_t _32;
     } gpr[32];
-
     vaddr_t pc;
+
+    // Current, only use - Table 7. Currently allocated RISC-V machine-level CSR addresses
+    struct
+    {
+        // Machine status register.
+        // 0x300
+        rtlreg_t mstatus;
+    
+        // Machine trap-handler base address.
+        // 0x305
+        rtlreg_t mtvec;
+    
+        // Machine exception program counter.
+        // 0x341
+        rtlreg_t mepc;
+    
+        // Machine trap cause
+        // 0x342
+        rtlreg_t mcause;
+    } csr;
 } riscv32_CPU_state;
 
 // decode
@@ -50,8 +69,7 @@ typedef struct
         // I-type
         struct 
         {
-            uint32_t opcode1_0 : 2;
-            uint32_t opcode6_2 : 5;
+            uint32_t opcode    : 7;
             uint32_t rd        : 5;
             uint32_t funct3    : 3;
             uint32_t rs1       : 5;
@@ -87,8 +105,7 @@ typedef struct
         // U-type
         struct 
         {
-            uint32_t opcode1_0 : 2;
-            uint32_t opcode6_2 : 5;
+            uint32_t opcode    : 7;
             uint32_t rd        : 5;
             uint32_t imm31_12  :20;
         } u;
@@ -104,6 +121,16 @@ typedef struct
             uint32_t imm10_1   : 10;
             uint32_t imm20     : 1;
         } j;
+
+        struct
+        {
+            uint32_t opcode    : 7;
+            uint32_t rd        : 5;
+            uint32_t funct3    : 3;
+            uint32_t rs1       : 5;
+            uint32_t csr       : 12;
+        } CSR;
+        
       
         uint32_t val;
     } instr;
