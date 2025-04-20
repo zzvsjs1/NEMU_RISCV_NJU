@@ -19,7 +19,10 @@ static void restart()
     cpu.gpr[0]._32 = 0;
 
     // Always start with 0x1800 in riscv32.
-    cpu.csr.mstatus = 0x1800;
+    // cpu.csr.mstatus = 0x1800;
+
+    // M mode.
+    cpu.prv = 0b11;
 }
 
 void init_isa() 

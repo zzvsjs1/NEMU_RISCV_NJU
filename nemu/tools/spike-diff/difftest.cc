@@ -44,6 +44,25 @@ struct diff_context_t {
   word_t gpr[32];
   word_t pc;
   
+  struct {
+    // Machine status register.
+    // 0x300
+    rtlreg_t mstatus;
+
+    // Machine trap-handler base address.
+    // 0x305
+    rtlreg_t mtvec;
+
+    // Machine exception program counter.
+    // 0x341
+    rtlreg_t mepc;
+
+    // Machine trap cause
+    // 0x342
+    rtlreg_t mcause;
+  } csr;
+
+  rtlreg_t prv;
 };
 
 static sim_t* s = NULL;
@@ -57,6 +76,9 @@ void sim_t::diff_init(int port) {
 
 void sim_t::diff_step(uint64_t n) {
   step(n);
+  struct diff_context_t ctx;
+  s->diff_get_regs(&ctx);
+  // printf("Spike PC = 0x%x\n", ctx.pc);
 }
 
 void sim_t::diff_get_regs(void* diff_context) {
@@ -66,6 +88,13 @@ void sim_t::diff_get_regs(void* diff_context) {
   }
 
   ctx->pc = state->pc;
+
+  ctx->csr.mstatus = state->mstatus.get()->read();
+  ctx->csr.mtvec = state->mtvec.get()->read();
+  ctx->csr.mepc = state->mepc.get()->read();
+  ctx->csr.mcause = state->mcause.get()->read();
+
+  ctx->prv = state->prv;
 }
 
 void sim_t::diff_set_regs(void* diff_context) {
@@ -74,6 +103,11 @@ void sim_t::diff_set_regs(void* diff_context) {
     state->XPR.write(i, (sword_t)ctx->gpr[i]);
   }
   state->pc = ctx->pc;
+
+  // state->mstatus.get()->write(ctx->csr.mstatus);
+  // state->mtvec.get()->write(ctx->csr.mtvec);
+  // state->mepc.get()->write(ctx->csr.mepc);
+  // state->mcause.get()->write(ctx->csr.mcause);
 }
 
 void sim_t::diff_memcpy(reg_t dest, void* src, size_t n) {
@@ -130,7 +164,15 @@ __EXPORT void difftest_init(int port) {
 
 __EXPORT void difftest_raise_intr(uint64_t NO) {
   trap_t t(NO);
+  // printf("Before: %08lx\n", state->mtvec.get());
   p->take_trap_public(t, state->pc);
+  // printf("After status: %08lx\n", state->mstatus.get()->read());
+  // printf("After mcause: %08lx\n", state->mcause.get()->read());
+
+    // **Before** any ref_difftest_exec, copy regs back and print PC**
+    // struct diff_context_t ctx;
+    // s->diff_get_regs(&ctx);
+    // printf("Spike PC after raise_intr = 0x%x\n", ctx.pc);
 }
 
 }

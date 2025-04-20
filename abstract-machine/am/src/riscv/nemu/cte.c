@@ -6,6 +6,7 @@ static Context* (*user_handler)(Event, Context*) = NULL;
 
 Context* __am_irq_handle(Context *c)
 {
+  // printf("\n\nmstatus= 0x%x\n\n", c->mstatus);
   if (user_handler)
   {
     Event ev = {0};
@@ -13,6 +14,8 @@ Context* __am_irq_handle(Context *c)
     {
       case -1: {
         ev.event = EVENT_YIELD; 
+        // Add pc, this must be done by software.
+        c->mepc += sizeof(uint32_t);
         break;
       }
       default: {

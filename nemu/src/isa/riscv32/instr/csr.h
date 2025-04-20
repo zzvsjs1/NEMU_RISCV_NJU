@@ -9,11 +9,15 @@ def_EHelper(ecall)
     // printf("JUMP PC %x\n", nextPC);
     // printf("RET PC %x\n\n", cpu.csr.mepc);
 
-
     Assert(success, "Cannot find a a7 register, it should be a logic error!\n");
 
     rtl_li(s, s0, nextPC);
     rtl_jr(s, s0);
+
+#ifdef CONFIG_DIFFTEST
+    // skip Spike’s next instruction
+    difftest_skip_ref();
+#endif
 }
 
 // The CSRRW (Atomic Read/Write CSR) instruction atomically swaps values in the CSRs and integer
@@ -24,6 +28,8 @@ def_EHelper(ecall)
 def_EHelper(csrrw) 
 {
     const word_t csrAddress = id_src2->imm;
+
+    // printf("\nWrite %x to CSR %x\n", *dsrc1, csrAddress);
 
     // Get csr register address.
     rtlreg_t* csrPtr = getCSRAddress(csrAddress);
