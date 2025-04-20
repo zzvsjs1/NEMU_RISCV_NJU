@@ -70,8 +70,6 @@ def_EHelper(mret)
     // mstatus.MPIE = bit 7
     // mstatus.MIE  = bit 3
 
-	rtlreg_t* mstatusPtr = &cpu.csr.mstatus;
-
 	// Step 1: Clear MPP (bits 12–11)
 	// Clear both bits
 	// I am lazy, just use C......
@@ -83,8 +81,6 @@ def_EHelper(mret)
 	
 	// Step 3: Set MPIE (bit 7) = 1
 	cpu.csr.mstatus |= (1 << 7);
-
-	cpu.csr.mepc += 4;
 
 	// PC <- mepc
 	// Just jump!

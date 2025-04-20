@@ -30,6 +30,8 @@ typedef struct
         // 0x342
         rtlreg_t mcause;
     } csr;
+
+    rtlreg_t prv;
 } riscv32_CPU_state;
 
 // decode
