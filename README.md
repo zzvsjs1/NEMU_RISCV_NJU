@@ -1,48 +1,83 @@
 # NEMU Full System Emulator
 
-# Overview
+## Overview
 
-This project is build on top of [Nanjing University NEMU Full System Emulator](https://github.com/NJU-ProjectN/nemu).
-I implemented the part of it that is used to emulate the RISC-V instruction set and filled the missing code in the output devices.
+This project is built on top of the [Nanjing University NEMU Full System Emulator](https://github.com/NJU-ProjectN/nemu).
 
-This version is based on the 2022 edition and incorporates parts of the updates from the 2023 and 2024 versions. Currently, the RISC-V32 instruction set has been implemented. Context switching is currently under development.
+NEMU is a lightweight, full-system emulator framework that supports x86 (without real mode or x87 FPU), MIPS32 (without CP1 FPU), RV32IM, and RV64IM. It provides a built-in monitor with features such as single-step execution, register and memory inspection, symbol-free expression evaluation, watchpoints, snapshotting, and differential testing against Spike or QEMU. Optional features include paging, a TLB, basic interrupt/exception handling, and simplified support for serial, timer, keyboard, VGA, and audio devices via port-mapped or memory-mapped I/O.
 
-The nemu directory contains the core of the emulator, abstract-machine provides the bare-metal runtime (and supports native execution to allow debugging), and am-kernel offers some test programs.
+This project implements the RV32IM architecture.
 
-# NEMU Supported devices
+It is based on the 2021 version of NEMU and includes selected updates from the 2023 and 2024 versions. The full RV32IM instruction set is currently implemented. Context switching is under active development.
 
-- Serial [✅]
-- Clock [✅]
-- Keyboard [✅]
-- VGA [✅]
-- Audio [✅]
-- SD Card [❌]
-- Disk [❌]
+- The `nemu` directory contains the core of the emulator.
+- The `abstract-machine` directory provides a bare-metal runtime (and supports native execution for debugging).
+- The `am-kernel` directory contains several test programs.
 
-# Build and run
+## Supported Devices
 
-## Build
+| Device    | Status   |
+|-----------|----------|
+| Serial    | ✅        |
+| Clock     | ✅ (Simple) |
+| Keyboard  | ✅        |
+| VGA       | ✅        |
+| Audio     | ✅        |
+| SD Card   | ❌        |
+| Disk      | ❌        |
 
-Run `init.sh` or set three environment variables. 
+## Build and Run
 
-- AM_HOME=Path to abstract mechine folder.
-- ISA=riscv32
-- NEMU_HOME=Path to nemu folder
+### Build
 
-Also, you need some packages:
+First, set the following environment variables:
 
-- It is recommended to build a RISC-V32 toolchain based on Newlib, using rv32im as the -march and ilp32 as the ABI.
-- LLVM-15
-- readline
-- libncurses
-- flex
-- bison
+- `AM_HOME`: Path to the abstract-machine folder  
+- `ISA`: `riscv32`  
+- `NEMU_HOME`: Path to the nemu folder  
+- `NAVY_HOME`: Path to the navy-apps folder  
 
-Then, go to nemu folder to run `make menuconfig` then `make`. It will build the NEMU.
-For other program, please go to other folder to check the README.MD.
+#### Dependencies
 
-## Run
+Make sure the following packages are installed:
 
-You can read the Makefile to see what it can run. Basiclly, use `make run` to run the nemu.
-For program, use `make ARCH=$ISA-nemu run` for nemu, `make ARCH=native run` for native.
+- A RISC-V32 toolchain based on **Newlib**, using `-march=rv32im` and `-mabi=ilp32`. This is required because other toolchains may not include the software multiplication and division library.
+- `LLVM-15`
+- `readline`
+- `libncurses`
+- `flex`
+- `bison`
 
+#### Building NEMU
+
+Navigate to the `nemu` directory and run:
+
+```bash
+make menuconfig
+make
+```
+
+This will build the NEMU emulator.
+
+To build and run other programs, refer to the `README.md` files in their respective directories.
+
+### Run
+
+You can check the `Makefile` for available commands. In general:
+
+- To run NEMU:  
+  ```bash
+  make run
+  ```
+
+- To run a program on NEMU:  
+  ```bash
+  make ARCH=$ISA-nemu run
+  ```
+
+- To run natively:  
+  ```bash
+  make ARCH=native run
+  ```
+
+You can also debug using GDB.

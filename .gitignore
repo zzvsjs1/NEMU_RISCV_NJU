@@ -1,5 +1,5 @@
 *.d
 *.o
 .vscode/
-*.json
-
+*.json/nanos-lite
+/navy-apps
