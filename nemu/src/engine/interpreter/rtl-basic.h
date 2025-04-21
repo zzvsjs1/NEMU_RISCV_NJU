@@ -152,7 +152,7 @@ static inline def_rtl(jr, rtlreg_t *target)
 
 static inline def_rtl(
     jrelop, 
-    uint32_t relop,
+    const RELOP_TYPE relop,
     const rtlreg_t *src1, 
     const rtlreg_t *src2, 
     vaddr_t target
