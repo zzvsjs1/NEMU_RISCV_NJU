@@ -180,8 +180,6 @@ def_EHelper(and)
     rtl_and(s, ddest, dsrc1, dsrc2);
 }
 
-//
-//
 def_EHelper(mul)
 {
     rtl_mulu_lo(s, ddest, dsrc1, dsrc2);
@@ -202,22 +200,99 @@ def_EHelper(mulhu)
     rtl_mulu_hi(s, ddest, dsrc1, dsrc2);
 }
 
-def_EHelper(div)
+def_EHelper(div) 
 {
-    rtl_divs_q(s, ddest, dsrc1, dsrc2);
+    const sword_t dividend = (sword_t)*dsrc1;
+    const sword_t divisor  = (sword_t)*dsrc2;
+    // Divide-by-zero -> quotient = all 1s
+    if (divisor == 0) 
+    {
+        rtl_li(s, ddest, -1);
+    }
+    else 
+    {
+        // Signed overflow: INT_MIN / -1 -> quotient = dividend
+        const sword_t int_min = (sword_t)(1ULL << (sizeof(sword_t) * 8 - 1));
+        if (dividend == int_min && divisor == -1) 
+        {
+            rtl_mv(s, ddest, dsrc1);
+        }
+        else 
+        {
+            rtl_divs_q(s, ddest, dsrc1, dsrc2);
+        }
+    }
 }
 
-def_EHelper(divu)
+def_EHelper(divu) 
 {
-    rtl_divu_q(s, ddest, dsrc1, dsrc2);  
+    uint64_t divisor = (uint64_t)*dsrc2;
+    // Divide-by-zero -> quotient = all 1s
+    if (divisor == 0) 
+    {
+        rtl_li(s, ddest, ~(rtlreg_t)0);
+    }
+    else 
+    {
+        rtl_divu_q(s, ddest, dsrc1, dsrc2);
+    }
 }
 
-def_EHelper(rem)
+def_EHelper(rem) 
 {
-    rtl_divs_r(s, ddest, dsrc1, dsrc2);
+    const sword_t dividend = (sword_t)*dsrc1;
+    const sword_t divisor  = (sword_t)*dsrc2;
+    // Divide-by-zero -> remainder = dividend
+    if (divisor == 0) 
+    {
+        rtl_mv(s, ddest, dsrc1);
+    }
+    else 
+    {
+        // Signed overflow: INT_MIN / -1 -> remainder = 0
+        const sword_t intMin = (sword_t)(1ULL << (sizeof(sword_t) * 8 - 1));
+        if (dividend == intMin && divisor == -1) 
+        {
+            rtl_li(s, ddest, 0);
+        }
+        else 
+        {
+            rtl_divs_r(s, ddest, dsrc1, dsrc2);
+        }
+    }
 }
 
-def_EHelper(remu)
+def_EHelper(remu) 
 {
-    rtl_divu_r(s, ddest, dsrc1, dsrc2);
+    const uint64_t divisor = (uint64_t)*dsrc2;
+    // Divide-by-zero -> remainder = dividend
+    if (divisor == 0) 
+    {
+        rtl_mv(s, ddest, dsrc1);
+    }
+    else 
+    {
+        rtl_divu_r(s, ddest, dsrc1, dsrc2);
+    }
 }
+
+
+// def_EHelper(div)
+// {
+//     rtl_divs_q(s, ddest, dsrc1, dsrc2);
+// }
+
+// def_EHelper(divu)
+// {
+//     rtl_divu_q(s, ddest, dsrc1, dsrc2);  
+// }
+
+// def_EHelper(rem)
+// {
+//     rtl_divs_r(s, ddest, dsrc1, dsrc2);
+// }
+
+// def_EHelper(remu)
+// {
+//     rtl_divu_r(s, ddest, dsrc1, dsrc2);
+// }

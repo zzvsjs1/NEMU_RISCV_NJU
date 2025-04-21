@@ -53,6 +53,7 @@
     f(csrrs) \
     f(csrrc) \
     f(ecall) \
+    f(ebreak) \
     f(mret) \
     f(nemu_trap)
 

@@ -20,6 +20,12 @@ def_EHelper(ecall)
 #endif
 }
 
+def_EHelper(ebreak) 
+{
+    Log("EBREAK trigger!\n");
+    Assert(false, "EBREAK instruction, this should not happend!\n");
+}
+
 // The CSRRW (Atomic Read/Write CSR) instruction atomically swaps values in the CSRs and integer
 // registers. CSRRW reads the old value of the CSR, zero-extends the value to 
 // XLEN bits, then writes it to

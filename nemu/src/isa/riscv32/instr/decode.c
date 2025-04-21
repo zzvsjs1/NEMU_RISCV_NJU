@@ -273,10 +273,11 @@ def_THelper(BRANCH)
 // Opcode SYSTEM == 1110011
 def_THelper(SYSTEM)
 {
-
-
     // ECALL
     def_INSTR_TAB("000000000000 00000 000 00000 1110011", ecall);
+
+    // ECALL
+    def_INSTR_TAB("000000000001 00000 000 00000 1110011", ebreak);
 
     // Trap-Return Instructions
     
