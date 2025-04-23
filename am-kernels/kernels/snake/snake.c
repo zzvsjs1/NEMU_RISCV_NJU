@@ -61,6 +61,7 @@ static void print_board(rect_t board) {
     draw_tile(board.top, i, color);
     draw_tile(board.bottom, i, color);
   }
+  
   for (int i = board.top; i <= board.bottom; i++) {
     draw_tile(i, board.left, color);
     draw_tile(i, board.right, color);

@@ -147,7 +147,7 @@ void cpu_exec(uint64_t n)
         
         if (nemu_state.state != NEMU_RUNNING)
         {
-             break;
+            break;
         }
 
         IFDEF(CONFIG_DEVICE, device_update());
