@@ -134,6 +134,8 @@ static int cmd_print_program_info(char* args)
 		return 0;
 	}
 
+	printf("Unknown command. r for register, w for watch points.\n");
+
 	return 0;
 }
 

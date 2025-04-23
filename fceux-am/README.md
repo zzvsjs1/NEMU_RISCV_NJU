@@ -1,5 +1,41 @@
 # FCEUX
 
+Nintendo Entertainment System emulator that can correctly run most ROMs.  
+Ported from https://github.com/TASVideos/fceux,  
+using git commit version `ed4f5d0000e17b6ae88c4e93e2f9e0695dbceac0`.
+
+This project ports it to the [AM](https://github.com/NJU-ProjectN/abstract-machine) environment.  
+Different IOE level can support different features:
+* Clock only: Can run in character mode by commenting out the `HAS_GUI` macro in `src/config.h`
+* Keyboard added: Can be operated in character mode
+* Graphics added: Can run in graphical mode
+* Sound added: Can play game sound effects
+
+## How to Run
+
+Place the game ROM in the `nes/rom/` directory and name it as `xxx.nes`, e.g., `nes/rom/mario.nes`.  
+Then, you can select the game to run using `mainargs`, for example:
+```
+make ARCH=native run mainargs=mario
+```
+
+or 
+
+```
+make ARCH=$ISA-nemu run mainargs=mario
+```
+
+## Controls
+
+* U — SELECT  
+* I — START  
+* J — A button  
+* K — B button  
+* W/S/A/D — UP/DOWN/LEFT/RIGHT  
+* Q — Quit
+
+# FCEUX
+
 Nintendo Entertainment System模拟器, 可以正确运行大多数ROM.
 移植自 https://github.com/TASVideos/fceux ,
 git commit版本为`ed4f5d0000e17b6ae88c4e93e2f9e0695dbceac0`.
@@ -17,6 +53,12 @@ git commit版本为`ed4f5d0000e17b6ae88c4e93e2f9e0695dbceac0`.
 然后可通过`mainargs`选择运行的游戏, 如:
 ```
 make ARCH=native run mainargs=mario
+```
+
+或者
+
+```
+make ARCH=$ISA-nemu run mainargs=mario
 ```
 
 ## 操作方式

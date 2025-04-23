@@ -19,11 +19,9 @@ NEMU_EXEC := $(BINARY) $(ARGS) $(IMG)
 run-env: $(BINARY) $(DIFF_REF_SO)
 
 run: run-env
-	$(call git_commit, "run")
 	$(NEMU_EXEC)
 
 gdb: run-env
-	$(call git_commit, "gdb")
 	gdb -s $(BINARY) --args $(NEMU_EXEC)
 
 clean-tools = $(dir $(shell find ./tools -maxdepth 2 -mindepth 2 -name "Makefile"))
