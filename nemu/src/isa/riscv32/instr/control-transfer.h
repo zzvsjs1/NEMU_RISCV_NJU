@@ -29,9 +29,6 @@ def_EHelper(jal)
 // required.
 def_EHelper(jalr)
 {
-	// Store the next instuction(pc + 4) to ddest(rd).
-	rtl_addi(s, ddest, &s->pc, 4);
-
 	// Adding sign-extended 12-bit I-immediate to the register rs1.
 	
 	// s0 = imm[11:0].
@@ -44,11 +41,14 @@ def_EHelper(jalr)
 	rtl_add(s, s0, s0, dsrc1);
 
 	// setting the least-significant bit of the result to zero
-	rtl_srli(s, s0, s0, 1);
-	rtl_slli(s, s0, s0, 1);
+	rtl_andi(s, s0, s0, ~1);
 
-	// Jump to *s0.
+	// Set dnpc, so it will be change later.
 	rtl_jr(s, s0);
+
+	// Store the next instuction(pc + 4) to ddest(rd).
+	// rd may equal to src1, so do this later.
+	rtl_addi(s, ddest, &s->pc, 4);
 }
 
 // To return after handling a trap, there are separate trap return instructions per privilege level, MRET

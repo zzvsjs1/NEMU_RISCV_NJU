@@ -32,10 +32,9 @@ typedef struct {
       int32_t  simm11_5  : 7;
     } s;
     struct {
-      uint32_t opcode1_0 : 2;
-      uint32_t opcode6_2 : 5;
+      uint32_t opcode    : 7;
       uint32_t rd        : 5;
-      int32_t  simm31_12 :20;
+      int32_t  imm31_12  :20;
     } u;
     uint32_t val;
   } instr;
