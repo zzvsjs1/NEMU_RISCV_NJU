@@ -88,7 +88,7 @@ def_EHelper(auipc)
 {
     // Adds this offset to the address of the AUIPC instruction, 
     // then places the result in register rd.
-    rtl_addi(s, ddest, &s->pc, id_src1->simm);
+    rtl_addi(s, ddest, &s->pc, id_src1->imm);
 }
 
 // SLTI (set less than immediate) places the value 1 in register rd if register rs1 is less than 

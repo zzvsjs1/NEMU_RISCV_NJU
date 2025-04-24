@@ -78,6 +78,7 @@ CC        = $(CROSS_COMPILE)gcc
 CXX       = $(CROSS_COMPILE)g++
 LD        = $(CROSS_COMPILE)ld
 AR        = $(CROSS_COMPILE)ar
+OBJDUMP   = $(CROSS_COMPILE)objdump
 
 ### Compilation flags
 INC_PATH += $(WORK_DIR)/include $(foreach l,$(LIBS_INC),$(NAVY_HOME)/libs/$(l)/include/)
@@ -130,6 +131,9 @@ $(foreach lib, $(LIBS), $(eval $(call LIB_TEMPLATE,$(lib))))
 $(APP): $(LINKAGE)
 	@echo + LD "->" $(shell realpath $@ --relative-to .)
 	@$(LD) $(LDFLAGS) -o $@ $(WL)--start-group $^ $(WL)--end-group
+	@echo + OBJDUMP "->" $(shell realpath $@ --relative-to .)
+	@$(OBJDUMP) -d $@ > $@.txt
+	@cp $@ ramdisk.img
 
 ### Rule (archive): objects (`*.o`) -> `ARCHIVE.a` (ar)
 $(ARCHIVE): $(LINKAGE)

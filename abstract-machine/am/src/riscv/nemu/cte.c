@@ -24,6 +24,12 @@ Context* __am_irq_handle(Context *c)
       }
     }
 
+    if (c->mcause >= 0 && c->mcause <= 19)
+    {
+      ev.event = EVENT_SYSCALL; 
+      c->mepc += sizeof(uint32_t);
+    }
+
     c = user_handler(ev, c);
     assert(c != NULL);
   }
