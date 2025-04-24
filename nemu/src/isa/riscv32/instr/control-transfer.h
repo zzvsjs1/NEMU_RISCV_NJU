@@ -43,12 +43,12 @@ def_EHelper(jalr)
 	// setting the least-significant bit of the result to zero
 	rtl_andi(s, s0, s0, ~1);
 
-	// Set dnpc, so it will be change later.
-	rtl_jr(s, s0);
-
 	// Store the next instuction(pc + 4) to ddest(rd).
 	// rd may equal to src1, so do this later.
 	rtl_addi(s, ddest, &s->pc, 4);
+
+	// Set dnpc, so it will be change later.
+	rtl_jr(s, s0);
 }
 
 // To return after handling a trap, there are separate trap return instructions per privilege level, MRET
