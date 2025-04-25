@@ -93,8 +93,8 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
     /* CSR */
     if (ref_r->csr.mcause != cpu.csr.mcause) 
     {
-        printf(
-            REG_FMT,
+        PRI_ERR(
+            "%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n",
             "mcause", ref_r->csr.mcause, " ", ref_r->csr.mcause, " ",
             (sword_t)ref_r->csr.mcause,
             cpu.csr.mcause
@@ -103,8 +103,8 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
 
     if (ref_r->csr.mepc != cpu.csr.mepc) 
 	{
-        printf(
-            REG_FMT,
+        PRI_ERR(
+            "%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n",
             "mepc", ref_r->csr.mepc, " ", ref_r->csr.mepc, " ",
             (sword_t)ref_r->csr.mepc,
             cpu.csr.mepc
@@ -113,8 +113,8 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
 
     if (ref_r->csr.mstatus != cpu.csr.mstatus) 
 	{
-        printf(
-            REG_FMT,
+        PRI_ERR(
+            "%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n",
             "mstatus", ref_r->csr.mstatus, " ", ref_r->csr.mstatus, " ",
             (sword_t)ref_r->csr.mstatus,
             cpu.csr.mstatus
@@ -123,8 +123,8 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
 
     if (ref_r->csr.mtvec != cpu.csr.mtvec) 
 	{
-        printf(
-            REG_FMT,
+        PRI_ERR(
+            "%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n",
             "mtvec", ref_r->csr.mtvec, " ", ref_r->csr.mtvec, " ",
             (sword_t)ref_r->csr.mtvec,
             cpu.csr.mtvec

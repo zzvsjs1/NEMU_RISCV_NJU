@@ -6,9 +6,9 @@
 #define MSTATUS_MPIE_BIT      7       // Machine‑level previous interrupt enable
 #define MSTATUS_MPP_SHIFT     11      // Machine‑level previous privilege (2 bits)
 #define MSTATUS_MPP_WIDTH     2
-#define MSTATUS_MPV_SHIFT     17      // H‑extension: previous virtualization mode (1 bit)
-#define MSTATUS_MPV_WIDTH     1
-#define MSTATUS_GVA_BIT       18      // H‑extension: guest VA valid on trap
+#define MSTATUS_MPRV_BIT      17      // Machine-Modify-Privilege bit
+#define MSTATUS_MPRV_WIDTH    1
+#define MSTATUS_GVA_BIT       18      // Guest VA valid on trap
 
 static inline uint64_t get_bit(uint64_t csr, unsigned bit)
 {
@@ -103,8 +103,8 @@ static void updateMstatus()
     s = set_bit(s, MSTATUS_MIE_BIT, false);
 
     // 5) Save prior virtualization‐mode V into MPV.
-    // Not support.
-    s = set_field(s, MSTATUS_MPV_SHIFT, MSTATUS_MPV_WIDTH, 0);
+    // Leave MPRV unchanged so bit 17 retains its prior value
+    // s = set_field(s, MSTATUS_MPV_SHIFT, MSTATUS_MPV_WIDTH, 0);
 
     // 6) Record whether the trap had a guest VA
     // Always 0.

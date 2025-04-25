@@ -24,6 +24,7 @@ Context* __am_irq_handle(Context *c)
       }
     }
 
+    // Is system call?
     if (c->mcause >= 0 && c->mcause <= 19)
     {
       ev.event = EVENT_SYSCALL; 
