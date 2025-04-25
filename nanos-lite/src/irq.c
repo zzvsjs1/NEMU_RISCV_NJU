@@ -7,6 +7,11 @@ static Context* do_event(Event e, Context* c)
       printf("\nYield!\n");
       break;
     }
+    case EVENT_SYSCALL: {
+      void do_syscall(Context *c);
+      do_syscall(c);
+      break;
+    }
     default: {
       panic("Unhandled event ID = %d", e.event);
       break;
