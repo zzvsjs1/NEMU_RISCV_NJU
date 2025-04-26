@@ -17,12 +17,14 @@
 #elif defined(__ISA_RISCV32__) || defined(__ISA_RISCV64__)
 # define EXPECT_TYPE EM_RISCV
 #else
-// # error unsupported ISA __ISA__
-# define EXPECT_TYPE EM_X86_64
+# error unsupported ISA __ISA__
+// # define EXPECT_TYPE EM_X86_64
 #endif
 
 static uintptr_t loader(PCB *pcb, const char *filename) 
 {
+    Log("Load exec filename = %s", filename);
+
     const int fd = fs_open(filename, 0, 0);
 
     // Read header.
@@ -40,17 +42,18 @@ static uintptr_t loader(PCB *pcb, const char *filename)
     for (int i = 0; i < (int)elfH.e_phnum; ++i)
     {
         Elf_Phdr phdr;
-        const size_t nowBase = elfH.e_phoff + i * elfH.e_phentsize;
+        const size_t phdrOffset = elfH.e_phoff + i * elfH.e_phentsize;
 
-        assert(fs_lseek(fd, nowBase, SEEK_SET) != (size_t)-1);
+        assert(fs_lseek(fd, phdrOffset, SEEK_SET) != (size_t)-1);
         assert(fs_read(fd, &phdr, elfH.e_phentsize) == elfH.e_phentsize);
 
+        // If cannot be loaded.
         if (phdr.p_type != PT_LOAD)
         {
             continue;
         }
 
-        // Bulk copy
+        // Bulk copy, avoid paging.
         void *dst = (void*)(uintptr_t)phdr.p_vaddr;
 
         // Seek to the start of this segment on disk…
@@ -59,7 +62,7 @@ static uintptr_t loader(PCB *pcb, const char *filename)
         // …then read ph.p_filesz bytes into memory
         assert(fs_read(fd, dst, phdr.p_filesz) == phdr.p_filesz);
 
-        // Zero the BSS
+        // Zero the BSS.
         memset(
             (void*)(phdr.p_vaddr + phdr.p_filesz),
             0,
@@ -67,6 +70,7 @@ static uintptr_t loader(PCB *pcb, const char *filename)
           );
     }
 
+    // Close fd.
     assert(fs_close(fd) == 0);
 
     // Return entry point.

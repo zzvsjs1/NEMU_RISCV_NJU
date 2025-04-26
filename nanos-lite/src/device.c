@@ -14,23 +14,36 @@ static const char *keyname[256] __attribute__((used)) = {
   AM_KEYS(NAME)
 };
 
-size_t serial_write(const void *buf, size_t offset, size_t len) {
+size_t serial_write(const void *buf, size_t offset, size_t len) 
+{
+  const char* buff = (const char*)buf;
+  for (size_t i = 0; i < len; i++)
+  {
+    putch(buff[i]);
+  }
+
+  return len;
+}
+
+size_t events_read(void *buf, size_t offset, size_t len) 
+{
+
   return 0;
 }
 
-size_t events_read(void *buf, size_t offset, size_t len) {
+size_t dispinfo_read(void *buf, size_t offset, size_t len) 
+{
   return 0;
 }
 
-size_t dispinfo_read(void *buf, size_t offset, size_t len) {
+size_t fb_write(const void *buf, size_t offset, size_t len) 
+{
+
   return 0;
 }
 
-size_t fb_write(const void *buf, size_t offset, size_t len) {
-  return 0;
-}
-
-void init_device() {
+void init_device() 
+{
   Log("Initializing devices...");
   ioe_init();
 }

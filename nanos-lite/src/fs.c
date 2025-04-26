@@ -3,8 +3,12 @@
 typedef size_t (*ReadFn) (void *buf, size_t offset, size_t len);
 typedef size_t (*WriteFn) (const void *buf, size_t offset, size_t len);
 
+// ramdisk.c
 size_t ramdisk_read(void *buf, size_t offset, size_t len);
 size_t ramdisk_write(const void *buf, size_t offset, size_t len);
+
+// device.c
+size_t serial_write(const void *buf, size_t offset, size_t len);
 
 typedef struct {
   char *name;
@@ -29,8 +33,8 @@ size_t invalid_write(const void *buf, size_t offset, size_t len) {
 /* This is the information about all files in disk. */
 static Finfo FILE_TABLE[] __attribute__((used)) = {
   [FD_STDIN]  = {"stdin", 0, 0, invalid_read, invalid_write},
-  [FD_STDOUT] = {"stdout", 0, 0, invalid_read, invalid_write},
-  [FD_STDERR] = {"stderr", 0, 0, invalid_read, invalid_write},
+  [FD_STDOUT] = {"stdout", 0, 0, invalid_read, serial_write},
+  [FD_STDERR] = {"stderr", 0, 0, invalid_read, serial_write},
 #include "files.h"
 };
 
@@ -38,11 +42,12 @@ static Finfo FILE_TABLE[] __attribute__((used)) = {
 enum { NR_FILES = sizeof(FILE_TABLE) / sizeof(FILE_TABLE[0]) };
 
 // Array to track the current offset for each open file
-static size_t openOffset[NR_FILES];  // Initialized to 0 automatically
+static size_t openOffset[NR_FILES] = {0};  // Initialized to 0 automatically
 
-void init_fs() {
+void init_fs() 
+{
   // TODO: initialize the size of /dev/fb
-  // No needed so far
+
 }
 
 // Open a file by pathname, return file descriptor (index in file_table)
@@ -60,7 +65,7 @@ int fs_open(const char *pathname, int flags, int mode)
   }
 
   // File not found: abort
-  printf("fs_open: Invalid pathname: %s\n", pathname);
+  Log("fs_open: Invalid pathname: %s\n", pathname);
   assert(0);
   return -1;
 }
@@ -72,14 +77,15 @@ size_t fs_read(int fd, void *buf, size_t len)
 
   Finfo *f = &FILE_TABLE[fd];
 
+  // Calculate available bytes
+  const size_t offset = openOffset[fd];
+
   // If read is not supported, return 0 (e.g., stdin not implemented)
-  if (f->read == invalid_read) 
+  if (f->read != NULL) 
   {
-    return 0;
+    return f->read(buf, offset, len);
   }
 
-  // Calculate available bytes
-  size_t offset = openOffset[fd];
   // if we've already reached or passed the end, bail out
   if (offset >= f->size) 
   {
@@ -102,22 +108,10 @@ size_t fs_write(int fd, const void *buf, size_t len)
   assert(fd >= 0 && fd < NR_FILES);
   Finfo *f = &FILE_TABLE[fd];
 
-  // stdin can't be written to.
-  if (fd == FD_STDIN) 
+  // If handle existed.
+  if (f->write != NULL) 
   {
-    return 0;
-  }
-
-  // stdout/stderr go to putch
-  if (fd == FD_STDOUT || fd == FD_STDERR) 
-  {
-    const char *cp = buf;
-    for (size_t i = 0; i < len; i++) 
-    {
-      putch(cp[i]);
-    }
-
-    return len;
+    return f->write(buf, 0, len);
   }
 
   // Calculate available space
