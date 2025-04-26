@@ -60,7 +60,8 @@ int fs_open(const char *pathname, int flags, int mode)
   }
 
   // File not found: abort
-  assert(0 && "fs_open: Invalid pathname");
+  printf("fs_open: Invalid pathname: %s\n", pathname);
+  assert(0);
   return -1;
 }
 
@@ -79,16 +80,17 @@ size_t fs_read(int fd, void *buf, size_t len)
 
   // Calculate available bytes
   size_t offset = openOffset[fd];
-  assert(offset <= f->size);
-
-  size_t avail = f->size - offset;
-  size_t rlen = len < avail ? len : avail;
-  if (rlen == 0) 
+  // if we've already reached or passed the end, bail out
+  if (offset >= f->size) 
   {
     return 0;
   }
 
-  // Perform read and advance offset
+  // compute how many bytes we can actually read
+  const size_t avail = f->size - offset;
+  const size_t rlen  = (len < avail ? len : avail);
+
+  // perform the read
   size_t ret = ramdisk_read(buf, f->disk_offset + offset, rlen);
   openOffset[fd] += ret;
   return ret;
@@ -100,18 +102,19 @@ size_t fs_write(int fd, const void *buf, size_t len)
   assert(fd >= 0 && fd < NR_FILES);
   Finfo *f = &FILE_TABLE[fd];
 
-  // If write is not supported, return 0 (e.g., stdout/stderr handled separately)
+  // stdin can't be written to.
   if (fd == FD_STDIN) 
   {
     return 0;
   }
 
-  if (fd == FD_STDOUT || fd == FD_STDERR)
+  // stdout/stderr go to putch
+  if (fd == FD_STDOUT || fd == FD_STDERR) 
   {
-    char* bufP = (char*) buf;
-    for (size_t i = 0;  i < len; ++i)
+    const char *cp = buf;
+    for (size_t i = 0; i < len; i++) 
     {
-      putchar(bufP[i]);
+      putch(cp[i]);
     }
 
     return len;
@@ -120,12 +123,9 @@ size_t fs_write(int fd, const void *buf, size_t len)
   // Calculate available space
   size_t offset = openOffset[fd];
   assert(offset <= f->size);
-  size_t avail = f->size - offset;
-  size_t wlen = len < avail ? len : avail;
-  if (wlen == 0) 
-  {
-    return 0;
-  }
+
+  const size_t avail = f->size - offset;
+  const size_t wlen = len < avail ? len : avail;
 
   // Perform write and advance offset
   size_t ret = ramdisk_write(buf, f->disk_offset + offset, wlen);
@@ -140,6 +140,7 @@ size_t fs_lseek(int fd, size_t offset, int whence)
 
   Finfo *f = &FILE_TABLE[fd];
   size_t newOffset = -1;
+
   switch (whence) {
     case SEEK_SET: {
       newOffset = offset;

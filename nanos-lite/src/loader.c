@@ -1,5 +1,6 @@
 #include <proc.h>
 #include <elf.h>
+#include "fs.h"
 
 #ifdef __LP64__
 # define Elf_Ehdr Elf64_Ehdr
@@ -16,18 +17,17 @@
 #elif defined(__ISA_RISCV32__) || defined(__ISA_RISCV64__)
 # define EXPECT_TYPE EM_RISCV
 #else
-# error unsupported ISA __ISA__
+// # error unsupported ISA __ISA__
+# define EXPECT_TYPE EM_X86_64
 #endif
-
-size_t ramdisk_read(void *buf, size_t offset, size_t len);
-size_t ramdisk_write(const void *buf, size_t offset, size_t len);
-size_t get_ramdisk_size();
 
 static uintptr_t loader(PCB *pcb, const char *filename) 
 {
+    const int fd = fs_open(filename, 0, 0);
+
     // Read header.
     Elf_Ehdr elfH;
-    ramdisk_read(&elfH, 0, sizeof(Elf_Ehdr));
+    assert(fs_read(fd, &elfH, sizeof(Elf_Ehdr)) == sizeof(Elf_Ehdr));
 
     // Check header.
     assert(memcmp(elfH.e_ident, ELFMAG, SELFMAG) == 0);
@@ -37,29 +37,37 @@ static uintptr_t loader(PCB *pcb, const char *filename)
     assert(elfH.e_phentsize == sizeof(Elf_Phdr));
     assert(elfH.e_phnum != 0);
 
-    Elf_Phdr ph;
-
     for (int i = 0; i < (int)elfH.e_phnum; ++i)
     {
-        const size_t address = elfH.e_phoff + i * elfH.e_phentsize;
-        ramdisk_read(&ph, address, sizeof(Elf_Phdr));
+        Elf_Phdr phdr;
+        const size_t nowBase = elfH.e_phoff + i * elfH.e_phentsize;
 
-        if (ph.p_type != PT_LOAD)
+        assert(fs_lseek(fd, nowBase, SEEK_SET) != (size_t)-1);
+        assert(fs_read(fd, &phdr, elfH.e_phentsize) == elfH.e_phentsize);
+
+        if (phdr.p_type != PT_LOAD)
         {
             continue;
         }
-        
+
         // Bulk copy
-        void *dst = (void*)(uintptr_t)ph.p_vaddr;
-        ramdisk_read(dst, ph.p_offset, ph.p_filesz);
+        void *dst = (void*)(uintptr_t)phdr.p_vaddr;
+
+        // Seek to the start of this segment on disk…
+        assert(fs_lseek(fd, phdr.p_offset, SEEK_SET) != (size_t)-1);
+
+        // …then read ph.p_filesz bytes into memory
+        assert(fs_read(fd, dst, phdr.p_filesz) == phdr.p_filesz);
 
         // Zero the BSS
         memset(
-            (void*)(ph.p_vaddr + ph.p_filesz),
+            (void*)(phdr.p_vaddr + phdr.p_filesz),
             0,
-            ph.p_memsz - ph.p_filesz
+            phdr.p_memsz - phdr.p_filesz
           );
     }
+
+    assert(fs_close(fd) == 0);
 
     // Return entry point.
     return elfH.e_entry;
