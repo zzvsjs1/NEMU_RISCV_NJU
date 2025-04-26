@@ -11,11 +11,12 @@ void do_syscall(Context *c)
   const uintptr_t arg3 = c->GPR4;
 
 #ifdef STRACE
-  printf(
-    "syscall entry: id=%" PRIuPTR
-    ", arg1=0x%016" PRIxPTR
-    ", arg2=0x%016" PRIxPTR
-    ", arg3=0x%016" PRIxPTR "\n",
+  Log(
+    "\nsyscall entry: "
+    "\n\tid=%" PRIuPTR
+    "\n\targ1=0x%016" PRIxPTR
+    "\n\targ2=0x%016" PRIxPTR
+    "\n\targ3=0x%016" PRIxPTR "",
     num, arg1, arg2, arg3
   );
 #endif
@@ -23,8 +24,8 @@ void do_syscall(Context *c)
   switch (num) {
     case SYS_exit: {
 #ifdef STRACE
-      printf(
-        "SYS_exit called, Exit code = %d\n\n",
+      Log(
+        "SYS_exit called, Exit code = %d",
         (int)arg1
       );
 #endif
@@ -35,7 +36,7 @@ void do_syscall(Context *c)
     
     case SYS_yield: {
 #ifdef STRACE
-      printf("SYS_yield called\n\n");
+      Log("SYS_yield called");
 #endif
 
       yield();
@@ -50,10 +51,10 @@ void do_syscall(Context *c)
       const size_t count = (size_t)arg3;
 
 #ifdef STRACE
-      printf(
+      Log(
         "SYS_write called, fd=%d"
         ", buf=0x%016" PRIxPTR
-        ", count=%zu\n\n",
+        ", count=%zu",
         fd, (uintptr_t)buf, count
       );
 #endif
@@ -77,8 +78,8 @@ void do_syscall(Context *c)
 
     case SYS_brk: {
 #ifdef STRACE
-      printf(
-        "SYS_brk called, new_brk = 0x%016" PRIxPTR "\n\n",
+      Log(
+        "SYS_brk called, new_brk = 0x%016" PRIxPTR "",
         arg1
       );
 #endif
@@ -89,10 +90,10 @@ void do_syscall(Context *c)
 
     case SYS_open: {
 #ifdef STRACE
-      printf(
+      Log(
         "SYS_open called, path=0x%016" PRIxPTR
         ", flags=%d"
-        ", mode=%d\n\n",
+        ", mode=%d",
         arg1, (int)arg2, (int)arg3
       );
 #endif
@@ -103,10 +104,10 @@ void do_syscall(Context *c)
 
     case SYS_read: {
 #ifdef STRACE
-      printf(
+      Log(
         "SYS_read called, fd=%d"
         ", buf=0x%016" PRIxPTR
-        ", count=%zu\n\n",
+        ", count=%zu",
         (int)arg1, arg2, (size_t)arg3
       );
 #endif
@@ -117,8 +118,8 @@ void do_syscall(Context *c)
 
     case SYS_close: {
 #ifdef STRACE
-      printf(
-        "SYS_close called, fd=%d\n\n",
+      Log(
+        "SYS_close called, fd=%d",
         (int)arg1
       );
 #endif
@@ -129,10 +130,10 @@ void do_syscall(Context *c)
     
     case SYS_lseek: {
 #ifdef STRACE
-      printf(
+      Log(
         "SYS_lseek called, fd=%d"
         ", offset=0x%016" PRIxPTR
-        ", whence=%d\n\n",
+        ", whence=%d",
         (int)arg1, arg2, (int)arg3
       );
 #endif
