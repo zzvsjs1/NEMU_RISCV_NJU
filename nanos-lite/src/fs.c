@@ -9,6 +9,9 @@ size_t ramdisk_write(const void *buf, size_t offset, size_t len);
 
 // device.c
 size_t serial_write(const void *buf, size_t offset, size_t len);
+size_t events_read(void *buf, size_t offset, size_t len);
+size_t dispinfo_read(void *buf, size_t offset, size_t len);
+size_t fb_write(const void *buf, size_t offset, size_t len); 
 
 typedef struct {
   char *name;
@@ -18,7 +21,7 @@ typedef struct {
   WriteFn write;
 } Finfo;
 
-enum {FD_STDIN, FD_STDOUT, FD_STDERR, FD_FB};
+enum {FD_STDIN, FD_STDOUT, FD_STDERR, FD_FB, FD_EVENTS, FD_DISPINFO};
 
 size_t invalid_read(void *buf, size_t offset, size_t len) {
   panic("should not reach here");
@@ -35,6 +38,10 @@ static Finfo FILE_TABLE[] __attribute__((used)) = {
   [FD_STDIN]  = {"stdin", 0, 0, invalid_read, invalid_write},
   [FD_STDOUT] = {"stdout", 0, 0, invalid_read, serial_write},
   [FD_STDERR] = {"stderr", 0, 0, invalid_read, serial_write},
+  [FD_FB] = {"/dev/fb", 0, 0, invalid_read, fb_write},
+  [FD_EVENTS] = {"/dev/events", 0, 0, events_read, invalid_write},
+  [FD_DISPINFO] ={"/proc/dispinfo", 0, 0, dispinfo_read, invalid_write},
+
 #include "files.h"
 };
 
@@ -46,8 +53,14 @@ static size_t openOffset[NR_FILES] = {0};  // Initialized to 0 automatically
 
 void init_fs() 
 {
-  // TODO: initialize the size of /dev/fb
+  // Initialise the size of /dev/fb
+  const AM_GPU_CONFIG_T gpuConfig = io_read(AM_GPU_CONFIG);
+  // Must present
+  assert(gpuConfig.present);
 
+  // Set file size.
+  const int vmemsz = gpuConfig.vmemsz;
+  FILE_TABLE[FD_FB].size = (size_t)vmemsz;
 }
 
 // Open a file by pathname, return file descriptor (index in file_table)

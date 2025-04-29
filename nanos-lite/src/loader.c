@@ -27,6 +27,8 @@ static uintptr_t loader(PCB *pcb, const char *filename)
 
     const int fd = fs_open(filename, 0, 0);
 
+    assert(fd >= 0);
+
     // Read header.
     Elf_Ehdr elfH;
     assert(fs_read(fd, &elfH, sizeof(Elf_Ehdr)) == sizeof(Elf_Ehdr));

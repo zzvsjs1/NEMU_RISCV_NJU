@@ -141,6 +141,46 @@ void do_syscall(Context *c)
       c->GPRx = fs_lseek((int)arg1, (size_t)arg2, (int)arg3);
       break;
     }
+
+    case SYS_gettimeofday: {
+#ifdef STRACE
+        Log(
+          "SYS_gettimeofday entry: tv_ptr=0x%016" PRIxPTR
+          ", tz_ptr=0x%016" PRIxPTR,
+          arg1, arg2
+        );
+#endif
+
+        struct timeval  *tv = (struct timeval *)arg1;
+        struct timezone *tz = (struct timezone *)arg2;
+        // read uptime (microseconds) from the abstract machine
+        const uint64_t uptimeUs = io_read(AM_TIMER_UPTIME).us;
+
+        // If tv is non-NULL, fill in time since Epoch (here: time since boot)
+        if (tv) 
+        {
+            tv->tv_sec  = uptimeUs / 1000000;
+            tv->tv_usec = uptimeUs % 1000000;
+#ifdef STRACE
+            Log("  -> tv_sec=%ld, tv_usec=%06ld", (long)tv->tv_sec, (long)tv->tv_usec);
+#endif
+        }
+
+        // If tz is non-NULL, zero it out (timezone support is obsolete)
+        if (tz) 
+        {
+            tz->tz_minuteswest = 0;
+            tz->tz_dsttime     = 0;
+
+#ifdef STRACE
+            Log("  -> tz_minuteswest=0, tz_dsttime=0");
+#endif
+        }
+
+        // success
+        c->GPRx = 0;
+      break;
+    }
     
     default: {
       panic("Unhandled syscall ID = %" PRIuPTR, num);
