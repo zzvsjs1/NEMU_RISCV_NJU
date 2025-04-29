@@ -13,6 +13,7 @@
 #include <klib.h>
 #include <klib-macros.h>
 #include <debug.h>
+#include <inttypes.h>
 
 typedef	long time_t;
 typedef long suseconds_t;
