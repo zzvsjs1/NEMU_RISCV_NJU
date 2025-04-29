@@ -124,7 +124,7 @@ size_t fs_write(int fd, const void *buf, size_t len)
   // If handle existed.
   if (f->write != NULL) 
   {
-    return f->write(buf, 0, len);
+    return f->write(buf, openOffset[fd], len);
   }
 
   // Calculate available space

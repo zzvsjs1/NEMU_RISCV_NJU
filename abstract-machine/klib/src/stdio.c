@@ -176,7 +176,7 @@ int vsnprintf(char       *out,
     size_t total_written = 0U;
     size_t out_pos       = 0U;
 
-    if (out == NULL && n > 0U)
+    if (out == NULL)
     {
         n = 0U;                    /* write count only mode */
     }

@@ -67,15 +67,19 @@ size_t dispinfo_read(void *buf, size_t offset, size_t len)
 
   char buff[64];
 
-  int total = sprintf(buff, "WIDTH:%d\nHEIGHT:%d\n\0", gpuConfig.width, gpuConfig.height);
-  if (total < 0) 
+  int total = sprintf(buff, "WIDTH:%d\nHEIGHT:%d\n", gpuConfig.width, gpuConfig.height);
+  if (total < 0 || total > 64) 
   {
+    Log("dispinfo_read: total < 0 || total > 64  total=%d", total);
+    assert(0);
+
     total = 0; 
   }
 
-  const size_t avail = total - offset;
-  const size_t toCopy = (avail < len ? avail : len);
+  const size_t avail = total;
+  const size_t toCopy = avail < len ? avail : len;
 
+  // Copy data to user program.
   memcpy(buf, buff, toCopy);
 
   return toCopy;
@@ -83,9 +87,25 @@ size_t dispinfo_read(void *buf, size_t offset, size_t len)
 
 size_t fb_write(const void *buf, size_t offset, size_t len) 
 {
+  const AM_GPU_CONFIG_T cfg = io_read(AM_GPU_CONFIG);
+  assert(cfg.present);
 
+  const int screenW = cfg.width;
 
-  return 0;
+  // Compute necessary variables.
+  const size_t byteOffset = offset;             // offset in bytes
+  const size_t pixelOffset = byteOffset / sizeof(uint32_t);    // now in pixels
+  
+  int row = (int)(pixelOffset / screenW);        // integer division → row
+  int col = (int)(pixelOffset % screenW);        // remainder → column
+  
+  int wPixels = len / sizeof(uint32_t);                 // len is bytes → divide to get pixel count
+
+  // printf("offset=%d row=%d col=%d wPixels=%d\n", (int)offset, row, col, wPixels);
+
+  io_write(AM_GPU_FBDRAW, col, row, (void*)buf, wPixels, 1, true);
+
+  return len;
 }
 
 void init_device() 
