@@ -1,5 +1,185 @@
 # Navy Application Framework
 
+## Build Instructions
+
+To compile an application in its directory (e.g., `tests/hello/`), run:
+```bash
+make ISA=xxx
+```
+
+To compile and install the application into the file system image under `fsimg/bin/`, run:
+```bash
+make ISA=xxx install
+```
+
+To compile a library alone (e.g., `libs/libbmp`), run:
+```bash
+make ISA=xxx archive
+```
+
+To clean the build output of an application or library, run:
+```bash
+make clean
+```
+Alternatively, from the project root directory, run:
+```bash
+make clean-all
+```
+to clean all application and library build results.
+
+## File System Image
+
+The `fsimg/` directory contains the file system image contents:
+```
+bin/ -- Binary files (this directory is not created by default)
+share/ -- Platform-independent files
+  files/ -- For file system tests
+  fonts/ -- Font files
+  music/ -- Sample music
+  pictures/ -- Sample images
+  games/ -- Game data (this directory is not created by default)
+    nes/ -- NES ROMs
+    pal/ -- Data files for Chinese Paladin
+```
+
+The `Makefile` in the project root contains the rules to build the file system image.
+You can modify the `APPS` and `TESTS` variables to specify which applications to install into the image, then run:
+```bash
+make ISA=xxx fsimg
+```
+to build and install the specified applications.
+
+You can also run:
+```bash
+make ISA=xxx ramdisk
+```
+to sequentially pack the contents of `fsimg/` into a simple image file `build/ramdisk.img`, and generate the corresponding metadata file `build/ramdisk.h`.
+Operating systems with basic file system support (e.g., Nanos-lite) can use this image.
+
+## Supported ISA / Operating Systems
+
+### native (run on local Linux)
+
+When compiling natively, `libc` and `libos` are not linked. Instead, the system uses the host glibc/glibstdc++ (linked via `g++` without extra flags).
+
+Device files such as `/dev/events`, `/dev/fb`, and others are simulated via `LD_PRELOAD`. See `libs/libos/src/native.cpp` for details.
+The native environment emulates a Navy-compatible runtime and allows running native programs with:
+```bash
+make ISA=native run mainargs="arg1 arg2 ..."
+```
+
+### x86, mips32, riscv32, am_native (Nanos, Nanos-lite)
+
+`am_native` refers to running the OS on the `native` mode of the [AM project](https://github.com/NJU-ProjectN/abstract-machine).
+
+## Runtime Environment
+
+### System Calls
+
+The Navy runtime provides a subset of POSIX system calls. See `libs/libos/src/syscall.c` for the list, and feel free to add more.
+More implemented system calls means more runnable applications.
+If an unimplemented syscall is called, it triggers an assertion failure.
+If assertion failure is not suitable, you can have it call `exit()` instead.
+
+### Special Files
+
+Navy expects the OS to support the following device files:
+
+1. Device files:
+ * `/dev/events`: Read-only device for key events. Events are separated by `'\n'`, and key names are all uppercase, matching SDL scan codes (see `nwm/native` for examples). For instance, `kd RETURN` means pressing Enter, `ku A` means releasing A.
+ * `/dev/fb`: Write-only device representing a W * H * 4-byte pixel array, row-major order, with each pixel in `00rrggbb` format (8-bit color). Supports `lseek`. Screen size is obtained from `/proc/dispinfo`.
+ * `/dev/sbctl` (optional): Read-write device.
+   * On write, the app must write 3 `int`s (12 bytes total) representing `freq`, `channels`, and `samples`, used to initialize the sound card.
+   * On read, the app receives an `int` indicating free bytes in the audio stream buffer.
+ * `/dev/sb` (optional): Write-only device for decoded audio data. Does not support `lseek`. Write completes only after the buffer is fully written.
+ * `/dev/null`, `/dev/zero` (optional): Return nothing or infinite zeros.
+ * `/dev/tty` (optional): Debug console.
+
+2. procfs filesystem: All files are key-value pairs in the format `[key] : [value]`. Whitespace around the colon is allowed.
+ * `/proc/dispinfo`: Screen info with keys: `WIDTH` for width, `HEIGHT` for height.
+ * `/proc/cpuinfo` (optional): CPU info.
+ * `/proc/meminfo` (optional): Memory info.
+
+Example of a valid `/proc/dispinfo` file:
+```
+WIDTH : 640
+HEIGHT:480
+```
+
+### Runtime Libraries
+
+* `libc`: C runtime library, ported from newlib 3.3.0. Also includes a minimal handwritten C++ runtime (no libstdc++ support).
+* `libos`: System call interface.
+* `compiler-rt`: Ported from LLVM, provides 64-bit division support on 32-bit ISAs.
+* `libfixedptc`: Fixed-point math library, includes `sin`, `pow`, `log`, and other elementary functions. Can replace floating-point within small ranges.
+* `libndl`: NDL (NJU DirectMedia Layer), low-level abstraction for clock, keyboard, graphics, and audio.
+* `libbmp`: 32-bit BMP file loader.
+* `libbdf`: BDF font loader.
+* `libminiSDL`: SDL-like multimedia library based on NDL.
+* `libvorbis`: OGG decoder (outputs `s16le` PCM). Ported from [stb project][stb].
+* `libam`: AM API implemented via Navy runtime, supports AM programs. Currently supports TRM and IOE.
+* `libSDL_ttf`: TrueType rasterizer using `libminiSDL` and stb's TTF parser.
+* `libSDL_image`: Image decoder using `libminiSDL` and stb’s image decoders. Supports JPG, PNG, BMP, and GIF.
+* `libSDL_mixer`: OGG audio mixer using `libminiSDL` and `libvorbis`. Supports multichannel mixing.
+
+[stb]: https://github.com/nothings/stb
+
+## Application List
+
+Applications included in the `apps/` directory:
+* `nslider`: NJU slideshow viewer for 4:3 slides.
+* `menu`: Startup menu to select which app to run.
+* `nterm`: NJU terminal with basic shell and external shell support.
+* `bird`: Flappy Bird clone, ported from sdlbird.
+* `pal`: Chinese Paladin RPG with sound support, ported from SDLPAL.
+* `am-kernels`: AM applications supported via `libam`. Includes CoreMark, Dhrystone, typing game.
+* `fceux`: NES emulator supported via `libam`.
+* `oslab0`: Student-written game collection running under `libam`.
+* `nplayer`: NJU audio player with volume control and visualization. Supports OGG format only.
+* `lua`: LUA script interpreter.
+* `busybox`: BusyBox 1.32.0. Only a few tools work if system calls are limited.
+* `onscripter`: NScripter interpreter for running visual novels like Planetarian, Clannad in Navy.
+* `nwm`: NJU window manager (requires `mmap`; currently only runs on native due to newlib limitation).
+
+## Application Development Guide
+
+### ANSI C Applications
+
+In principle, ANSI C applications can be compiled and run directly. `stdin` accepts input, `stdout` and `stderr` handle output.
+
+#### NTerm Terminal Applications
+
+Output to `stdout` or `stderr` to display in the terminal. ANSI escape sequences are supported:
+* `\033[s`: Save cursor state
+* `\033[u`: Restore cursor state
+* `\033[J`/`\033[2J`: Clear screen
+* `\033[K`: Clear from cursor to end of line (inclusive)
+* `\033[#;#H`/`\033[#;#f]`: Move cursor to row/column (`#` starts from 1)
+* `\033[H`/`\033[f`: Move cursor to top-left
+* `\033[#A`: Move cursor up `#` lines
+* `\033[#B`: Move cursor down `#` lines
+* `\033[#C`: Move cursor right `#` columns
+* `\033[#D`: Move cursor left `#` columns
+* `\033[#;#;...;#m`: Set display modes (partial support)
+
+NTerm-specific sequences:
+
+* `\033[1t`: Cooked input mode
+* `\033[2t`: Raw input mode
+
+See `apps/nterm/src/term.cpp` for details.
+
+#### NWM Graphical Applications
+
+Applications created via NWM communicate with NWM using the following file descriptors:
+* File descriptor `3`: Event pipe. Reading from this gives key events in `/dev/events` format.
+* File descriptor `4`: Graphics control pipe. Write two integers (width and height) separated by a space to request a window. Then poll FD 3 for response. If successful, FD 3 returns `mmap ok`.
+* File descriptor `5`: Shared memory canvas, accessible after window creation confirmation. Its size matches the requested window.
+
+
+
+# Navy Application Framework
+
 ## 编译方法
 
 在应用程序目录(如`tests/hello/`)下通过

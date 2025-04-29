@@ -12,7 +12,9 @@ int SDL_PushEvent(SDL_Event *ev) {
   return 0;
 }
 
-int SDL_PollEvent(SDL_Event *ev) {
+int SDL_PollEvent(SDL_Event *ev) 
+{
+  
   return 0;
 }
 
