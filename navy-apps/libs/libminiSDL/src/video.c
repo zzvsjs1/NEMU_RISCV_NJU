@@ -7,12 +7,47 @@
 void SDL_BlitSurface(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_Rect *dstrect) {
   assert(dst && src);
   assert(dst->format->BitsPerPixel == src->format->BitsPerPixel);
+
+  int src_x = srcrect ? srcrect->x : 0;
+  int src_y = srcrect ? srcrect->y : 0;
+  int w     = srcrect ? srcrect->w : src->w;
+  int h     = srcrect ? srcrect->h : src->h;
+
+  int dst_x = dstrect ? dstrect->x : 0;
+  int dst_y = dstrect ? dstrect->y : 0;
+
+  int bpp    = src->format->BytesPerPixel;
+  int pitchS = src->pitch;
+  int pitchD = dst->pitch;
+
+  uint8_t *pixelsS = (uint8_t *)src->pixels;
+  uint8_t *pixelsD = (uint8_t *)dst->pixels;
+
+  for (int row = 0; row < h; row++) {
+    uint8_t *rowS = pixelsS + (src_y + row) * pitchS + src_x * bpp;
+    uint8_t *rowD = pixelsD + (dst_y + row) * pitchD + dst_x * bpp;
+    memcpy(rowD, rowS, w * bpp);
+  }
 }
 
-void SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, uint32_t color) {
+void SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, uint32_t color) 
+{
+  
 }
 
 void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h) {
+  assert(s && s->format->BitsPerPixel == 32);
+
+  // if w or h is zero, update the entire surface
+  if (w == 0 || h == 0) {
+    x = 0; y = 0;
+    w = s->w; h = s->h;
+  }
+
+  // pointer to the first pixel of the rect
+  uint32_t *pixels = (uint32_t *)s->pixels + y * s->w + x;
+  // draw into framebuffer via NDL
+  NDL_DrawRect(pixels, x, y, w, h);
 }
 
 // APIs below are already implemented.

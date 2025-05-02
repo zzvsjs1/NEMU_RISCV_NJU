@@ -114,7 +114,7 @@ static void open_display() {
 
   SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_TIMER);
   window = SDL_CreateWindow("Simulated Nanos Application",
-      SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_W, WINDOW_H, SDL_WINDOW_OPENGL);
+      SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_W, WINDOW_H, 0);
   surface = SDL_CreateRGBSurfaceFrom(fb, disp_w, disp_h, 32, disp_w * sizeof(uint32_t),
       RMASK, GMASK, BMASK, AMASK);
   SDL_CreateThread(event_thread, "event thread", nullptr);
@@ -178,7 +178,7 @@ ssize_t read(int fd, void *buf, size_t count) {
   if (fd == dispinfo_fd) {
     // This does not strictly conform to `navy-apps/README.md`.
     // But it should be enough for real usage. Modify it if necessary.
-    return snprintf((char *)buf, count, "WIDTH: %d\nHEIGHT: %d\n", disp_w, disp_h);
+    return snprintf((char *)buf, count, "WIDTH:%d\nHEIGHT:%d\n", disp_w, disp_h);
   } else if (fd == evt_fd) {
     int has_key = 0;
     SDL_Event ev = {};
