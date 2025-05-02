@@ -126,36 +126,67 @@ typedef	__uint128_t fixedptud;
 #define fixedpt_tofloat(T) ((float) ((T)*((float)(1)/(float)(1L << FIXEDPT_FBITS))))
 
 /* Multiplies a fixedpt number with an integer, returns the result. */
-static inline fixedpt fixedpt_muli(fixedpt A, int B) {
-	return 0;
+static inline fixedpt fixedpt_muli(fixedpt A, int B) 
+{
+    // A = a·2^FBITS, multiplying by integer B gives (a·B)·2^FBITS
+    return (fixedpt)((fixedptd)A * (fixedptd)B);
 }
 
 /* Divides a fixedpt number with an integer, returns the result. */
-static inline fixedpt fixedpt_divi(fixedpt A, int B) {
-	return 0;
+static inline fixedpt fixedpt_divi(fixedpt A, int B) 
+{
+    // A = a·2^FBITS, dividing by integer B gives (a/B)·2^FBITS
+    return (fixedpt)((fixedptd)A / (fixedptd)B);
 }
 
 /* Multiplies two fixedpt numbers, returns the result. */
-static inline fixedpt fixedpt_mul(fixedpt A, fixedpt B) {
-	return 0;
+static inline fixedpt fixedpt_mul(fixedpt A, fixedpt B) 
+{
+    // Raw product is A·B = (a·2^FBITS)·(b·2^FBITS) = (a·b)·2^(2·FBITS)
+    // Shift right by FBITS to restore scale, add half-unit for rounding
+    return (fixedpt)(((fixedptd)A * (fixedptd)B + FIXEDPT_ONE_HALF) >> FIXEDPT_FBITS);
 }
 
 
 /* Divides two fixedpt numbers, returns the result. */
-static inline fixedpt fixedpt_div(fixedpt A, fixedpt B) {
-	return 0;
+static inline fixedpt fixedpt_div(fixedpt A, fixedpt B) 
+{
+    // To compute (a·2^FBITS)/(b·2^FBITS) = (a/b)·2^0, we first shift A left by FBITS
+    // then divide by B, adding half of B for rounding
+    fixedptd num  = ((fixedptd)A << FIXEDPT_FBITS);
+    fixedptd half = B >= 0 ? ((fixedptd)B >> 1) : -((fixedptd)B >> 1);
+    return (fixedpt)((num + half) / (fixedptd)B);
 }
 
-static inline fixedpt fixedpt_abs(fixedpt A) {
-	return 0;
+static inline fixedpt fixedpt_abs(fixedpt A) 
+{
+    return A < 0 ? -A : A;
 }
 
-static inline fixedpt fixedpt_floor(fixedpt A) {
-	return 0;
+static inline fixedpt fixedpt_floor(fixedpt A) 
+{
+    // floor: round down to nearest integer
+    // for positive A, just zero out fractional bits
+    // for negative A with nonzero fraction, subtract one more unit
+    fixedpt mask = FIXEDPT_FMASK;
+    if (A >= 0) {
+        return A & ~mask;
+    } else {
+        return -(((-A) + mask) & ~mask);
+    }
 }
 
-static inline fixedpt fixedpt_ceil(fixedpt A) {
-	return 0;
+static inline fixedpt fixedpt_ceil(fixedpt A) 
+{
+    // ceil: round up to nearest integer
+    // for positive A with nonzero fraction, add one unit
+    // for negative A, just zero out fractional bits
+    fixedpt mask = FIXEDPT_FMASK;
+    if (A >= 0) {
+        return (A + mask) & ~mask;
+    } else {
+        return -(((-A) & ~mask));
+    }
 }
 
 /*
