@@ -181,6 +181,13 @@ void do_syscall(Context *c)
         c->GPRx = 0;
       break;
     }
+
+    case SYS_execve: {
+      
+
+      c->GPRx = 0;
+      break;
+    }
     
     default: {
       panic("Unhandled syscall ID = %" PRIuPTR, num);
