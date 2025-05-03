@@ -22,7 +22,50 @@ static void sh_prompt() {
   sh_printf("sh> ");
 }
 
-static void sh_handle_cmd(const char *cmd) {
+static void sh_handle_cmd(const char *cmd) 
+{
+    // 1. Make a mutable copy and strip trailing newline
+    char *line = strdup(cmd);
+    const size_t len = strlen(line);
+
+    if (len > 0 && line[len - 1] == '\n') 
+    {
+        line[len - 1] = '\0';
+    }
+
+    // 2. Tokenize on whitespace
+    char *saveptr = NULL;
+    char *token = strtok_r(line, " \t", &saveptr);
+
+    if (!token) 
+    {
+        free(line);
+        return;  // empty line, just return
+    }
+
+    // 3. Handle 'echo' command
+    if (strcmp(token, "echo") == 0) 
+    {
+        char *arg;
+        int first = 1;
+        while ((arg = strtok_r(NULL, " \t", &saveptr))) {
+            if (!first) {
+                sh_printf(" ");  // space between args
+            }
+
+            sh_printf("%s", arg);
+            first = 0;
+        }
+        
+        sh_printf("\n");
+    }
+    // 4. Unknown command fallback
+    else 
+    {
+        sh_printf("Unknown command: %s\n", token);
+    }
+
+    free(line);
 }
 
 void builtin_sh_run() {
