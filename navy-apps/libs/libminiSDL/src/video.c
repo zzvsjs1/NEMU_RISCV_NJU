@@ -2,6 +2,7 @@
 #include <sdl-video.h>
 #include <assert.h>
 #include <string.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 // Performs a fast blit from the source surface to the destination surface.
@@ -220,9 +221,12 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h) {
   assert(s);
 
   // If w or h is zero, update the entire surface
-  if (w == 0 || h == 0) {
-      x = 0; y = 0;
-      w = s->w; h = s->h;
+  if (w == 0 || h == 0) 
+  {
+      x = 0; 
+      y = 0;
+      w = s->w; 
+      h = s->h;
   }
 
   if (s->format->BitsPerPixel == 32) 
@@ -231,6 +235,7 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h) {
       uint32_t *pixels = (uint32_t *)s->pixels + y * s->w + x;
       NDL_DrawRect(pixels, x, y, w, h);
   }
+  // For The Legend of Sword and Fairy.
   else if (s->format->BitsPerPixel == 8) 
   {
       // 8-bit palette path
@@ -239,21 +244,26 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h) {
       uint32_t *buf = malloc(sizeof(uint32_t) * w * h);
       assert(buf);
 
+      // The actual ARGB color array.
       SDL_Color *palette = s->format->palette->colors;
-      for (int row = 0; row < h; row++) 
+      for (int row = 0; row < h; ++row) 
       {
           uint8_t *rowp = src + row * pitch;
           uint32_t *dstp = buf + row * w;
-          for (int col = 0; col < w; col++) 
+          for (int col = 0; col < w; ++col) 
           {
-              uint8_t idx = rowp[col];
+              const uint8_t idx = rowp[col];
               SDL_Color c = palette[idx];
               // Pack into 0xAARRGGBB.
               dstp[col] = (c.a << 24) | (c.r << 16) | (c.g << 8) | c.b;
           }
       }
 
+      // Draw it.
       NDL_DrawRect(buf, x, y, w, h);
+
+      // Don't forget to free the buffer.
+      // Maybe cache the buffer???
       free(buf);
   }
   else 

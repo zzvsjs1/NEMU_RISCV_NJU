@@ -45,6 +45,7 @@ int NDL_PollEvent(char *buf, int len)
 
   if (eventsFd < 0)
   {
+    assert(0);
     return 0;
   }
 
@@ -128,8 +129,13 @@ void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
 
 void NDL_OpenAudio(int freq, int channels, int samples) 
 {
-  // Add these three parameter to nemu...
+  // // Add these three parameter to nemu...
+  // if (!io_read(AM_AUDIO_CONFIG).present) {
+  //   printf("WARNING: %s does not support audio\n", TOSTRING(__ARCH__));
+  //   return;
+  // }
 
+  // io_write(AM_AUDIO_CTRL, 44100, 2, 1024);
 
 }
 
