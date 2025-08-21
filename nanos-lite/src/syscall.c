@@ -2,6 +2,7 @@
 #include "syscall.h"
 #include "fs.h"
 #include <inttypes.h>   // for PRIxPTR, PRIuPTR, etc.
+#include "proc.h"
 
 void do_syscall(Context *c) 
 {
@@ -183,8 +184,8 @@ void do_syscall(Context *c)
     }
 
     case SYS_execve: {
-      
-
+      void naive_uload(PCB *pcb, const char *filename);
+      naive_uload(NULL, (char*)arg1);
       c->GPRx = 0;
       break;
     }
