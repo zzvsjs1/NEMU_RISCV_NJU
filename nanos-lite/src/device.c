@@ -1,6 +1,12 @@
 #include "debug.h"
 #include <common.h>
 
+#if defined(MULTIPROGRAM) && !defined(TIME_SHARING)
+# define MULTIPROGRAM_YIELD() yield()
+#else
+# define MULTIPROGRAM_YIELD()
+#endif
+
 #define NAME(key) \
   [AM_KEY_##key] = #key,
 
@@ -115,6 +121,7 @@ size_t sb_write(const void *buf, size_t offset, size_t len)
     AM_AUDIO_CONFIG_T cfg = io_read(AM_AUDIO_CONFIG);
     size_t free_bytes = (size_t)cfg.bufsize - (size_t)st.count;
     if (free_bytes >= len) break;
+    MULTIPROGRAM_YIELD();       // be nice if we have a scheduler
   }
 
   // Now push the whole chunk
@@ -136,8 +143,6 @@ size_t sbctl_write(const void *buf, size_t offset, size_t len)
   uint32_t freq = p[0];
   uint32_t channels = p[1];
   uint32_t samples = p[2];
-
-  Log("sbctl_write");
 
   // Program the audio device
   io_write(AM_AUDIO_CTRL, .freq = freq, .channels = channels, .samples = samples);
