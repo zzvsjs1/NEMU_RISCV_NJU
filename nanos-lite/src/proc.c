@@ -18,14 +18,15 @@ void hello_fun(void *arg) {
   }
 }
 
-void init_proc() {
+void init_proc() 
+{
   switch_boot_pcb();
 
   Log("Initializing processes...");
 
   // load program here
   void naive_uload(PCB *pcb, const char *filename);
-  naive_uload(NULL, "/bin/typing-game");
+  naive_uload(NULL, "/bin/nplayer");
 }
 
 Context *schedule(Context *prev) 
