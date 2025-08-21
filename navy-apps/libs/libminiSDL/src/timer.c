@@ -31,7 +31,8 @@ void SDL_Delay(uint32_t ms)
   while ((SDL_GetTicks() - start) < ms) 
   {
       void CallbackHelper(void);
-      CallbackHelper();
+      extern int g_in_audio_cb;
+      if (!g_in_audio_cb) CallbackHelper();  // keep audio flowing without recursion
     // very short pause would be nice on native OS, but not required
   }
 }

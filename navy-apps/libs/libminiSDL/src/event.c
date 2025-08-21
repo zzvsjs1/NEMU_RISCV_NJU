@@ -126,7 +126,8 @@ void SDL_PumpEvents(void)
   pumpKeyboardEvents();
 
   void CallbackHelper(void);
-  CallbackHelper();  // keep audio flowing
+  extern int g_in_audio_cb;
+  if (!g_in_audio_cb) CallbackHelper(); // keep audio flowing
 }
 
 // One thing need to notice:
