@@ -124,6 +124,9 @@ int SDL_PushEvent(SDL_Event *ev)
 void SDL_PumpEvents(void) 
 {
   pumpKeyboardEvents();
+
+  void CallbackHelper(void);
+  CallbackHelper();  // keep audio flowing
 }
 
 // One thing need to notice:

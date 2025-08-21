@@ -30,6 +30,8 @@ void SDL_Delay(uint32_t ms)
   // Loop until the requested delay has elapsed
   while ((SDL_GetTicks() - start) < ms) 
   {
-      // nothing; just spin
+      void CallbackHelper(void);
+      CallbackHelper();
+    // very short pause would be nice on native OS, but not required
   }
 }

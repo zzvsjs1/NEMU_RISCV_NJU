@@ -23,6 +23,9 @@ static int fbFd = -1;
 /* initTick holds the millisecond timestamp taken at NDL_Init() */
 static uint32_t initTick = 0;
 
+static int sbFd = -1;
+static int sbctlFd = -1;
+
 uint32_t NDL_GetTicks() 
 {
   struct timeval tv;
@@ -129,29 +132,59 @@ void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
 
 void NDL_OpenAudio(int freq, int channels, int samples) 
 {
-  // // Add these three parameter to nemu...
-  // if (!io_read(AM_AUDIO_CONFIG).present) {
-  //   printf("WARNING: %s does not support audio\n", TOSTRING(__ARCH__));
-  //   return;
-  // }
+  if (sbctlFd < 0) 
+  {
+    sbctlFd = open("/dev/sbctl", O_WRONLY | O_CLOEXEC);
+    assert(sbctlFd >= 0);
+  }
 
-  // io_write(AM_AUDIO_CTRL, 44100, 2, 1024);
+  uint32_t cfg[3];
+  cfg[0] = (uint32_t)freq;
+  cfg[1] = (uint32_t)channels;
+  cfg[2] = (uint32_t)samples;
+  // Write exactly 12 bytes
+  ssize_t w = write(sbctlFd, cfg, sizeof(cfg));
+  assert(w == (ssize_t)sizeof(cfg));
 
+  if (sbFd < 0) 
+  {
+    sbFd = open("/dev/sb", O_WRONLY | O_CLOEXEC);
+    assert(sbFd >= 0);
+  }
 }
 
 void NDL_CloseAudio() 
 {
-  // Do nothing?
+  if (sbFd >= 0) { close(sbFd); sbFd = -1; }
+  if (sbctlFd >= 0) { close(sbctlFd); sbctlFd = -1; }
 }
 
 int NDL_PlayAudio(void *buf, int len) 
 {
-  return 0;
+  assert(sbFd >= 0);
+  // /dev/sb write is blocking until all bytes are accepted
+  int written = 0;
+  while (written < len) 
+  {
+    ssize_t w = write(sbFd, (uint8_t *)buf + written, len - written);
+    if (w <= 0) return written; // should not happen, but be safe
+    written += (int)w;
+  }
+
+  return written;
 }
 
 int NDL_QueryAudio() 
 {
-  return 0;
+  if (sbctlFd < 0) {
+    // open on demand for read as well
+    sbctlFd = open("/dev/sbctl", O_RDWR | O_CLOEXEC);
+    assert(sbctlFd >= 0);
+  }
+  int free_bytes = 0;
+  ssize_t r = read(sbctlFd, &free_bytes, sizeof(free_bytes));
+  if (r < (ssize_t)sizeof(free_bytes)) return 0;
+  return free_bytes;
 }
 
 int NDL_Init(uint32_t flags) 
