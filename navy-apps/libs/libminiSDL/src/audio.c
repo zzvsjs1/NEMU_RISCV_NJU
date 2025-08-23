@@ -24,14 +24,14 @@ volatile int g_in_audio_cb = 0;
 #define BURST_CALLBACKS  4
 
 // very small helper for clamp
-static inline int16_t clamp_s16(int x) 
+static inline int16_t clampS16(int x) 
 {
     if (x > 32767) return 32767;
     if (x < -32768) return -32768;
     return (int16_t)x;
 }
 
-static int read_exact(int fd, void *buf, size_t n) 
+static int readExact(int fd, void *buf, size_t n) 
 {
     uint8_t *p = (uint8_t *)buf;
     size_t got = 0;
@@ -46,7 +46,7 @@ static int read_exact(int fd, void *buf, size_t n)
     return 1;
 }
 
-static int skip_bytes(int fd, uint32_t n) 
+static int skipBytes(int fd, uint32_t n) 
 {
     // Some targets may not have lseek on /proc-like FS, fallback to read+discard
     uint8_t tmp[512];
@@ -63,7 +63,7 @@ static int skip_bytes(int fd, uint32_t n)
 }
 
 // Derive bytes_per_sample from SDL_AudioSpec.format for robustness.
-static int bytes_per_sample_from_format(uint16_t fmt) 
+static int bytesPerSampleFromFormat(uint16_t fmt) 
 {
     switch (fmt) 
     {
@@ -80,7 +80,7 @@ int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained)
     memset(&g_spec, 0, sizeof(g_spec));
     g_spec = *desired;
 
-    int bytes_per_sample = bytes_per_sample_from_format(desired->format);
+    int bytes_per_sample = bytesPerSampleFromFormat(desired->format);
     assert(bytes_per_sample != 0 && "Unsupported audio format");
     g_bytes_per_frame = desired->channels * bytes_per_sample;  // interleaved frame size in bytes
 
@@ -125,8 +125,7 @@ void SDL_PauseAudio(int pause_on)
 }
 
 
-// ---------- SDL_MixAudio (support S16 and U8) ----------
-
+// SDL_MixAudio (support S16 and U8)
 void SDL_MixAudio(uint8_t *dst, uint8_t *src, uint32_t len, int volume) 
 {
     if (volume <= 0 || len == 0) return;
@@ -152,7 +151,8 @@ void SDL_MixAudio(uint8_t *dst, uint8_t *src, uint32_t len, int volume)
         uint32_t samples = len / 2;
         int16_t *d = (int16_t *)dst;
         int16_t *s = (int16_t *)src;
-        for (uint32_t i = 0; i < samples; i++) {
+        for (uint32_t i = 0; i < samples; i++) 
+        {
             int mixed = (int)d[i] + ((int)s[i] * volume) / SDL_MIX_MAXVOLUME;
             if (mixed > 32767) mixed = 32767;
             else if (mixed < -32768) mixed = -32768;
@@ -177,9 +177,9 @@ SDL_AudioSpec *SDL_LoadWAV(
     // RIFF header: "RIFF" <size> "WAVE"
     char riff[4], wave[4];
     uint32_t riff_size;
-    if (!read_exact(fd, riff, 4) ||
-            !read_exact(fd, &riff_size, 4) ||
-            !read_exact(fd, wave, 4) ||
+    if (!readExact(fd, riff, 4) ||
+            !readExact(fd, &riff_size, 4) ||
+            !readExact(fd, wave, 4) ||
             memcmp(riff, "RIFF", 4) != 0 ||
             memcmp(wave, "WAVE", 4) != 0) {
         close(fd);
@@ -197,25 +197,29 @@ SDL_AudioSpec *SDL_LoadWAV(
     uint32_t data_size = 0;
     uint8_t *data_ptr = NULL;
 
-    while (1) {
+    while (1) 
+    {
         char id[4];
         uint32_t sz;
 
         ssize_t r = read(fd, id, 4);
         if (r == 0) break;              // EOF
         if (r < 0) { if (errno == EINTR) continue; break; }
-        if (!read_exact(fd, &sz, 4)) break;
+        if (!readExact(fd, &sz, 4)) break;
 
         if (memcmp(id, "fmt ", 4) == 0) {
             // Expect at least PCM WAVEFORMAT header (16 bytes)
             uint8_t fmtbuf[32] = {0};
-            if (sz < 16 || sz > sizeof(fmtbuf)) {
+            if (sz < 16 || sz > sizeof(fmtbuf)) 
+            {
                 // read what we can, skip the rest
                 uint32_t toread = sz > sizeof(fmtbuf) ? sizeof(fmtbuf) : sz;
-                if (!read_exact(fd, fmtbuf, toread)) { break; }
-                if (sz > toread && !skip_bytes(fd, sz - toread)) { break; }
-            } else {
-                if (!read_exact(fd, fmtbuf, sz)) { break; }
+                if (!readExact(fd, fmtbuf, toread)) { break; }
+                if (sz > toread && !skipBytes(fd, sz - toread)) { break; }
+            } 
+            else 
+            {
+                if (!readExact(fd, fmtbuf, sz)) { break; }
             }
 
             audioFormat   = (uint16_t)(fmtbuf[0] | (fmtbuf[1] << 8));
@@ -224,33 +228,41 @@ SDL_AudioSpec *SDL_LoadWAV(
             // byteRate at [8..11], blockAlign at [12..13]
             bitsPerSample = (uint16_t)(fmtbuf[14] | (fmtbuf[15] << 8));
 
-            if (audioFormat != 1 /* PCM */) {
+            if (audioFormat != 1 /* PCM */) 
+            {
                 // compressed formats are not supported in PA
                 break;
             }
-            if (numChannels == 0 || sampleRate == 0 || (bitsPerSample != 8 && bitsPerSample != 16)) {
+
+            if (numChannels == 0 || sampleRate == 0 || (bitsPerSample != 8 && bitsPerSample != 16)) 
+            {
                 break;
             }
+
             have_fmt = 1;
 
             // If chunk size is odd, one padding byte follows
-            if (sz & 1) { if (!skip_bytes(fd, 1)) break; }
+            if (sz & 1) { if (!skipBytes(fd, 1)) break; }
 
-        } else if (memcmp(id, "data", 4) == 0) {
+        } 
+        else if (memcmp(id, "data", 4) == 0) 
+        {
             // Allocate and read the whole PCM payload
             data_size = sz;
             data_ptr = (uint8_t *)malloc(data_size ? data_size : 1);
             if (!data_ptr) break;
-            if (data_size && !read_exact(fd, data_ptr, data_size)) { free(data_ptr); data_ptr = NULL; break; }
+            if (data_size && !readExact(fd, data_ptr, data_size)) { free(data_ptr); data_ptr = NULL; break; }
             have_data = 1;
 
             // Pad byte if needed
-            if (sz & 1) { if (!skip_bytes(fd, 1)) break; }
+            if (sz & 1) { if (!skipBytes(fd, 1)) break; }
 
-        } else {
+        } 
+        else 
+        {
             // Unknown chunk, skip its payload plus pad if odd
-            if (!skip_bytes(fd, sz)) { break; }
-            if (sz & 1) { if (!skip_bytes(fd, 1)) break; }
+            if (!skipBytes(fd, sz)) { break; }
+            if (sz & 1) { if (!skipBytes(fd, 1)) break; }
         }
 
         if (have_fmt && have_data) break;
@@ -258,7 +270,8 @@ SDL_AudioSpec *SDL_LoadWAV(
 
     close(fd);
 
-    if (!have_fmt || !have_data || !data_ptr) {
+    if (!have_fmt || !have_data || !data_ptr) 
+    {
         if (data_ptr) free(data_ptr);
         return NULL;
     }
@@ -267,7 +280,7 @@ SDL_AudioSpec *SDL_LoadWAV(
     memset(spec, 0, sizeof(*spec));
     spec->freq     = (int)sampleRate;
     spec->channels = (uint8_t)numChannels;
-    spec->format   = (bitsPerSample == 8) ? AUDIO_U8 : AUDIO_S16SYS;
+    spec->format = (bitsPerSample == 8) ? AUDIO_U8 : AUDIO_S16SYS;
     // Choose a reasonable default buffer size for callback-driven playback
     spec->samples  = 1024;
 
@@ -293,7 +306,8 @@ void SDL_UnlockAudio()
 
 // Call this very frequently from event or delay APIs.
 // Also call it a few times right after unpausing for prefill.
-void CallbackHelper(void) {
+void CallbackHelper(void) 
+{
     // Fast exits for common conditions
     if (g_paused) return;
     if (!g_spec.callback) return;
@@ -309,7 +323,8 @@ void CallbackHelper(void) {
     uint32_t now = NDL_GetTicks();
 
     // Respect the nominal schedule unless we can feed at least one frame
-    if ((now - g_last_cb_ms) < g_interval_ms && free_bytes < g_bytes_per_frame) {
+    if ((now - g_last_cb_ms) < g_interval_ms && free_bytes < g_bytes_per_frame) 
+    {
         return;
     }
 
@@ -323,7 +338,8 @@ void CallbackHelper(void) {
     g_in_audio_cb = 1;
 
     // Feed several chunks back to back, until space drops, or we hit limits
-    while (free_bytes >= g_bytes_per_frame && bursts < BURST_CALLBACKS) {
+    while (free_bytes >= g_bytes_per_frame && bursts < BURST_CALLBACKS) 
+    {
         int chunk = (free_bytes < target_per_cb) ? free_bytes : target_per_cb;
         if (chunk > MAX_PUSH_BYTES) chunk = MAX_PUSH_BYTES;
 
