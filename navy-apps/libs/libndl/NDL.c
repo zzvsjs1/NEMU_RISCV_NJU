@@ -13,7 +13,6 @@ static int screen_w = 0, screen_h = 0;
 static int canvas_w = 0, canvas_h = 0;
 static int canvas_x = 0, canvas_y = 0;
 
-
 // For keyboard.
 static int eventsFd = -1;
 
@@ -71,13 +70,15 @@ void NDL_OpenCanvas(int *w, int *h)
     // let NWM resize the window and create the frame buffer
     (void) write(fbctl, buf, len);
 
-    while (1) {
+    while (1) 
+    {
       // 3 = evtdev
       int nread = read(3, buf, sizeof(buf) - 1);
       if (nread <= 0) continue;
       buf[nread] = '\0';
       if (strcmp(buf, "mmap ok") == 0) break;
     }
+
     close(fbctl);
   }
   
@@ -176,11 +177,13 @@ int NDL_PlayAudio(void *buf, int len)
 
 int NDL_QueryAudio() 
 {
-  if (sbctlFd < 0) {
+  if (sbctlFd < 0) 
+  {
     // open on demand for read as well
     sbctlFd = open("/dev/sbctl", O_RDWR | O_CLOEXEC);
     assert(sbctlFd >= 0);
   }
+
   int free_bytes = 0;
   ssize_t r = read(sbctlFd, &free_bytes, sizeof(free_bytes));
   if (r < (ssize_t)sizeof(free_bytes)) return 0;
@@ -213,5 +216,14 @@ void NDL_Quit()
   {
     assert(close(fbFd) == 0);
   }
+
+  if (sbFd >= 0)
+  {
+    assert(close(sbFd) == 0);
+  }
   
+  if (sbctlFd >= 0)
+  {
+    assert(close(sbctlFd) == 0);
+  }
 }

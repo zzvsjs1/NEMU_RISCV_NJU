@@ -120,14 +120,19 @@ size_t sb_write(const void *buf, size_t offset, size_t len)
     AM_AUDIO_STATUS_T st = io_read(AM_AUDIO_STATUS);
     AM_AUDIO_CONFIG_T cfg = io_read(AM_AUDIO_CONFIG);
     size_t free_bytes = (size_t)cfg.bufsize - (size_t)st.count;
-    if (free_bytes >= len) break;
-    MULTIPROGRAM_YIELD();       // be nice if we have a scheduler
+    if (free_bytes >= len) 
+    {
+      break;
+    }
+
+    // be nice if we have a scheduler...
+    MULTIPROGRAM_YIELD();       
   }
 
   // Now push the whole chunk
   Area sbuf;
   sbuf.start = (void *)buf;
-  sbuf.end   = (void *)((uint8_t *)buf + len);
+  sbuf.end = (void *)((uint8_t *)buf + len);
   io_write(AM_AUDIO_PLAY, sbuf);
   return len;
 }
@@ -136,7 +141,8 @@ size_t sbctl_write(const void *buf, size_t offset, size_t len)
 {
   if (len != 3 * sizeof(uint32_t)) 
   {
-    return 0;  // not supported
+    // Not supported
+    return 0;  
   }
 
   const uint32_t *p = (const uint32_t *)buf;
@@ -144,7 +150,7 @@ size_t sbctl_write(const void *buf, size_t offset, size_t len)
   uint32_t channels = p[1];
   uint32_t samples = p[2];
 
-  // Program the audio device
+  // Program the audio device.
   io_write(AM_AUDIO_CTRL, .freq = freq, .channels = channels, .samples = samples);
   return len;
 }
@@ -155,7 +161,7 @@ size_t sbctl_read(void *buf, size_t offset, size_t len)
   AM_AUDIO_CONFIG_T cfg = io_read(AM_AUDIO_CONFIG);
   int32_t free_bytes = (int32_t)cfg.bufsize - (int32_t)st.count;
 
-  // Return one int, truncated to caller's `len`
+  // Return one int, truncated to caller's len.
   size_t to_copy = len < sizeof(int32_t) ? len : sizeof(int32_t);
   memcpy(buf, &free_bytes, to_copy);
   return to_copy;

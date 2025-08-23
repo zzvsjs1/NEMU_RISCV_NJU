@@ -1,7 +1,7 @@
 #include <common.h>
 #include "syscall.h"
 #include "fs.h"
-#include <inttypes.h>   // for PRIxPTR, PRIuPTR, etc.
+#include <inttypes.h>
 #include "proc.h"
 
 void do_syscall(Context *c) 
