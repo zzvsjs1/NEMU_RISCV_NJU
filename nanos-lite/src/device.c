@@ -109,33 +109,54 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
   return len;
 }
 
+// Semantics: write `len` bytes starting at (uint8_t*)buf + offset, block until all bytes are queued.
+// Note: offset applies to the user buffer, not the device, since a stream device has no seek position.
 size_t sb_write(const void *buf, size_t offset, size_t len) 
 {
-  if (len == 0) return 0;
+  if (buf == NULL || len == 0) return 0;
 
-  // Wait until the stream buffer has enough free space to hold `len` bytes
-  // This makes write() to /dev/sb blocking as required.
-  while (1) 
-  {
-    AM_AUDIO_STATUS_T st = io_read(AM_AUDIO_STATUS);
-    AM_AUDIO_CONFIG_T cfg = io_read(AM_AUDIO_CONFIG);
-    size_t free_bytes = (size_t)cfg.bufsize - (size_t)st.count;
-    if (free_bytes >= len) 
+  const uint8_t *p = (const uint8_t *)buf + offset;
+  size_t remain = len;
+
+  while (remain > 0) {
+    size_t free_bytes = 0;
+
+    // Wait until the device ring buffer exposes some free space
+    while (1) 
     {
-      break;
+      AM_AUDIO_STATUS_T st = io_read(AM_AUDIO_STATUS);
+      AM_AUDIO_CONFIG_T cfg = io_read(AM_AUDIO_CONFIG);
+      size_t used = (size_t)st.count;
+      size_t cap  = (size_t)cfg.bufsize;
+      free_bytes = (used >= cap) ? 0 : (cap - used);
+      if (free_bytes > 0) break;
+      MULTIPROGRAM_YIELD();  // be cooperative if a scheduler exists
     }
 
-    // be nice if we have a scheduler...
-    MULTIPROGRAM_YIELD();       
+    // Write at most the available free space, and no more than what remains
+    size_t n = free_bytes;
+    if (n > remain) n = remain;
+
+    // Optional, enforce sample frame alignment if the device requires it
+    // size_t frame_bytes = 1;  // e.g., stereo 16-bit PCM is 4 bytes per frame
+    // n -= n % frame_bytes;
+    // if (n == 0) { MULTIPROGRAM_YIELD(); continue; }
+
+    // Push this chunk
+    Area sbuf;
+    sbuf.start = (void *)p;
+    sbuf.end   = (void *)(p + n);
+    io_write(AM_AUDIO_PLAY, sbuf);
+
+    // Advance source pointer
+    p      += n;
+    remain -= n;
   }
 
-  // Now push the whole chunk
-  Area sbuf;
-  sbuf.start = (void *)buf;
-  sbuf.end = (void *)((uint8_t *)buf + len);
-  io_write(AM_AUDIO_PLAY, sbuf);
+  // All requested bytes have been queued to the device
   return len;
 }
+
 
 size_t sbctl_write(const void *buf, size_t offset, size_t len)
 {
