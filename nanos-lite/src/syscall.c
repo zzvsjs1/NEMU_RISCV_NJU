@@ -2,7 +2,11 @@
 #include "syscall.h"
 #include "fs.h"
 #include <inttypes.h>
+#include "memory.h"
 #include "proc.h"
+
+void context_uload(PCB *pcb, const char *filename, char *const argv[], char *const envp[]);
+extern PCB *current;
 
 void do_syscall(Context *c) 
 {
@@ -42,7 +46,6 @@ void do_syscall(Context *c)
 
       yield();
       c->GPRx = 0;
-
       break;
     }
 
@@ -184,9 +187,23 @@ void do_syscall(Context *c)
     }
 
     case SYS_execve: {
-      void naive_uload(PCB *pcb, const char *filename);
-      naive_uload(NULL, (char*)arg1);
-      c->GPRx = 0;
+      // User pointers, in this lab stage we assume they are directly readable.
+      const char *filename = (const char *)arg1;
+      char *const *argv = (char *const *)arg2;
+      char *const *envp = (char *const *)arg3;
+
+      // Replace current process image with the new program.
+      // execve semantics, reuse current PCB.
+      context_uload(current, filename, (char *const *)argv, (char *const *)envp);
+
+      // Do not return to the old user stack of process A.
+      // Force a context switch to the newly created user context.
+      void switch_boot_pcb();
+      switch_boot_pcb();
+      yield();
+
+      // Should never reach here on success.
+      c->GPRx = (uintptr_t)-1;
       break;
     }
     

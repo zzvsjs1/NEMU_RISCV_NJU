@@ -34,6 +34,10 @@ __am_asm_trap:
 
   MAP(REGS, PUSH)
 
+  // Save stack pointer to context.
+  addi t3, sp, CONTEXT_SIZE
+  STORE t3, OFFSET_SP(sp)
+
   csrr t0, mcause
   csrr t1, mstatus
   csrr t2, mepc
@@ -49,6 +53,8 @@ __am_asm_trap:
 
   mv a0, sp
   call __am_irq_handle
+  // Switch sp to new context.
+  mv sp, a0
 
   LOAD t1, OFFSET_STATUS(sp)
   LOAD t2, OFFSET_EPC(sp)

@@ -69,6 +69,28 @@ void __am_switch(Context *c) {
 void map(AddrSpace *as, void *va, void *pa, int prot) {
 }
 
-Context *ucontext(AddrSpace *as, Area kstack, void *entry) {
-  return NULL;
+Context *ucontext(AddrSpace *as, Area kstack, void *entry) 
+{
+  // Allocate the Context at the top of the kernel stack.
+  uintptr_t sp = (uintptr_t)kstack.end;
+  // 16-byte alignment is a good ABI habit
+  sp &= ~((uintptr_t)0xF);
+
+  Context *c = (Context *)(sp - sizeof(Context));
+
+  // Clean zero.
+  memset(c, 0, sizeof(Context));
+
+  // Start executing from 'entry' after mret.
+  c->mepc = (uintptr_t)entry;
+
+  // For a user process, return to U-mode after mret.
+  // RISC-V mstatus.MPP is at bits [12:11].
+  // Set MPP=00 (U-mode) by clearing those bits.
+  // Also set MPIE (bit 7) so interrupt enable state is sane after mret.
+  c->mstatus = 0;
+  c->mstatus |= (1 << 7);             // MPIE = 1
+  c->mstatus &= ~((uintptr_t)0x1800); // MPP = 00 (U)
+
+  return c;
 }

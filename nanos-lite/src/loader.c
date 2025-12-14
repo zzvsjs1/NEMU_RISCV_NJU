@@ -21,6 +21,9 @@
 // # define EXPECT_TYPE EM_X86_64
 #endif
 
+// Provided by Nanos-lite memory system.
+extern Area heap;
+
 static uintptr_t loader(PCB *pcb, const char *filename) 
 {
     Log("Load exec filename = %s", filename);
@@ -77,6 +80,127 @@ static uintptr_t loader(PCB *pcb, const char *filename)
 
     // Return entry point.
     return elfH.e_entry;
+}
+
+// Align down helper, works for 32-bit and 64-bit.
+static inline uintptr_t align_down(uintptr_t x, uintptr_t a) 
+{
+  return x & ~(a - 1);
+}
+
+// Build argc/argv/envp layout on user stack.
+// Return the address where argc is stored, which will be passed via GPRx.
+static uintptr_t build_user_stack(uintptr_t ustack_end, char *const argv[], char *const envp[]) 
+{
+  // Count argc, envc. argv/envp are expected to be NULL-terminated arrays.
+  int argc = 0;
+  int envc = 0;
+
+  if (argv != NULL) 
+  {
+    while (argv[argc] != NULL) argc++;
+  }
+  if (envp != NULL) 
+  {
+    while (envp[envc] != NULL) envc++;
+  }
+
+  // We need to remember the final string addresses to build argv/envp pointer arrays.
+  // For simplicity, use small fixed limits here, you can enlarge if needed.
+  // Alternatively, you can allocate dynamically, but PA labs usually keep it simple.
+  char *argv_ptrs[64];
+  char *envp_ptrs[64];
+  assert(argc < 64 && envc < 64);
+
+  uintptr_t sp = ustack_end;
+
+  // 1) Copy strings into the "string area" at high addresses, growing downward.
+  // The string order does not matter as long as argv/envp pointers are correct.
+  for (int i = 0; i < argc; i++) 
+  {
+    size_t len = strlen(argv[i]) + 1;   // include '\0'
+    sp -= len;
+    memcpy((void *)sp, argv[i], len);
+    argv_ptrs[i] = (char *)sp;
+  }
+
+  for (int i = 0; i < envc; i++) 
+  {
+    size_t len = strlen(envp[i]) + 1;
+    sp -= len;
+    memcpy((void *)sp, envp[i], len);
+    envp_ptrs[i] = (char *)sp;
+  }
+
+  // 2) Align for pointer pushing.
+  sp = align_down(sp, sizeof(uintptr_t));
+
+  // 3) Push envp pointers, then NULL, then argv pointers, then NULL, then argc.
+  // Layout from low to high (stack grows down):
+  //   [argc][argv0..argvN-1][NULL][envp0..envpM-1][NULL][string area...]
+  //
+  // Use a PUSH macro to avoid pointer arithmetic mistakes.
+#define PUSH_U(v) do {                         \
+    sp -= sizeof(uintptr_t);                     \
+    *(uintptr_t *)sp = (uintptr_t)(v);           \
+  } while (0)
+
+  // envp NULL terminator
+  PUSH_U(0);
+
+  // envp pointers, keep original order in envp[0..envc-1]
+  for (int i = envc - 1; i >= 0; i--) 
+  {
+    PUSH_U(envp_ptrs[i]);
+  }
+
+  // argv NULL terminator
+  PUSH_U(0);
+
+  // argv pointers, keep original order in argv[0..argc-1]
+  for (int i = argc - 1; i >= 0; i--) 
+  {
+    PUSH_U(argv_ptrs[i]);
+  }
+
+  // argc value at the bottom
+  PUSH_U((uintptr_t)argc);
+
+#undef PUSH_U
+
+  // Now sp points to argc, exactly what the lab convention requires.
+  return sp;
+}
+
+void context_uload(PCB *pcb, const char *filename, char *const argv[], char *const envp[])
+{
+  // 1) Prepare address space metadata (may be used later).
+  // protect(&pcb->as);
+
+  // 2) Load the program image and get its entry (usually _start).
+  uintptr_t entry = loader(pcb, filename);
+
+  // 3) Create user context on kernel stack.
+  Area kstack = (Area) {
+    .start = pcb->stack,
+    .end   = pcb + 1,
+  };
+  
+  pcb->cp = ucontext(&pcb->as, kstack, (void *)entry);
+
+  // 4) Allocate a fresh user stack for this process (32KB = 8 pages).
+  void *ustack_base = new_page(8);
+  uintptr_t ustack_end = (uintptr_t)ustack_base + 8 * PGSIZE;
+
+  // 5) Build argc/argv/envp layout on this new user stack.
+  // If envp is NULL, treat it as an empty list.
+  static char *const empty_envp[] = { NULL };
+  if (envp == NULL) envp = empty_envp;
+
+  uintptr_t args_addr = build_user_stack(ustack_end, argv, envp);
+
+  // 6) Pass "address of argc" via GPRx, Navy _start will set sp and call call_main(args).
+  pcb->cp->GPRx = args_addr;
 }
 
 void naive_uload(PCB *pcb, const char *filename) 
