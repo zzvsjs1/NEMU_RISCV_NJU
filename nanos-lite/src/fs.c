@@ -92,9 +92,8 @@ int fs_open(const char *pathname, int flags, int mode)
     }
   }
 
-  // File not found: abort
+  // File not found.
   Log("fs_open: Invalid pathname: %s\n", pathname);
-  assert(0);
   return -1;
 }
 

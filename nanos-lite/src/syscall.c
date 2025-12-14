@@ -187,26 +187,31 @@ void do_syscall(Context *c)
     }
 
     case SYS_execve: {
-      // User pointers, in this lab stage we assume they are directly readable.
       const char *filename = (const char *)arg1;
       char *const *argv = (char *const *)arg2;
       char *const *envp = (char *const *)arg3;
 
-      // Replace current process image with the new program.
-      // execve semantics, reuse current PCB.
+      // Check existence, execvp will probe multiple candidates
+      int fd = fs_open((char *)filename, 0, 0);
+      if (fd < 0) 
+      {
+        c->GPRx = (uintptr_t)-2;   // ENOENT
+        break;
+      }
+      
+      fs_close(fd);
+
       context_uload(current, filename, (char *const *)argv, (char *const *)envp);
 
-      // Do not return to the old user stack of process A.
-      // Force a context switch to the newly created user context.
       void switch_boot_pcb();
       switch_boot_pcb();
       yield();
 
-      // Should never reach here on success.
+      // Should not reach here on success
       c->GPRx = (uintptr_t)-1;
       break;
     }
-    
+
     default: {
       panic("Unhandled syscall ID = %" PRIuPTR, num);
       break;

@@ -1,5 +1,6 @@
 #include <proc.h>
 #include <elf.h>
+#include "debug.h"
 #include "fs.h"
 
 #ifdef __LP64__
@@ -100,6 +101,7 @@ static uintptr_t build_user_stack(uintptr_t ustack_end, char *const argv[], char
   {
     while (argv[argc] != NULL) argc++;
   }
+  
   if (envp != NULL) 
   {
     while (envp[envc] != NULL) envc++;
@@ -172,36 +174,30 @@ static uintptr_t build_user_stack(uintptr_t ustack_end, char *const argv[], char
   return sp;
 }
 
-void context_uload(PCB *pcb, const char *filename, char *const argv[], char *const envp[])
+void context_uload(PCB *pcb, const char *filename, char *const argv[], char *const envp[]) 
 {
-  // 1) Prepare address space metadata (may be used later).
-  // protect(&pcb->as);
-
-  // 2) Load the program image and get its entry (usually _start).
-  uintptr_t entry = loader(pcb, filename);
-
-  // 3) Create user context on kernel stack.
-  Area kstack = (Area) {
-    .start = pcb->stack,
-    .end   = pcb + 1,
-  };
-  
-  pcb->cp = ucontext(&pcb->as, kstack, (void *)entry);
-
-  // 4) Allocate a fresh user stack for this process (32KB = 8 pages).
+  // 1) Allocate fresh user stack first
   void *ustack_base = new_page(8);
   uintptr_t ustack_end = (uintptr_t)ustack_base + 8 * PGSIZE;
 
-  // 5) Build argc/argv/envp layout on this new user stack.
-  // If envp is NULL, treat it as an empty list.
+  // 2) Ensure envp is valid
   static char *const empty_envp[] = { NULL };
   if (envp == NULL) envp = empty_envp;
 
+  // 3) Build argc/argv/envp NOW, before loader overwrites old address space
   uintptr_t args_addr = build_user_stack(ustack_end, argv, envp);
 
-  // 6) Pass "address of argc" via GPRx, Navy _start will set sp and call call_main(args).
+  // 4) Load program image
+  uintptr_t entry = loader(pcb, filename);
+
+  // 5) Create user context on kernel stack
+  Area kstack = (Area){ .start = pcb->stack, .end = pcb + 1 };
+  pcb->cp = ucontext(&pcb->as, kstack, (void *)entry);
+
+  // 6) Pass argc address via GPRx, Navy _start will set sp and call call_main(args)
   pcb->cp->GPRx = args_addr;
 }
+
 
 void naive_uload(PCB *pcb, const char *filename) 
 {
