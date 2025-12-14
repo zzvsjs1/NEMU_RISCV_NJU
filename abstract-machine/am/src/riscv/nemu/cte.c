@@ -51,8 +51,34 @@ bool cte_init(Context*(*handler)(Event, Context*))
   return true;
 }
 
-Context *kcontext(Area kstack, void (*entry)(void *), void *arg) {
-  return NULL;
+Context *kcontext(Area kstack, void (*entry)(void *), void *arg) 
+{
+  // Align to 16 bytes.
+  uintptr_t sp = (uintptr_t)kstack.end;
+  sp &= ~((uintptr_t)0xF);
+
+  // Place context
+  Context *c = (Context *)(sp - sizeof(Context));
+
+  // Fill zero
+  memset(c, 0, sizeof(Context));
+
+  c->mepc = (uintptr_t)entry;
+  // Stack pointer is x2, which is gpr[2].
+  c->GPRSP = sp;            
+
+  // Place the argument.
+  c->GPR2 = (uintptr_t)arg;
+
+  c->mstatus = 0x1800 | 0x80;
+
+  c->mcause = 0;
+  c->pdir = NULL;
+
+  // Clash now!
+  c->gpr[1] = 0;
+  
+  return c;
 }
 
 void yield()

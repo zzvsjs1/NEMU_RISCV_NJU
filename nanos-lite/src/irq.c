@@ -1,10 +1,12 @@
 #include <common.h>
 
+Context *schedule(Context *prev);
+
 static Context* do_event(Event e, Context* c) 
 {
   switch (e.event) {
     case EVENT_YIELD: {
-      break;
+      return schedule(c);
     }
     case EVENT_SYSCALL: {
       void do_syscall(Context *c);

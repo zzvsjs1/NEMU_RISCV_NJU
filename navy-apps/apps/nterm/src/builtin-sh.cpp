@@ -3,6 +3,8 @@
 #include <unistd.h>
 #include <SDL.h>
 
+extern char **environ;
+
 char handle_key(SDL_Event *ev);
 
 static void sh_printf(const char *format, ...) {
