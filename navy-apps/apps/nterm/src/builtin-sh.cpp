@@ -79,13 +79,40 @@ static void sh_prompt() {
   sh_printf("sh> ");
 }
 
-static void sh_handle_cmd(const char *cmd) {
-  // 1) Make a mutable copy and strip trailing newline
+static void sh_print_exec_error(const char *cmd, int err) {
+  // Provide user-friendly diagnostics based on errno.
+  switch (err) {
+    case ENOENT:
+      sh_printf("%s: command not found\n", cmd);
+      break;
+    case EACCES:
+      sh_printf("%s: permission denied\n", cmd);
+      break;
+    case ENOEXEC:
+      sh_printf("%s: exec format error\n", cmd);
+      break;
+    case E2BIG:
+      sh_printf("%s: argument list too long\n", cmd);
+      break;
+    default:
+      sh_printf("%s: exec failed, errno=%d\n", cmd, err);
+      break;
+  }
+}
+
+static void sh_handle_cmd(const char *cmd) 
+{
+  // 0) Defensive checks
+  if (!cmd) return;
+
+  // 1) Make a mutable copy and strip trailing newline(s)
   char *line = strdup(cmd);
   if (!line) return;
 
   size_t len = strlen(line);
-  if (len > 0 && line[len - 1] == '\n') line[len - 1] = '\0';
+  while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+    line[--len] = '\0';
+  }
 
   // 2) Skip leading spaces
   char *p = line;
@@ -102,6 +129,15 @@ static void sh_handle_cmd(const char *cmd) {
     free(line);
     return;
   }
+
+  // Ensure argv is NULL-terminated for exec*
+  if (argc >= SH_MAX_ARGS) {
+    // If sh_split_argv can return SH_MAX_ARGS, reserve space for NULL.
+    sh_printf("too many arguments, max=%d\n", SH_MAX_ARGS - 1);
+    free(line);
+    return;
+  }
+  argv[argc] = NULL;
 
   // 4) Built-ins
   if (strcmp(argv[0], "echo") == 0) {
@@ -126,18 +162,25 @@ static void sh_handle_cmd(const char *cmd) {
   }
 
   if (strcmp(argv[0], "exit") == 0) {
+    // No need to free(line) because we are terminating the process.
     _exit(0);
   }
 
-  // 5) External command: execve replaces current image
+  // 5) External command
   char path[SH_MAX_PATH];
   const char *filename = sh_resolve_path(argv[0], path, sizeof(path));
+  if (!filename || filename[0] == '\0') {
+    // If your resolver can tell "not found", handle it explicitly.
+    sh_printf("%s: command not found\n", argv[0]);
+    free(line);
+    return;
+  }
 
   execvp(filename, argv);
 
-  // If we reached here, execve failed
-  // On some minimal libc, strerror may be missing, errno is still useful
-  sh_printf("execve failed: %s, errno=%d\n", filename, errno);
+  // If we reached here, execvp failed, capture errno immediately.
+  int err = errno;
+  sh_print_exec_error(argv[0], err);
 
   free(line);
 }

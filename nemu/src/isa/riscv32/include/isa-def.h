@@ -14,6 +14,9 @@ typedef struct
     // Current, only use - Table 7. Currently allocated RISC-V machine-level CSR addresses
     struct
     {
+        // 0x180, Supervisor Address Translation and Protection
+        rtlreg_t satp;
+        
         // Machine status register.
         // 0x300
         rtlreg_t mstatus;
@@ -137,7 +140,5 @@ typedef struct
         uint32_t val;
     } instr;
 } riscv32_ISADecodeInfo;
-
-#define isa_mmu_check(vaddr, len, type) (MMU_DIRECT)
 
 #endif

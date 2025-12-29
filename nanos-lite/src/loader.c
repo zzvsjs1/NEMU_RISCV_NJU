@@ -198,7 +198,6 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
   pcb->cp->GPRx = args_addr;
 }
 
-
 void naive_uload(PCB *pcb, const char *filename) 
 {
   uintptr_t entry = loader(pcb, filename);
