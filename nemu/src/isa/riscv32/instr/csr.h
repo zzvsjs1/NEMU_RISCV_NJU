@@ -44,10 +44,12 @@ def_EHelper(csrrw)
     // THIS IS A HACK!
     if (s->isa.instr.CSR.rd != 0)
     {
-        const word_t oldCSRValue = *csrPtr;
+        //const word_t oldCSRValue = *csrPtr;
 
         // zero-extends the value to XLEN bits, then writes it to integer register rd
-        rtl_li(s, ddest, oldCSRValue & 0x1FFF);
+        //rtl_li(s, ddest, oldCSRValue);
+
+        rtl_mv(s, ddest, csrPtr);
     }
 
     // Write rs1 to csr

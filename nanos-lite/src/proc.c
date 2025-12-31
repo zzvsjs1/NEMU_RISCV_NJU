@@ -44,9 +44,9 @@ void init_proc()
 
   Log("Initializing processes...");
 
-  static char *const argv_pal[] = { "/bin/menu", NULL, NULL };
+  static char *const argv_pal[] = { "/bin/pal", NULL, NULL };
   static char *const envp_empty[] = { NULL };
-  context_uload(&pcb[1], "/bin/menu", argv_pal, envp_empty);
+  context_uload(&pcb[1], "/bin/pal", argv_pal, envp_empty);
   
   // Initialize current to the boot PCB,
   // so the first schedule() call switches to pcb[0].

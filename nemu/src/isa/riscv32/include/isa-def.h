@@ -34,7 +34,7 @@ typedef struct
         rtlreg_t mcause;
     } csr;
 
-    rtlreg_t prv;
+    rtlreg_t prvi;
 } riscv32_CPU_state;
 
 // decode

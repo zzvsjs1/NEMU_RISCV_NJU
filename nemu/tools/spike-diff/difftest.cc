@@ -62,7 +62,7 @@ struct diff_context_t {
     rtlreg_t mcause;
   } csr;
 
-  rtlreg_t prv;
+  rtlreg_t prvi;
 };
 
 static sim_t* s = NULL;
@@ -94,7 +94,7 @@ void sim_t::diff_get_regs(void* diff_context) {
   ctx->csr.mepc = state->mepc.get()->read();
   ctx->csr.mcause = state->mcause.get()->read();
 
-  ctx->prv = state->prv;
+  ctx->prvi = state->prvi;
 }
 
 void sim_t::diff_set_regs(void* diff_context) {

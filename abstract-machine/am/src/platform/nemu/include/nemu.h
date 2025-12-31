@@ -36,10 +36,14 @@
 extern char _pmem_start;
 #define PMEM_SIZE (128 * 1024 * 1024)
 #define PMEM_END  ((uintptr_t)&_pmem_start + PMEM_SIZE)
+
+#define AUDIO_SBUF_SIZE 0x10000
+
 #define NEMU_PADDR_SPACE \
   RANGE(&_pmem_start, PMEM_END), \
   RANGE(FB_ADDR, FB_ADDR + 0x200000), \
-  RANGE(MMIO_BASE, MMIO_BASE + 0x1000) /* serial, rtc, screen, keyboard */
+  RANGE(MMIO_BASE, MMIO_BASE + 0x1000), /* serial, rtc, screen, keyboard, audio-ctl, disk */ \
+  RANGE(AUDIO_SBUF_ADDR, AUDIO_SBUF_ADDR + AUDIO_SBUF_SIZE) /* audio sample buffer */
 
 typedef uintptr_t PTE;
 

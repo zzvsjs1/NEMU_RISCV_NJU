@@ -73,16 +73,44 @@ def_EHelper(mret)
 	// Step 1: Clear MPP (bits 12–11)
 	// Clear both bits
 	// I am lazy, just use C......
-	cpu.csr.mstatus &= ~(0b11 << 11);
+	// cpu.csr.mstatus &= ~(0b11 << 11);
 
-	// Step 2: Set MIE (bit 3) = MPIE (bit 7)
-	const uint32_t mpie = (cpu.csr.mstatus >> 7) & 0x1;
-	cpu.csr.mstatus = (cpu.csr.mstatus & ~(1 << 3)) | (mpie << 3);
+	// // Step 2: Set MIE (bit 3) = MPIE (bit 7)
+	// const uint32_t mpie = (cpu.csr.mstatus >> 7) & 0x1;
+	// cpu.csr.mstatus = (cpu.csr.mstatus & ~(1 << 3)) | (mpie << 3);
 	
-	// Step 3: Set MPIE (bit 7) = 1
-	cpu.csr.mstatus |= (1 << 7);
+	// // Step 3: Set MPIE (bit 7) = 1
+	// cpu.csr.mstatus |= (1 << 7);
 
-	// PC <- mepc
-	// Just jump!
+	// // PC <- mepc
+	// // Just jump!
+	// rtl_jr(s, &cpu.csr.mepc);
+
+	
+	/* Save old mstatus fields before modifying */
+	word_t mstatus = cpu.csr.mstatus;
+
+	/* Extract old MPP and MPIE */
+	word_t mpp  = (mstatus >> 11) & 0x3u;  /* bits 12:11 */
+	word_t mpie = (mstatus >>  7) & 0x1u;  /* bit 7 */
+
+	/* Clear MPP */
+	mstatus &= ~((word_t)0x3u << 11);
+
+	/* MIE <- MPIE */
+	mstatus = (mstatus & ~((word_t)1u << 3)) | (mpie << 3);
+
+	/* MPIE <- 1 */
+	mstatus |= ((word_t)1u << 7);
+
+	cpu.csr.mstatus = mstatus;
+
+	/*
+	* If you implement privilege levels, you should restore privilege mode here.
+	* Example, cpu.priv = mpp;
+	*/
+	cpu.prvi = mpp;
+
+	/* dnpc <- mepc */
 	rtl_jr(s, &cpu.csr.mepc);
 }
