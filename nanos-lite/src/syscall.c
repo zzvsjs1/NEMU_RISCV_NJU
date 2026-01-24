@@ -4,9 +4,20 @@
 #include <inttypes.h>
 #include "memory.h"
 #include "proc.h"
+#include "sys/_intsup.h"
 
 void context_uload(PCB *pcb, const char *filename, char *const argv[], char *const envp[]);
 extern PCB *current;
+
+static volatile int need_resched = 0;
+
+// Called by do_event() to test and clear the reschedule request.
+int syscall_need_resched_and_clear(void) 
+{
+  const int v = need_resched;
+  need_resched = 0;
+  return v;
+}
 
 void do_syscall(Context *c) 
 {
@@ -44,7 +55,10 @@ void do_syscall(Context *c)
       Log("SYS_yield called");
 #endif
 
-      yield();
+      // yield();
+
+      // Do not trigger another trap here, just request rescheduling.
+      need_resched = 1;
       c->GPRx = 0;
       break;
     }
@@ -88,7 +102,9 @@ void do_syscall(Context *c)
       );
 #endif
 
-      c->GPRx = 0;
+      // brk() returns 0 on success, -1 on failure in our convention.
+      int mm_brk(uintptr_t brk);
+      c->GPRx = mm_brk(arg1);
       break;
     }
 
@@ -203,9 +219,12 @@ void do_syscall(Context *c)
 
       context_uload(current, filename, (char *const *)argv, (char *const *)envp);
 
-      void switch_boot_pcb();
-      switch_boot_pcb();
-      yield();
+      // void switch_boot_pcb();
+      // switch_boot_pcb();
+      // yield();
+
+      // Request rescheduling so the new context can take effect.
+      need_resched = 1;
 
       // Should not reach here on success
       c->GPRx = (uintptr_t)-1;

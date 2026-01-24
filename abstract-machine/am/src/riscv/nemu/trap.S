@@ -53,8 +53,13 @@ __am_asm_trap:
 
   mv a0, sp
   call __am_irq_handle
+  
   // Switch sp to new context.
   mv sp, a0
+
+  # Switch address space AFTER we are on the next Context stack
+  mv a0, sp
+  call __am_switch
 
   LOAD t1, OFFSET_STATUS(sp)
   LOAD t2, OFFSET_EPC(sp)

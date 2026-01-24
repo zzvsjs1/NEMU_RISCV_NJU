@@ -80,6 +80,9 @@ LD        = $(CROSS_COMPILE)ld
 AR        = $(CROSS_COMPILE)ar
 OBJDUMP   = $(CROSS_COMPILE)objdump
 
+# VME, use vitual memory
+VME       = 1
+
 ### Compilation flags
 INC_PATH += $(WORK_DIR)/include $(foreach l,$(LIBS_INC),$(NAVY_HOME)/libs/$(l)/include/)
 INCFLAGS += $(addprefix -I, $(INC_PATH))

@@ -6,6 +6,9 @@ static Context* (*user_handler)(Event, Context*) = NULL;
 
 Context* __am_irq_handle(Context *c)
 {
+  void __am_get_cur_as(Context *c);
+  __am_get_cur_as(c);
+
   // printf("\n\nc->mcause= 0x%x\n\n", c->mcause);
   if (user_handler)
   {
@@ -18,6 +21,7 @@ Context* __am_irq_handle(Context *c)
         c->mepc += sizeof(uint32_t);
         break;
       }
+
       default: {
         ev.event = EVENT_ERROR; 
         break;
@@ -34,6 +38,9 @@ Context* __am_irq_handle(Context *c)
     c = user_handler(ev, c);
     assert(c != NULL);
   }
+
+  // void __am_switch(Context *c);
+  // __am_switch(c);
 
   return c;
 }

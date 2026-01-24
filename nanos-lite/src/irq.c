@@ -2,17 +2,30 @@
 
 Context *schedule(Context *prev);
 
+// Provided by syscall.c
+int syscall_need_resched_and_clear(void);
+
 static Context* do_event(Event e, Context* c) 
 {
   switch (e.event) {
     case EVENT_YIELD: {
+      // Yield event always triggers scheduling.
       return schedule(c);
     }
+
     case EVENT_SYSCALL: {
       void do_syscall(Context *c);
       do_syscall(c);
+
+      // Perform scheduling once if the syscall requested it.
+      if (syscall_need_resched_and_clear()) 
+      {
+        return schedule(c);
+      }
+
       break;
     }
+
     default: {
       panic("Unhandled event ID = %d", e.event);
       break;
