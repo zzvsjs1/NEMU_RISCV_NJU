@@ -68,11 +68,13 @@ public:
   uint32_t background(int x, int y);
 
   void clear(); // clear dirty states
+  void clear_screen();
   const char *keypress(char ch);
 };
 
 extern Terminal *term;
 
 void refresh_terminal();
+int nterm_selftest(bool to_terminal);
 
 #endif

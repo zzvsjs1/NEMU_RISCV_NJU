@@ -39,6 +39,7 @@ typedef struct
     } csr;
 
     rtlreg_t prvi;
+    bool INTR;
 } riscv32_CPU_state;
 
 // decode

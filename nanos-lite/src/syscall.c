@@ -10,6 +10,7 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
 extern PCB *current;
 
 static volatile int need_resched = 0;
+static volatile int context_replaced = 0;
 
 // Called by do_event() to test and clear the reschedule request.
 int syscall_need_resched_and_clear(void) 
@@ -17,6 +18,19 @@ int syscall_need_resched_and_clear(void)
   const int v = need_resched;
   need_resched = 0;
   return v;
+}
+
+Context *syscall_replacement_context_and_clear(void)
+{
+  if (!context_replaced)
+  {
+    return NULL;
+  }
+
+  context_replaced = 0;
+  assert(current != NULL);
+  assert(current->cp != NULL);
+  return current->cp;
 }
 
 #ifdef STRACE
@@ -196,12 +210,9 @@ void do_syscall(Context *c)
 
       context_uload(current, filename, (char *const *)argv, (char *const *)envp);
 
-      // void switch_boot_pcb();
-      // switch_boot_pcb();
-      // yield();
-
-      // Request rescheduling so the new context can take effect.
-      need_resched = 1;
+      // Return through the freshly built user context instead of the old
+      // syscall frame, which belongs to the image being replaced.
+      context_replaced = 1;
 
       // Should not reach here on success
       c->GPRx = (uintptr_t)-1;

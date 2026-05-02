@@ -181,7 +181,8 @@ Context *ucontext(AddrSpace *as, Area kstack, void *entry)
     c->mstatus &= ~((uintptr_t)0x1800); // MPP = 00 (U)
 
     c->pdir = as->ptr;   // Use this address space's page table root
-    c->ksp = c;
+    c->ksp = kstack.end;
+    c->np = 1;
 
     return c;
 }

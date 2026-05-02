@@ -10,6 +10,11 @@ PCB *current = NULL;
 
 void switch_boot_pcb() { current = &pcb_boot; }
 
+static bool pcb_runnable(PCB *pcb)
+{
+  return pcb != NULL && pcb->cp != NULL;
+}
+
 void context_kload(PCB* pcb, void (*entry)(void *), void* arg)
 {
   // Build an Area that describes this PCB's kernel stack range.
@@ -40,13 +45,13 @@ void hello_fun(void *arg)
 
 void init_proc() 
 {
-  context_kload(&pcb[0], hello_fun, (void *)"A");
-
   Log("Initializing processes...");
 
-  static char *const argv_pal[] = { "/bin/pal", NULL, NULL };
+  static char *const argv_nterm[] = { "/bin/nterm", NULL };
+  static char *const argv_hello[] = { "/bin/hello", NULL };
   static char *const envp_empty[] = { NULL };
-  context_uload(&pcb[1], "/bin/pal", argv_pal, envp_empty);
+  context_uload(&pcb[0], "/bin/nterm", argv_nterm, envp_empty);
+  context_uload(&pcb[1], "/bin/hello", argv_hello, envp_empty);
   
   // Initialize current to the boot PCB,
   // so the first schedule() call switches to pcb[0].
@@ -58,7 +63,8 @@ void init_proc()
 
 Context *schedule(Context *prev) 
 { 
-  // Do RR schedule.
+  enum { FOREGROUND_QUANTA = 5 };
+  static int foreground_budget = FOREGROUND_QUANTA;
   
   // Save the context of the currently running PCB.
   if (current != NULL) 
@@ -72,10 +78,20 @@ Context *schedule(Context *prev)
   {
     current = &pcb[0];
   } 
+  else if (current == &pcb[0])
+  {
+    if (pcb_runnable(&pcb[1]) && foreground_budget-- <= 0)
+    {
+      foreground_budget = FOREGROUND_QUANTA;
+      current = &pcb[1];
+    }
+  }
   else 
   {
-    current = (current == &pcb[0]) ? &pcb[1] : &pcb[0];
+    current = &pcb[0];
   }
+
+  assert(pcb_runnable(current));
 
   // Return the context pointer of the next PCB.
   return current->cp;

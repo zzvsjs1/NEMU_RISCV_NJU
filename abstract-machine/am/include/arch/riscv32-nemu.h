@@ -9,7 +9,8 @@ struct Context
   uintptr_t mepc;
   void *pdir;
   void *ksp;
-  uintptr_t _padding[3];
+  uintptr_t np;
+  uintptr_t _padding[2];
 };
 
 #define GPR1 gpr[17] // a7

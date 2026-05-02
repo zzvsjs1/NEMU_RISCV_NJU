@@ -10,6 +10,8 @@
 #define MSTATUS_MPRV_WIDTH    1
 #define MSTATUS_GVA_BIT       18      // Guest VA valid on trap
 
+#define IRQ_TIMER 0x80000007u
+
 static inline uint64_t get_bit(uint64_t csr, unsigned bit)
 {
     return (csr >> bit) & 1ULL;
@@ -177,5 +179,11 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc)
 
 word_t isa_query_intr() 
 {
+    if (cpu.INTR && (cpu.csr.mstatus & (1u << MSTATUS_MIE_BIT)))
+    {
+        cpu.INTR = false;
+        return IRQ_TIMER;
+    }
+
     return INTR_EMPTY;
 }

@@ -327,3 +327,10 @@ void Terminal::clear() {
   dirty[cursor.x + cursor.y * w] = true;
 }
 
+void Terminal::clear_screen() {
+  for (int i = 0; i < w; i ++)
+    for (int j = 0; j < h; j ++) {
+      putch(i, j, EMPTY);
+    }
+  cursor = {.x = 0, .y = 0};
+}

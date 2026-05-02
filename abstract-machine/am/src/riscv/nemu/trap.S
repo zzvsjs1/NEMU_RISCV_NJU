@@ -27,20 +27,37 @@ f(30) f(31)
 #define OFFSET_STATUS (33 * XLEN)
 #define OFFSET_EPC    (34 * XLEN)
 #define OFFSET_KSP    (36 * XLEN)
+#define OFFSET_NP     (37 * XLEN)
 
 .align 3
 .globl __am_asm_trap
 __am_asm_trap:
-  // Use the current context's kernel trap stack. The interrupted sp is
-  // saved in mscratch until it can be written into Context.gpr[2].
+  // If mscratch is non-zero, we trapped from user mode and it holds the
+  // kernel stack top. If it is zero, we trapped while already in kernel mode.
   csrrw sp, mscratch, sp
+  bnez sp, 1f
+
+  // Kernel trap: restore the interrupted kernel sp from mscratch.
+  csrr sp, mscratch
+  addi sp, sp, -CONTEXT_SIZE
+  MAP(REGS, PUSH)
+  li t0, 0
+  j 2f
+
+1:
   addi sp, sp, -CONTEXT_SIZE
 
   MAP(REGS, PUSH)
+  li t0, 1
 
-  // Save stack pointer to context.
+2:
+  STORE t0, OFFSET_NP(sp)
+
+  // Save interrupted sp to context.
   csrr t3, mscratch
   STORE t3, OFFSET_SP(sp)
+
+  // Remember this context's kernel stack top for diagnostics/compatibility.
   addi t3, sp, CONTEXT_SIZE
   STORE t3, OFFSET_KSP(sp)
 
@@ -57,6 +74,10 @@ __am_asm_trap:
   or t1, t1, a0
   csrw mstatus, t1
 
+  // CTE has switched to a kernel stack. Any nested trap before returning must
+  // be treated as a kernel trap.
+  csrw mscratch, zero
+
   mv a0, sp
   call __am_irq_handle
   
@@ -67,10 +88,16 @@ __am_asm_trap:
   mv a0, sp
   call __am_switch
 
-  // Prepare the trap stack for the context we are about to resume.
-  LOAD t0, OFFSET_KSP(sp)
+  // Prepare mscratch for the privilege mode we are about to resume.
+  LOAD t0, OFFSET_NP(sp)
+  beqz t0, 3f
+  addi t0, sp, CONTEXT_SIZE
   csrw mscratch, t0
+  j 4f
+3:
+  csrw mscratch, zero
 
+4:
   LOAD t1, OFFSET_STATUS(sp)
   LOAD t2, OFFSET_EPC(sp)
   csrw mstatus, t1

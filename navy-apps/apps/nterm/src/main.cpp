@@ -1,6 +1,9 @@
 #include <nterm.h>
 #include <SDL.h>
 #include <SDL_bdf.h>
+#include <unistd.h>
+
+extern char **environ;
 
 static const char *font_fname = "/share/fonts/Courier-7.bdf";
 static BDF_Font *font = NULL;
@@ -20,6 +23,21 @@ int main(int argc, char *argv[]) {
   screen = SDL_SetVideoMode(win_w, win_h, 32, SDL_HWSURFACE);
 
   term = new Terminal(W, H);
+
+  if (argc >= 2 && strcmp(argv[1], "--selftest") == 0) {
+    // Build/ramdisk tests can execute this mode without synthesizing keyboard
+    // events in the graphical terminal.
+    return nterm_selftest(false);
+  }
+
+  if (argc >= 2 && strcmp(argv[1], "--autopal") == 0) {
+    // This mode mirrors the shell `autopal` command but avoids the shell event
+    // loop, which makes it suitable for deterministic startup tests.
+    const char *pal_argv[] = { "/bin/pal", NULL };
+    execve(pal_argv[0], (char **)pal_argv, environ);
+    printf("NTERM_AUTOPAL: exec failed\n");
+    return 1;
+  }
 
   if (argc < 2) { builtin_sh_run(); }
   else { extern_app_run(argv[1]); }

@@ -16,8 +16,6 @@ char handle_key(SDL_Event *ev);
 
 extern char **environ;
 
-char handle_key(SDL_Event *ev);
-
 static int sh_split_argv(char *s, char *argv[], int max_args) 
 {
   int argc = 0;
@@ -100,6 +98,51 @@ static void sh_print_exec_error(const char *cmd, int err) {
   }
 }
 
+static void sh_exec_external(const char *filename, char *argv[])
+{
+  // Nanos-lite's execve replaces the current process image on success.
+  // Returning from execvp therefore means the launch failed and should be
+  // reported in the shell instead of falling through silently.
+  execvp(filename, argv);
+
+  int err = errno;
+  sh_print_exec_error(argv[0], err);
+}
+
+static void sh_print_apps()
+{
+  sh_printf("Available shortcuts:\n");
+  sh_printf("  pal       launch /bin/pal\n");
+  sh_printf("  hello     launch /bin/hello\n");
+  sh_printf("  busybox   launch /bin/busybox\n");
+  sh_printf("  autopal   launch /bin/pal for automated testing\n");
+  sh_printf("  selftest  run NTerm built-in checks\n");
+}
+
+int nterm_selftest(bool to_terminal)
+{
+  // Keep this test independent of the GUI event loop: it validates the shell
+  // argument splitter used by command shortcuts and can run as `/bin/nterm
+  // --selftest` from automated Nanos-lite tests.
+  char line[] = "pal --skip \"quoted arg\"";
+  char *argv[SH_MAX_ARGS];
+  int argc = sh_split_argv(line, argv, SH_MAX_ARGS);
+  bool ok = true;
+
+  ok = ok && argc == 3;
+  ok = ok && strcmp(argv[0], "pal") == 0;
+  ok = ok && strcmp(argv[1], "--skip") == 0;
+  ok = ok && strcmp(argv[2], "quoted arg") == 0;
+
+  const char *msg = ok ? "NTERM_SELFTEST: PASS\n" : "NTERM_SELFTEST: FAIL\n";
+  printf("%s", msg);
+  if (to_terminal && term != NULL) {
+    term->write(msg, strlen(msg));
+  }
+
+  return ok ? 0 : 1;
+}
+
 static void sh_handle_cmd(const char *cmd) 
 {
   // 0) Defensive checks
@@ -153,7 +196,14 @@ static void sh_handle_cmd(const char *cmd)
   if (strcmp(argv[0], "help") == 0) {
     sh_printf("Built-in commands:\n");
     sh_printf("  echo [args...]\n");
+    sh_printf("  apps\n");
+    sh_printf("  clear\n");
     sh_printf("  help\n");
+    sh_printf("  pal [args...]\n");
+    sh_printf("  hello [args...]\n");
+    sh_printf("  busybox [args...]\n");
+    sh_printf("  autopal\n");
+    sh_printf("  selftest\n");
     sh_printf("  exit\n");
     sh_printf("External programs:\n");
     sh_printf("  <prog> [args...], example: pal --skip\n");
@@ -161,9 +211,60 @@ static void sh_handle_cmd(const char *cmd)
     return;
   }
 
+  if (strcmp(argv[0], "clear") == 0) {
+    term->clear_screen();
+    free(line);
+    return;
+  }
+
+  if (strcmp(argv[0], "apps") == 0) {
+    sh_print_apps();
+    free(line);
+    return;
+  }
+
+  if (strcmp(argv[0], "selftest") == 0) {
+    nterm_selftest(true);
+    free(line);
+    return;
+  }
+
   if (strcmp(argv[0], "exit") == 0) {
     // No need to free(line) because we are terminating the process.
     _exit(0);
+  }
+
+  if (strcmp(argv[0], "pal") == 0) {
+    // The shortcut preserves user-provided arguments while replacing argv[0]
+    // with the absolute ramdisk path expected by Nanos-lite.
+    argv[0] = (char *)"/bin/pal";
+    sh_exec_external(argv[0], argv);
+    free(line);
+    return;
+  }
+
+  if (strcmp(argv[0], "hello") == 0) {
+    argv[0] = (char *)"/bin/hello";
+    sh_exec_external(argv[0], argv);
+    free(line);
+    return;
+  }
+
+  if (strcmp(argv[0], "busybox") == 0) {
+    argv[0] = (char *)"/bin/busybox";
+    sh_exec_external(argv[0], argv);
+    free(line);
+    return;
+  }
+
+  if (strcmp(argv[0], "autopal") == 0) {
+    // `autopal` is intentionally non-interactive: it gives tests and manual
+    // sessions a stable way to jump from NTerm into PAL without typing a path.
+    char *autopal_argv[] = { (char *)"/bin/pal", NULL };
+    sh_printf("Launching /bin/pal...\n");
+    sh_exec_external(autopal_argv[0], autopal_argv);
+    free(line);
+    return;
   }
 
   // 5) External command
@@ -176,11 +277,7 @@ static void sh_handle_cmd(const char *cmd)
     return;
   }
 
-  execvp(filename, argv);
-
-  // If we reached here, execvp failed, capture errno immediately.
-  int err = errno;
-  sh_print_exec_error(argv[0], err);
+  sh_exec_external(filename, argv);
 
   free(line);
 }

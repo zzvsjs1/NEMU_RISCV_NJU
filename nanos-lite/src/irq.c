@@ -4,6 +4,7 @@ Context *schedule(Context *prev);
 
 // Provided by syscall.c
 int syscall_need_resched_and_clear(void);
+Context *syscall_replacement_context_and_clear(void);
 
 static Context* do_event(Event e, Context* c) 
 {
@@ -17,6 +18,12 @@ static Context* do_event(Event e, Context* c)
       void do_syscall(Context *c);
       do_syscall(c);
 
+      Context *replacement = syscall_replacement_context_and_clear();
+      if (replacement != NULL)
+      {
+        return replacement;
+      }
+
       // Perform scheduling once if the syscall requested it.
       if (syscall_need_resched_and_clear()) 
       {
@@ -24,6 +31,10 @@ static Context* do_event(Event e, Context* c)
       }
 
       break;
+    }
+
+    case EVENT_IRQ_TIMER: {
+      return schedule(c);
     }
 
     default: {

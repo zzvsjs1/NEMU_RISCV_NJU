@@ -3,7 +3,13 @@
 #include <klib.h>
 
 static Context* (*user_handler)(Event, Context*) = NULL;
-static uint8_t boot_trap_stack[4096] __attribute__((aligned(16)));
+
+enum { NP_KERNEL = 0, NP_USER = 1 };
+
+#define IRQ_TIMER ((uintptr_t)0x80000007u)
+#define MSTATUS_MIE  (1u << 3)
+#define MSTATUS_MPIE (1u << 7)
+#define MSTATUS_MPP_M (3u << 11)
 
 Context* __am_irq_handle(Context *c)
 {
@@ -20,6 +26,11 @@ Context* __am_irq_handle(Context *c)
         ev.event = EVENT_YIELD; 
         // Add pc, this must be done by software.
         c->mepc += sizeof(uint32_t);
+        break;
+      }
+
+      case IRQ_TIMER: {
+        ev.event = EVENT_IRQ_TIMER;
         break;
       }
 
@@ -49,7 +60,7 @@ bool cte_init(Context*(*handler)(Event, Context*))
 {
   // initialize exception entry
   asm volatile("csrw mtvec, %0" : : "r"(__am_asm_trap));
-  asm volatile("csrw mscratch, %0" : : "r"(boot_trap_stack + sizeof(boot_trap_stack)));
+  asm volatile("csrw mscratch, zero");
 
   // register event handler
   user_handler = handler;
@@ -76,11 +87,12 @@ Context *kcontext(Area kstack, void (*entry)(void *), void *arg)
   // Place the argument.
   c->GPR2 = (uintptr_t)arg;
 
-  c->mstatus = 0x1800 | 0x80;
+  c->mstatus = MSTATUS_MPP_M | MSTATUS_MPIE;
 
   c->mcause = 0;
   c->pdir = NULL;
-  c->ksp = c;
+  c->ksp = kstack.end;
+  c->np = NP_KERNEL;
 
   // Clash now!
   c->gpr[1] = 0;
@@ -95,10 +107,19 @@ void yield()
 
 bool ienabled()
 {
-  return false;
+  uintptr_t mstatus;
+  asm volatile("csrr %0, mstatus" : "=r"(mstatus));
+  return (mstatus & MSTATUS_MIE) != 0;
 }
 
 void iset(bool enable)
 {
-  // Do nothing.
+  if (enable) 
+  {
+    asm volatile("csrsi mstatus, 8");
+  } 
+  else 
+  {
+    asm volatile("csrci mstatus, 8");
+  }
 }
