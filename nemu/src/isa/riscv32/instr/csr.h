@@ -40,20 +40,18 @@ def_EHelper(csrrw)
     // Get csr register address.
     rtlreg_t* csrPtr = getCSRAddress(csrAddress);
 
-    // If not x0, we read the csr value and write to dest.
-    // THIS IS A HACK!
+    const rtlreg_t oldCSRValue = *csrPtr;
+    const rtlreg_t newCSRValue = *dsrc1;
+
+    // If rd is not x0, read the old CSR value and write it to rd.
     if (s->isa.instr.CSR.rd != 0)
     {
-        //const word_t oldCSRValue = *csrPtr;
-
-        // zero-extends the value to XLEN bits, then writes it to integer register rd
-        //rtl_li(s, ddest, oldCSRValue);
-
-        rtl_mv(s, ddest, csrPtr);
+        rtl_li(s, ddest, oldCSRValue);
     }
 
-    // Write rs1 to csr
-    rtl_mv(s, csrPtr, dsrc1);
+    // Write the original rs1 value to the CSR. This must still be correct
+    // when rd == rs1, for example: csrrw sp, mscratch, sp.
+    rtl_li(s, csrPtr, newCSRValue);
 }
 
 // The CSRRS (Atomic Read and Set Bits in CSR) instruction reads the value of the CSR, zero-extends the

@@ -474,16 +474,7 @@ int sprintf(char       *out,
 
 int printf(const char *fmt, ...)
 {
-    static char *buffer = NULL;
-
-    if (buffer == NULL)
-    {
-        buffer = (char *)malloc(PRINTF_BUFFER_SIZE);
-        if (!buffer)
-        {
-            return -1;              /* allocation failed */
-        }
-    }
+    static char buffer[PRINTF_BUFFER_SIZE];
 
     va_list ap;
     va_start(ap, fmt);

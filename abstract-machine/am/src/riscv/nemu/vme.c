@@ -69,7 +69,8 @@ void unprotect(AddrSpace *as)
 
 void __am_get_cur_as(Context *c) 
 {
-    c->pdir = (vme_enable ? (void *)get_satp() : NULL);
+    uintptr_t mpp = (c->mstatus >> 11) & 0x3;
+    c->pdir = (vme_enable && mpp == 0 ? (void *)get_satp() : NULL);
 }
 
 void __am_switch(Context *c) 
@@ -180,6 +181,7 @@ Context *ucontext(AddrSpace *as, Area kstack, void *entry)
     c->mstatus &= ~((uintptr_t)0x1800); // MPP = 00 (U)
 
     c->pdir = as->ptr;   // Use this address space's page table root
+    c->ksp = c;
 
     return c;
 }

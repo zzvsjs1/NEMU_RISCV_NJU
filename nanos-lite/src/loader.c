@@ -327,6 +327,7 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
     pcb->cp = ucontext(&pcb->as, kstack, (void *)entry);
 
     // 6) Set user initial SP and the ABI argument pointer.
+    pcb->cp->GPRSP = args_va;
     pcb->cp->GPRx = args_va;
 }
 
@@ -336,4 +337,3 @@ void naive_uload(PCB *pcb, const char *filename)
     Log("Jump to entry = %p", entry);
     ((void(*)())entry) ();
 }
-

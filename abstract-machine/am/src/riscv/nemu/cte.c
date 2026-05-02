@@ -3,6 +3,7 @@
 #include <klib.h>
 
 static Context* (*user_handler)(Event, Context*) = NULL;
+static uint8_t boot_trap_stack[4096] __attribute__((aligned(16)));
 
 Context* __am_irq_handle(Context *c)
 {
@@ -39,9 +40,6 @@ Context* __am_irq_handle(Context *c)
     assert(c != NULL);
   }
 
-  // void __am_switch(Context *c);
-  // __am_switch(c);
-
   return c;
 }
 
@@ -51,6 +49,7 @@ bool cte_init(Context*(*handler)(Event, Context*))
 {
   // initialize exception entry
   asm volatile("csrw mtvec, %0" : : "r"(__am_asm_trap));
+  asm volatile("csrw mscratch, %0" : : "r"(boot_trap_stack + sizeof(boot_trap_stack)));
 
   // register event handler
   user_handler = handler;
@@ -81,6 +80,7 @@ Context *kcontext(Area kstack, void (*entry)(void *), void *arg)
 
   c->mcause = 0;
   c->pdir = NULL;
+  c->ksp = c;
 
   // Clash now!
   c->gpr[1] = 0;

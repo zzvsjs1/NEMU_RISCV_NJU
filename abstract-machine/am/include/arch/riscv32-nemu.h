@@ -8,6 +8,8 @@ struct Context
   uintptr_t mstatus;
   uintptr_t mepc;
   void *pdir;
+  void *ksp;
+  uintptr_t _padding[3];
 };
 
 #define GPR1 gpr[17] // a7

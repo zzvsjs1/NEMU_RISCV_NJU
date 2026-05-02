@@ -25,6 +25,10 @@ typedef struct
         // 0x305
         rtlreg_t mtvec;
     
+        // Machine scratch register.
+        // 0x340
+        rtlreg_t mscratch;
+
         // Machine exception program counter.
         // 0x341
         rtlreg_t mepc;

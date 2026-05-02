@@ -95,9 +95,8 @@ static void updateMstatus()
     // 2) Save old MIE into MPIE
     s = set_bit(s, MSTATUS_MPIE_BIT, get_bit(cpu.csr.mstatus, MSTATUS_MIE_BIT));
 
-    // 3) Save current priv into MPP
-    // 0x3 mean Machine, will change later.....
-    s = set_field(s, MSTATUS_MPP_SHIFT, MSTATUS_MPP_WIDTH, 0x3);
+    // 3) Save current privilege into MPP.
+    s = set_field(s, MSTATUS_MPP_SHIFT, MSTATUS_MPP_WIDTH, cpu.prvi);
 
     // 4) Disable interrupts (clear MIE)
     s = set_bit(s, MSTATUS_MIE_BIT, false);
@@ -112,6 +111,7 @@ static void updateMstatus()
 
     // 7) Write it back
     cpu.csr.mstatus = s;
+    cpu.prvi = 0x3;
 }
 
 word_t isa_raise_intr(word_t NO, vaddr_t epc) 

@@ -21,22 +21,28 @@ f(30) f(31)
 #define PUSH(n) STORE concat(x, n), (n * XLEN)(sp);
 #define POP(n)  LOAD  concat(x, n), (n * XLEN)(sp);
 
-#define CONTEXT_SIZE  ((32 + 3 + 1) * XLEN)
+#define CONTEXT_SIZE  ((32 + 3 + 1 + 1 + 3) * XLEN)
 #define OFFSET_SP     ( 2 * XLEN)
 #define OFFSET_CAUSE  (32 * XLEN)
 #define OFFSET_STATUS (33 * XLEN)
 #define OFFSET_EPC    (34 * XLEN)
+#define OFFSET_KSP    (36 * XLEN)
 
 .align 3
 .globl __am_asm_trap
 __am_asm_trap:
+  // Use the current context's kernel trap stack. The interrupted sp is
+  // saved in mscratch until it can be written into Context.gpr[2].
+  csrrw sp, mscratch, sp
   addi sp, sp, -CONTEXT_SIZE
 
   MAP(REGS, PUSH)
 
   // Save stack pointer to context.
-  addi t3, sp, CONTEXT_SIZE
+  csrr t3, mscratch
   STORE t3, OFFSET_SP(sp)
+  addi t3, sp, CONTEXT_SIZE
+  STORE t3, OFFSET_KSP(sp)
 
   csrr t0, mcause
   csrr t1, mstatus
@@ -57,9 +63,13 @@ __am_asm_trap:
   // Switch sp to new context.
   mv sp, a0
 
-  # Switch address space AFTER we are on the next Context stack
+  # Switch address space after moving to the next context stack.
   mv a0, sp
   call __am_switch
+
+  // Prepare the trap stack for the context we are about to resume.
+  LOAD t0, OFFSET_KSP(sp)
+  csrw mscratch, t0
 
   LOAD t1, OFFSET_STATUS(sp)
   LOAD t2, OFFSET_EPC(sp)
@@ -68,5 +78,6 @@ __am_asm_trap:
 
   MAP(REGS, POP)
 
-  addi sp, sp, CONTEXT_SIZE
+  // Restore target x2 from Context.gpr[2], not from Context pointer arithmetic.
+  LOAD sp, OFFSET_SP(sp)
   mret

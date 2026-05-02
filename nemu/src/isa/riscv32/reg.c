@@ -26,6 +26,7 @@ static const csr_disp_t csr_list[] = {
   {0x180, "satp"},
   {0x300, "mstatus"},
   {0x305, "mtvec"},
+  {0x340, "mscratch"},
   {0x341, "mepc"},
   {0x342, "mcause"},
 };
@@ -46,6 +47,7 @@ rtlreg_t* getCSRAddress(const word_t address)
     case 0x180: return &cpu.csr.satp;
     case 0x300: return &cpu.csr.mstatus;
     case 0x305: return &cpu.csr.mtvec;
+    case 0x340: return &cpu.csr.mscratch;
     case 0x341: return &cpu.csr.mepc;
     case 0x342: return &cpu.csr.mcause;
     default:
