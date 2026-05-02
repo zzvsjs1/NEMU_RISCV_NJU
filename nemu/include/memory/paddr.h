@@ -17,4 +17,11 @@ static inline bool in_pmem(paddr_t addr) {
 word_t paddr_read(paddr_t addr, int len);
 void paddr_write(paddr_t addr, int len, word_t data);
 
+#ifndef CONFIG_TARGET_AM
+#include <stdio.h>
+/* Snapshot support needs the raw PMEM image without exposing pmem itself. */
+bool pmem_save(FILE *fp);
+bool pmem_load(FILE *fp);
+#endif
+
 #endif

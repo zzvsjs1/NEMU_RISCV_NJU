@@ -34,6 +34,21 @@ extern NEMUState nemu_state;
 
 uint64_t get_time();
 
+// ----------- debug infrastructure -----------
+
+#ifndef CONFIG_TARGET_AM
+// SDB snapshot commands persist the simulator state, not guest files.
+void save_snapshot(const char *path);
+void load_snapshot(const char *path);
+#endif
+
+// Trace helpers are no-ops unless their matching Kconfig option is enabled.
+void trace_iringbuf_record(const char *logbuf);
+void trace_iringbuf_dump();
+void ftrace_init(const char *elf_file);
+void ftrace_call(vaddr_t pc, vaddr_t target);
+void ftrace_ret(vaddr_t pc);
+
 // ----------- log -----------
 
 #define ANSI_FG_BLACK   "\33[1;30m"

@@ -16,6 +16,12 @@ def_EHelper(jal)
 	// Compute the inst address jump to.
 	rtl_add(s, s0, &s->pc, s0);
 
+	// RISC-V ABI uses x1(ra) and x5(t0) as link registers for calls.
+	if (s->isa.instr.j.rd == 1 || s->isa.instr.j.rd == 5)
+	{
+		ftrace_call(s->pc, *s0);
+	}
+
 	// Jump *s0
 	rtl_jr(s, s0);
 }
@@ -42,6 +48,18 @@ def_EHelper(jalr)
 
 	// setting the least-significant bit of the result to zero
 	rtl_andi(s, s0, s0, ~1);
+
+	// ret is encoded as jalr x0, 0(x1/x5); jalr to x1/x5 records a call.
+	if (s->isa.instr.i.rd == 0 &&
+		(s->isa.instr.i.rs1 == 1 || s->isa.instr.i.rs1 == 5) &&
+		s->isa.instr.i.simm11_0 == 0)
+	{
+		ftrace_ret(s->pc);
+	}
+	else if (s->isa.instr.i.rd == 1 || s->isa.instr.i.rd == 5)
+	{
+		ftrace_call(s->pc, *s0);
+	}
 
 	// Store the next instuction(pc + 4) to ddest(rd).
 	// rd may equal to src1, so do this later.

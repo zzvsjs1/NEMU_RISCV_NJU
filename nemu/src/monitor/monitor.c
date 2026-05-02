@@ -28,6 +28,8 @@ void sdb_set_batch_mode();
 static char *log_file = NULL;
 static char *diff_so_file = NULL;
 static char *img_file = NULL;
+/* Optional ELF path used only by CONFIG_FTRACE for symbol lookup. */
+static char *elf_file = NULL;
 static int difftest_port = 1234;
 static char* expr_test_file = NULL;
 
@@ -61,6 +63,7 @@ static int parse_args(int argc, char *argv[])
     {"batch"        , no_argument      , NULL, 'b'},     
     {"log"          , required_argument, NULL, 'l'},    
     {"diff"         , required_argument, NULL, 'd'},    
+    {"elf"          , required_argument, NULL, 'f'},
     {"port"         , required_argument, NULL, 'p'},   
     {"expr"         , required_argument, NULL, 'e'},   
     {"help"         , no_argument      , NULL, 'h'},   
@@ -68,7 +71,7 @@ static int parse_args(int argc, char *argv[])
     };
 
     int o;
-    while ( (o = getopt_long(argc, argv, "-bhl:d:p:e:", table, NULL)) != -1)
+    while ( (o = getopt_long(argc, argv, "-bhl:d:f:p:e:", table, NULL)) != -1)
     {
         switch (o)
         {
@@ -76,6 +79,8 @@ static int parse_args(int argc, char *argv[])
             case 'p': sscanf(optarg, "%d", &difftest_port); break;
             case 'l': log_file = optarg; break;
             case 'd': diff_so_file = optarg; break;
+            /* Keep --elf separate from IMAGE because ftrace needs the unstripped ELF. */
+            case 'f': elf_file = optarg; break;
             case 'e': expr_test_file = optarg; break;
             case 1: img_file = optarg; return optind - 1;
             default:
@@ -83,6 +88,7 @@ static int parse_args(int argc, char *argv[])
                 printf("\t-b,--batch                      run with batch mode\n");
                 printf("\t-l,--log=FILE                   output log to FILE\n");
                 printf("\t-d,--diff=REF_SO                run DiffTest with reference REF_SO\n");
+                printf("\t-f,--elf=FILE                   load ELF symbols for ftrace\n");
                 printf("\t-p,--port=PORT                  run DiffTest with port PORT\n");
                 printf("\t-e, --expr=FILE                 run expr test with FILE\n");
                 printf("\n");
@@ -184,6 +190,9 @@ void init_monitor(int argc, char *argv[])
 
     /* Initialize the simple debugger. */
     init_sdb();
+
+    /* ftrace tolerates a missing ELF path; it simply stays disabled at runtime. */
+    IFDEF(CONFIG_FTRACE, ftrace_init(elf_file));
 
     IFDEF(CONFIG_ITRACE, init_disasm(
         MUXDEF(CONFIG_ISA_x86,         "i686",

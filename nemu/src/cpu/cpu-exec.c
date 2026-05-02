@@ -23,6 +23,11 @@ void fetch_decode(Decode *s, vaddr_t pc);
 
 static void trace_and_difftest(Decode *_this, vaddr_t dnpc) 
 {
+#ifdef CONFIG_IRINGBUF
+    /* Record every decoded itrace line so aborts can print recent history. */
+    trace_iringbuf_record(_this->logbuf);
+#endif
+
 #ifdef CONFIG_ITRACE_COND
 
     if (ITRACE_COND) 
@@ -78,6 +83,8 @@ static void statistic()
 
 void assert_fail_msg() 
 {
+    /* Print the recent instruction window before register/statistic dumps. */
+    trace_iringbuf_dump();
     isa_reg_display();
     statistic();
 }
@@ -163,6 +170,8 @@ void cpu_exec(uint64_t n)
             break;
         case NEMU_END: 
         case NEMU_ABORT:
+            /* NEMU_ABORT may not go through Assert(), so dump the ring here too. */
+            IFDEF(CONFIG_IRINGBUF, trace_iringbuf_dump());
             Log("nemu: %s at pc = " FMT_WORD,
                     (nemu_state.state == NEMU_ABORT ? ANSI_FMT("ABORT", ANSI_FG_RED) :
                      (nemu_state.halt_ret == 0 ? ANSI_FMT("HIT GOOD TRAP", ANSI_FG_GREEN) :

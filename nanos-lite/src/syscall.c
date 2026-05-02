@@ -19,6 +19,65 @@ int syscall_need_resched_and_clear(void)
   return v;
 }
 
+#ifdef STRACE
+static const char *syscall_name(uintptr_t num)
+{
+  /* Keep unknown IDs printable so the panic path still has context. */
+  switch (num) {
+    case SYS_exit: return "exit";
+    case SYS_yield: return "yield";
+    case SYS_open: return "open";
+    case SYS_read: return "read";
+    case SYS_write: return "write";
+    case SYS_close: return "close";
+    case SYS_lseek: return "lseek";
+    case SYS_brk: return "brk";
+    case SYS_execve: return "execve";
+    case SYS_gettimeofday: return "gettimeofday";
+    default: return "unknown";
+  }
+}
+
+static void strace_log(uintptr_t num, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3, uintptr_t ret)
+{
+  /* Print one Linux-strace-like line after the syscall has produced GPRx. */
+  switch (num) {
+    case SYS_open:
+      Log("strace: open(\"%s\", %d, %d) = %d", (char *)arg1, (int)arg2, (int)arg3, (int)ret);
+      break;
+    case SYS_read:
+      Log("strace: read(%d, 0x%08" PRIxPTR ", %zu) = %d", (int)arg1, arg2, (size_t)arg3, (int)ret);
+      break;
+    case SYS_write:
+      Log("strace: write(%d, 0x%08" PRIxPTR ", %zu) = %d", (int)arg1, arg2, (size_t)arg3, (int)ret);
+      break;
+    case SYS_close:
+      Log("strace: close(%d) = %d", (int)arg1, (int)ret);
+      break;
+    case SYS_lseek:
+      Log("strace: lseek(%d, %zu, %d) = %d", (int)arg1, (size_t)arg2, (int)arg3, (int)ret);
+      break;
+    case SYS_brk:
+      Log("strace: brk(0x%08" PRIxPTR ") = %d", arg1, (int)ret);
+      break;
+    case SYS_execve:
+      Log("strace: execve(\"%s\", 0x%08" PRIxPTR ", 0x%08" PRIxPTR ") = %d",
+          (char *)arg1, arg2, arg3, (int)ret);
+      break;
+    case SYS_gettimeofday:
+      Log("strace: gettimeofday(0x%08" PRIxPTR ", 0x%08" PRIxPTR ") = %d", arg1, arg2, (int)ret);
+      break;
+    case SYS_yield:
+      Log("strace: yield() = %d", (int)ret);
+      break;
+    default:
+      Log("strace: %s(0x%08" PRIxPTR ", 0x%08" PRIxPTR ", 0x%08" PRIxPTR ") = %d",
+          syscall_name(num), arg1, arg2, arg3, (int)ret);
+      break;
+  }
+}
+#endif
+
 void do_syscall(Context *c) 
 {
   const uintptr_t num  = c->GPR1;
@@ -26,24 +85,11 @@ void do_syscall(Context *c)
   const uintptr_t arg2 = c->GPR3;
   const uintptr_t arg3 = c->GPR4;
 
-#ifdef STRACE
-  Log(
-    "\nsyscall entry: "
-    "\n\tid=%" PRIuPTR
-    "\n\targ1=0x%016" PRIxPTR
-    "\n\targ2=0x%016" PRIxPTR
-    "\n\targ3=0x%016" PRIxPTR "",
-    num, arg1, arg2, arg3
-  );
-#endif
-
   switch (num) {
     case SYS_exit: {
 #ifdef STRACE
-      Log(
-        "SYS_exit called, Exit code = %d",
-        (int)arg1
-      );
+      /* SYS_exit halts before the common return-value trace can run. */
+      Log("strace: exit(%d)", (int)arg1);
 #endif
 
       halt(arg1);
@@ -51,10 +97,6 @@ void do_syscall(Context *c)
     }
     
     case SYS_yield: {
-#ifdef STRACE
-      Log("SYS_yield called");
-#endif
-
       // yield();
 
       // Do not trigger another trap here, just request rescheduling.
@@ -67,15 +109,6 @@ void do_syscall(Context *c)
       const int    fd    = (int)arg1;
       const char  *buf   = (char*)arg2;
       const size_t count = (size_t)arg3;
-
-#ifdef STRACE
-      Log(
-        "SYS_write called, fd=%d"
-        ", buf=0x%016" PRIxPTR
-        ", count=%zu",
-        fd, (uintptr_t)buf, count
-      );
-#endif
 
       if (fd == 1 || fd == 2) 
       {
@@ -95,13 +128,6 @@ void do_syscall(Context *c)
     }
 
     case SYS_brk: {
-#ifdef STRACE
-      Log(
-        "SYS_brk called, new_brk = 0x%016" PRIxPTR "",
-        arg1
-      );
-#endif
-
       // brk() returns 0 on success, -1 on failure in our convention.
       int mm_brk(uintptr_t brk);
       c->GPRx = mm_brk(arg1);
@@ -109,68 +135,26 @@ void do_syscall(Context *c)
     }
 
     case SYS_open: {
-#ifdef STRACE
-      Log(
-        "SYS_open called, path=0x%016" PRIxPTR
-        ", flags=%d"
-        ", mode=%d",
-        arg1, (int)arg2, (int)arg3
-      );
-#endif
-
       c->GPRx = fs_open((char*)arg1, (int)arg2, (int)arg3);
       break;
     }
 
     case SYS_read: {
-#ifdef STRACE
-      Log(
-        "SYS_read called, fd=%d"
-        ", buf=0x%016" PRIxPTR
-        ", count=%zu",
-        (int)arg1, arg2, (size_t)arg3
-      );
-#endif
-
       c->GPRx = fs_read((int)arg1, (void*)arg2, (size_t)arg3);
       break;
     }
 
     case SYS_close: {
-#ifdef STRACE
-      Log(
-        "SYS_close called, fd=%d",
-        (int)arg1
-      );
-#endif
-
       c->GPRx = fs_close((int)arg1);
       break;
     }
     
     case SYS_lseek: {
-#ifdef STRACE
-      Log(
-        "SYS_lseek called, fd=%d"
-        ", offset=0x%016" PRIxPTR
-        ", whence=%d",
-        (int)arg1, arg2, (int)arg3
-      );
-#endif
-
       c->GPRx = fs_lseek((int)arg1, (size_t)arg2, (int)arg3);
       break;
     }
 
     case SYS_gettimeofday: {
-#ifdef STRACE
-        Log(
-          "SYS_gettimeofday entry: tv_ptr=0x%016" PRIxPTR
-          ", tz_ptr=0x%016" PRIxPTR,
-          arg1, arg2
-        );
-#endif
-
         struct timeval  *tv = (struct timeval *)arg1;
         struct timezone *tz = (struct timezone *)arg2;
         // read uptime (microseconds) from the abstract machine
@@ -181,9 +165,6 @@ void do_syscall(Context *c)
         {
             tv->tv_sec  = uptimeUs / 1000000;
             tv->tv_usec = uptimeUs % 1000000;
-#ifdef STRACE
-            Log("  -> tv_sec=%ld, tv_usec=%06ld", (long)tv->tv_sec, (long)tv->tv_usec);
-#endif
         }
 
         // If tz is non-NULL, zero it out (timezone support is obsolete)
@@ -191,10 +172,6 @@ void do_syscall(Context *c)
         {
             tz->tz_minuteswest = 0;
             tz->tz_dsttime     = 0;
-
-#ifdef STRACE
-            Log("  -> tz_minuteswest=0, tz_dsttime=0");
-#endif
         }
 
         // success
@@ -236,4 +213,9 @@ void do_syscall(Context *c)
       break;
     }
   }
+
+#ifdef STRACE
+  /* Normal syscalls trace here so return values are always included. */
+  strace_log(num, arg1, arg2, arg3, c->GPRx);
+#endif
 }

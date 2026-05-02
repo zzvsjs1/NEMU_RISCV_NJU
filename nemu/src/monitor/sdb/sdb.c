@@ -5,6 +5,7 @@
 #include "sdb.h"
 #include "inttypes.h"
 #include <memory/vaddr.h>
+#include <utils.h>
 
 static int is_batch_mode = false;
 
@@ -63,6 +64,9 @@ static int cmd_add_wp(char* args);
 static int cmd_del_wp(char* args);
 
 static int cmd_set_register_val(char* args);
+/* Snapshot commands are monitor-only and operate on simulator state. */
+static int cmd_save(char* args);
+static int cmd_load(char* args);
 
 static struct {
 	const char *name;
@@ -81,6 +85,8 @@ static struct {
 	{ "w", "w expr. Add a watch point. The result will calculate by expression.", cmd_add_wp },
 	{ "d", "d [i]. Delete the no.i watch point", cmd_del_wp },
 	{ "set", "set reg_name val. Set a register to specific value.", cmd_set_register_val },
+	{ "save", "save [path]. Save NEMU snapshot to path.", cmd_save },
+	{ "load", "load [path]. Load NEMU snapshot from path.", cmd_load },
 
 };
 
@@ -324,6 +330,20 @@ static int cmd_set_register_val(char* args)
 error:
 
 	free(buffer);
+	return 0;
+}
+
+static int cmd_save(char* args)
+{
+	/* Keep argument parsing in snapshot.c so save/load validate paths consistently. */
+	save_snapshot(args);
+	return 0;
+}
+
+static int cmd_load(char* args)
+{
+	/* Restoring state can change pc, registers, PMEM, and NEMU stop/running status. */
+	load_snapshot(args);
 	return 0;
 }
 
