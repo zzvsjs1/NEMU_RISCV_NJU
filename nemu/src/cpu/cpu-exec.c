@@ -173,7 +173,8 @@ static inline bool should_update_device(uint32_t *counter)
 static inline bool can_fast_exec()
 {
 #if defined(CONFIG_ISA_riscv32) && !defined(CONFIG_TRACE) && \
-    !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT)
+    !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
+    !defined(CONFIG_MTRACE)
     return !g_print_step;
 #else
     return false;
