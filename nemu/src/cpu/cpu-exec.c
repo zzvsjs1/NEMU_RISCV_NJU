@@ -175,6 +175,12 @@ static inline bool can_fast_exec()
 #if defined(CONFIG_ISA_riscv32) && !defined(CONFIG_TRACE) && \
     !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
     !defined(CONFIG_MTRACE)
+    /*
+     * The fast executor bypasses the normal decode/execute helpers for common
+     * RISC-V32 instructions. Keep it disabled when any tracing or checking
+     * feature needs the full slow path, because those features depend on the
+     * interpreter's normal instrumentation points.
+     */
     return !g_print_step;
 #else
     return false;
