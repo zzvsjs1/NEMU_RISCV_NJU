@@ -32,6 +32,58 @@ static inline uint32_t rv32_funct7_funct3(Decode *s)
     return (rv32_funct7(s) << 3) | rv32_funct3(s);
 }
 
+static inline uint32_t rv32_rd(Decode *s)
+{
+    return BITS(get_instr(s), 11, 7);
+}
+
+static inline uint32_t rv32_rs1(Decode *s)
+{
+    return BITS(get_instr(s), 19, 15);
+}
+
+static inline uint32_t rv32_rs2(Decode *s)
+{
+    return BITS(get_instr(s), 24, 20);
+}
+
+static inline word_t rv32_imm_i(Decode *s)
+{
+    return (word_t)SEXT(BITS(get_instr(s), 31, 20), 12);
+}
+
+static inline word_t rv32_imm_s(Decode *s)
+{
+    const uint32_t imm = (BITS(get_instr(s), 31, 25) << 5) | rv32_rd(s);
+    return (word_t)SEXT(imm, 12);
+}
+
+static inline word_t rv32_imm_b_raw(Decode *s)
+{
+    return (BITS(get_instr(s), 11, 8) << 1)
+        | (BITS(get_instr(s), 30, 25) << 5)
+        | (BITS(get_instr(s), 7, 7) << 11)
+        | (BITS(get_instr(s), 31, 31) << 12);
+}
+
+static inline word_t rv32_imm_u(Decode *s)
+{
+    return get_instr(s) & 0xfffff000u;
+}
+
+static inline word_t rv32_imm_j_raw(Decode *s)
+{
+    return (BITS(get_instr(s), 31, 31) << 20)
+        | (BITS(get_instr(s), 19, 12) << 12)
+        | (BITS(get_instr(s), 20, 20) << 11)
+        | (BITS(get_instr(s), 30, 21) << 1);
+}
+
+static inline uint32_t rv32_csr(Decode *s)
+{
+    return BITS(get_instr(s), 31, 20);
+}
+
 /* End Helper */
 
 
@@ -60,74 +112,63 @@ static def_DopHelper(r)
 
 static def_DHelper(R)
 {
-    decode_op_r(s, id_src1, s->isa.instr.r.rs1, false);
-    decode_op_r(s, id_src2, s->isa.instr.r.rs2, false);
-    decode_op_r(s, id_dest, s->isa.instr.r.rd, true);
+    decode_op_r(s, id_src1, rv32_rs1(s), false);
+    decode_op_r(s, id_src2, rv32_rs2(s), false);
+    decode_op_r(s, id_dest, rv32_rd(s), true);
 }
 
 static def_DHelper(I)
 {
-    decode_op_r(s, id_src1, s->isa.instr.i.rs1, false);
-    decode_op_i(s, id_src2, s->isa.instr.i.simm11_0, false);
-    decode_op_r(s, id_dest, s->isa.instr.i.rd, true);
+    decode_op_r(s, id_src1, rv32_rs1(s), false);
+    decode_op_i(s, id_src2, rv32_imm_i(s), false);
+    decode_op_r(s, id_dest, rv32_rd(s), true);
 }
 
 static def_DHelper(S)
 {
-    decode_op_r(s, id_src1, s->isa.instr.s.rs1, false);
-    sword_t simm = (s->isa.instr.s.simm11_5 << 5) | s->isa.instr.s.imm4_0;
-    decode_op_i(s, id_src2, simm, false);
-    decode_op_r(s, id_dest, s->isa.instr.s.rs2, false);
+    decode_op_r(s, id_src1, rv32_rs1(s), false);
+    decode_op_i(s, id_src2, rv32_imm_s(s), false);
+    decode_op_r(s, id_dest, rv32_rs2(s), false);
 }
 
 static def_DHelper(B)
 {
     // rs1
-    decode_op_r(s, id_src1, s->isa.instr.b.rs1, false);
+    decode_op_r(s, id_src1, rv32_rs1(s), false);
     
     // rs2
-    decode_op_r(s, id_src2, s->isa.instr.b.rs2, false);
-
-    word_t simm = (s->isa.instr.b.imm4_1 << 1)
-                    | (s->isa.instr.b.imm10_5 << 5)
-                    | (s->isa.instr.b.imm11 << 11)
-                    | (s->isa.instr.b.simm12 << 12);
+    decode_op_r(s, id_src2, rv32_rs2(s), false);
 
     // imm
-    rtl_li(s, s0, simm);
+    rtl_li(s, s0, rv32_imm_b_raw(s));
 }
 
 static def_DHelper(U)
 {
     // imm[31:12]
-    decode_op_i(s, id_src1, s->isa.instr.u.imm31_12 << 12, true);
+    decode_op_i(s, id_src1, rv32_imm_u(s), true);
     // rd[11:7]
-    decode_op_r(s, id_dest, s->isa.instr.u.rd, true);
+    decode_op_r(s, id_dest, rv32_rd(s), true);
 }
 
 static def_DHelper(J)
 {
-    word_t cur_imm = s->isa.instr.j.imm20 << 20;
-    cur_imm |= s->isa.instr.j.imm19_12 << 12;
-    cur_imm |= s->isa.instr.j.imm11 << 11;
-    cur_imm |= s->isa.instr.j.imm10_1 << 1;
-
     // imm -> src1
     // rd -> id_dest.
-    decode_op_i(s, id_src1, cur_imm, false);
-    decode_op_r(s, id_dest, s->isa.instr.j.rd, true);
+    decode_op_i(s, id_src1, rv32_imm_j_raw(s), false);
+    decode_op_r(s, id_dest, rv32_rd(s), true);
 }
 
 static def_DHelper(CSR)
 {
     // rs1 to src1
-    decode_op_r(s, id_src1, s->isa.instr.CSR.rs1, false);
+    decode_op_r(s, id_src1, rv32_rs1(s), false);
 
     // CSR address -> src2.
-    decode_op_i(s, id_src2, s->isa.instr.CSR.csr, false);
+    decode_op_i(s, id_src2, rv32_csr(s), false);
 
     // rd to dest.
-    decode_op_r(s, id_dest, s->isa.instr.CSR.rd, true);
+    decode_op_r(s, id_dest, rv32_rd(s), true);
 }
 
 /* End with Decode Helper functions */
