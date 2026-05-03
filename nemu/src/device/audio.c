@@ -19,11 +19,40 @@ enum {
 
 static SDL_AudioSpec spec = {0};
 static SDL_AudioSpec specOut = {0};
+static bool audio_opened = false;
 
 static uint8_t *sbuf = NULL;
 static uint32_t *audio_base = NULL;
 
 static volatile int sbufReadIndex  = 0;
+
+/*
+ * NEMU exposes one host SDL audio device, but under Nanos-lite multiple user
+ * programs can be loaded at once and each may call SDL_OpenAudio() when it
+ * first becomes foreground. SDL rejects a second open on the same process with
+ * "Audio device is already opened", so each guest audio init request is treated
+ * as ownership transfer: pause and close the previous host stream, clear the
+ * emulated ring-buffer state, then open the new guest's requested format.
+ */
+static void close_audio_if_open(void)
+{
+    if (!audio_opened)
+    {
+        return;
+    }
+
+    SDL_PauseAudio(1);
+    SDL_CloseAudio();
+    audio_opened = false;
+}
+
+static void reset_audio_stream(void)
+{
+    sbufReadIndex = 0;
+    audio_base[reg_count] = 0;
+    memset(&spec, 0, sizeof(spec));
+    memset(&specOut, 0, sizeof(specOut));
+}
 
 // This is the callback function that SDL calls to get more audio samples.
 // It reads data from sbuf (the ring buffer) and copies it into the stream
@@ -94,6 +123,9 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
             case reg_init: {
                 Assert(val == 1, "The write value is not 1 in audio init, please check Abstract Machine.");
 
+                close_audio_if_open();
+                reset_audio_stream();
+
                 spec.freq = audio_base[reg_freq];
                 spec.format = AUDIO_S16SYS;
                 spec.channels = audio_base[reg_channels];
@@ -108,6 +140,7 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
                 }
 
                 // Unpause and start audio playback.
+                audio_opened = true;
                 SDL_PauseAudio(0);
 
                 break;
@@ -160,6 +193,7 @@ void init_audio()
   // Write out the stream buffer size to the register.
   // In AM, it will run as: init -> config -> ctrl.
   audio_base[reg_sbuf_size] = CONFIG_SB_SIZE;
+  reset_audio_stream();
 
   // Init subsystem in here before open device.
   if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) 

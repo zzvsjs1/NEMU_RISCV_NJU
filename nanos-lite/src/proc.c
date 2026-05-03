@@ -1,9 +1,6 @@
 #include <proc.h>
 
 enum {
-  MAX_NR_PROC = 4,
-  NR_FOREGROUND_PROC = 3,
-  HELLO_PROC = 3,
   FOREGROUND_QUANTA = 5,
 };
 
@@ -20,6 +17,30 @@ void switch_boot_pcb() { current = &pcb_boot; }
 static bool pcb_runnable(PCB *pcb)
 {
   return pcb != NULL && pcb->cp != NULL;
+}
+
+// Translate PCB pointers to process-table slots without exposing pcb[] itself.
+static int pcb_index_of(PCB *target)
+{
+  for (int i = 0; i < MAX_NR_PROC; i++)
+  {
+    if (target == &pcb[i])
+    {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+int current_pcb_index(void)
+{
+  return pcb_index_of(current);
+}
+
+int foreground_pcb_index(void)
+{
+  return pcb_index_of(fg_pcb);
 }
 
 void switch_fg_pcb(int index)

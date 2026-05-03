@@ -1,6 +1,7 @@
 #include "am.h"
 #include "debug.h"
 #include <common.h>
+#include <memory.h>
 #include <proc.h>
 
 #if defined(MULTIPROGRAM) && !defined(TIME_SHARING)
@@ -17,17 +18,136 @@ static const char *keyname[256] __attribute__((used)) = {
   AM_KEYS(NAME)
 };
 
+/*
+ * All foreground apps share one physical /dev/fb. If a smaller app such as
+ * Bird is centered on the screen, then a wider app such as NSlider can paint
+ * outside Bird's canvas. When we later switch back to Bird, Bird may repaint
+ * only its own canvas, leaving stale pixels around it.
+ *
+ * Treat the framebuffer like foreground-owned device state: keep one full
+ * screen shadow for each switchable foreground PCB, update the running app's
+ * shadow on every /dev/fb write, and blit the selected app's shadow during
+ * F1/F2/F3 switching. This preserves each app's last visible screen without
+ * requiring event-driven apps to repaint just because they became foreground.
+ */
+static int fb_screen_w = 0;
+static int fb_screen_h = 0;
+static uint32_t *fb_shadow[NR_FOREGROUND_PROC] = {};
+static bool fb_shadow_ready = false;
+
+static size_t round_up_to_page(size_t size)
+{
+  return (size + PGSIZE - 1) & ~(size_t)(PGSIZE - 1);
+}
+
+static void init_fb_shadow(void)
+{
+  const AM_GPU_CONFIG_T cfg = io_read(AM_GPU_CONFIG);
+  assert(cfg.present);
+
+  fb_screen_w = cfg.width;
+  fb_screen_h = cfg.height;
+
+  const size_t fb_size = (size_t)fb_screen_w * (size_t)fb_screen_h * sizeof(uint32_t);
+  const size_t alloc_size = round_up_to_page(fb_size);
+  const size_t nr_page = alloc_size / PGSIZE;
+
+  for (int i = 0; i < NR_FOREGROUND_PROC; i++)
+  {
+    fb_shadow[i] = new_page(nr_page);
+    memset(fb_shadow[i], 0, alloc_size);
+  }
+
+  fb_shadow_ready = true;
+}
+
+// Mirror the current foreground app's one-row /dev/fb write into its shadow.
+static void update_current_fb_shadow(const void *buf, int row, int col, int w_pixels)
+{
+  if (!fb_shadow_ready || buf == NULL || w_pixels <= 0)
+  {
+    return;
+  }
+
+  const int owner = current_pcb_index();
+  if (owner < 0 || owner >= NR_FOREGROUND_PROC)
+  {
+    return;
+  }
+
+  if (row < 0 || row >= fb_screen_h || col >= fb_screen_w)
+  {
+    return;
+  }
+
+  int src_skip = 0;
+  if (col < 0)
+  {
+    src_skip = -col;
+    w_pixels -= src_skip;
+    col = 0;
+  }
+
+  if (w_pixels <= 0)
+  {
+    return;
+  }
+
+  if (col + w_pixels > fb_screen_w)
+  {
+    w_pixels = fb_screen_w - col;
+  }
+
+  if (w_pixels <= 0)
+  {
+    return;
+  }
+
+  uint32_t *dst = fb_shadow[owner] + (size_t)row * (size_t)fb_screen_w + col;
+  const uint32_t *src = (const uint32_t *)buf + src_skip;
+  memcpy(dst, src, (size_t)w_pixels * sizeof(uint32_t));
+}
+
+// Restore the selected foreground app's full-screen shadow to the real display.
+static void fb_restore_foreground(void)
+{
+  if (!fb_shadow_ready)
+  {
+    return;
+  }
+
+  const int owner = foreground_pcb_index();
+  if (owner < 0 || owner >= NR_FOREGROUND_PROC)
+  {
+    return;
+  }
+
+  io_write(AM_GPU_FBDRAW, 0, 0, fb_shadow[owner], fb_screen_w, fb_screen_h, true);
+}
+
 static bool handle_foreground_hotkey(AM_INPUT_KEYBRD_T *keyboard)
 {
   switch (keyboard->keycode) {
     case AM_KEY_F1:
-      if (keyboard->keydown) switch_fg_pcb(0);
+      if (keyboard->keydown)
+      {
+        switch_fg_pcb(0);
+        fb_restore_foreground();
+      }
       return true;
     case AM_KEY_F2:
-      if (keyboard->keydown) switch_fg_pcb(1);
+      if (keyboard->keydown)
+      {
+        switch_fg_pcb(1);
+        fb_restore_foreground();
+      }
       return true;
     case AM_KEY_F3:
-      if (keyboard->keydown) switch_fg_pcb(2);
+      if (keyboard->keydown)
+      {
+        switch_fg_pcb(2);
+        fb_restore_foreground();
+      }
       return true;
     default:
       return false;
@@ -129,6 +249,7 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
   // printf("offset=%d row=%d col=%d wPixels=%d\n", (int)offset, row, col, wPixels);
 
   io_write(AM_GPU_FBDRAW, col, row, (void*)buf, wPixels, 1, true);
+  update_current_fb_shadow(buf, row, col, wPixels);
 
   return len;
 }
@@ -216,4 +337,5 @@ void init_device()
 {
   Log("Initializing devices...");
   ioe_init();
+  init_fb_shadow();
 }
