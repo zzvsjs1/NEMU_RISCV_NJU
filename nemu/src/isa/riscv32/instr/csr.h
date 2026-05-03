@@ -94,3 +94,46 @@ def_EHelper(csrrc)
         rtl_and(s, csrPtr, csrPtr, s0);
     }
 }
+
+def_EHelper(csrrwi)
+{
+    const word_t csrAddress = id_src2->imm;
+    rtlreg_t* csrPtr = getCSRAddress(csrAddress);
+    const rtlreg_t uimm = s->isa.instr.CSR.rs1;
+
+    if (s->isa.instr.CSR.rd != 0)
+    {
+        rtl_li(s, ddest, *csrPtr);
+    }
+
+    rtl_li(s, csrPtr, uimm);
+}
+
+def_EHelper(csrrsi)
+{
+    const word_t csrAddress = id_src2->imm;
+    rtlreg_t* csrPtr = getCSRAddress(csrAddress);
+    const rtlreg_t uimm = s->isa.instr.CSR.rs1;
+
+    rtl_li(s, ddest, *csrPtr);
+
+    if (isCSRWriteable(csrAddress) && uimm != 0)
+    {
+        rtl_ori(s, csrPtr, csrPtr, uimm);
+    }
+}
+
+def_EHelper(csrrci)
+{
+    const word_t csrAddress = id_src2->imm;
+    rtlreg_t* csrPtr = getCSRAddress(csrAddress);
+    const rtlreg_t uimm = s->isa.instr.CSR.rs1;
+
+    rtl_li(s, ddest, *csrPtr);
+
+    if (isCSRWriteable(csrAddress) && uimm != 0)
+    {
+        rtl_li(s, s0, ~uimm);
+        rtl_and(s, csrPtr, csrPtr, s0);
+    }
+}

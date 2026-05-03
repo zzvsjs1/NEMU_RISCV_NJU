@@ -166,11 +166,14 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc)
     word_t mtvec = cpu.csr.mtvec;
     word_t mode = mtvec & 0x3;
     word_t base = mtvec & ~0x3UL;
+    word_t interruptMask = (word_t)1 << (sizeof(word_t) * 8 - 1);
+    bool isInterrupt = (NO & interruptMask) != 0;
+    word_t cause = NO & ~interruptMask;
 
-    // vectored: branch to base + 4*cause
-    if (mode == 1) 
+    // Vectored mode only offsets interrupts; synchronous exceptions go to BASE.
+    if (mode == 1 && isInterrupt) 
     {
-        return base + (NO * 4);
+        return base + (cause * 4);
     }
 
     // direct

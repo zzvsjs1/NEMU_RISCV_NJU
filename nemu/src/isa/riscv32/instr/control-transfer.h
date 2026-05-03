@@ -121,6 +121,12 @@ def_EHelper(mret)
 	/* MPIE <- 1 */
 	mstatus |= ((word_t)1u << 7);
 
+	/* MPRV <- 0 when returning to a mode below M-mode. */
+	if (mpp != 0x3u)
+	{
+		mstatus &= ~((word_t)1u << 17);
+	}
+
 	cpu.csr.mstatus = mstatus;
 
 	/*
