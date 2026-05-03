@@ -61,44 +61,24 @@ static const void* g_exec_table[TOTAL_INSTR] = {
     MAP(INSTR_LIST, FILL_EXEC_TABLE)
 };
 
-static void fetch_decode_exec_updatepc(Decode *s) 
-{
-    fetch_decode(s, cpu.pc);
-    s->EHelper(s);
-    cpu.pc = s->dnpc;
-}
+#define EXEC_DECODED_CASE(name) \
+    case concat(EXEC_ID_, name): concat(exec_, name)(s); return;
 
-static void statistic() 
+static inline void exec_decoded_instr(int idx, Decode *s)
 {
-    IFNDEF(CONFIG_TARGET_AM, setlocale(LC_NUMERIC, ""));
-#define NUMBERIC_FMT MUXDEF(CONFIG_TARGET_AM, "%ld", "%'ld")
-    Log("host time spent = " NUMBERIC_FMT " us", g_timer);
-    Log("total guest instructions = " NUMBERIC_FMT, g_nr_guest_instr);
-
-    if (g_timer > 0) 
+    switch (idx)
     {
-        Log("simulation frequency = " NUMBERIC_FMT " instr/s", g_nr_guest_instr * 1000000 / g_timer);
-        return;
+        MAP(INSTR_LIST, EXEC_DECODED_CASE)
+        default: exec_inv(s); return;
     }
-
-    Log("Finish running in less than 1 us and can not calculate the simulation frequency");
 }
 
-void assert_fail_msg() 
-{
-    /* Print the recent instruction window before register/statistic dumps. */
-    trace_iringbuf_dump();
-    isa_reg_display();
-    statistic();
-}
-
-void fetch_decode(Decode *s, vaddr_t pc) 
+static inline int fetch_decode_idx(Decode *s, vaddr_t pc)
 {
     s->pc = pc;
     s->snpc = pc;
     int idx = isa_fetch_decode(s);
     s->dnpc = s->snpc;
-    s->EHelper = g_exec_table[idx];
 #ifdef CONFIG_ITRACE
     char *p = s->logbuf;
     p += snprintf(p, sizeof(s->logbuf), FMT_WORD ":", s->pc);
@@ -128,6 +108,44 @@ void fetch_decode(Decode *s, vaddr_t pc)
     disassemble(p, s->logbuf + sizeof(s->logbuf) - p,
             MUXDEF(CONFIG_ISA_x86, s->snpc, s->pc), (uint8_t *)&s->isa.instr.val, ilen);
 #endif
+    return idx;
+}
+
+static inline void fetch_decode_exec_updatepc(Decode *s) 
+{
+    int idx = fetch_decode_idx(s, cpu.pc);
+    exec_decoded_instr(idx, s);
+    cpu.pc = s->dnpc;
+}
+
+static void statistic() 
+{
+    IFNDEF(CONFIG_TARGET_AM, setlocale(LC_NUMERIC, ""));
+#define NUMBERIC_FMT MUXDEF(CONFIG_TARGET_AM, "%ld", "%'ld")
+    Log("host time spent = " NUMBERIC_FMT " us", g_timer);
+    Log("total guest instructions = " NUMBERIC_FMT, g_nr_guest_instr);
+
+    if (g_timer > 0) 
+    {
+        Log("simulation frequency = " NUMBERIC_FMT " instr/s", g_nr_guest_instr * 1000000 / g_timer);
+        return;
+    }
+
+    Log("Finish running in less than 1 us and can not calculate the simulation frequency");
+}
+
+void assert_fail_msg() 
+{
+    /* Print the recent instruction window before register/statistic dumps. */
+    trace_iringbuf_dump();
+    isa_reg_display();
+    statistic();
+}
+
+void fetch_decode(Decode *s, vaddr_t pc) 
+{
+    int idx = fetch_decode_idx(s, pc);
+    s->EHelper = g_exec_table[idx];
 }
 
 static inline word_t query_pending_intr()
