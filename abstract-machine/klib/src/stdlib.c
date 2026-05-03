@@ -41,14 +41,19 @@ int atoi(const char* nptr)
 
 static size_t si = 0;
 
+#define MALLOC_ALIGN 16
+
 void *malloc(size_t size) 
 {
   // On native, malloc() will be called during initializaion of C runtime.
   // Therefore do not call panic() here, else it will yield a dead recursion:
   //   panic() -> putchar() -> (glibc) -> malloc() -> panic()
 #if !(defined(__ISA_NATIVE__) && defined(__NATIVE_USE_KLIB__))
-  void* ret = heap.start + si;
-  si += size;
+  uintptr_t addr = ROUNDUP((uintptr_t)heap.start + si, MALLOC_ALIGN);
+  uintptr_t next = ROUNDUP(addr + size, MALLOC_ALIGN);
+  assert(next <= (uintptr_t)heap.end);
+  si = next - (uintptr_t)heap.start;
+  void* ret = (void *)addr;
   return ret;
 #endif
 

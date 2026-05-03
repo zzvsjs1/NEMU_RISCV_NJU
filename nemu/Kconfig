@@ -181,6 +181,14 @@ config MTRACE_END
     The default covers the full riscv32 physical address range. Set this
     together with MTRACE_START when only one device or memory window matters.
 
+config DTRACE
+  depends on TRACE && DEVICE && TARGET_NATIVE_ELF
+  bool "Enable device access tracer"
+  default n
+  help
+    Log device map reads and writes with the device name, guest PC, address,
+    access width, and transferred data.
+
 config FTRACE
   depends on TRACE && TARGET_NATIVE_ELF && ENGINE_INTERPRETER
   bool "Enable function call tracer"
