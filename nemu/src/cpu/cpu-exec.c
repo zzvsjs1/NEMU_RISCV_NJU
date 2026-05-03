@@ -10,6 +10,7 @@
  * You can modify this value as you want.
  */
 #define MAX_INSTR_TO_PRINT 10
+#define DEVICE_UPDATE_CHECK_INTERVAL 256u
 
 CPU_state cpu = {0};
 uint64_t g_nr_guest_instr = 0;
@@ -129,6 +130,25 @@ void fetch_decode(Decode *s, vaddr_t pc)
 #endif
 }
 
+static inline word_t query_pending_intr()
+{
+#ifdef CONFIG_ISA_riscv32
+    if (likely(!cpu.INTR))
+    {
+        return INTR_EMPTY;
+    }
+#endif
+    return isa_query_intr();
+}
+
+#ifdef CONFIG_DEVICE
+static inline bool should_update_device(uint32_t *counter)
+{
+    *counter = (*counter + 1u) & (DEVICE_UPDATE_CHECK_INTERVAL - 1u);
+    return *counter == 0 || g_print_step;
+}
+#endif
+
 /* Simulate how the CPU works. */
 void cpu_exec(uint64_t n) 
 {
@@ -148,6 +168,10 @@ void cpu_exec(uint64_t n)
     uint64_t timer_start = get_time();
 
     Decode s;
+#ifdef CONFIG_DEVICE
+    uint32_t device_update_counter = 0;
+#endif
+
     for (;n > 0; n--) 
     {
         fetch_decode_exec_updatepc(&s);
@@ -159,9 +183,14 @@ void cpu_exec(uint64_t n)
             break;
         }
 
-        IFDEF(CONFIG_DEVICE, device_update());
+#ifdef CONFIG_DEVICE
+        if (should_update_device(&device_update_counter))
+        {
+            device_update();
+        }
+#endif
 
-        word_t intr = isa_query_intr();
+        word_t intr = query_pending_intr();
         if (intr != INTR_EMPTY)
         {
             cpu.pc = isa_raise_intr(intr, cpu.pc);
