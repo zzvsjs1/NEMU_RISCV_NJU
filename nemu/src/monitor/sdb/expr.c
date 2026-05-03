@@ -92,7 +92,7 @@ void init_regex()
 #define THE_ONCE_BUF_SIZE (32)
 #define BUFFER_SIZE (THE_ONCE_BUF_SIZE)
 #define MAXIMUM_STRING_SIZE (BUFFER_SIZE - 1)
-#define MAX_TOKENDS (THE_ONCE_BUF_SIZE)
+#define MAX_TOKENS (4096)
 #define REMOVE_PERCENT(STR) (STR + 1)
 #define IS_FIRST(i) (i == 0)
 
@@ -102,7 +102,7 @@ typedef struct
     char str[BUFFER_SIZE];
 } Token;
 
-static Token tokens[MAX_TOKENDS] = {};
+static Token tokens[MAX_TOKENS] = {};
 static int numOfTokens = 0;
 
 static bool isBiOperator(const TokenType tk)
@@ -253,7 +253,7 @@ static bool make_token(char *e)
         /* Try all rules one by one. */
         for (; i < NR_REGEX; ++i)
         {
-            if (numOfTokens == MAX_TOKENDS)
+            if (numOfTokens == MAX_TOKENS)
             {
                 printf("Too many tokens\n");
                 return false;

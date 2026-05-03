@@ -156,6 +156,13 @@ config IRINGBUF_SIZE
   int "Instruction ring buffer size"
   default 16
 
+config WATCHPOINT
+  depends on TARGET_NATIVE_ELF && ENGINE_INTERPRETER
+  bool "Enable watchpoint"
+  default y
+  help
+    Check active SDB watchpoints after each executed instruction.
+
 config MTRACE
   depends on TRACE && TARGET_NATIVE_ELF
   bool "Enable memory access tracer"
