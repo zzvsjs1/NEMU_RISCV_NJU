@@ -3,6 +3,15 @@
 #include <memory/paddr.h>
 #include <memory/vaddr.h>
 
+#ifdef CONFIG_ISA_riscv32
+#define RISCV32_SATP_MODE_MASK 0x80000000u
+
+static inline bool rv32_mmu_direct_mode()
+{
+    return likely((cpu.csr.satp & RISCV32_SATP_MODE_MASK) == 0);
+}
+#endif
+
 // translate returns (pg_paddr | status), pg_paddr is page-aligned so low 12 bits are free
 static int mem_ret_status(paddr_t ret) 
 {
@@ -16,6 +25,13 @@ static paddr_t mem_ret_pgaddr(paddr_t ret)
 
 word_t vaddr_ifetch(vaddr_t addr, int len) 
 {
+#ifdef CONFIG_ISA_riscv32
+    if (rv32_mmu_direct_mode())
+    {
+        return paddr_read((paddr_t)addr, len);
+    }
+#endif
+
     int mmu = isa_mmu_check(addr, len, MEM_TYPE_IFETCH);
 
     if (mmu == MMU_DIRECT) 
@@ -51,6 +67,13 @@ word_t vaddr_ifetch(vaddr_t addr, int len)
 
 word_t vaddr_read(vaddr_t addr, int len) 
 {
+#ifdef CONFIG_ISA_riscv32
+    if (rv32_mmu_direct_mode())
+    {
+        return paddr_read((paddr_t)addr, len);
+    }
+#endif
+
     const int mmu = isa_mmu_check(addr, len, MEM_TYPE_READ);
 
     if (mmu == MMU_DIRECT) 
@@ -84,6 +107,14 @@ word_t vaddr_read(vaddr_t addr, int len)
 
 void vaddr_write(vaddr_t addr, int len, word_t data) 
 {
+#ifdef CONFIG_ISA_riscv32
+    if (rv32_mmu_direct_mode())
+    {
+        paddr_write((paddr_t)addr, len, data);
+        return;
+    }
+#endif
+
     int mmu = isa_mmu_check(addr, len, MEM_TYPE_WRITE);
 
     if (mmu == MMU_DIRECT) 
