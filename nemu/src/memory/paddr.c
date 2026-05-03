@@ -68,6 +68,23 @@ static bool mtrace_in_range(paddr_t addr, int len)
 }
 #endif
 
+word_t paddr_ifetch(paddr_t addr)
+{
+  if (likely(in_pmem(addr)))
+  {
+    word_t data = *(uint32_t *)pmem_host_addr(addr);
+#ifdef CONFIG_MTRACE
+    if (mtrace_in_range(addr, 4)) {
+      log_write("mtrace read  pc=" FMT_WORD " addr=" FMT_PADDR " len=4 data=" FMT_WORD "\n",
+          cpu.pc, addr, data);
+    }
+#endif
+    return data;
+  }
+
+  return paddr_read(addr, 4);
+}
+
 word_t paddr_read(paddr_t addr, int len) 
 {
   if (likely(in_pmem(addr))) 

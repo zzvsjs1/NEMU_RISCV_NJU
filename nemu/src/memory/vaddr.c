@@ -28,7 +28,7 @@ word_t vaddr_ifetch(vaddr_t addr, int len)
 #ifdef CONFIG_ISA_riscv32
     if (rv32_mmu_direct_mode())
     {
-        return paddr_read((paddr_t)addr, len);
+        return paddr_ifetch((paddr_t)addr);
     }
 #endif
 
@@ -36,6 +36,12 @@ word_t vaddr_ifetch(vaddr_t addr, int len)
 
     if (mmu == MMU_DIRECT) 
     {
+#ifdef CONFIG_ISA_riscv32
+        if (likely(len == 4))
+        {
+            return paddr_ifetch((paddr_t)addr);
+        }
+#endif
         return paddr_read((paddr_t)addr, len);
     }
 
@@ -48,6 +54,12 @@ word_t vaddr_ifetch(vaddr_t addr, int len)
         {
             paddr_t pg = mem_ret_pgaddr(ret);
             paddr_t pa = pg | (paddr_t)(addr & PAGE_MASK);
+#ifdef CONFIG_ISA_riscv32
+            if (likely(len == 4))
+            {
+                return paddr_ifetch(pa);
+            }
+#endif
             return paddr_read(pa, len);
         }
 
