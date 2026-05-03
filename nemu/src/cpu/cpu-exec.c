@@ -2,6 +2,9 @@
 #include <cpu/exec.h>
 #include <cpu/difftest.h>
 #include <isa-all-instr.h>
+#ifdef CONFIG_ISA_riscv32
+#include <isa-fast-exec.h>
+#endif
 #include <locale.h>
 
 /* The assembly code of instructions executed is only output to the screen
@@ -167,6 +170,16 @@ static inline bool should_update_device(uint32_t *counter)
 }
 #endif
 
+static inline bool can_fast_exec()
+{
+#if defined(CONFIG_ISA_riscv32) && !defined(CONFIG_TRACE) && \
+    !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT)
+    return !g_print_step;
+#else
+    return false;
+#endif
+}
+
 /* Simulate how the CPU works. */
 void cpu_exec(uint64_t n) 
 {
@@ -189,12 +202,27 @@ void cpu_exec(uint64_t n)
 #ifdef CONFIG_DEVICE
     uint32_t device_update_counter = 0;
 #endif
+    const bool fast_exec = can_fast_exec();
 
     for (;n > 0; n--) 
     {
-        fetch_decode_exec_updatepc(&s);
+        bool fast_done = false;
+#ifdef CONFIG_ISA_riscv32
+        if (fast_exec)
+        {
+            fast_done = isa_fast_exec_once();
+        }
+#endif
+        if (!fast_done)
+        {
+            fetch_decode_exec_updatepc(&s);
+        }
+
         g_nr_guest_instr++;
-        trace_and_difftest(&s, cpu.pc);
+        if (!fast_done)
+        {
+            trace_and_difftest(&s, cpu.pc);
+        }
         
         if (nemu_state.state != NEMU_RUNNING)
         {
