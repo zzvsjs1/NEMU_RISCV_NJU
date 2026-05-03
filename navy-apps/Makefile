@@ -122,10 +122,17 @@ $(DST_DIR)/%.o: %.S
 
 # $(1): library name
 define LIB_TEMPLATE =
-$$(NAVY_HOME)/libs/$(1)/build/$(1)-$$(ISA).a:
+$$(NAVY_HOME)/libs/$(1)/build/$(1)-$$(ISA).a: FORCE
 	@$$(MAKE) -s -C $$(NAVY_HOME)/libs/$(1) archive
 LINKAGE += $$(NAVY_HOME)/libs/$(1)/build/$(1)-$$(ISA).a
 endef
+
+# Library archives are produced by recursive makefiles. Keep this dependency
+# phony so an app build always asks each library to check its own sources; this
+# prevents changes in libndl/libminiSDL from being skipped when only the app
+# target is rebuilt by `make update`.
+.PHONY: FORCE
+FORCE:
 
 ### Rule (recursive make): build dependent libraries (libc, libos, ...)
 $(foreach lib, $(LIBS), $(eval $(call LIB_TEMPLATE,$(lib))))

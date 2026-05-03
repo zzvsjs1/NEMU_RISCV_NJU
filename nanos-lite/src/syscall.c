@@ -211,12 +211,15 @@ void do_syscall(Context *c)
       context_uload(current, filename, (char *const *)argv, (char *const *)envp);
 
       // Return through the freshly built user context instead of the old
-      // syscall frame, which belongs to the image being replaced.
+      // syscall frame, which belongs to the image being replaced. For execve()
+      // success there is no user-visible return value: the new program starts
+      // from its entry point. This also must not write c->GPRx after
+      // context_uload(), because the old syscall frame and the freshly-created
+      // ucontext for the same PCB are both placed at the top of the same kernel
+      // stack. Writing the old frame's a0 here would overwrite the new image's
+      // initial a0, which crt0 uses as the user stack pointer.
       context_replaced = 1;
-
-      // Should not reach here on success
-      c->GPRx = (uintptr_t)-1;
-      break;
+      return;
     }
 
     default: {

@@ -19,6 +19,33 @@ static int eventsFd = -1;
 // For framebuffer.
 static int fbFd = -1;
 
+static void clear_full_framebuffer(int width, int height)
+{
+  assert(fbFd >= 0);
+  assert(width > 0 && height > 0);
+
+  const size_t row_bytes = (size_t)width * sizeof(uint32_t);
+  uint32_t *black_row = calloc((size_t)width, sizeof(uint32_t));
+  assert(black_row != NULL);
+
+  /*
+   * NDL centers an app canvas inside the physical display. If a new app opens
+   * a smaller canvas, its later NDL_DrawRect() calls only repaint that centered
+   * rectangle; pixels outside the canvas keep the previous app's framebuffer
+   * contents. Clear the whole physical framebuffer once at canvas-open time so
+   * transitions such as NTerm -> PAL do not leave NTerm's white background
+   * around PAL's smaller game image.
+   */
+  for (int row = 0; row < height; ++row)
+  {
+    const off_t offset = (off_t)row * width * (off_t)sizeof(uint32_t);
+    assert(lseek(fbFd, offset, SEEK_SET) == offset);
+    assert(write(fbFd, black_row, row_bytes) == (ssize_t)row_bytes);
+  }
+
+  free(black_row);
+}
+
 /* initTick holds the millisecond timestamp taken at NDL_Init() */
 static uint32_t initTick = 0;
 
@@ -113,6 +140,8 @@ void NDL_OpenCanvas(int *w, int *h)
   // Open file, if failed, just exit.
   fbFd = open("/dev/fb", O_CLOEXEC);
   assert(fbFd >= 0);
+
+  clear_full_framebuffer(screen_w, screen_h);
 }
 
 void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h) 

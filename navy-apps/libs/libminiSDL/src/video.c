@@ -322,6 +322,16 @@ SDL_Surface* SDL_CreateRGBSurface(uint32_t flags, int width, int height, int dep
   if (!(flags & SDL_PREALLOC)) {
     s->pixels = malloc(s->pitch * height);
     assert(s->pixels);
+    /*
+     * SDL callers are allowed to update or palette-convert a newly-created
+     * surface before they have painted every pixel. PAL does this during
+     * startup: gpScreenReal is a hardware 8-bit surface, palette changes can
+     * trigger SDL_UpdateRect(), and the first title frames do not necessarily
+     * overwrite every byte immediately. Start every owned surface at palette
+     * index / pixel value 0 so those early updates show black instead of stale
+     * allocator contents or pixels left by the previous Navy app.
+     */
+    memset(s->pixels, 0, s->pitch * height);
   }
 
   return s;
@@ -352,8 +362,20 @@ void SDL_FreeSurface(SDL_Surface *s) {
 
 SDL_Surface* SDL_SetVideoMode(int width, int height, int bpp, uint32_t flags) {
   if (flags & SDL_HWSURFACE) NDL_OpenCanvas(&width, &height);
-  return SDL_CreateRGBSurface(flags, width, height, bpp,
+  SDL_Surface *s = SDL_CreateRGBSurface(flags, width, height, bpp,
       DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
+
+  if (flags & SDL_HWSURFACE) {
+    /*
+     * NDL_OpenCanvas() clears the physical framebuffer, while this sync clears
+     * the app's newly-created hardware surface inside that canvas. This covers
+     * programs like PAL that open a smaller 8-bit surface after NTerm and then
+     * change palettes before the whole logical screen has been repainted.
+     */
+    SDL_UpdateRect(s, 0, 0, 0, 0);
+  }
+
+  return s;
 }
 
 void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_Rect *dstrect) {
