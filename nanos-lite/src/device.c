@@ -1,6 +1,7 @@
 #include "am.h"
 #include "debug.h"
 #include <common.h>
+#include <proc.h>
 
 #if defined(MULTIPROGRAM) && !defined(TIME_SHARING)
 # define MULTIPROGRAM_YIELD() yield()
@@ -15,6 +16,23 @@ static const char *keyname[256] __attribute__((used)) = {
   [AM_KEY_NONE] = "NONE",
   AM_KEYS(NAME)
 };
+
+static bool handle_foreground_hotkey(AM_INPUT_KEYBRD_T *keyboard)
+{
+  switch (keyboard->keycode) {
+    case AM_KEY_F1:
+      if (keyboard->keydown) switch_fg_pcb(0);
+      return true;
+    case AM_KEY_F2:
+      if (keyboard->keydown) switch_fg_pcb(1);
+      return true;
+    case AM_KEY_F3:
+      if (keyboard->keydown) switch_fg_pcb(2);
+      return true;
+    default:
+      return false;
+  }
+}
 
 size_t serial_write(const void *buf, size_t offset, size_t len) 
 {
@@ -34,6 +52,11 @@ size_t events_read(void *buf, size_t offset, size_t len)
 
   // Ignore NONE key.
   if (keyboard.keycode == AM_KEY_NONE)
+  {
+    return 0;
+  }
+
+  if (handle_foreground_hotkey(&keyboard))
   {
     return 0;
   }

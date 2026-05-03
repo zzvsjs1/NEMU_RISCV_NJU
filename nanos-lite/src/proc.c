@@ -1,18 +1,40 @@
 #include <proc.h>
 
-#define MAX_NR_PROC 4
+enum {
+  MAX_NR_PROC = 4,
+  NR_FOREGROUND_PROC = 3,
+  HELLO_PROC = 3,
+  FOREGROUND_QUANTA = 5,
+};
 
 void context_uload(PCB *pcb, const char *filename, char *const argv[], char *const envp[]);
 
 static PCB pcb[MAX_NR_PROC] __attribute__((used)) = {};
 static PCB pcb_boot = {};
 PCB *current = NULL;
+static PCB *fg_pcb = &pcb[0];
+static int foreground_budget = FOREGROUND_QUANTA;
 
 void switch_boot_pcb() { current = &pcb_boot; }
 
 static bool pcb_runnable(PCB *pcb)
 {
   return pcb != NULL && pcb->cp != NULL;
+}
+
+void switch_fg_pcb(int index)
+{
+  assert(index >= 0 && index < NR_FOREGROUND_PROC);
+
+  PCB *next = &pcb[index];
+  assert(pcb_runnable(next));
+
+  if (fg_pcb != next)
+  {
+    fg_pcb = next;
+    foreground_budget = FOREGROUND_QUANTA;
+    Log("Switch foreground to pcb[%d]", index);
+  }
 }
 
 void context_kload(PCB* pcb, void (*entry)(void *), void* arg)
@@ -47,11 +69,17 @@ void init_proc()
 {
   Log("Initializing processes...");
 
-  static char *const argv_nterm[] = { "/bin/nterm", NULL };
+  static char *const argv_pal[] = { "/bin/pal", NULL };
+  static char *const argv_bird[] = { "/bin/bird", NULL };
+  static char *const argv_nslider[] = { "/bin/nslider", NULL };
   static char *const argv_hello[] = { "/bin/hello", NULL };
   static char *const envp_empty[] = { NULL };
-  context_uload(&pcb[0], "/bin/nterm", argv_nterm, envp_empty);
-  context_uload(&pcb[1], "/bin/hello", argv_hello, envp_empty);
+  context_uload(&pcb[0], "/bin/pal", argv_pal, envp_empty);
+  context_uload(&pcb[1], "/bin/bird", argv_bird, envp_empty);
+  context_uload(&pcb[2], "/bin/nslider", argv_nslider, envp_empty);
+  context_uload(&pcb[3], "/bin/hello", argv_hello, envp_empty);
+  fg_pcb = &pcb[0];
+  foreground_budget = FOREGROUND_QUANTA;
   
   // Initialize current to the boot PCB,
   // so the first schedule() call switches to pcb[0].
@@ -63,9 +91,6 @@ void init_proc()
 
 Context *schedule(Context *prev) 
 { 
-  enum { FOREGROUND_QUANTA = 5 };
-  static int foreground_budget = FOREGROUND_QUANTA;
-  
   // Save the context of the currently running PCB.
   if (current != NULL) 
   {
@@ -73,22 +98,22 @@ Context *schedule(Context *prev)
   }
 
   // Pick the next runnable PCB.
-  // First switch: from boot PCB to pcb[0].
+  // First switch: from boot PCB to the selected foreground process.
   if (current == &pcb_boot) 
   {
-    current = &pcb[0];
+    current = fg_pcb;
   } 
-  else if (current == &pcb[0])
+  else if (current == fg_pcb)
   {
-    if (pcb_runnable(&pcb[1]) && foreground_budget-- <= 0)
+    if (pcb_runnable(&pcb[HELLO_PROC]) && foreground_budget-- <= 0)
     {
       foreground_budget = FOREGROUND_QUANTA;
-      current = &pcb[1];
+      current = &pcb[HELLO_PROC];
     }
   }
   else 
   {
-    current = &pcb[0];
+    current = fg_pcb;
   }
 
   assert(pcb_runnable(current));

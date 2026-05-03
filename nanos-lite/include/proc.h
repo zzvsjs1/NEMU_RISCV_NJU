@@ -18,4 +18,6 @@ typedef union {
 
 extern PCB *current;
 
+void switch_fg_pcb(int index);
+
 #endif

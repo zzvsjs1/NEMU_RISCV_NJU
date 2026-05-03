@@ -2,3 +2,4 @@
 *.o
 .vscode/
 *.json/nanos-lite
+scripts/codex-*.sh
