@@ -15,7 +15,7 @@
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 
-//#define MODE_800x600
+#define MODE_800x600
 
 #define FPS 60
 #define WINDOW_W 800
@@ -48,6 +48,11 @@ static int sb_fifo[2] = {-1, -1};
 static int sbctl_fd = -1;
 static uint32_t *fb = NULL;
 static char fsimg_path[512] = "";
+
+static bool use_dummy_video() {
+  const char *driver = getenv("SDL_VIDEODRIVER");
+  return driver != NULL && strcmp(driver, "dummy") == 0;
+}
 
 static inline void get_fsimg_path(char *newpath, const char *path) {
   sprintf(newpath, "%s%s", fsimg_path, path);
@@ -111,6 +116,15 @@ static void open_display() {
   assert(fb != (void *)-1);
   memset(fb, 0, FB_SIZE);
   lseek(fb_memfd, 0, SEEK_SET);
+
+  /*
+   * Headless runs still need /proc/dispinfo and /dev/fb to behave like normal
+   * Navy devices, but they must not open a host window.  This is important for
+   * Codex and CI sessions where SDL video access may hang or be unavailable.
+   */
+  if (use_dummy_video()) {
+    return;
+  }
 
   SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_TIMER);
   window = SDL_CreateWindow("Simulated Nanos Application",
@@ -260,11 +274,17 @@ struct Init {
     get_fsimg_path(newpath, "/bin");
     setenv("PATH", newpath, 1); // overwrite the current PATH
 
-    SDL_Init(0);
+    /*
+     * Do not call host SDL_Init(0) here.  This shared object is preloaded into
+     * Navy native apps that also define miniSDL's SDL_Init(), and the global
+     * host initialisation can block under dummy/headless drivers before the app
+     * reaches main().  Each simulated device below initialises the exact host
+     * SDL subsystem it needs.
+     */
     if (!getenv("NWM_APP")) {
       open_display();
-      open_event();
     }
+    open_event();
     open_audio();
   }
   ~Init() {

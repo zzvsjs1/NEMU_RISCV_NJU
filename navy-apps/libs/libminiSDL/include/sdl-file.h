@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/types.h>
 
 enum { RW_TYPE_FILE, RW_TYPE_MEM };
 
@@ -16,8 +17,12 @@ typedef struct SDL_RWops {
   uint32_t type;
   FILE *fp;
 
-  // mem.base is only defined when type == RW_TYPE_MEM
-  struct { void *base; ssize_t size; } mem;
+  /* mem fields are only defined when type == RW_TYPE_MEM. */
+  struct {
+    uint8_t *base;
+    ssize_t size;
+    ssize_t offset;
+  } mem;
 } SDL_RWops;
 
 SDL_RWops* SDL_RWFromFile(const char *filename, const char *mode);

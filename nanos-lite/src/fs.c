@@ -3,9 +3,9 @@
 typedef size_t (*ReadFn) (void *buf, size_t offset, size_t len);
 typedef size_t (*WriteFn) (const void *buf, size_t offset, size_t len);
 
-// ramdisk.c
-size_t ramdisk_read(void *buf, size_t offset, size_t len);
-size_t ramdisk_write(const void *buf, size_t offset, size_t len);
+// disk.c
+size_t disk_read(void *buf, size_t offset, size_t len);
+size_t disk_write(const void *buf, size_t offset, size_t len);
 
 // device.c
 size_t serial_write(const void *buf, size_t offset, size_t len);
@@ -123,8 +123,8 @@ size_t fs_read(int fd, void *buf, size_t len)
   const size_t avail = f->size - offset;
   const size_t rlen  = (len < avail ? len : avail);
 
-  // perform the read
-  size_t ret = ramdisk_read(buf, f->disk_offset + offset, rlen);
+  // Perform the read from the configured disk backend.
+  size_t ret = disk_read(buf, f->disk_offset + offset, rlen);
   openOffset[fd] += ret;
   return ret;
 }
@@ -148,8 +148,8 @@ size_t fs_write(int fd, const void *buf, size_t len)
   const size_t avail = f->size - offset;
   const size_t wlen = len < avail ? len : avail;
 
-  // Perform write and advance offset
-  size_t ret = ramdisk_write(buf, f->disk_offset + offset, wlen);
+  // Perform write and advance offset.
+  size_t ret = disk_write(buf, f->disk_offset + offset, wlen);
   openOffset[fd] += ret;
   return ret;
 }
