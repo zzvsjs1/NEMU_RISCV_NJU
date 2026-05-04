@@ -335,68 +335,205 @@ static inline bool rv32_fast_store_may_touch_page_table(paddr_t paddr)
 }
 
 /*
- * Fast data/instruction read. Direct-mode PMEM reads avoid vaddr_read entirely.
- * Paged reads use the small TLB and still reject translated MMIO or unsupported
- * cases so devices keep using the normal memory path.
+ * Width-specific PMEM readers avoid the host_read(len) switch in the hottest
+ * load paths. They still check the physical address against PMEM first; a false
+ * result tells the caller to use the normal vaddr/paddr path, which is required
+ * for MMIO and other device side effects.
  */
-static inline bool rv32_fast_read_mem(vaddr_t addr, int len, int type, word_t *data)
+static inline bool rv32_fast_read_pmem_u8(paddr_t paddr, word_t *data)
 {
-  if (rv32_fast_direct_mode())
-  {
-    const paddr_t paddr = (paddr_t)addr;
-    if (!likely(in_pmem(paddr)))
-    {
-      return false;
-    }
-
-    *data = host_read(guest_to_host(paddr), len);
-    return true;
-  }
-
-  paddr_t paddr = 0;
-  if (!rv32_fast_translate(addr, len, type, &paddr) ||
-      !rv32_fast_pmem_range(paddr, len))
+  if (!likely(in_pmem(paddr)))
   {
     return false;
   }
 
-  *data = host_read(guest_to_host(paddr), len);
+  *data = *(uint8_t *)guest_to_host(paddr);
+  return true;
+}
+
+static inline bool rv32_fast_read_pmem_u16(paddr_t paddr, word_t *data)
+{
+  if (!likely(in_pmem(paddr)))
+  {
+    return false;
+  }
+
+  *data = *(uint16_t *)guest_to_host(paddr);
+  return true;
+}
+
+static inline bool rv32_fast_read_pmem_u32(paddr_t paddr, word_t *data)
+{
+  if (!likely(in_pmem(paddr)))
+  {
+    return false;
+  }
+
+  *data = *(uint32_t *)guest_to_host(paddr);
   return true;
 }
 
 /*
- * Fast store with the same direct/paged split as reads. For paged stores, the
- * write is made through host PMEM only after translation succeeds; possible
- * page-table writes invalidate cached translations afterwards.
+ * Paged fast accesses need both a successful Sv32 translation and a translated
+ * physical range that stays fully inside PMEM. If either check fails, fallback
+ * keeps the complete NEMU memory behaviour.
  */
-static inline bool rv32_fast_write_mem(vaddr_t addr, int len, word_t data)
+static inline bool rv32_fast_translate_pmem(vaddr_t addr, int len, int type, paddr_t *paddr)
+{
+  return rv32_fast_translate(addr, len, type, paddr) &&
+      rv32_fast_pmem_range(*paddr, len);
+}
+
+/*
+ * Width-specific virtual readers keep direct-mode accesses short while still
+ * supporting translated Nanos-lite addresses through the fast TLB.
+ */
+static inline bool rv32_fast_read_u8(vaddr_t addr, int type, word_t *data)
 {
   if (rv32_fast_direct_mode())
   {
-    const paddr_t paddr = (paddr_t)addr;
-    if (!likely(in_pmem(paddr)))
-    {
-      return false;
-    }
-
-    host_write(guest_to_host(paddr), len, data);
-    return true;
+    return rv32_fast_read_pmem_u8((paddr_t)addr, data);
   }
 
   paddr_t paddr = 0;
-  if (!rv32_fast_translate(addr, len, MEM_TYPE_WRITE, &paddr) ||
-      !rv32_fast_pmem_range(paddr, len))
+  return rv32_fast_translate_pmem(addr, 1, type, &paddr) &&
+      rv32_fast_read_pmem_u8(paddr, data);
+}
+
+static inline bool rv32_fast_read_u16(vaddr_t addr, int type, word_t *data)
+{
+  if (rv32_fast_direct_mode())
+  {
+    return rv32_fast_read_pmem_u16((paddr_t)addr, data);
+  }
+
+  paddr_t paddr = 0;
+  return rv32_fast_translate_pmem(addr, 2, type, &paddr) &&
+      rv32_fast_read_pmem_u16(paddr, data);
+}
+
+static inline bool rv32_fast_read_u32(vaddr_t addr, int type, word_t *data)
+{
+  if (rv32_fast_direct_mode())
+  {
+    return rv32_fast_read_pmem_u32((paddr_t)addr, data);
+  }
+
+  paddr_t paddr = 0;
+  return rv32_fast_translate_pmem(addr, 4, type, &paddr) &&
+      rv32_fast_read_pmem_u32(paddr, data);
+}
+
+/*
+ * Width-specific PMEM writers mirror the readers: direct host stores for normal
+ * RAM, false for anything outside PMEM so device writes are not swallowed.
+ */
+static inline bool rv32_fast_write_pmem_u8(paddr_t paddr, word_t data)
+{
+  if (!likely(in_pmem(paddr)))
+  {
+    return false;
+  }
+
+  *(uint8_t *)guest_to_host(paddr) = data;
+  return true;
+}
+
+static inline bool rv32_fast_write_pmem_u16(paddr_t paddr, word_t data)
+{
+  if (!likely(in_pmem(paddr)))
+  {
+    return false;
+  }
+
+  *(uint16_t *)guest_to_host(paddr) = data;
+  return true;
+}
+
+static inline bool rv32_fast_write_pmem_u32(paddr_t paddr, word_t data)
+{
+  if (!likely(in_pmem(paddr)))
+  {
+    return false;
+  }
+
+  *(uint32_t *)guest_to_host(paddr) = data;
+  return true;
+}
+
+/*
+ * Page-table stores are rare but dangerous for cached translations. The caller
+ * computes the conservative flush flag before writing, then this helper applies
+ * the flush after the new PTE value is visible in PMEM.
+ */
+static inline void rv32_fast_flush_after_page_table_store(bool flush_tlb)
+{
+  if (unlikely(flush_tlb))
+  {
+    rv32_fast_tlb_flush();
+  }
+}
+
+/*
+ * Width-specific virtual writers keep the direct-mode path branch-light. In
+ * translated mode they also preserve the page-table write invalidation used by
+ * the generic fast store.
+ */
+static inline bool rv32_fast_write_u8(vaddr_t addr, word_t data)
+{
+  if (rv32_fast_direct_mode())
+  {
+    return rv32_fast_write_pmem_u8((paddr_t)addr, data);
+  }
+
+  paddr_t paddr = 0;
+  if (!rv32_fast_translate_pmem(addr, 1, MEM_TYPE_WRITE, &paddr))
   {
     return false;
   }
 
   const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
-  host_write(guest_to_host(paddr), len, data);
-  if (unlikely(flush_tlb))
+  const bool ok = rv32_fast_write_pmem_u8(paddr, data);
+  rv32_fast_flush_after_page_table_store(flush_tlb);
+  return ok;
+}
+
+static inline bool rv32_fast_write_u16(vaddr_t addr, word_t data)
+{
+  if (rv32_fast_direct_mode())
   {
-    rv32_fast_tlb_flush();
+    return rv32_fast_write_pmem_u16((paddr_t)addr, data);
   }
-  return true;
+
+  paddr_t paddr = 0;
+  if (!rv32_fast_translate_pmem(addr, 2, MEM_TYPE_WRITE, &paddr))
+  {
+    return false;
+  }
+
+  const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
+  const bool ok = rv32_fast_write_pmem_u16(paddr, data);
+  rv32_fast_flush_after_page_table_store(flush_tlb);
+  return ok;
+}
+
+static inline bool rv32_fast_write_u32(vaddr_t addr, word_t data)
+{
+  if (rv32_fast_direct_mode())
+  {
+    return rv32_fast_write_pmem_u32((paddr_t)addr, data);
+  }
+
+  paddr_t paddr = 0;
+  if (!rv32_fast_translate_pmem(addr, 4, MEM_TYPE_WRITE, &paddr))
+  {
+    return false;
+  }
+
+  const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
+  const bool ok = rv32_fast_write_pmem_u32(paddr, data);
+  rv32_fast_flush_after_page_table_store(flush_tlb);
+  return ok;
 }
 
 /*
@@ -406,24 +543,21 @@ static inline bool rv32_fast_write_mem(vaddr_t addr, int len, word_t data)
  */
 static inline word_t rv32_fast_read_or_fallback(vaddr_t addr, int len, int type)
 {
-  /*
-   * Instruction fetch in direct mode is the hottest benchmark path. NEMU already
-   * builds fixed-width 32-bit RISC-V32 instructions, so reading the host word
-   * directly removes the host_read switch overhead for normal PMEM fetches.
-   */
-  if (type == MEM_TYPE_IFETCH && rv32_fast_direct_mode())
-  {
-    const paddr_t paddr = (paddr_t)addr;
-    if (likely(in_pmem(paddr)))
-    {
-      return *(uint32_t *)guest_to_host(paddr);
-    }
-  }
-
   word_t data = 0;
-  if (rv32_fast_read_mem(addr, len, type, &data))
+
+  switch (len)
   {
-    return data;
+    case 1:
+      if (rv32_fast_read_u8(addr, type, &data)) return data;
+      break;
+    case 2:
+      if (rv32_fast_read_u16(addr, type, &data)) return data;
+      break;
+    case 4:
+      if (rv32_fast_read_u32(addr, type, &data)) return data;
+      break;
+    default:
+      break;
   }
 
   return type == MEM_TYPE_IFETCH ? vaddr_ifetch(addr, len) : vaddr_read(addr, len);
@@ -436,7 +570,17 @@ static inline word_t rv32_fast_read_or_fallback(vaddr_t addr, int len, int type)
  */
 static inline void rv32_fast_write_or_fallback(vaddr_t addr, int len, word_t data)
 {
-  if (!rv32_fast_write_mem(addr, len, data))
+  bool ok = false;
+
+  switch (len)
+  {
+    case 1: ok = rv32_fast_write_u8(addr, data); break;
+    case 2: ok = rv32_fast_write_u16(addr, data); break;
+    case 4: ok = rv32_fast_write_u32(addr, data); break;
+    default: break;
+  }
+
+  if (!ok)
   {
     vaddr_write(addr, len, data);
   }
