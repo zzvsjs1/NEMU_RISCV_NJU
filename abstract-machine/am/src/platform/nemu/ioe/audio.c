@@ -12,6 +12,12 @@
 static volatile uint32_t bufferSize = 0;
 static volatile uintptr_t curWriteAddress = AUDIO_SBUF_ADDR;
 
+static inline void advance_write_ptr(uint32_t len)
+{
+    curWriteAddress = AUDIO_SBUF_ADDR
+        + ((curWriteAddress - AUDIO_SBUF_ADDR + len) % bufferSize);
+}
+
 void __am_audio_init() 
 {
     // Do nothing, delay subsystem init in ctrl call.
@@ -37,6 +43,7 @@ void __am_audio_ctrl(AM_AUDIO_CTRL_T *ctrl)
     outl(AUDIO_FREQ_ADDR, ctrl->freq);
     outl(AUDIO_CHANNELS_ADDR, ctrl->channels);
     outl(AUDIO_SAMPLES_ADDR, ctrl->samples);
+    curWriteAddress = AUDIO_SBUF_ADDR;
 
     // Start init in here, we need to make sure all the necessary data is ready.
     outl(AUDIO_INIT_ADDR, 1);
@@ -61,16 +68,18 @@ void __am_audio_play(AM_AUDIO_PLAY_T *ctl)
     {
         outb(curWriteAddress, *start);
 
-        // Add one byte each time.
-        uint8_t* nextWritePtr = (uint8_t*)curWriteAddress + 1;
-        const uintptr_t nextWritePtrValue = AUDIO_SBUF_ADDR + (((uintptr_t)nextWritePtr - AUDIO_SBUF_ADDR) % bufferSize);
-        curWriteAddress = nextWritePtrValue;
-
+        // Advance inside the device ring buffer and wrap back to the start.
+        advance_write_ptr(1);
         ++start;
     }
     
-    const uint32_t bufferBeUsedFinal = inl(AUDIO_COUNT_ADDR);
-
-    // Write the current count to register.
-    outl(AUDIO_COUNT_ADDR, len + bufferBeUsedFinal);
+    /*
+     * Commit only the number of bytes appended above.  Do not read the count,
+     * add len, then write the full value back: SDL's host callback may consume
+     * samples between that read and write, so a full-value write can restore a
+     * stale count and make the guest believe already-played bytes still exist.
+     * NEMU adds this delta to its private counter while holding the SDL audio
+     * lock, which keeps producer and consumer updates serialised.
+     */
+    outl(AUDIO_COUNT_ADDR, len);
 }

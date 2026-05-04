@@ -99,6 +99,14 @@ menuconfig HAS_AUDIO
   default y
 
 if HAS_AUDIO
+config AUDIO_DUMMY
+  bool "Use dummy audio backend"
+  default n
+  help
+    Keep the guest audio MMIO interface visible, but do not open a host SDL
+    audio device. NEMU will discard queued samples immediately, which is useful
+    for headless or benchmark runs that should not block on real playback.
+
 config SB_ADDR
   hex "Physical address of the audio stream buffer"
   default 0xa1200000

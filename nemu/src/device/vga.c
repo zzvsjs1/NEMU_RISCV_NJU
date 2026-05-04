@@ -56,6 +56,10 @@ static inline void update_screen() {
 #endif
 #endif
 
+#ifndef CONFIG_VGA_SHOW_SCREEN
+static inline void update_screen() {}
+#endif
+
 void vga_update_screen() 
 {
 	if (vgactl_port_base[1] != 0)

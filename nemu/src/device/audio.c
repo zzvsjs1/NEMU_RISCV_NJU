@@ -10,21 +10,49 @@ enum {
   reg_channels,   // Number of channels (e.g., 1 for mono, 2 for stereo)
   reg_samples,    // Number of samples per callback
   reg_sbuf_size,  // Total size of the stream buffer
-  reg_init,       // Write to initialize audio
-  reg_count,      // Read to get current used buffer size
+  reg_init,       // Write to initialise audio
+  reg_count,      // Read used bytes; write the number of newly appended bytes
   nr_reg
 };
 
 #define MIN(a, b) (((a) > (b)) ? (b) : (a))
 
+#ifndef CONFIG_AUDIO_DUMMY
 static SDL_AudioSpec spec = {0};
 static SDL_AudioSpec specOut = {0};
 static bool audio_opened = false;
+#endif
 
 static uint8_t *sbuf = NULL;
 static uint32_t *audio_base = NULL;
 
-static volatile int sbufReadIndex  = 0;
+static uint32_t audio_count = 0;
+static uint32_t sbufReadIndex = 0;
+
+static void publish_audio_count(void)
+{
+    audio_base[reg_count] = audio_count;
+}
+
+static void lock_audio_counter(void)
+{
+#ifndef CONFIG_AUDIO_DUMMY
+    if (audio_opened)
+    {
+        SDL_LockAudio();
+    }
+#endif
+}
+
+static void unlock_audio_counter(void)
+{
+#ifndef CONFIG_AUDIO_DUMMY
+    if (audio_opened)
+    {
+        SDL_UnlockAudio();
+    }
+#endif
+}
 
 /*
  * NEMU exposes one host SDL audio device, but under Nanos-lite multiple user
@@ -36,6 +64,7 @@ static volatile int sbufReadIndex  = 0;
  */
 static void close_audio_if_open(void)
 {
+#ifndef CONFIG_AUDIO_DUMMY
     if (!audio_opened)
     {
         return;
@@ -44,16 +73,21 @@ static void close_audio_if_open(void)
     SDL_PauseAudio(1);
     SDL_CloseAudio();
     audio_opened = false;
+#endif
 }
 
 static void reset_audio_stream(void)
 {
     sbufReadIndex = 0;
-    audio_base[reg_count] = 0;
+    audio_count = 0;
+    publish_audio_count();
+#ifndef CONFIG_AUDIO_DUMMY
     memset(&spec, 0, sizeof(spec));
     memset(&specOut, 0, sizeof(specOut));
+#endif
 }
 
+#ifndef CONFIG_AUDIO_DUMMY
 // This is the callback function that SDL calls to get more audio samples.
 // It reads data from sbuf (the ring buffer) and copies it into the stream
 // buffer. If data runs out, the rest of the output is filled with silence's value.
@@ -63,15 +97,15 @@ static void sdlAudioCallback(void *userdata, Uint8 *stream, int len)
     SDL_memset(stream, specOut.silence, len);
 
     // Determine how many bytes we can copy from the audio buffer.
-    const uint32_t currentSizeOfData = audio_base[reg_count];
+    const uint32_t currentSizeOfData = audio_count;
     const uint32_t filledBytes = MIN((uint32_t)len, currentSizeOfData);
 
     // Calculate new index with wrap-around logic.
-    const int endIndex = (sbufReadIndex + filledBytes) % CONFIG_SB_SIZE;
+    const uint32_t endIndex = (sbufReadIndex + filledBytes) % CONFIG_SB_SIZE;
 
     // Determine how many bytes to copy before and after the buffer wrap.
-    const int firstHalfLen = (endIndex < sbufReadIndex) ? (CONFIG_SB_SIZE - sbufReadIndex) : filledBytes;
-    const int secondHalfLen = filledBytes - firstHalfLen;
+    const uint32_t firstHalfLen = (endIndex < sbufReadIndex) ? (CONFIG_SB_SIZE - sbufReadIndex) : filledBytes;
+    const uint32_t secondHalfLen = filledBytes - firstHalfLen;
 
     // printf("Len%d datasize: %d\n", len, (int)filledBytes);
 
@@ -83,8 +117,10 @@ static void sdlAudioCallback(void *userdata, Uint8 *stream, int len)
 
     // Update the read index and the count of audio data.
     sbufReadIndex = endIndex;
-    audio_base[reg_count] -= filledBytes;
+    audio_count -= filledBytes;
+    publish_audio_count();
 }
+#endif
 
 static void audio_io_handler(uint32_t offset, int len, bool is_write) 
 {
@@ -114,8 +150,37 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
             }
 
             case reg_count: {
-                SDL_LockAudio();
-                SDL_UnlockAudio();
+#ifdef CONFIG_AUDIO_DUMMY
+                /*
+                 * The dummy backend accepts the guest's MMIO protocol but has
+                 * no SDL callback thread to consume samples later.  Treat each
+                 * commit as immediately drained; otherwise a headless run would
+                 * fill the emulated stream buffer and block forever.
+                 */
+                Assert(val <= CONFIG_SB_SIZE,
+                        "Dummy audio append is larger than the stream buffer: append=%u size=%u",
+                        val, CONFIG_SB_SIZE);
+                audio_count = 0;
+                publish_audio_count();
+#else
+                /*
+                 * AM writes a delta: the number of bytes just copied into the
+                 * stream buffer.  Keeping the real occupancy in audio_count
+                 * avoids a race where the SDL callback drains bytes between a
+                 * guest count read and a later guest count write.  The mapped
+                 * register cell is only the public view returned to reads.
+                 */
+                lock_audio_counter();
+                Assert(audio_count <= CONFIG_SB_SIZE,
+                        "Audio stream buffer count is invalid: count=%u size=%u",
+                        audio_count, CONFIG_SB_SIZE);
+                Assert(val <= CONFIG_SB_SIZE - audio_count,
+                        "Audio stream buffer overflow: count=%u append=%u size=%u",
+                        audio_count, val, CONFIG_SB_SIZE);
+                audio_count += val;
+                publish_audio_count();
+                unlock_audio_counter();
+#endif
                 break;
             }
 
@@ -126,6 +191,7 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
                 close_audio_if_open();
                 reset_audio_stream();
 
+#ifndef CONFIG_AUDIO_DUMMY
                 spec.freq = audio_base[reg_freq];
                 spec.format = AUDIO_S16SYS;
                 spec.channels = audio_base[reg_channels];
@@ -142,6 +208,7 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
                 // Unpause and start audio playback.
                 audio_opened = true;
                 SDL_PauseAudio(0);
+#endif
 
                 break;
             }
@@ -163,8 +230,9 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
         }
 
         case reg_count: {
-            SDL_LockAudio();
-            SDL_UnlockAudio();
+            lock_audio_counter();
+            publish_audio_count();
+            unlock_audio_counter();
             break;
         }
 
@@ -195,10 +263,12 @@ void init_audio()
   audio_base[reg_sbuf_size] = CONFIG_SB_SIZE;
   reset_audio_stream();
 
+#ifndef CONFIG_AUDIO_DUMMY
   // Init subsystem in here before open device.
   if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) 
   {
       printf("SDL_InitSubSystem error: %s\n", SDL_GetError());
       exit(1);
   }
+#endif
 }
