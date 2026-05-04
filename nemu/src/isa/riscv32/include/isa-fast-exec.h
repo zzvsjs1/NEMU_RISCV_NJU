@@ -342,6 +342,10 @@ static inline bool rv32_fast_store_may_touch_page_table(paddr_t paddr)
  */
 static inline bool rv32_fast_read_pmem_u8(paddr_t paddr, word_t *data)
 {
+  /*
+   * Byte loads cannot cross a PMEM boundary by width, so checking the starting
+   * physical address is enough before dereferencing the host PMEM pointer.
+   */
   if (!likely(in_pmem(paddr)))
   {
     return false;
@@ -353,6 +357,10 @@ static inline bool rv32_fast_read_pmem_u8(paddr_t paddr, word_t *data)
 
 static inline bool rv32_fast_read_pmem_u16(paddr_t paddr, word_t *data)
 {
+  /*
+   * Halfword loads are used for LH/LHU. The cast deliberately lets the host do
+   * the same little-endian unaligned access style already used by host_read().
+   */
   if (!likely(in_pmem(paddr)))
   {
     return false;
@@ -364,6 +372,10 @@ static inline bool rv32_fast_read_pmem_u16(paddr_t paddr, word_t *data)
 
 static inline bool rv32_fast_read_pmem_u32(paddr_t paddr, word_t *data)
 {
+  /*
+   * Word loads and instruction fetches are the most common hot-path memory
+   * operations, so this removes the generic host_read(len) switch completely.
+   */
   if (!likely(in_pmem(paddr)))
   {
     return false;
@@ -376,10 +388,15 @@ static inline bool rv32_fast_read_pmem_u32(paddr_t paddr, word_t *data)
 /*
  * Paged fast accesses need both a successful Sv32 translation and a translated
  * physical range that stays fully inside PMEM. If either check fails, fallback
- * keeps the complete NEMU memory behaviour.
+ * keeps the complete NEMU memory behaviour, including MMIO callbacks.
  */
 static inline bool rv32_fast_translate_pmem(vaddr_t addr, int len, int type, paddr_t *paddr)
 {
+  /*
+   * rv32_fast_translate() may succeed for direct mode or translated mode. The
+   * second predicate is still required because a valid translated physical
+   * address can be MMIO, and MMIO must go through the full fallback path.
+   */
   return rv32_fast_translate(addr, len, type, paddr) &&
       rv32_fast_pmem_range(*paddr, len);
 }
@@ -390,6 +407,10 @@ static inline bool rv32_fast_translate_pmem(vaddr_t addr, int len, int type, pad
  */
 static inline bool rv32_fast_read_u8(vaddr_t addr, int type, word_t *data)
 {
+  /*
+   * Bare mode is expected for AM benchmarks. In that case the virtual address is
+   * the physical address, and the helper below only needs the PMEM bound check.
+   */
   if (rv32_fast_direct_mode())
   {
     return rv32_fast_read_pmem_u8((paddr_t)addr, data);
@@ -402,6 +423,7 @@ static inline bool rv32_fast_read_u8(vaddr_t addr, int type, word_t *data)
 
 static inline bool rv32_fast_read_u16(vaddr_t addr, int type, word_t *data)
 {
+  /* Same split as byte reads, specialised for the LH/LHU access width. */
   if (rv32_fast_direct_mode())
   {
     return rv32_fast_read_pmem_u16((paddr_t)addr, data);
@@ -414,6 +436,10 @@ static inline bool rv32_fast_read_u16(vaddr_t addr, int type, word_t *data)
 
 static inline bool rv32_fast_read_u32(vaddr_t addr, int type, word_t *data)
 {
+  /*
+   * This serves both LW and normal 32-bit RISC-V instruction fetches. Keeping it
+   * width-specific avoids a switch in the common direct-PMEM case.
+   */
   if (rv32_fast_direct_mode())
   {
     return rv32_fast_read_pmem_u32((paddr_t)addr, data);
@@ -430,6 +456,10 @@ static inline bool rv32_fast_read_u32(vaddr_t addr, int type, word_t *data)
  */
 static inline bool rv32_fast_write_pmem_u8(paddr_t paddr, word_t data)
 {
+  /*
+   * Store helpers truncate naturally through the target pointer type, matching
+   * host_write() for SB/SH/SW without carrying a runtime length argument.
+   */
   if (!likely(in_pmem(paddr)))
   {
     return false;
@@ -441,6 +471,7 @@ static inline bool rv32_fast_write_pmem_u8(paddr_t paddr, word_t data)
 
 static inline bool rv32_fast_write_pmem_u16(paddr_t paddr, word_t data)
 {
+  /* Halfword store for SH; falls back before dereference if the address is MMIO. */
   if (!likely(in_pmem(paddr)))
   {
     return false;
@@ -452,6 +483,7 @@ static inline bool rv32_fast_write_pmem_u16(paddr_t paddr, word_t data)
 
 static inline bool rv32_fast_write_pmem_u32(paddr_t paddr, word_t data)
 {
+  /* Word store for SW, the dominant benchmark store width. */
   if (!likely(in_pmem(paddr)))
   {
     return false;
@@ -481,6 +513,10 @@ static inline void rv32_fast_flush_after_page_table_store(bool flush_tlb)
  */
 static inline bool rv32_fast_write_u8(vaddr_t addr, word_t data)
 {
+  /*
+   * In Bare mode this is just SB to PMEM. In translated mode the extra flush
+   * check protects cached TLB entries if the store updates a page table.
+   */
   if (rv32_fast_direct_mode())
   {
     return rv32_fast_write_pmem_u8((paddr_t)addr, data);
@@ -500,6 +536,7 @@ static inline bool rv32_fast_write_u8(vaddr_t addr, word_t data)
 
 static inline bool rv32_fast_write_u16(vaddr_t addr, word_t data)
 {
+  /* SH version of rv32_fast_write_u8(), with the same fallback and TLB rules. */
   if (rv32_fast_direct_mode())
   {
     return rv32_fast_write_pmem_u16((paddr_t)addr, data);
@@ -519,6 +556,11 @@ static inline bool rv32_fast_write_u16(vaddr_t addr, word_t data)
 
 static inline bool rv32_fast_write_u32(vaddr_t addr, word_t data)
 {
+  /*
+   * SW is important for stack traffic and structure copies. Page-table writes
+   * are detected before the store, but the flush happens after the new word is
+   * visible so the next walk observes the updated PTE.
+   */
   if (rv32_fast_direct_mode())
   {
     return rv32_fast_write_pmem_u32((paddr_t)addr, data);
@@ -545,6 +587,11 @@ static inline word_t rv32_fast_read_or_fallback(vaddr_t addr, int len, int type)
 {
   word_t data = 0;
 
+  /*
+   * len is normally a compile-time constant at each call site. After inlining,
+   * GCC can keep only the matching case, which gives separate hot code for
+   * byte, halfword, and word accesses without changing the public helper API.
+   */
   switch (len)
   {
     case 1:
@@ -572,6 +619,10 @@ static inline void rv32_fast_write_or_fallback(vaddr_t addr, int len, word_t dat
 {
   bool ok = false;
 
+  /*
+   * Store widths are also constant at call sites. Unsupported widths are not
+   * guessed here; they go to vaddr_write(), preserving the slow-path behaviour.
+   */
   switch (len)
   {
     case 1: ok = rv32_fast_write_u8(addr, data); break;
@@ -697,7 +748,6 @@ static inline bool rv32_fast_exec_op_imm(uint32_t instr, vaddr_t pc)
   const uint32_t rd = rv32_fast_bits(instr, 11, 7);
   const uint32_t funct3 = rv32_fast_bits(instr, 14, 12);
   const uint32_t rs1 = rv32_fast_bits(instr, 19, 15);
-  const uint32_t funct7 = rv32_fast_bits(instr, 31, 25);
   const word_t src = gpr(rs1);
   const sword_t imm = rv32_fast_imm_i(instr);
 
@@ -710,21 +760,29 @@ static inline bool rv32_fast_exec_op_imm(uint32_t instr, vaddr_t pc)
     case 0x6: rv32_fast_write_gpr(rd, src | (word_t)imm); break;
     case 0x7: rv32_fast_write_gpr(rd, src & (word_t)imm); break;
     case 0x1:
-      if (funct7 != 0x00) return false;
+      /*
+       * Only shift-immediate instructions look at funct7. The other OP-IMM
+       * forms, especially ADDI used by li/mv and stack adjustment, avoid this
+       * extraction on their hot path.
+       */
+      if (rv32_fast_bits(instr, 31, 25) != 0x00) return false;
       rv32_fast_write_gpr(rd, src << rv32_fast_bits(instr, 24, 20));
       break;
     case 0x5:
-      if (funct7 == 0x00)
       {
-        rv32_fast_write_gpr(rd, src >> rv32_fast_bits(instr, 24, 20));
-      }
-      else if (funct7 == 0x20)
-      {
-        rv32_fast_write_gpr(rd, (word_t)((sword_t)src >> rv32_fast_bits(instr, 24, 20)));
-      }
-      else
-      {
-        return false;
+        const uint32_t funct7 = rv32_fast_bits(instr, 31, 25);
+        if (funct7 == 0x00)
+        {
+          rv32_fast_write_gpr(rd, src >> rv32_fast_bits(instr, 24, 20));
+        }
+        else if (funct7 == 0x20)
+        {
+          rv32_fast_write_gpr(rd, (word_t)((sword_t)src >> rv32_fast_bits(instr, 24, 20)));
+        }
+        else
+        {
+          return false;
+        }
       }
       break;
     default: return false;
