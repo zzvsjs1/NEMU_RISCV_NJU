@@ -5,6 +5,8 @@ enum {
 };
 
 void context_uload(PCB *pcb, const char *filename, char *const argv[], char *const envp[]);
+void device_note_foreground_switch(void);
+void device_restore_foreground_on_schedule(void);
 
 static PCB pcb[MAX_NR_PROC] __attribute__((used)) = {};
 static PCB pcb_boot = {};
@@ -54,6 +56,7 @@ void switch_fg_pcb(int index)
   {
     fg_pcb = next;
     foreground_budget = FOREGROUND_QUANTA;
+    device_note_foreground_switch();
     Log("Switch foreground to pcb[%d]", index);
   }
 }
@@ -138,6 +141,10 @@ Context *schedule(Context *prev)
   }
 
   assert(pcb_runnable(current));
+  if (current == fg_pcb)
+  {
+    device_restore_foreground_on_schedule();
+  }
 
   // Return the context pointer of the next PCB.
   return current->cp;

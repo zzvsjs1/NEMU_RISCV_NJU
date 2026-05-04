@@ -35,6 +35,25 @@ static int fb_screen_h = 0;
 static uint32_t *fb_shadow[NR_FOREGROUND_PROC] = {};
 static bool fb_shadow_ready = false;
 
+/*
+ * Audio is also a foreground-owned physical device. PAL and Bird keep their
+ * own userspace SDL state after a hotkey switch, but NEMU has only one host
+ * SDL audio device. If Bird opens 44100 Hz audio and we later switch back to
+ * PAL, PAL will not call SDL_OpenAudio() again because its process still thinks
+ * the device is open. Without restoring PAL's saved hardware format, NEMU keeps
+ * playing PAL's 11025 Hz samples through Bird's 44100 Hz host configuration,
+ * which makes the music sound sped up and distorted.
+ */
+typedef struct {
+  bool configured;
+  uint32_t freq;
+  uint32_t channels;
+  uint32_t samples;
+} ForegroundAudioState;
+
+static ForegroundAudioState audio_state[NR_FOREGROUND_PROC] = {};
+static bool audio_restore_pending = false;
+
 static size_t round_up_to_page(size_t size)
 {
   return (size + PGSIZE - 1) & ~(size_t)(PGSIZE - 1);
@@ -123,6 +142,67 @@ static void fb_restore_foreground(void)
   }
 
   io_write(AM_GPU_FBDRAW, 0, 0, fb_shadow[owner], fb_screen_w, fb_screen_h, true);
+}
+
+static void audio_program(uint32_t freq, uint32_t channels, uint32_t samples)
+{
+  io_write(AM_AUDIO_CTRL, .freq = freq, .channels = channels, .samples = samples);
+}
+
+static void audio_remember_current(uint32_t freq, uint32_t channels, uint32_t samples)
+{
+  const int owner = current_pcb_index();
+  if (owner < 0 || owner >= NR_FOREGROUND_PROC)
+  {
+    return;
+  }
+
+  audio_state[owner] = (ForegroundAudioState) {
+    .configured = true,
+    .freq = freq,
+    .channels = channels,
+    .samples = samples,
+  };
+}
+
+static void audio_restore_foreground(void)
+{
+  const int owner = foreground_pcb_index();
+  if (owner < 0 || owner >= NR_FOREGROUND_PROC)
+  {
+    return;
+  }
+
+  const ForegroundAudioState *state = &audio_state[owner];
+  if (!state->configured)
+  {
+    return;
+  }
+
+  /*
+   * Reprogramming AM_AUDIO_CTRL resets both the AM stream-buffer write pointer
+   * and NEMU's host SDL audio stream. Do it when the selected app is about to
+   * run, not inside the old app's key-event syscall, because miniSDL calls its
+   * audio callback once after polling events. Restoring here prevents the old
+   * app from writing one last callback through the new app's audio format.
+   */
+  audio_program(state->freq, state->channels, state->samples);
+}
+
+void device_note_foreground_switch(void)
+{
+  audio_restore_pending = true;
+}
+
+void device_restore_foreground_on_schedule(void)
+{
+  if (!audio_restore_pending)
+  {
+    return;
+  }
+
+  audio_restore_pending = false;
+  audio_restore_foreground();
 }
 
 static bool handle_foreground_hotkey(AM_INPUT_KEYBRD_T *keyboard)
@@ -317,7 +397,8 @@ size_t sbctl_write(const void *buf, size_t offset, size_t len)
   uint32_t samples = p[2];
 
   // Program the audio device.
-  io_write(AM_AUDIO_CTRL, .freq = freq, .channels = channels, .samples = samples);
+  audio_remember_current(freq, channels, samples);
+  audio_program(freq, channels, samples);
   return len;
 }
 
