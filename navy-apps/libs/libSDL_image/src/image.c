@@ -7,9 +7,33 @@
 
 SDL_Surface* IMG_Load_RW(SDL_RWops *src, int freesrc) 
 {
-  assert(src->type == RW_TYPE_MEM);
-  assert(freesrc == 0);
-  return NULL;
+  if (src == NULL) return NULL;
+
+  int64_t size = SDL_RWsize(src);
+  if (size <= 0) {
+    if (freesrc) SDL_RWclose(src);
+    return NULL;
+  }
+
+  uint8_t *buf = malloc((size_t)size);
+  if (buf == NULL) {
+    if (freesrc) SDL_RWclose(src);
+    return NULL;
+  }
+
+  /*
+   * Decode from the current stream position, matching SDL_image's RWops
+   * contract. ONScripter leaves memory streams at offset zero before loading.
+   */
+  size_t got = SDL_RWread(src, buf, 1, (size_t)size);
+  SDL_Surface *surface = NULL;
+  if (got == (size_t)size) {
+    surface = STBIMG_LoadFromMemory(buf, (int)size);
+  }
+
+  free(buf);
+  if (freesrc) SDL_RWclose(src);
+  return surface;
 }
 
 SDL_Surface* IMG_Load(const char *filename) 
@@ -87,7 +111,18 @@ SDL_Surface* IMG_Load(const char *filename)
 
 int IMG_isPNG(SDL_RWops *src) 
 {
-  return 0;
+  if (src == NULL) return 0;
+
+  static const uint8_t png_magic[8] = {
+    0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'
+  };
+  uint8_t buf[8];
+  int64_t pos = SDL_RWtell(src);
+  if (pos < 0) return 0;
+
+  size_t got = SDL_RWread(src, buf, 1, sizeof(buf));
+  SDL_RWseek(src, pos, RW_SEEK_SET);
+  return got == sizeof(buf) && memcmp(buf, png_magic, sizeof(buf)) == 0;
 }
 
 SDL_Surface* IMG_LoadJPG_RW(SDL_RWops *src) 

@@ -14,19 +14,29 @@ static const char *keyname[] = {
 static uint8_t keyStates[KEANAME_COUNT] = { 0 };
 
 
-/* ring buffer for outgoing SDL_Events */
+/* Ring buffer for outgoing SDL_Events. */
 #define EVENT_QUEUE_SIZE 128
 static SDL_Event  eventQueue[EVENT_QUEUE_SIZE];
 static int queueHead = 0;
 static int queueTail = 0;
 
-/* enqueue, dropping oldest if full */
+static int queueEmpty(void)
+{
+  return queueHead == queueTail;
+}
+
+static int eventMatchesMask(const SDL_Event *ev, uint32_t mask)
+{
+  return (mask & SDL_EVENTMASK(ev->type)) != 0;
+}
+
+/* Enqueue, dropping the oldest event if the fixed queue is full. */
 static void enqueueEvent(const SDL_Event *ev) 
 {
   const int next = (queueTail + 1) % EVENT_QUEUE_SIZE;
   if (next == queueHead) 
   {
-      /* buffer full → overwrite oldest */
+      /* Buffer full: overwrite the oldest event to keep recent input live. */
       queueHead = (queueHead + 1) % EVENT_QUEUE_SIZE;
   }
 
@@ -34,12 +44,11 @@ static void enqueueEvent(const SDL_Event *ev)
   queueTail = next;
 }
 
-/* dequeue one, return 1 if success */
+/* Dequeue one event. Return 1 on success and 0 when the queue is empty. */
 static int dequeueEvent(SDL_Event *ev) 
 {
-  if (queueHead == queueTail) 
+  if (queueEmpty())
   {
-    // Empty
     return 0;
   }
 
@@ -49,7 +58,7 @@ static int dequeueEvent(SDL_Event *ev)
 }
 
 
-// Helper: find the index of 'name' in keyname[], or -1 if not found
+// Find the index of 'name' in keyname[], or -1 if not found.
 static int lookupKeycode(const char *name) 
 {
   for (int i = 0; i < KEANAME_COUNT; i++) 
@@ -63,7 +72,7 @@ static int lookupKeycode(const char *name)
   return -1;
 }
 
-/* centralized: read every raw NDL event, update keyStates, enqueue */
+/* Read every raw NDL event, update keyStates, and enqueue translated events. */
 static void pumpKeyboardEvents(void) 
 {
   char buf[64];
@@ -73,7 +82,6 @@ static void pumpKeyboardEvents(void)
       const int n = NDL_PollEvent(buf, sizeof(buf));
       if (n <= 0) 
       {
-        // No event.
         break;
       }
 
@@ -82,14 +90,12 @@ static void pumpKeyboardEvents(void)
       char prefix[3], name[32];
       if (sscanf(buf, "%2s %31s", prefix, name) != 2) 
       {
-        // malformed  
         continue;
       }
 
       int kc = lookupKeycode(name);
       if (kc < 0) 
       {
-        // unknown key
         continue;
       }
 
@@ -97,7 +103,6 @@ static void pumpKeyboardEvents(void)
       if (strcmp(prefix, "kd") == 0) 
       {
           ev.type = SDL_KEYDOWN;
-          // Set keystate in here.
           keyStates[kc] = 1;
       }
       else if (strcmp(prefix, "ku") == 0) 
@@ -117,21 +122,23 @@ static void pumpKeyboardEvents(void)
 
 int SDL_PushEvent(SDL_Event *ev) 
 {
-  TODO("SDL_PushEvent");
+  if (ev == NULL) return -1;
+  enqueueEvent(ev);
   return 0;
 }
 
 void SDL_PumpEvents(void) 
 {
+  void SDL_CheckTimers(void);
+
   pumpKeyboardEvents();
+  SDL_CheckTimers();
 
   void CallbackHelper(void);
   extern int g_in_audio_cb;
   if (!g_in_audio_cb) CallbackHelper(); // keep audio flowing
 }
 
-// One thing need to notice:
-// 
 int SDL_PollEvent(SDL_Event *ev) 
 {
   SDL_PumpEvents();
@@ -146,8 +153,47 @@ int SDL_WaitEvent(SDL_Event *event)
 
 int SDL_PeepEvents(SDL_Event *ev, int numevents, int action, uint32_t mask) 
 {
-  TODO("SDL_PeepEvents");
-  return 0;
+  if (numevents <= 0) return 0;
+
+  if (action == SDL_ADDEVENT)
+  {
+    for (int i = 0; i < numevents; i++) enqueueEvent(&ev[i]);
+    return numevents;
+  }
+
+  SDL_PumpEvents();
+
+  int matched = 0;
+  SDL_Event tmp[EVENT_QUEUE_SIZE];
+  int tmp_count = 0;
+
+  /*
+   * Rebuild the queue after scanning. This keeps event ordering stable while
+   * allowing SDL_GETEVENT to remove only the events that matched the mask.
+   */
+  while (!queueEmpty())
+  {
+    SDL_Event cur;
+    dequeueEvent(&cur);
+
+    const int take = matched < numevents && eventMatchesMask(&cur, mask);
+    if (take)
+    {
+      if (ev != NULL) ev[matched] = cur;
+      matched++;
+    }
+
+    if (action != SDL_GETEVENT || !take)
+    {
+      assert(tmp_count < EVENT_QUEUE_SIZE);
+      tmp[tmp_count++] = cur;
+    }
+  }
+
+  queueHead = queueTail = 0;
+  for (int i = 0; i < tmp_count; i++) enqueueEvent(&tmp[i]);
+
+  return matched;
 }
 
 uint8_t* SDL_GetKeyState(int *numkeys) 

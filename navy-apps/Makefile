@@ -187,22 +187,71 @@ $(CLEAN_ALL):
 .PHONY: clean-all $(CLEAN_ALL)
 
 ### Build fsimg and ramdisk for Nanos-lite
-APPS = pal bird nslider menu nterm busybox
+APPS = pal bird onscripter
 TESTS = hello
+
+ONS_GAME_SRC = $(NAVY_HOME)/apps/onscripter/game
+ONS_GAME_DST = $(NAVY_HOME)/fsimg/share/games/ons
+ONS_SCRIPT_FILES = 0.txt 00.txt nscript.dat nscript.___
+
+# ONScripter receives "-r /share/games/ons" from Nanos-lite, so at least one
+# NScripter script file must appear directly under that directory in the
+# generated file table.  Use a symlink, matching PAL and bird, so fsimg names
+# the data without keeping a second multi-GB copy of the game tree.  NEMU still
+# reads the final build/ramdisk.img as a disk image at runtime; this link is
+# only build-time metadata for generating that image and ramdisk.h.
+ons-game-data:
+	@echo + ONSDATA "->" /share/games/ons
+	@if [ ! -d "$(ONS_GAME_SRC)" ]; then \
+		echo "error: ONS game directory is missing: $(ONS_GAME_SRC)" >&2; \
+		echo "       Put the unpacked game data there before building ramdisk.img." >&2; \
+		exit 1; \
+	fi
+	@found=0; \
+	for f in $(ONS_SCRIPT_FILES); do \
+		if [ -f "$(ONS_GAME_SRC)/$$f" ]; then found=1; break; fi; \
+	done; \
+	if [ "$$found" -ne 1 ]; then \
+		echo "error: ONS game directory has no top-level scenario script." >&2; \
+		echo "       Expected one of: $(ONS_SCRIPT_FILES)" >&2; \
+		echo "       Directory checked: $(ONS_GAME_SRC)" >&2; \
+		exit 1; \
+	fi
+	@if [ -e "$(ONS_GAME_DST)" ] && [ ! -L "$(ONS_GAME_DST)" ]; then \
+		echo "error: $(ONS_GAME_DST) is a real directory, but it should be a symlink." >&2; \
+		echo "       Remove the generated copy, then rerun make update." >&2; \
+		echo "       Expected link target: $(ONS_GAME_SRC)" >&2; \
+		exit 1; \
+	fi
+	@mkdir -p "$(dir $(ONS_GAME_DST))"
+	@ln -sfn -T "$(ONS_GAME_SRC)" "$(ONS_GAME_DST)"
 
 fsimg: $(addprefix apps/, $(APPS)) $(addprefix tests/, $(TESTS))
 	-for t in $^; do $(MAKE) -s -C $(NAVY_HOME)/$$t install; done
+	@$(MAKE) -s -C $(NAVY_HOME) ons-game-data
 
 RAMDISK = build/ramdisk.img
 RAMDISK_H = build/ramdisk.h
+
+# Build the image from a streamed file list so paths containing spaces or
+# parentheses are passed to the shell as quoted values.  Some ONS assets use
+# names such as "9-2(3).png", which break if the whole file list is expanded
+# directly into one `cat ...` command.
 $(RAMDISK): fsimg
-	$(eval FSIMG_FILES := $(shell find -L ./fsimg -type f))
 	@mkdir -p $(@D)
-	@cat $(FSIMG_FILES) > $@
-	@truncate -s \%512 $@
 	@echo "// file path, file size, offset in disk" > $(RAMDISK_H)
-	@wc -c $(FSIMG_FILES) | grep -v 'total$$' | sed -e 's+ ./fsimg+ +' | awk -v sum=0 '{print "\x7b\x22" $$2 "\x22\x2c " $$1 "\x2c " sum "\x7d\x2c";sum += $$1}' >> $(RAMDISK_H)
+	@rm -f $@
+	@touch $@
+	@offset=0; \
+	find -L ./fsimg -type f | sort | while IFS= read -r f; do \
+		size=$$(wc -c < "$$f"); \
+		rel=$${f#./fsimg}; \
+		cat "$$f" >> "$@"; \
+		printf '{"%s", %s, %s},\n' "$$rel" "$$size" "$$offset" >> "$(RAMDISK_H)"; \
+		offset=$$((offset + size)); \
+	done
+	@truncate -s \%512 $@
 
 ramdisk: $(RAMDISK)
 
-.PHONY: fsimg ramdisk
+.PHONY: fsimg ramdisk ons-game-data
