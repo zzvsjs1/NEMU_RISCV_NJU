@@ -4,7 +4,6 @@
 #include <inttypes.h>
 #include "memory.h"
 #include "proc.h"
-#include "sys/_intsup.h"
 
 void context_uload(PCB *pcb, const char *filename, char *const argv[], char *const envp[]);
 extern PCB *current;

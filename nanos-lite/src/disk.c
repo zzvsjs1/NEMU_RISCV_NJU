@@ -28,8 +28,11 @@ static void check_disk_range(size_t offset, size_t len)
   assert(len <= size - offset);
 }
 
-static void disk_transfer_block(bool write, size_t blkno)
+static void disk_transfer_blocks(bool write, size_t blkno, size_t blkcnt)
 {
+  assert(blkcnt > 0);
+  assert(blkcnt * (size_t)disk_cfg.blksz <= DISK_BLOCK_BUF_SIZE);
+
   /*
    * NEMU receives this pointer as a guest physical address and translates it
    * directly into host PMEM.  Keep it as a kernel static buffer: syscall
@@ -39,7 +42,7 @@ static void disk_transfer_block(bool write, size_t blkno)
       .write = write,
       .buf = disk_block_buf,
       .blkno = (int)blkno,
-      .blkcnt = 1);
+      .blkcnt = (int)blkcnt);
 }
 
 size_t disk_read(void *buf, size_t offset, size_t len)
@@ -58,9 +61,28 @@ size_t disk_read(void *buf, size_t offset, size_t len)
     const size_t cur = offset + done;
     const size_t blkno = cur / blksz;
     const size_t blkoff = cur % blksz;
+
+    if (blkoff == 0) {
+      /*
+       * Read as many consecutive whole blocks as the bounce buffer can hold.
+       * The AM/NEMU disk interface already supports multi-block transfers, so
+       * this cuts MMIO traffic and host fseek/fread calls for large assets.
+       */
+      const size_t max_blocks = DISK_BLOCK_BUF_SIZE / blksz;
+      const size_t needed_blocks = (len - done + blksz - 1) / blksz;
+      const size_t disk_blocks_left = (size_t)disk_cfg.blkcnt - blkno;
+      const size_t blkcnt = min_size(min_size(needed_blocks, max_blocks), disk_blocks_left);
+      const size_t chunk = min_size(len - done, blkcnt * blksz);
+
+      disk_transfer_blocks(false, blkno, blkcnt);
+      memcpy(out + done, disk_block_buf, chunk);
+      done += chunk;
+      continue;
+    }
+
     const size_t chunk = min_size(len - done, blksz - blkoff);
 
-    disk_transfer_block(false, blkno);
+    disk_transfer_blocks(false, blkno, 1);
     memcpy(out + done, disk_block_buf + blkoff, chunk);
 
     done += chunk;
@@ -93,11 +115,11 @@ size_t disk_write(const void *buf, size_t offset, size_t len)
        * Full aligned block writes can skip the read because the whole buffer
        * is overwritten before the write command.
        */
-      disk_transfer_block(false, blkno);
+      disk_transfer_blocks(false, blkno, 1);
     }
 
     memcpy(disk_block_buf + blkoff, in + done, chunk);
-    disk_transfer_block(true, blkno);
+    disk_transfer_blocks(true, blkno, 1);
 
     done += chunk;
   }

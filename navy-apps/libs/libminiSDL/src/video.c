@@ -220,20 +220,45 @@ void SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, uint32_t color)
 void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h) {
   assert(s);
 
-  // If w or h is zero, update the entire surface
-  if (w == 0 || h == 0) 
-  {
-      x = 0; 
-      y = 0;
-      w = s->w; 
+  /*
+   * SDL_UpdateRect(surface, 0, 0, 0, 0) is the conventional full-surface
+   * refresh.  A rectangle with only one zero dimension is empty; drawing it as
+   * a full row/column can turn a bad glyph or clipping rectangle into a large
+   * framebuffer update.
+   */
+  if (x == 0 && y == 0 && w == 0 && h == 0) {
+      w = s->w;
       h = s->h;
+  } else if (w <= 0 || h <= 0) {
+      return;
   }
 
   if (s->format->BitsPerPixel == 32) 
   {
-      // 32-bit path, direct draw.
-      uint32_t *pixels = (uint32_t *)s->pixels + y * s->w + x;
-      NDL_DrawRect(pixels, x, y, w, h);
+      /*
+       * NDL_DrawRect() expects a tightly packed w*h pixel array.  The screen
+       * surface itself is pitched by the full surface width, so passing a
+       * pointer into the middle of the surface only works for full-width
+       * updates.  ONScripter often updates small dirty rectangles; pack those
+       * rows first so every destination row starts from the correct source row.
+       */
+      const int bpp = s->format->BytesPerPixel;
+      const int pitch = s->pitch;
+      uint8_t *src = (uint8_t *)s->pixels + y * pitch + x * bpp;
+
+      if (x == 0 && w * bpp == pitch) {
+        NDL_DrawRect((uint32_t *)src, x, y, w, h);
+      } else {
+        uint32_t *buf = malloc(sizeof(uint32_t) * w * h);
+        assert(buf);
+
+        for (int row = 0; row < h; row++) {
+          memcpy(buf + row * w, src + row * pitch, (size_t)w * bpp);
+        }
+
+        NDL_DrawRect(buf, x, y, w, h);
+        free(buf);
+      }
   }
   // For The Legend of Sword and Fairy.
   else if (s->format->BitsPerPixel == 8) 

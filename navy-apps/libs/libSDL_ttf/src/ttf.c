@@ -62,13 +62,30 @@ int TTF_GlyphMetrics(TTF_Font *font, Uint16 ch, int *minx, int *maxx, int *miny,
   stbtt_fontinfo *finfo = font->finfo;
   int glyphIndex = stbtt_FindGlyphIndex(finfo, ch);
   if (glyphIndex == 0) return -1;
-  int ret = stbtt_GetGlyphBox(finfo, glyphIndex, minx, miny, maxx, maxy);
-  if (ret == 0) return -1;
-  if (minx) *minx = fixedpt_toint(fixedpt_muli(font->factor, *minx));
-  if (miny) *miny = fixedpt_toint(fixedpt_muli(font->factor, *miny));
-  if (maxx) *maxx = fixedpt_toint(fixedpt_muli(font->factor, *maxx));
-  if (maxy) *maxy = fixedpt_toint(fixedpt_muli(font->factor, *maxy));
-  assert(advance == NULL); // not implemented
+
+  int advanceWidth;
+  stbtt_GetGlyphHMetrics(finfo, glyphIndex, &advanceWidth, NULL);
+  if (advance) *advance = fixedpt_toint(fixedpt_muli(font->factor, advanceWidth));
+
+  int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+  int ret = stbtt_GetGlyphBox(finfo, glyphIndex, &x0, &y0, &x1, &y1);
+  if (ret == 0) {
+    /*
+     * Spaces and similar glyphs are real glyphs with an advance width, but
+     * they have no ink box.  SDL_ttf reports them as a zero-sized box instead
+     * of failing; callers such as ONScripter rely on that distinction.
+     */
+    if (minx) *minx = 0;
+    if (miny) *miny = 0;
+    if (maxx) *maxx = 0;
+    if (maxy) *maxy = 0;
+    return 0;
+  }
+
+  if (minx) *minx = fixedpt_toint(fixedpt_muli(font->factor, x0));
+  if (miny) *miny = fixedpt_toint(fixedpt_muli(font->factor, y0));
+  if (maxx) *maxx = fixedpt_toint(fixedpt_muli(font->factor, x1));
+  if (maxy) *maxy = fixedpt_toint(fixedpt_muli(font->factor, y1));
   return 0;
 }
 

@@ -92,8 +92,15 @@ int fs_open(const char *pathname, int flags, int mode)
     }
   }
 
-  // File not found.
-  Log("fs_open: Invalid pathname: %s\n", pathname);
+  /*
+   * Many applications probe optional files as normal control flow.  Logging
+   * every miss is very expensive on NEMU because each character goes through
+   * the emulated serial device.  Enable this macro only when debugging file
+   * table generation or path translation.
+   */
+#ifdef CONFIG_TRACE_FS_OPEN_MISS
+  Log("fs_open: Invalid pathname: %s", pathname);
+#endif
   return -1;
 }
 
