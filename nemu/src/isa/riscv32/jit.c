@@ -674,6 +674,103 @@ static bool emit_call_abs(rv32_jit_writer_t *w, uintptr_t func)
       && emit_u8(w, 0xff) && emit_u8(w, 0xd0);
 }
 
+typedef struct
+{
+  uint8_t *satp_slow_disp;
+  uint8_t *range_slow_disp;
+} rv32_jit_pmem_guard_patch_t;
+
+static bool emit_movabs_r9(rv32_jit_writer_t *w, uint64_t value)
+{
+  /* movabs r9, imm64 */
+  return emit_u8(w, 0x49) && emit_u8(w, 0xb9) && emit_u64(w, value);
+}
+
+static bool emit_movabs_r10(rv32_jit_writer_t *w, uint64_t value)
+{
+  /* movabs r10, imm64 */
+  return emit_u8(w, 0x49) && emit_u8(w, 0xba) && emit_u64(w, value);
+}
+
+static bool emit_mov_edx_eax(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x89) && emit_u8(w, 0xc2);
+}
+
+static bool emit_mov_r8d_edx(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xd0);
+}
+
+static bool emit_sub_edx_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+  return emit_u8(w, 0x81) && emit_u8(w, 0xea) && emit_u32(w, value);
+}
+
+static bool emit_cmp_edx_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+  return emit_u8(w, 0x81) && emit_u8(w, 0xfa) && emit_u32(w, value);
+}
+
+static bool emit_and_r8d_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+  return emit_u8(w, 0x41) && emit_u8(w, 0x81) && emit_u8(w, 0xe0)
+      && emit_u32(w, value);
+}
+
+static bool emit_cmp_r8d_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+  return emit_u8(w, 0x41) && emit_u8(w, 0x81) && emit_u8(w, 0xf8)
+      && emit_u32(w, value);
+}
+
+static bool emit_shr_r8d_imm(rv32_jit_writer_t *w, uint8_t value)
+{
+  return emit_u8(w, 0x41) && emit_u8(w, 0xc1) && emit_u8(w, 0xe8)
+      && emit_u8(w, value);
+}
+
+static bool emit_cmp_satp_zero(rv32_jit_writer_t *w)
+{
+  const uint32_t off = (uint32_t)offsetof(CPU_state, csr.satp);
+
+  /* cmp dword ptr [r11 + satp_off], 0 */
+  return emit_u8(w, 0x41) && emit_u8(w, 0x83) && emit_u8(w, 0xbb)
+      && emit_u32(w, off) && emit_u8(w, 0x00);
+}
+
+static bool emit_cmp_source_page_ref_zero(rv32_jit_writer_t *w)
+{
+  /* cmp word ptr [r9 + r8 * 2], 0 */
+  return emit_u8(w, 0x66) && emit_u8(w, 0x43) && emit_u8(w, 0x83)
+      && emit_u8(w, 0x3c) && emit_u8(w, 0x41) && emit_u8(w, 0x00);
+}
+
+static bool emit_direct_pmem_guard(rv32_jit_writer_t *w, uint32_t len,
+    rv32_jit_pmem_guard_patch_t *patch)
+{
+  Assert(len >= 1 && len <= 4, "jit: unsupported direct PMEM width %u", len);
+
+  /*
+   * Keep the guard stricter than paddr_read(): it only accepts a complete
+   * in-PMEM byte range. Any boundary, MMIO, paging, or wraparound case falls
+   * back to the existing helper path.
+   */
+  return emit_cmp_satp_zero(w)
+      && emit_jcc_rel32_placeholder(w, 0x85, &patch->satp_slow_disp)
+      && emit_mov_edx_eax(w)
+      && emit_sub_edx_imm(w, (uint32_t)CONFIG_MBASE)
+      && emit_cmp_edx_imm(w, (uint32_t)CONFIG_MSIZE - len)
+      && emit_jcc_rel32_placeholder(w, 0x87, &patch->range_slow_disp);
+}
+
+static void patch_direct_pmem_guard(const rv32_jit_pmem_guard_patch_t *patch,
+    const uint8_t *slow_path)
+{
+  patch_rel32(patch->satp_slow_disp, slow_path);
+  patch_rel32(patch->range_slow_disp, slow_path);
+}
+
 static bool emit_prologue(rv32_jit_writer_t *w)
 {
   /*
