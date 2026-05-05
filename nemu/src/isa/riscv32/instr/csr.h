@@ -1,4 +1,14 @@
 
+#include <isa-jit.h>
+
+static inline void csr_flush_jit_if_satp(word_t csr_addr)
+{
+    if (csr_addr == 0x180u)
+    {
+        isa_jit_flush_all();
+    }
+}
+
 def_EHelper(ecall) 
 {
     bool success = false;
@@ -52,6 +62,7 @@ def_EHelper(csrrw)
     // Write the original rs1 value to the CSR. This must still be correct
     // when rd == rs1, for example: csrrw sp, mscratch, sp.
     rtl_li(s, csrPtr, newCSRValue);
+    csr_flush_jit_if_satp(csrAddress);
 }
 
 // The CSRRS (Atomic Read and Set Bits in CSR) instruction reads the value of the CSR, zero-extends the
@@ -72,6 +83,7 @@ def_EHelper(csrrs)
     if (isCSRWriteable(csrAddress) && s->isa.instr.CSR.rs1 != 0) 
     {
         rtl_or(s, csrPtr, csrPtr, dsrc1);
+        csr_flush_jit_if_satp(csrAddress);
     }
 }
 
@@ -92,6 +104,7 @@ def_EHelper(csrrc)
         rtl_mv(s, s0, dsrc1);
         rtl_not(s, s0, s0);
         rtl_and(s, csrPtr, csrPtr, s0);
+        csr_flush_jit_if_satp(csrAddress);
     }
 }
 
@@ -107,6 +120,7 @@ def_EHelper(csrrwi)
     }
 
     rtl_li(s, csrPtr, uimm);
+    csr_flush_jit_if_satp(csrAddress);
 }
 
 def_EHelper(csrrsi)
@@ -120,6 +134,7 @@ def_EHelper(csrrsi)
     if (isCSRWriteable(csrAddress) && uimm != 0)
     {
         rtl_ori(s, csrPtr, csrPtr, uimm);
+        csr_flush_jit_if_satp(csrAddress);
     }
 }
 
@@ -135,5 +150,6 @@ def_EHelper(csrrci)
     {
         rtl_li(s, s0, ~uimm);
         rtl_and(s, csrPtr, csrPtr, s0);
+        csr_flush_jit_if_satp(csrAddress);
     }
 }

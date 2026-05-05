@@ -2,6 +2,9 @@
 #include <memory/paddr.h>
 #include <device/mmio.h>
 #include <isa.h>
+#ifdef CONFIG_ISA_riscv32
+#include <isa-jit.h>
+#endif
 #include <utils.h>
 
 #if   defined(CONFIG_TARGET_AM)
@@ -122,6 +125,9 @@ void paddr_write(paddr_t addr, int len, word_t data) {
     }
 #endif
     pmem_write(addr, len, data);
+#ifdef CONFIG_ISA_riscv32
+    isa_jit_invalidate_paddr(addr, len);
+#endif
     return;
   }
   MUXDEF(CONFIG_DEVICE, mmio_write(addr, len, data),

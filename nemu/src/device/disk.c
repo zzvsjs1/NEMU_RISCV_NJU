@@ -1,6 +1,9 @@
 #include <common.h>
 #include <device/map.h>
 #include <memory/paddr.h>
+#ifdef CONFIG_ISA_riscv32
+#include <isa-jit.h>
+#endif
 
 #include <errno.h>
 #include <stdio.h>
@@ -105,7 +108,7 @@ static void open_disk_image(void)
   Log("disk: no usable disk image, device is absent");
 }
 
-static uint8_t *guest_buffer_to_host(uint32_t guest_addr, size_t bytes)
+static uint8_t *guest_buffer_to_host(uint32_t guest_addr, size_t bytes, paddr_t *out_paddr)
 {
   Assert(guest_addr >= PMEM_BASE,
       "disk: guest DMA address 0x%08x is below PMEM base 0x%08x",
@@ -125,6 +128,7 @@ static uint8_t *guest_buffer_to_host(uint32_t guest_addr, size_t bytes)
       "disk: guest DMA range [0x%08x, 0x%08x) is outside PMEM",
       guest_addr, guest_addr + (uint32_t)bytes);
 
+  *out_paddr = paddr;
   return guest_to_host(paddr);
 }
 
@@ -183,12 +187,17 @@ static void do_blkio(void)
       blkno, blkno + blkcnt, disk_blkcnt);
 
   disk_base[reg_ready] = 0;
-  uint8_t *buf = guest_buffer_to_host(disk_base[reg_buf], bytes);
+  paddr_t dma_paddr = 0;
+  uint8_t *buf = guest_buffer_to_host(disk_base[reg_buf], bytes, &dma_paddr);
 
   if (disk_base[reg_write]) {
     write_blocks(buf, blkno, blkcnt);
   } else {
     read_blocks(buf, blkno, blkcnt);
+#ifdef CONFIG_ISA_riscv32
+    Assert(bytes <= INT32_MAX, "disk: DMA read is too large for JIT invalidation");
+    isa_jit_invalidate_paddr(dma_paddr, (int)bytes);
+#endif
   }
 
   disk_base[reg_ready] = 1;
