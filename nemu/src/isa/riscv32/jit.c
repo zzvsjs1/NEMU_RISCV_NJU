@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-#if defined(__x86_64__) && defined(CONFIG_ISA_riscv32) && \
+#if defined(__x86_64__) && defined(CONFIG_RV32_JIT) && \
     defined(CONFIG_TARGET_NATIVE_ELF) && !defined(CONFIG_TRACE) && \
     !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
     !defined(CONFIG_MTRACE) && !defined(CONFIG_FTRACE)
@@ -25,7 +25,9 @@
 #define RV32_JIT_CODE_ALIGN 16u
 #define RV32_JIT_PMEM_PAGE_COUNT \
   (((size_t)CONFIG_MSIZE + (size_t)PAGE_SIZE - 1u) / (size_t)PAGE_SIZE)
-#ifndef RV32_JIT_STATS
+#ifdef CONFIG_RV32_JIT_STATS
+#define RV32_JIT_STATS 1
+#else
 #define RV32_JIT_STATS 0
 #endif
 

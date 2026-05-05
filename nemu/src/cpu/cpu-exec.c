@@ -201,7 +201,7 @@ static inline bool can_fast_exec()
 
 static inline bool can_jit_exec()
 {
-#if defined(CONFIG_ISA_riscv32) && !defined(CONFIG_TRACE) && \
+#if defined(CONFIG_RV32_JIT) && !defined(CONFIG_TRACE) && \
     !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
     !defined(CONFIG_MTRACE) && !defined(CONFIG_FTRACE)
     /*

@@ -244,6 +244,34 @@ config DIFFTEST_REF_NAME
   default "none"
 endmenu
 
+menu "RISC-V32 JIT"
+  depends on ISA_riscv32 && TARGET_NATIVE_ELF && ENGINE_INTERPRETER
+
+config RV32_JIT
+  bool "Enable RISC-V32 x86-64 JIT"
+  depends on !TRACE && !DIFFTEST && !WATCHPOINT && !MTRACE && !FTRACE
+  default y
+  help
+    Translate supported RISC-V32 basic blocks to native x86-64 code. The JIT is
+    kept behind the same instrumentation boundary as the fast executor, because
+    tracing, watchpoints and differential testing need the interpreter's normal
+    per-instruction hooks.
+
+    The environment variable NEMU_DISABLE_JIT=1 can still disable this at run
+    time for quick benchmark comparisons without changing the saved config.
+
+config RV32_JIT_STATS
+  bool "Collect RISC-V32 JIT statistics"
+  depends on RV32_JIT
+  default n
+  help
+    Count JIT cache hits, compiled blocks, executed blocks, helper calls and
+    invalidations. This adds counter updates on hot paths, so leave it disabled
+    for normal performance runs. When enabled in the binary, set
+    NEMU_JIT_STATS=1 at run time to print the summary.
+
+endmenu
+
 if MODE_SYSTEM
 source "src/memory/Kconfig"
 source "src/device/Kconfig"
