@@ -805,6 +805,53 @@ static bool emit_direct_pmem_load_eax(rv32_jit_writer_t *w, uint32_t funct3)
   }
 }
 
+static bool emit_direct_pmem_store_from_ecx(rv32_jit_writer_t *w, uint32_t len)
+{
+  if (!emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)))
+  {
+    return false;
+  }
+
+  switch (len)
+  {
+    case 1:
+      /* mov byte ptr [r10 + rdx], cl */
+      return emit_u8(w, 0x41) && emit_u8(w, 0x88)
+          && emit_u8(w, 0x0c) && emit_u8(w, 0x12);
+    case 2:
+      /* mov word ptr [r10 + rdx], cx */
+      return emit_u8(w, 0x66) && emit_u8(w, 0x41) && emit_u8(w, 0x89)
+          && emit_u8(w, 0x0c) && emit_u8(w, 0x12);
+    case 4:
+      /* mov dword ptr [r10 + rdx], ecx */
+      return emit_u8(w, 0x41) && emit_u8(w, 0x89)
+          && emit_u8(w, 0x0c) && emit_u8(w, 0x12);
+    default:
+      return false;
+  }
+}
+
+static bool emit_store_source_page_guard(rv32_jit_writer_t *w, uint32_t len,
+    uint8_t **cross_page_disp, uint8_t **source_page_disp)
+{
+  Assert(len >= 1 && len <= 4, "jit: unsupported direct store width %u", len);
+
+  /*
+   * Direct continuing stores only handle one PMEM page. Cross-page stores are
+   * rare in the benchmark loops and use the helper path to keep invalidation
+   * conservative.
+   */
+  return emit_mov_r8d_edx(w)
+      && emit_and_r8d_imm(w, PAGE_MASK)
+      && emit_cmp_r8d_imm(w, PAGE_SIZE - len)
+      && emit_jcc_rel32_placeholder(w, 0x87, cross_page_disp)
+      && emit_mov_r8d_edx(w)
+      && emit_shr_r8d_imm(w, PAGE_SHIFT)
+      && emit_movabs_r9(w, (uint64_t)(uintptr_t)jit_source_page_refs)
+      && emit_cmp_source_page_ref_zero(w)
+      && emit_jcc_rel32_placeholder(w, 0x85, source_page_disp);
+}
+
 static bool emit_prologue(rv32_jit_writer_t *w)
 {
   /*
@@ -871,12 +918,66 @@ static bool emit_load_instr(rv32_jit_writer_t *w, uint32_t instr)
   return emit_store_gpr_eax(w, rd);
 }
 
-static bool emit_load_store_instr(rv32_jit_writer_t *w, uint32_t instr)
+static bool emit_store_instr(rv32_jit_writer_t *w, uint32_t instr,
+    vaddr_t next_pc, uint32_t exit_count)
 {
-  const uint32_t opcode = instr & 0x7fu;
   const uint32_t funct3 = bits(instr, 14, 12);
   const uint32_t rs1 = bits(instr, 19, 15);
   const uint32_t rs2 = bits(instr, 24, 20);
+
+  uintptr_t helper = 0;
+  uint32_t len = 0;
+  switch (funct3)
+  {
+    case 0x0: helper = (uintptr_t)jit_store_u8; len = 1; break;
+    case 0x1: helper = (uintptr_t)jit_store_u16; len = 2; break;
+    case 0x2: helper = (uintptr_t)jit_store_u32; len = 4; break;
+    default: return false;
+  }
+
+  rv32_jit_pmem_guard_patch_t guard = {0};
+  uint8_t *cross_page_disp = NULL;
+  uint8_t *source_page_disp = NULL;
+  uint8_t *done_disp = NULL;
+  if (!emit_addr_eax_from_rs1_imm(w, rs1, imm_s(instr)) ||
+      !emit_load_gpr_ecx(w, rs2) ||
+      !emit_direct_pmem_guard(w, len, &guard) ||
+      !emit_store_source_page_guard(w, len, &cross_page_disp,
+          &source_page_disp) ||
+      !emit_direct_pmem_store_from_ecx(w, len) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp))
+  {
+    return false;
+  }
+
+  const uint8_t *slow_path = w->cur;
+  patch_direct_pmem_guard(&guard, slow_path);
+  patch_rel32(cross_page_disp, slow_path);
+  patch_rel32(source_page_disp, slow_path);
+
+  /*
+   * The helper path handles MMIO, paging, cross-page direct stores, and source
+   * code invalidation. It exits before the next guest fetch so side effects are
+   * observed at the same boundary as the old store-ending block policy.
+   */
+  if (!emit_u8(w, 0x89) || !emit_u8(w, 0xc7) ||
+      !emit_u8(w, 0x89) || !emit_u8(w, 0xce) ||
+      !emit_call_abs(w, helper) ||
+      !emit_load_cpu_base(w) ||
+      !emit_set_pc_imm(w, next_pc) ||
+      !emit_epilogue_return_count(w, exit_count))
+  {
+    return false;
+  }
+
+  patch_rel32(done_disp, w->cur);
+  return true;
+}
+
+static bool emit_load_store_instr(rv32_jit_writer_t *w, uint32_t instr,
+    vaddr_t cur_pc, uint32_t exit_count)
+{
+  const uint32_t opcode = instr & 0x7fu;
 
   if (opcode == 0x03)
   {
@@ -885,33 +986,10 @@ static bool emit_load_store_instr(rv32_jit_writer_t *w, uint32_t instr)
 
   if (opcode == 0x23)
   {
-    uintptr_t helper = 0;
-    switch (funct3)
-    {
-      case 0x0: helper = (uintptr_t)jit_store_u8; break;
-      case 0x1: helper = (uintptr_t)jit_store_u16; break;
-      case 0x2: helper = (uintptr_t)jit_store_u32; break;
-      default: return false;
-    }
-
-    /*
-     * Stores go through vaddr_write(), so MMU, MMIO and code-cache
-     * invalidation stay in the existing memory system.
-     */
-    return emit_addr_eax_from_rs1_imm(w, rs1, imm_s(instr))
-        && emit_u8(w, 0x89) && emit_u8(w, 0xc7)
-        && emit_load_gpr_eax(w, rs2)
-        && emit_u8(w, 0x89) && emit_u8(w, 0xc6)
-        && emit_call_abs(w, helper)
-        && emit_load_cpu_base(w);
+    return emit_store_instr(w, instr, cur_pc + 4u, exit_count);
   }
 
   return false;
-}
-
-static bool jit_instr_is_store(uint32_t instr)
-{
-  return (instr & 0x7fu) == 0x23;
 }
 
 static bool jit_instr_is_control_flow(uint32_t instr)
@@ -1261,7 +1339,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
       end_block = true;
     }
     else if (!emit_alu_instr(&w, instr, cur_pc) &&
-        !emit_load_store_instr(&w, instr))
+        !emit_load_store_instr(&w, instr, cur_pc, count + 1u))
     {
       /*
        * Emitters may fail after writing a prefix of an x86 instruction. Roll
@@ -1274,15 +1352,6 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     cur_pc += 4;
     source_len += 4;
     count++;
-    if (jit_instr_is_store(instr))
-    {
-      /*
-       * A store can modify code bytes or page-table memory. Ending the native
-       * block immediately after the store lets invalidation take effect before
-       * the next guest fetch, preserving self-modifying-code behaviour.
-       */
-      break;
-    }
 
     if (end_block)
     {
