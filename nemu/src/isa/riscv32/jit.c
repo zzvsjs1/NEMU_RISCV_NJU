@@ -20,6 +20,15 @@
 #endif
 
 #define RV32_JIT_BLOCK_MAX_INSNS 32u
+/*
+ * One native block may still be very short because stores, branches and
+ * unsupported instructions end translation early. A bounded batch lets one
+ * isa_jit_exec() call consume several cached blocks before returning to the
+ * outer CPU loop. The limit is intentionally the same scale as the device
+ * update interval, so timer/device work and interrupt checks are not delayed
+ * by an unbounded translated-code run.
+ */
+#define RV32_JIT_BATCH_MAX_INSNS 256u
 #define RV32_JIT_CACHE_SIZE 4096u
 #define RV32_JIT_CODE_SIZE (4u * 1024u * 1024u)
 #define RV32_JIT_CODE_ALIGN 16u
@@ -1154,40 +1163,53 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
 
   JIT_STAT_INC(exec_requests);
 
-  uint32_t max_insns = remaining > RV32_JIT_BLOCK_MAX_INSNS
-      ? RV32_JIT_BLOCK_MAX_INSNS : (uint32_t)remaining;
-  if (max_insns > device_budget)
+  uint32_t batch_budget = remaining > RV32_JIT_BATCH_MAX_INSNS
+      ? RV32_JIT_BATCH_MAX_INSNS : (uint32_t)remaining;
+  if (batch_budget > device_budget)
   {
-    max_insns = device_budget;
+    batch_budget = device_budget;
   }
 
-  rv32_jit_block_t *block = jit_cache_slot(cpu.pc);
-  if (!block->valid || block->pc != cpu.pc || block->satp != cpu.csr.satp ||
-      block->insn_count > max_insns)
+  uint32_t total = 0;
+  while (total < batch_budget)
   {
-    JIT_STAT_INC(cache_misses);
-    block = jit_compile_block(cpu.pc, max_insns);
-  }
-  else
-  {
-    JIT_STAT_INC(cache_hits);
-  }
-
-  if (block == NULL || !block->valid || block->entry == NULL)
-  {
-    if (block != NULL && block->valid && block->entry == NULL)
+    uint32_t block_budget = batch_budget - total;
+    if (block_budget > RV32_JIT_BLOCK_MAX_INSNS)
     {
-      JIT_STAT_INC(unsupported_hits);
+      block_budget = RV32_JIT_BLOCK_MAX_INSNS;
     }
-    return false;
+
+    rv32_jit_block_t *block = jit_cache_slot(cpu.pc);
+    if (!block->valid || block->pc != cpu.pc || block->satp != cpu.csr.satp ||
+        block->insn_count > block_budget)
+    {
+      JIT_STAT_INC(cache_misses);
+      block = jit_compile_block(cpu.pc, block_budget);
+    }
+    else
+    {
+      JIT_STAT_INC(cache_hits);
+    }
+
+    if (block == NULL || !block->valid || block->entry == NULL)
+    {
+      if (block != NULL && block->valid && block->entry == NULL)
+      {
+        JIT_STAT_INC(unsupported_hits);
+      }
+      break;
+    }
+
+    const uint32_t ran = block->entry();
+    Assert(ran > 0 && ran <= block_budget,
+        "jit: invalid executed count %u", ran);
+    JIT_STAT_INC(blocks_executed);
+    JIT_STAT_ADD(executed_insns, ran);
+    total += ran;
   }
 
-  const uint32_t ran = block->entry();
-  Assert(ran > 0 && ran <= max_insns, "jit: invalid executed count %u", ran);
-  JIT_STAT_INC(blocks_executed);
-  JIT_STAT_ADD(executed_insns, ran);
-  *executed = ran;
-  return true;
+  *executed = total;
+  return total > 0;
 }
 
 #if RV32_JIT_STATS
