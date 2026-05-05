@@ -36,6 +36,8 @@ enum {
   FD_SBCTL
 };
 
+#define FIRST_REGULAR_FILE (FD_SBCTL + 1)
+
 size_t invalid_read(void *buf, size_t offset, size_t len) {
   panic("should not reach here");
   return 0;
@@ -66,6 +68,54 @@ enum { NR_FILES = sizeof(FILE_TABLE) / sizeof(FILE_TABLE[0]) };
 // Array to track the current offset for each open file
 static size_t openOffset[NR_FILES] = {0};  // Initialized to 0 automatically
 
+static int find_special_file(const char *pathname)
+{
+  for (int i = 0; i < FIRST_REGULAR_FILE; i++)
+  {
+    if (strcmp(pathname, FILE_TABLE[i].name) == 0)
+    {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+static int find_regular_file(const char *pathname)
+{
+  /*
+   * navy-apps/Makefile writes files.h from `find ... | sort`, so every normal
+   * ramdisk pathname after the device entries is lexicographically ordered.
+   * ONScripter opens many PNG/archive paths while changing scenes; binary
+   * search cuts that path lookup from about 1,600 string comparisons to about
+   * 11 in the current large game image.
+   */
+  int left = FIRST_REGULAR_FILE;
+  int right = NR_FILES;
+
+  while (left < right)
+  {
+    const int mid = left + (right - left) / 2;
+    const int cmp = strcmp(pathname, FILE_TABLE[mid].name);
+
+    if (cmp == 0)
+    {
+      return mid;
+    }
+
+    if (cmp < 0)
+    {
+      right = mid;
+    }
+    else
+    {
+      left = mid + 1;
+    }
+  }
+
+  return -1;
+}
+
 void init_fs() 
 {
   // Initialise the size of /dev/fb
@@ -81,15 +131,17 @@ void init_fs()
 // Open a file by pathname, return file descriptor (index in file_table)
 int fs_open(const char *pathname, int flags, int mode) 
 {
-  // Search for the file in the file table
-  for (int i = 0; i < NR_FILES; i++) 
+  int fd = find_special_file(pathname);
+  if (fd < 0)
   {
-    if (strcmp(pathname, FILE_TABLE[i].name) == 0) 
-    {
-      // Reset offset and return descriptor
-      openOffset[i] = 0;
-      return i;
-    }
+    fd = find_regular_file(pathname);
+  }
+
+  if (fd >= 0)
+  {
+    // Reset offset and return descriptor.
+    openOffset[fd] = 0;
+    return fd;
   }
 
   /*

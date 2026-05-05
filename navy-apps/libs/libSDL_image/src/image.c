@@ -2,6 +2,8 @@
 #define SDL_free    free
 #define SDL_realloc realloc
 
+#include <limits.h>
+
 #define SDL_STBIMAGE_IMPLEMENTATION
 #include "SDL_stbimage.h"
 
@@ -13,6 +15,21 @@ SDL_Surface* IMG_Load_RW(SDL_RWops *src, int freesrc)
   if (size <= 0) {
     if (freesrc) SDL_RWclose(src);
     return NULL;
+  }
+
+  if (src->type == RW_TYPE_MEM) {
+    int64_t pos = SDL_RWtell(src);
+    if (pos < 0 || pos > size || size - pos > INT_MAX) {
+      if (freesrc) SDL_RWclose(src);
+      return NULL;
+    }
+
+    int len = (int)(size - pos);
+    unsigned char *base = src->mem.base + pos;
+    SDL_Surface *surface = STBIMG_LoadFromMemory(base, len);
+    SDL_RWseek(src, size, RW_SEEK_SET);
+    if (freesrc) SDL_RWclose(src);
+    return surface;
   }
 
   uint8_t *buf = malloc((size_t)size);

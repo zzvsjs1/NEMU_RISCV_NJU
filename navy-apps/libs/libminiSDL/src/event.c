@@ -134,9 +134,7 @@ void SDL_PumpEvents(void)
   pumpKeyboardEvents();
   SDL_CheckTimers();
 
-  void CallbackHelper(void);
-  extern int g_in_audio_cb;
-  if (!g_in_audio_cb) CallbackHelper(); // keep audio flowing
+  SDL_PumpAudio();
 }
 
 int SDL_PollEvent(SDL_Event *ev) 

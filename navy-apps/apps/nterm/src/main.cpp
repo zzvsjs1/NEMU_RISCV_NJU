@@ -17,12 +17,17 @@ int main(int argc, char *argv[]) {
   SDL_Init(0);
   font = new BDF_Font(font_fname);
 
-  // setup display
-  int win_w = font->w * W;
-  int win_h = font->h * H;
-  screen = SDL_SetVideoMode(win_w, win_h, 32, SDL_HWSURFACE);
+  // Open the whole physical display, then derive a character grid that fits
+  // the selected bitmap font. This keeps NTerm in sync with 800x600 without
+  // baking one fixed terminal size into the application.
+  screen = SDL_SetVideoMode(0, 0, 32, SDL_HWSURFACE);
+  assert(screen);
 
-  term = new Terminal(W, H);
+  const int term_w = screen->w / font->w;
+  const int term_h = screen->h / font->h;
+  assert(term_w > 0 && term_h > 0);
+
+  term = new Terminal(term_w, term_h);
 
   if (argc >= 2 && strcmp(argv[1], "--selftest") == 0) {
     // Build/ramdisk tests can execute this mode without synthesizing keyboard
@@ -48,15 +53,15 @@ int main(int argc, char *argv[]) {
 
 static void draw_ch(int x, int y, char ch, uint32_t fg, uint32_t bg) {
   SDL_Surface *s = BDF_CreateSurface(font, ch, fg, bg);
-  SDL_Rect dstrect = { .x = x, .y = y };
+  SDL_Rect dstrect = { .x = (int16_t)x, .y = (int16_t)y };
   SDL_BlitSurface(s, NULL, screen, &dstrect);
   SDL_FreeSurface(s);
 }
 
 void refresh_terminal() {
   int needsync = 0;
-  for (int i = 0; i < W; i ++)
-    for (int j = 0; j < H; j ++)
+  for (int i = 0; i < term->w; i ++)
+    for (int j = 0; j < term->h; j ++)
       if (term->is_dirty(i, j)) {
         draw_ch(i * font->w, j * font->h, term->getch(i, j), term->foreground(i, j), term->background(i, j));
         needsync = 1;

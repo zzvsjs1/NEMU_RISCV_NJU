@@ -3,6 +3,7 @@
 #include <common.h>
 #include <memory.h>
 #include <proc.h>
+#include <stdint.h>
 
 #if defined(MULTIPROGRAM) && !defined(TIME_SHARING)
 # define MULTIPROGRAM_YIELD() yield()
@@ -41,8 +42,8 @@ static bool fb_shadow_ready = false;
  * SDL audio device. If Bird opens 44100 Hz audio and we later switch back to
  * PAL, PAL will not call SDL_OpenAudio() again because its process still thinks
  * the device is open. Without restoring PAL's saved hardware format, NEMU keeps
- * playing PAL's 11025 Hz samples through Bird's 44100 Hz host configuration,
- * which makes the music sound sped up and distorted.
+ * playing one app's samples through another app's host configuration, which
+ * makes the music sound sped up, slowed down, or distorted.
  */
 typedef struct {
   bool configured;
@@ -80,10 +81,10 @@ static void init_fb_shadow(void)
   fb_shadow_ready = true;
 }
 
-// Mirror the current foreground app's one-row /dev/fb write into its shadow.
-static void update_current_fb_shadow(const void *buf, int row, int col, int w_pixels)
+// Mirror the current foreground app's linear /dev/fb write into its shadow.
+static void update_current_fb_shadow(const void *buf, size_t offset, size_t len)
 {
-  if (!fb_shadow_ready || buf == NULL || w_pixels <= 0)
+  if (!fb_shadow_ready || buf == NULL || len == 0)
   {
     return;
   }
@@ -94,37 +95,14 @@ static void update_current_fb_shadow(const void *buf, int row, int col, int w_pi
     return;
   }
 
-  if (row < 0 || row >= fb_screen_h || col >= fb_screen_w)
+  const size_t fb_size = (size_t)fb_screen_w * (size_t)fb_screen_h * sizeof(uint32_t);
+  if (offset >= fb_size)
   {
     return;
   }
 
-  int src_skip = 0;
-  if (col < 0)
-  {
-    src_skip = -col;
-    w_pixels -= src_skip;
-    col = 0;
-  }
-
-  if (w_pixels <= 0)
-  {
-    return;
-  }
-
-  if (col + w_pixels > fb_screen_w)
-  {
-    w_pixels = fb_screen_w - col;
-  }
-
-  if (w_pixels <= 0)
-  {
-    return;
-  }
-
-  uint32_t *dst = fb_shadow[owner] + (size_t)row * (size_t)fb_screen_w + col;
-  const uint32_t *src = (const uint32_t *)buf + src_skip;
-  memcpy(dst, src, (size_t)w_pixels * sizeof(uint32_t));
+  const size_t copy_len = len < fb_size - offset ? len : fb_size - offset;
+  memcpy((uint8_t *)fb_shadow[owner] + offset, buf, copy_len);
 }
 
 // Restore the selected foreground app's full-screen shadow to the real display.
@@ -312,10 +290,10 @@ size_t dispinfo_read(void *buf, size_t offset, size_t len)
 
 size_t fb_write(const void *buf, size_t offset, size_t len) 
 {
-  const AM_GPU_CONFIG_T cfg = io_read(AM_GPU_CONFIG);
-  assert(cfg.present);
+  assert(fb_shadow_ready);
+  assert(len % sizeof(uint32_t) == 0);
 
-  const int screenW = cfg.width;
+  const int screenW = fb_screen_w;
 
   // Compute necessary variables.
   const size_t byteOffset = offset;             // offset in bytes
@@ -324,12 +302,33 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
   int row = (int)(pixelOffset / screenW);        // integer division → row
   int col = (int)(pixelOffset % screenW);        // remainder → column
   
-  int wPixels = len / sizeof(uint32_t);                 // len is bytes → divide to get pixel count
+  size_t pixelCount = len / sizeof(uint32_t);            // len is bytes → divide to get pixel count
+
+  if (pixelCount == 0)
+  {
+    return len;
+  }
 
   // printf("offset=%d row=%d col=%d wPixels=%d\n", (int)offset, row, col, wPixels);
 
-  io_write(AM_GPU_FBDRAW, col, row, (void*)buf, wPixels, 1, true);
-  update_current_fb_shadow(buf, row, col, wPixels);
+  /*
+   * Full-width writes are common when an app repaints a whole image.  Send
+   * those as one multi-row draw so the VGA sync flag is raised once instead of
+   * once per row.  Other linear spans keep the old one-span behaviour.
+   */
+  if (col == 0 && pixelCount >= (size_t)screenW
+      && pixelCount % (size_t)screenW == 0)
+  {
+    const int hPixels = (int)(pixelCount / (size_t)screenW);
+    io_write(AM_GPU_FBDRAW, col, row, (void *)buf, screenW, hPixels, true);
+  }
+  else
+  {
+    assert(pixelCount <= (size_t)INT32_MAX);
+    io_write(AM_GPU_FBDRAW, col, row, (void *)buf, (int)pixelCount, 1, true);
+  }
+
+  update_current_fb_shadow(buf, offset, len);
 
   return len;
 }

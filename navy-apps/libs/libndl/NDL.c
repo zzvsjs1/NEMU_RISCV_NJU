@@ -24,9 +24,9 @@ static void clear_full_framebuffer(int width, int height)
   assert(fbFd >= 0);
   assert(width > 0 && height > 0);
 
-  const size_t row_bytes = (size_t)width * sizeof(uint32_t);
-  uint32_t *black_row = calloc((size_t)width, sizeof(uint32_t));
-  assert(black_row != NULL);
+  const size_t frame_bytes = (size_t)width * (size_t)height * sizeof(uint32_t);
+  uint32_t *black_frame = calloc((size_t)width * (size_t)height, sizeof(uint32_t));
+  assert(black_frame != NULL);
 
   /*
    * NDL centers an app canvas inside the physical display. If a new app opens
@@ -36,14 +36,10 @@ static void clear_full_framebuffer(int width, int height)
    * transitions such as NTerm -> PAL do not leave NTerm's white background
    * around PAL's smaller game image.
    */
-  for (int row = 0; row < height; ++row)
-  {
-    const off_t offset = (off_t)row * width * (off_t)sizeof(uint32_t);
-    assert(lseek(fbFd, offset, SEEK_SET) == offset);
-    assert(write(fbFd, black_row, row_bytes) == (ssize_t)row_bytes);
-  }
+  assert(lseek(fbFd, 0, SEEK_SET) == 0);
+  assert(write(fbFd, black_frame, frame_bytes) == (ssize_t)frame_bytes);
 
-  free(black_row);
+  free(black_frame);
 }
 
 /* initTick holds the millisecond timestamp taken at NDL_Init() */
@@ -147,6 +143,25 @@ void NDL_OpenCanvas(int *w, int *h)
 void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h) 
 {
   assert(fbFd >= 0);
+
+  if (w <= 0 || h <= 0)
+  {
+    return;
+  }
+
+  /*
+   * If the rectangle covers whole physical framebuffer rows, one contiguous
+   * write is enough.  This is the common full-screen image path for ONScripter
+   * on a 400x300 canvas, and it avoids one syscall and one VGA sync per row.
+   */
+  if (canvas_x + x == 0 && w == screen_w)
+  {
+    const off_t offset = (off_t)(canvas_y + y) * screen_w * (off_t)sizeof(uint32_t);
+    const size_t bytes = (size_t)w * (size_t)h * sizeof(uint32_t);
+    assert(lseek(fbFd, offset, SEEK_SET) == offset);
+    assert(write(fbFd, pixels, bytes) == (ssize_t)bytes);
+    return;
+  }
 
   for (int row = 0; row < h; ++row) 
   {

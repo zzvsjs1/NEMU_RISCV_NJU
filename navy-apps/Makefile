@@ -243,7 +243,7 @@ $(RAMDISK): fsimg
 	@rm -f $@
 	@touch $@
 	@offset=0; \
-	find -L ./fsimg -type f | sort | while IFS= read -r f; do \
+	LC_ALL=C find -L ./fsimg -type f | LC_ALL=C sort | while IFS= read -r f; do \
 		size=$$(wc -c < "$$f"); \
 		rel=$${f#./fsimg}; \
 		cat "$$f" >> "$@"; \

@@ -19,8 +19,8 @@ static void fork_child(const char *nterm_proc) {
     nterm_proc,
     NULL,
   };
-  char env_lines[32]; sprintf(env_lines, "LINES=%d", H);
-  char env_columns[32]; sprintf(env_columns, "COLUMNS=%d", W);
+  char env_lines[32]; sprintf(env_lines, "LINES=%d", term->h);
+  char env_columns[32]; sprintf(env_columns, "COLUMNS=%d", term->w);
   const char *envp[] = {
     env_lines,
     env_columns,

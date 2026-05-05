@@ -408,25 +408,88 @@ void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_
   assert(dst->format->BitsPerPixel == src->format->BitsPerPixel);
   assert(dst->format->BitsPerPixel == 8);
 
-  int x = (srcrect == NULL ? 0 : srcrect->x);
-  int y = (srcrect == NULL ? 0 : srcrect->y);
-  int w = (srcrect == NULL ? src->w : srcrect->w);
-  int h = (srcrect == NULL ? src->h : srcrect->h);
+  const int src_x = (srcrect == NULL ? 0 : srcrect->x);
+  const int src_y = (srcrect == NULL ? 0 : srcrect->y);
+  const int src_w = (srcrect == NULL ? src->w : srcrect->w);
+  const int src_h = (srcrect == NULL ? src->h : srcrect->h);
 
-  assert(dstrect);
-  if(w == dstrect->w && h == dstrect->h) {
-    /* The source rectangle and the destination rectangle
-     * are of the same size. If that is the case, there
-     * is no need to stretch, just copy. */
-    SDL_Rect rect;
-    rect.x = x;
-    rect.y = y;
-    rect.w = w;
-    rect.h = h;
-    SDL_BlitSurface(src, &rect, dst, dstrect);
+  SDL_Rect dst_full = {
+    .x = 0,
+    .y = 0,
+    .w = (uint16_t)dst->w,
+    .h = (uint16_t)dst->h,
+  };
+  SDL_Rect *dst_area = dstrect == NULL ? &dst_full : dstrect;
+
+  if (src_w <= 0 || src_h <= 0 || dst_area->w <= 0 || dst_area->h <= 0) {
+    return;
   }
-  else {
-    assert(0);
+
+  assert(src_x >= 0 && src_y >= 0);
+  assert(src_x + src_w <= src->w && src_y + src_h <= src->h);
+
+  if (src_w == dst_area->w && src_h == dst_area->h) {
+    /*
+     * The same-size path keeps SDL_BlitSurface()'s richer clipping behaviour.
+     * A local destination rectangle avoids writing back through dst_full when
+     * the caller passed NULL, matching normal SDL "whole destination" usage.
+     */
+    SDL_Rect src_rect = {
+      .x = src_x,
+      .y = src_y,
+      .w = (uint16_t)src_w,
+      .h = (uint16_t)src_h,
+    };
+    SDL_Rect dst_rect = *dst_area;
+    SDL_BlitSurface(src, &src_rect, dst, &dst_rect);
+    if (dstrect != NULL) *dstrect = dst_rect;
+    return;
+  }
+
+  /*
+   * PAL renders into a 320x200 8-bit buffer and stretches it to the real
+   * screen. Nearest-neighbour scaling is enough here: it is deterministic,
+   * cheap for NEMU, and preserves the indexed palette values until the final
+   * SDL_UpdateRect() palette conversion.
+   */
+  const int dst_x = dst_area->x;
+  const int dst_y = dst_area->y;
+  const int dst_w = dst_area->w;
+  const int dst_h = dst_area->h;
+
+  int clip_x0 = dst_x < 0 ? 0 : dst_x;
+  int clip_y0 = dst_y < 0 ? 0 : dst_y;
+  int clip_x1 = dst_x + dst_w;
+  int clip_y1 = dst_y + dst_h;
+  if (clip_x1 > dst->w) clip_x1 = dst->w;
+  if (clip_y1 > dst->h) clip_y1 = dst->h;
+
+  if (clip_x0 >= clip_x1 || clip_y0 >= clip_y1) {
+    if (dstrect != NULL) {
+      dstrect->x = clip_x0;
+      dstrect->y = clip_y0;
+      dstrect->w = 0;
+      dstrect->h = 0;
+    }
+    return;
+  }
+
+  for (int dy = clip_y0; dy < clip_y1; dy++) {
+    const int src_row = src_y + (dy - dst_y) * src_h / dst_h;
+    const uint8_t *src_rowp = (const uint8_t *)src->pixels + src_row * src->pitch + src_x;
+    uint8_t *dst_rowp = (uint8_t *)dst->pixels + dy * dst->pitch + clip_x0;
+
+    for (int dx = clip_x0; dx < clip_x1; dx++) {
+      const int src_col = (dx - dst_x) * src_w / dst_w;
+      dst_rowp[dx - clip_x0] = src_rowp[src_col];
+    }
+  }
+
+  if (dstrect != NULL) {
+    dstrect->x = clip_x0;
+    dstrect->y = clip_y0;
+    dstrect->w = (uint16_t)(clip_x1 - clip_x0);
+    dstrect->h = (uint16_t)(clip_y1 - clip_y0);
   }
 }
 

@@ -4,7 +4,15 @@ size_t ramdisk_read(void *buf, size_t offset, size_t len);
 size_t ramdisk_write(const void *buf, size_t offset, size_t len);
 size_t get_ramdisk_size(void);
 
-#define DISK_BLOCK_BUF_SIZE 4096
+/*
+ * Keep one kernel-owned DMA bounce buffer for disk I/O.  User buffers can be
+ * virtual addresses that NEMU's simple disk device cannot translate, so Nanos
+ * copies through this physical buffer.  A larger buffer is worthwhile for
+ * ONScripter: switching images often reads hundreds of KiB from the ramdisk,
+ * and each extra chunk costs several MMIO register writes plus one host-side
+ * disk command.
+ */
+#define DISK_BLOCK_BUF_SIZE (128 * 1024)
 
 static AM_DISK_CONFIG_T disk_cfg;
 static bool disk_present = false;

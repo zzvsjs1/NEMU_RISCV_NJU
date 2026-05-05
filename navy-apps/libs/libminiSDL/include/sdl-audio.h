@@ -23,6 +23,7 @@ void SDL_PauseAudio(int pause_on);
 SDL_AudioSpec *SDL_LoadWAV(const char *file, SDL_AudioSpec *spec, uint8_t **audio_buf, uint32_t *audio_len);
 void SDL_FreeWAV(uint8_t *audio_buf);
 void SDL_MixAudio(uint8_t *dst, uint8_t *src, uint32_t len, int volume);
+void SDL_PumpAudio();
 void SDL_LockAudio();
 void SDL_UnlockAudio();
 

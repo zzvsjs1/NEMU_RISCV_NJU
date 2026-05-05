@@ -23,6 +23,8 @@ volatile int g_in_audio_cb = 0;
 #define MAX_PUSH_BYTES   (64 * 1024)
 #define BURST_CALLBACKS  4
 
+void CallbackHelper(void);
+
 // very small helper for clamp
 static inline int16_t clampS16(int x) 
 {
@@ -364,4 +366,12 @@ void CallbackHelper(void)
 
     // Leave protected region
     g_in_audio_cb = 0;
+}
+
+void SDL_PumpAudio(void)
+{
+    if (!g_in_audio_cb)
+    {
+        CallbackHelper();
+    }
 }

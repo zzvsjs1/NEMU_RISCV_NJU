@@ -224,6 +224,27 @@ int main(void)
   CHECK(Mix_AllocateChannels(2) == 2);
   Mix_ChannelFinished(channel_finished);
 
+  ogg = read_whole_file("/share/music/rhythm/Do.ogg", &ogg_size);
+  ogg_rw = open_memory_rw(ogg, ogg_size);
+  Mix_Chunk *ogg_chunk = Mix_LoadWAV_RW(ogg_rw, 1);
+  CHECK(ogg_chunk != NULL);
+  CHECK(ogg_chunk->format == AUDIO_S16SYS);
+  CHECK(ogg_chunk->channels >= 1 && ogg_chunk->channels <= 2);
+  CHECK(ogg_chunk->frequency > 0);
+  CHECK(ogg_chunk->alen > 0);
+
+  channel_finished_index = -1;
+  int ogg_channel = Mix_PlayChannel(-1, ogg_chunk, 0);
+  CHECK(ogg_channel >= 0);
+
+  for (int i = 0; i < 200 && channel_finished_index < 0; i++) {
+    SDL_Delay(5);
+  }
+
+  CHECK(channel_finished_index == ogg_channel);
+  Mix_FreeChunk(ogg_chunk);
+  free(ogg);
+
   size_t wav_size = 0;
   uint8_t *wav = make_mono_wav(&wav_size);
   SDL_RWops *wav_rw = open_memory_rw(wav, wav_size);

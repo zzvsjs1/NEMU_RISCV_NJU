@@ -1,4 +1,5 @@
 #include <NDL.h>
+#include <sdl-audio.h>
 #include <sdl-timer.h>
 #include <stdio.h>
 #include <assert.h>
@@ -104,9 +105,7 @@ void SDL_Delay(uint32_t ms)
   while ((SDL_GetTicks() - start) < ms) 
   {
       SDL_CheckTimers();
-      void CallbackHelper(void);
-      extern int g_in_audio_cb;
-      if (!g_in_audio_cb) CallbackHelper();  // keep audio flowing without recursion
+      SDL_PumpAudio();
       // A very short host sleep would be nice on native OS, but is not required.
   }
 

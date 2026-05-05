@@ -611,6 +611,49 @@ static Mix_Chunk *load_wav_from_memory(const uint8_t *data, int len)
   return chunk;
 }
 
+static Mix_Chunk *load_ogg_chunk_from_memory(const uint8_t *data, int len)
+{
+  int channels = 0;
+  int frequency = 0;
+  short *pcm = NULL;
+
+  int frames = stb_vorbis_decode_memory(data, len, &channels, &frequency, &pcm);
+  if (frames <= 0 || pcm == NULL) {
+    free(pcm);
+    set_error("Could not decode Ogg Vorbis chunk");
+    return NULL;
+  }
+
+  if (frequency <= 0 || channels <= 0 || channels > MAX_OUTPUT_CHANNELS) {
+    free(pcm);
+    set_error("Unsupported Ogg Vorbis chunk format");
+    return NULL;
+  }
+
+  uint64_t pcm_len = (uint64_t)frames * (uint64_t)channels * sizeof(short);
+  if (pcm_len > UINT32_MAX) {
+    free(pcm);
+    set_error("Ogg Vorbis chunk is too large");
+    return NULL;
+  }
+
+  Mix_Chunk *chunk = (Mix_Chunk *)calloc(1, sizeof(*chunk));
+  if (chunk == NULL) {
+    free(pcm);
+    set_error("Out of memory allocating Ogg chunk");
+    return NULL;
+  }
+
+  chunk->abuf = (Uint8 *)pcm;
+  chunk->allocated = 1;
+  chunk->alen = (Uint32)pcm_len;
+  chunk->volume = MIX_MAX_VOLUME;
+  chunk->frequency = frequency;
+  chunk->format = AUDIO_S16SYS;
+  chunk->channels = (Uint8)channels;
+  return chunk;
+}
+
 // General
 
 int Mix_OpenAudio(int frequency, uint16_t format, int channels, int chunksize)
@@ -720,7 +763,13 @@ Mix_Chunk *Mix_LoadWAV_RW(SDL_RWops *src, int freesrc)
 
   if (data == NULL) return NULL;
 
-  Mix_Chunk *chunk = load_wav_from_memory(data, len);
+  Mix_Chunk *chunk = NULL;
+  if (len >= 4 && memcmp(data, "OggS", 4) == 0) {
+    chunk = load_ogg_chunk_from_memory(data, len);
+  } else {
+    chunk = load_wav_from_memory(data, len);
+  }
+
   free(data);
   return chunk;
 }

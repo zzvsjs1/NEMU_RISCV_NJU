@@ -8,10 +8,13 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #define DISK_BLKSZ 512u
 #define DISK_CMD_GO 1u
 #define DISK_PATH_BUFSZ 4096
+#define DISK_SOURCE_BUFSZ 64
 #define PMEM_BASE CONFIG_MBASE
 
 enum {
@@ -29,8 +32,12 @@ enum {
 
 static uint32_t *disk_base = NULL;
 static FILE *disk_img = NULL;
+static uint8_t *disk_map = NULL;
 static size_t disk_img_size = 0;
+static size_t disk_map_size = 0;
 static uint32_t disk_blkcnt = 0;
+static char disk_img_path[DISK_PATH_BUFSZ] = "";
+static char disk_img_source[DISK_SOURCE_BUFSZ] = "";
 
 static uint32_t blocks_for_size(size_t size)
 {
@@ -45,6 +52,48 @@ static void publish_disk_config(void)
   disk_base[reg_blksz] = present ? DISK_BLKSZ : 0;
   disk_base[reg_blkcnt] = present ? disk_blkcnt : 0;
   disk_base[reg_ready] = 1;
+}
+
+static void unmap_disk_image(void)
+{
+  if (disk_map == NULL) {
+    return;
+  }
+
+  int ret = munmap(disk_map, disk_map_size);
+  Assert(ret == 0, "disk: munmap failed: %s", strerror(errno));
+
+  disk_map = NULL;
+  disk_map_size = 0;
+}
+
+static void map_disk_image(void)
+{
+  unmap_disk_image();
+
+  if (disk_img == NULL || disk_img_size == 0) {
+    return;
+  }
+
+  const int fd = fileno(disk_img);
+  if (fd < 0) {
+    Log("disk: cannot map %s image '%s': %s",
+        disk_img_source, disk_img_path, strerror(errno));
+    return;
+  }
+
+  void *map = mmap(NULL, disk_img_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (map == MAP_FAILED) {
+    Log("disk: mmap disabled for %s image '%s': %s",
+        disk_img_source, disk_img_path, strerror(errno));
+    return;
+  }
+
+  disk_map = (uint8_t *)map;
+  disk_map_size = disk_img_size;
+
+  Log("disk: mapped %s image '%s' for fast reads, size = %zu bytes",
+      disk_img_source, disk_img_path, disk_map_size);
 }
 
 static bool try_open_disk_image(const char *path, const char *source)
@@ -77,6 +126,9 @@ static bool try_open_disk_image(const char *path, const char *source)
   disk_img = fp;
   disk_img_size = (size_t)size;
   disk_blkcnt = blocks_for_size(disk_img_size);
+  snprintf(disk_img_path, sizeof(disk_img_path), "%s", path);
+  snprintf(disk_img_source, sizeof(disk_img_source), "%s", source);
+  map_disk_image();
   Log("disk: using %s image '%s', size = %zu bytes, blocks = %u",
       source, path, disk_img_size, disk_blkcnt);
   return true;
@@ -135,30 +187,43 @@ static uint8_t *guest_buffer_to_host(uint32_t guest_addr, size_t bytes, paddr_t 
 static void read_blocks(uint8_t *buf, uint32_t blkno, uint32_t blkcnt)
 {
   const size_t bytes = (size_t)blkcnt * DISK_BLKSZ;
+  const size_t offset = (size_t)blkno * DISK_BLKSZ;
+  const size_t available = offset < disk_img_size
+      ? (bytes < disk_img_size - offset ? bytes : disk_img_size - offset)
+      : 0;
+
+  if (available > 0) {
+    if (disk_map != NULL && offset + available <= disk_map_size) {
+      memcpy(buf, disk_map + offset, available);
+    } else {
+      int ret = fseek(disk_img, (long)offset, SEEK_SET);
+      Assert(ret == 0, "disk: seek before read failed: %s", strerror(errno));
+
+      size_t got = fread(buf, 1, available, disk_img);
+      Assert(got == available,
+          "disk: read failed at block %u count %u: %s",
+          blkno, blkcnt, strerror(errno));
+      clearerr(disk_img);
+    }
+  }
 
   /*
    * The ramdisk image size is not required to be a multiple of 512 bytes.
-   * Clear the destination first so reads from the padded tail of the final
-   * block return deterministic zero bytes instead of stale guest memory.
+   * Only the short padded tail needs clearing; full-block reads should avoid
+   * doubling the memory traffic with a redundant memset().
    */
-  memset(buf, 0, bytes);
-
-  int ret = fseek(disk_img, (long)blkno * DISK_BLKSZ, SEEK_SET);
-  Assert(ret == 0, "disk: seek before read failed: %s", strerror(errno));
-
-  size_t got = fread(buf, 1, bytes, disk_img);
-  Assert(got == bytes || feof(disk_img),
-      "disk: read failed at block %u count %u: %s",
-      blkno, blkcnt, strerror(errno));
-  clearerr(disk_img);
+  if (available < bytes) {
+    memset(buf + available, 0, bytes - available);
+  }
 }
 
 static void write_blocks(const uint8_t *buf, uint32_t blkno, uint32_t blkcnt)
 {
   const size_t bytes = (size_t)blkcnt * DISK_BLKSZ;
+  const size_t offset = (size_t)blkno * DISK_BLKSZ;
   const size_t end = ((size_t)blkno + blkcnt) * DISK_BLKSZ;
 
-  int ret = fseek(disk_img, (long)blkno * DISK_BLKSZ, SEEK_SET);
+  int ret = fseek(disk_img, (long)offset, SEEK_SET);
   Assert(ret == 0, "disk: seek before write failed: %s", strerror(errno));
 
   size_t put = fwrite(buf, 1, bytes, disk_img);
@@ -166,9 +231,19 @@ static void write_blocks(const uint8_t *buf, uint32_t blkno, uint32_t blkcnt)
       blkno, blkcnt, strerror(errno));
   Assert(fflush(disk_img) == 0, "disk: flush failed: %s", strerror(errno));
 
+  /*
+   * Keep the mapped read view coherent with guest writes.  Writes are uncommon
+   * for the Navy ramdisk, but file-test uses them and later reads must observe
+   * the updated bytes even if the host has not yet refreshed the shared page.
+   */
+  if (disk_map != NULL && offset + bytes <= disk_map_size) {
+    memcpy(disk_map + offset, buf, bytes);
+  }
+
   if (end > disk_img_size) {
     disk_img_size = end;
     disk_blkcnt = blocks_for_size(disk_img_size);
+    map_disk_image();
     publish_disk_config();
   }
 }

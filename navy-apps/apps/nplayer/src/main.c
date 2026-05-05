@@ -10,8 +10,8 @@
 #define MUSIC_PATH "/share/music/little-star.ogg"
 #define SAMPLES 4096
 #define FPS 10
-#define W 400
-#define H 100
+#define W 800
+#define H 600
 #define MAX_VOLUME 128
 
 stb_vorbis *v = NULL;
@@ -39,6 +39,8 @@ static void visualize(int16_t *stream, int samples) {
     fixedpt multipler = fixedpt_cos(fixedpt_divi(fixedpt_muli(FIXEDPT_PI, 2 * i), samples));
     int x = i * W / samples;
     int y = center_y - fixedpt_toint(fixedpt_muli(fixedpt_divi(fixedpt_muli(multipler, stream[i]), 32768), H / 2));
+    if (y < 0) y = 0;
+    if (y >= H) y = H - 1;
     if (y < center_y) drawVerticalLine(x, y, center_y, color);
     else drawVerticalLine(x, center_y, y, color);
     color ++;
