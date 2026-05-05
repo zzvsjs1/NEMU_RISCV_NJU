@@ -4,6 +4,7 @@
 #include <isa-all-instr.h>
 #ifdef CONFIG_ISA_riscv32
 #include <isa-fast-exec.h>
+#include <isa-jit.h>
 #endif
 #include <locale.h>
 
@@ -163,10 +164,16 @@ static inline word_t query_pending_intr()
 }
 
 #ifdef CONFIG_DEVICE
-static inline bool should_update_device(uint32_t *counter)
+static inline bool should_update_device_after(uint32_t *counter, uint32_t executed)
 {
-    *counter = (*counter + 1u) & (DEVICE_UPDATE_CHECK_INTERVAL - 1u);
-    return *counter == 0 || g_print_step;
+    *counter += executed;
+    if (*counter >= DEVICE_UPDATE_CHECK_INTERVAL || g_print_step)
+    {
+        *counter &= (DEVICE_UPDATE_CHECK_INTERVAL - 1u);
+        return true;
+    }
+
+    return false;
 }
 #endif
 
@@ -182,6 +189,22 @@ static inline bool can_fast_exec()
      * interpreter's normal instrumentation points.
      */
     return !g_print_step;
+#else
+    return false;
+#endif
+}
+
+static inline bool can_jit_exec()
+{
+#if defined(CONFIG_ISA_riscv32) && !defined(CONFIG_TRACE) && \
+    !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
+    !defined(CONFIG_MTRACE) && !defined(CONFIG_FTRACE)
+    /*
+     * The JIT bypasses per-instruction Decode objects, so keep it behind the
+     * same instrumentation boundary as the fast executor. If exact hooks are
+     * needed, the interpreter remains the source of behaviour.
+     */
+    return !g_print_step && isa_jit_available();
 #else
     return false;
 #endif
@@ -210,25 +233,50 @@ void cpu_exec(uint64_t n)
     uint32_t device_update_counter = 0;
 #endif
     const bool fast_exec = can_fast_exec();
+    const bool jit_exec = can_jit_exec();
 
-    for (;n > 0; n--) 
+    while (n > 0)
     {
-        bool fast_done = false;
+        uint32_t executed = 0;
+        bool jit_done = false;
 #ifdef CONFIG_ISA_riscv32
-        if (fast_exec)
+        if (jit_exec)
         {
-            fast_done = isa_fast_exec_once();
+            uint32_t device_budget = UINT32_MAX;
+#ifdef CONFIG_DEVICE
+            device_budget = DEVICE_UPDATE_CHECK_INTERVAL - device_update_counter;
+#endif
+            jit_done = isa_jit_exec(n, device_budget, &executed);
         }
 #endif
-        if (!fast_done)
-        {
-            fetch_decode_exec_updatepc(&s);
-        }
 
-        g_nr_guest_instr++;
-        if (!fast_done)
+        if (jit_done)
         {
-            trace_and_difftest(&s, cpu.pc);
+            Assert(executed > 0, "JIT reported success without executing instructions");
+            n -= executed;
+            g_nr_guest_instr += executed;
+        }
+        else
+        {
+            bool fast_done = false;
+#ifdef CONFIG_ISA_riscv32
+            if (fast_exec)
+            {
+                fast_done = isa_fast_exec_once();
+            }
+#endif
+            if (!fast_done)
+            {
+                fetch_decode_exec_updatepc(&s);
+            }
+
+            n--;
+            executed = 1;
+            g_nr_guest_instr++;
+            if (!fast_done)
+            {
+                trace_and_difftest(&s, cpu.pc);
+            }
         }
         
         if (nemu_state.state != NEMU_RUNNING)
@@ -237,7 +285,7 @@ void cpu_exec(uint64_t n)
         }
 
 #ifdef CONFIG_DEVICE
-        if (should_update_device(&device_update_counter))
+        if (should_update_device_after(&device_update_counter, executed))
         {
             device_update();
         }
