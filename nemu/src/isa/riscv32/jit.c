@@ -1,5 +1,6 @@
 #include <isa-jit.h>
 #include <isa.h>
+#include <memory/host.h>
 #include <memory/vaddr.h>
 #include <utils.h>
 #include "local-include/reg.h"
@@ -21,6 +22,8 @@
 #define RV32_JIT_CACHE_SIZE 4096u
 #define RV32_JIT_CODE_SIZE (4u * 1024u * 1024u)
 #define RV32_JIT_CODE_ALIGN 16u
+#define RV32_JIT_PMEM_PAGE_COUNT \
+  (((size_t)CONFIG_MSIZE + (size_t)PAGE_SIZE - 1u) / (size_t)PAGE_SIZE)
 
 typedef uint32_t (*rv32_jit_entry_t)(void);
 
@@ -43,6 +46,7 @@ typedef struct
 } rv32_jit_block_t;
 
 static rv32_jit_block_t jit_cache[RV32_JIT_CACHE_SIZE];
+static uint16_t jit_source_page_refs[RV32_JIT_PMEM_PAGE_COUNT];
 static uint8_t *jit_code = NULL;
 static size_t jit_code_used = 0;
 static bool jit_disabled = false;
@@ -72,14 +76,53 @@ static int32_t imm_s(uint32_t instr)
   return sext(bits(instr, 11, 7) | (bits(instr, 31, 25) << 5), 12);
 }
 
+static int32_t imm_b(uint32_t instr)
+{
+  const uint32_t imm = (bits(instr, 11, 8) << 1)
+      | (bits(instr, 30, 25) << 5)
+      | (bits(instr, 7, 7) << 11)
+      | (bits(instr, 31, 31) << 12);
+  return sext(imm, 13);
+}
+
 static uint32_t imm_u(uint32_t instr)
 {
   return instr & 0xfffff000u;
 }
 
+static int32_t imm_j(uint32_t instr)
+{
+  const uint32_t imm = (bits(instr, 19, 12) << 12)
+      | (bits(instr, 20, 20) << 11)
+      | (bits(instr, 30, 21) << 1)
+      | (bits(instr, 31, 31) << 20);
+  return sext(imm, 21);
+}
+
+static bool jit_direct_pmem_range(vaddr_t addr, uint32_t len, paddr_t *paddr)
+{
+  if ((cpu.csr.satp & 0x80000000u) != 0 || len == 0)
+  {
+    return false;
+  }
+
+  const paddr_t start = (paddr_t)addr;
+  const paddr_t end = start + (paddr_t)len - 1u;
+  if (end < start || !in_pmem(start) || !in_pmem(end))
+  {
+    return false;
+  }
+
+  *paddr = start;
+  return true;
+}
+
 static uint32_t jit_load(vaddr_t addr, uint32_t len, uint32_t sign_ext)
 {
-  uint32_t value = vaddr_read(addr, (int)len);
+  paddr_t paddr = 0;
+  uint32_t value = jit_direct_pmem_range(addr, len, &paddr)
+      ? (uint32_t)host_read(guest_to_host(paddr), (int)len)
+      : vaddr_read(addr, (int)len);
   if (sign_ext && len == 1)
   {
     value = (uint32_t)(int32_t)(int8_t)value;
@@ -94,7 +137,72 @@ static uint32_t jit_load(vaddr_t addr, uint32_t len, uint32_t sign_ext)
 
 static void jit_store(vaddr_t addr, uint32_t len, uint32_t data)
 {
+  paddr_t paddr = 0;
+  if (jit_direct_pmem_range(addr, len, &paddr))
+  {
+    host_write(guest_to_host(paddr), (int)len, data);
+    isa_jit_invalidate_paddr(paddr, (int)len);
+    return;
+  }
+
   vaddr_write(addr, (int)len, data);
+}
+
+static uint32_t jit_op_complex(uint32_t instr)
+{
+  const uint32_t rd = bits(instr, 11, 7);
+  const uint32_t funct3 = bits(instr, 14, 12);
+  const uint32_t rs1 = bits(instr, 19, 15);
+  const uint32_t rs2 = bits(instr, 24, 20);
+  const uint32_t funct7 = bits(instr, 31, 25);
+  const uint32_t key = (funct7 << 3) | funct3;
+  const uint32_t lhs = gpr(rs1);
+  const uint32_t rhs = gpr(rs2);
+  uint32_t out = 0;
+
+  switch (key)
+  {
+    case 0x009:
+      out = (uint32_t)(((int64_t)(int32_t)lhs *
+          (int64_t)(int32_t)rhs) >> 32);
+      break;
+    case 0x00a:
+      /*
+       * MULHSU is signed(rs1) * unsigned(rs2). The product still fits in a
+       * signed 64-bit value because both operands are 32-bit wide.
+       */
+      out = (uint32_t)(((int64_t)(int32_t)lhs *
+          (int64_t)(uint64_t)rhs) >> 32);
+      break;
+    case 0x00b:
+      out = (uint32_t)(((uint64_t)lhs * (uint64_t)rhs) >> 32);
+      break;
+    case 0x00c:
+      out = (rhs == 0) ? UINT32_MAX :
+          ((int32_t)lhs == INT32_MIN && (int32_t)rhs == -1
+              ? lhs : (uint32_t)((int32_t)lhs / (int32_t)rhs));
+      break;
+    case 0x00d:
+      out = rhs == 0 ? UINT32_MAX : lhs / rhs;
+      break;
+    case 0x00e:
+      out = (rhs == 0) ? lhs :
+          ((int32_t)lhs == INT32_MIN && (int32_t)rhs == -1
+              ? 0 : (uint32_t)((int32_t)lhs % (int32_t)rhs));
+      break;
+    case 0x00f:
+      out = rhs == 0 ? lhs : lhs % rhs;
+      break;
+    default:
+      panic("jit: unsupported complex OP instruction 0x%08x", instr);
+  }
+
+  if (rd != 0)
+  {
+    gpr(rd) = out;
+  }
+
+  return out;
 }
 
 static size_t jit_align_up(size_t value, size_t align)
@@ -107,9 +215,134 @@ static uint32_t jit_hash(vaddr_t pc, word_t satp)
   return ((pc >> 2) ^ satp ^ (satp >> 12)) & (RV32_JIT_CACHE_SIZE - 1u);
 }
 
+static bool jit_pmem_page_index(paddr_t addr, size_t *idx)
+{
+  if (!in_pmem(addr))
+  {
+    return false;
+  }
+
+  *idx = ((size_t)(addr - (paddr_t)CONFIG_MBASE)) >> PAGE_SHIFT;
+  return *idx < RV32_JIT_PMEM_PAGE_COUNT;
+}
+
+static void jit_source_pages_ref(paddr_t addr, uint32_t len)
+{
+  if (len == 0)
+  {
+    return;
+  }
+
+  size_t first = 0;
+  size_t last = 0;
+  if (!jit_pmem_page_index(addr, &first) ||
+      !jit_pmem_page_index(addr + (paddr_t)len - 1u, &last))
+  {
+    return;
+  }
+
+  for (size_t i = first; i <= last; i++)
+  {
+    Assert(jit_source_page_refs[i] != UINT16_MAX,
+        "jit: too many source blocks on PMEM page %zu", i);
+    jit_source_page_refs[i]++;
+  }
+}
+
+static void jit_source_pages_unref(paddr_t addr, uint32_t len)
+{
+  if (len == 0)
+  {
+    return;
+  }
+
+  size_t first = 0;
+  size_t last = 0;
+  if (!jit_pmem_page_index(addr, &first) ||
+      !jit_pmem_page_index(addr + (paddr_t)len - 1u, &last))
+  {
+    return;
+  }
+
+  for (size_t i = first; i <= last; i++)
+  {
+    Assert(jit_source_page_refs[i] > 0,
+        "jit: source page refcount underflow on PMEM page %zu", i);
+    jit_source_page_refs[i]--;
+  }
+}
+
+static bool jit_write_may_touch_source_page(paddr_t addr, int len)
+{
+  if (len <= 0)
+  {
+    return false;
+  }
+
+  const paddr_t pmem_start = (paddr_t)CONFIG_MBASE;
+  const paddr_t pmem_end = (paddr_t)CONFIG_MBASE + (paddr_t)CONFIG_MSIZE - 1u;
+  paddr_t start = addr;
+  paddr_t end = addr + (paddr_t)len - 1u;
+  if (end < start)
+  {
+    return true;
+  }
+
+  if (end < pmem_start || start > pmem_end)
+  {
+    return false;
+  }
+
+  if (start < pmem_start)
+  {
+    start = pmem_start;
+  }
+  if (end > pmem_end)
+  {
+    end = pmem_end;
+  }
+
+  size_t first = 0;
+  size_t last = 0;
+  if (!jit_pmem_page_index(start, &first) ||
+      !jit_pmem_page_index(end, &last))
+  {
+    return true;
+  }
+
+  for (size_t i = first; i <= last; i++)
+  {
+    if (jit_source_page_refs[i] != 0)
+    {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static void jit_block_discard(rv32_jit_block_t *block)
+{
+  if (!block->valid)
+  {
+    return;
+  }
+
+  if (block->entry != NULL && block->source_len != 0)
+  {
+    jit_source_pages_unref(block->paddr_start, block->source_len);
+  }
+
+  block->valid = false;
+  block->entry = NULL;
+  block->source_len = 0;
+  block->insn_count = 0;
+}
+
 static void jit_cache_clear(void)
 {
   memset(jit_cache, 0, sizeof(jit_cache));
+  memset(jit_source_page_refs, 0, sizeof(jit_source_page_refs));
 }
 
 static bool jit_code_init(void)
@@ -187,14 +420,18 @@ static bool emit_movabs_r11(rv32_jit_writer_t *w, uint64_t value)
   return emit_u8(w, 0x49) && emit_u8(w, 0xbb) && emit_u64(w, value);
 }
 
+static bool emit_load_cpu_base(rv32_jit_writer_t *w)
+{
+  return emit_movabs_r11(w, (uint64_t)(uintptr_t)&cpu);
+}
+
 static bool emit_load_gpr_eax(rv32_jit_writer_t *w, uint32_t reg)
 {
   const uint32_t off = (uint32_t)offsetof(CPU_state, gpr)
       + reg * sizeof(cpu.gpr[0]);
 
-  /* mov eax, dword ptr [r11 + off], with r11 loaded from &cpu first. */
-  return emit_movabs_r11(w, (uint64_t)(uintptr_t)&cpu)
-      && emit_u8(w, 0x41) && emit_u8(w, 0x8b) && emit_u8(w, 0x83)
+  /* mov eax, dword ptr [r11 + off]. r11 holds &cpu inside native blocks. */
+  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) && emit_u8(w, 0x83)
       && emit_u32(w, off);
 }
 
@@ -203,9 +440,8 @@ static bool emit_load_gpr_ecx(rv32_jit_writer_t *w, uint32_t reg)
   const uint32_t off = (uint32_t)offsetof(CPU_state, gpr)
       + reg * sizeof(cpu.gpr[0]);
 
-  /* mov ecx, dword ptr [r11 + off], with r11 loaded from &cpu first. */
-  return emit_movabs_r11(w, (uint64_t)(uintptr_t)&cpu)
-      && emit_u8(w, 0x41) && emit_u8(w, 0x8b) && emit_u8(w, 0x8b)
+  /* mov ecx, dword ptr [r11 + off]. r11 holds &cpu inside native blocks. */
+  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) && emit_u8(w, 0x8b)
       && emit_u32(w, off);
 }
 
@@ -220,8 +456,15 @@ static bool emit_store_gpr_eax(rv32_jit_writer_t *w, uint32_t reg)
       + reg * sizeof(cpu.gpr[0]);
 
   /* mov dword ptr [r11 + off], eax. Writes to x0 are ignored above. */
-  return emit_movabs_r11(w, (uint64_t)(uintptr_t)&cpu)
-      && emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0x83)
+  return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0x83)
+      && emit_u32(w, off);
+}
+
+static bool emit_store_pc_eax(rv32_jit_writer_t *w)
+{
+  const uint32_t off = (uint32_t)offsetof(CPU_state, pc);
+
+  return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0x83)
       && emit_u32(w, off);
 }
 
@@ -230,9 +473,62 @@ static bool emit_set_pc_imm(rv32_jit_writer_t *w, vaddr_t pc)
   const uint32_t off = (uint32_t)offsetof(CPU_state, pc);
 
   /* mov dword ptr [r11 + pc_off], imm32 */
-  return emit_movabs_r11(w, (uint64_t)(uintptr_t)&cpu)
-      && emit_u8(w, 0x41) && emit_u8(w, 0xc7) && emit_u8(w, 0x83)
+  return emit_u8(w, 0x41) && emit_u8(w, 0xc7) && emit_u8(w, 0x83)
       && emit_u32(w, off) && emit_u32(w, pc);
+}
+
+static bool emit_mov_eax_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+  return emit_u8(w, 0xb8) && emit_u32(w, value);
+}
+
+static bool emit_cmp_eax_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+  return emit_u8(w, 0x3d) && emit_u32(w, value);
+}
+
+static bool emit_cmp_eax_ecx(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x39) && emit_u8(w, 0xc8);
+}
+
+static bool emit_setcc_eax(rv32_jit_writer_t *w, uint8_t setcc_opcode)
+{
+  /* setcc al; movzx eax, al */
+  return emit_u8(w, 0x0f) && emit_u8(w, setcc_opcode) && emit_u8(w, 0xc0)
+      && emit_u8(w, 0x0f) && emit_u8(w, 0xb6) && emit_u8(w, 0xc0);
+}
+
+static bool emit_jcc_rel32_placeholder(rv32_jit_writer_t *w, uint8_t jcc_opcode,
+    uint8_t **disp)
+{
+  if (!emit_u8(w, 0x0f) || !emit_u8(w, jcc_opcode))
+  {
+    return false;
+  }
+
+  *disp = w->cur;
+  return emit_u32(w, 0);
+}
+
+static bool emit_jmp_rel32_placeholder(rv32_jit_writer_t *w, uint8_t **disp)
+{
+  if (!emit_u8(w, 0xe9))
+  {
+    return false;
+  }
+
+  *disp = w->cur;
+  return emit_u32(w, 0);
+}
+
+static void patch_rel32(uint8_t *disp, const uint8_t *target)
+{
+  const int64_t rel = target - (disp + 4);
+  Assert(rel >= INT32_MIN && rel <= INT32_MAX,
+      "jit: x86 branch displacement out of range");
+  const int32_t rel32 = (int32_t)rel;
+  memcpy(disp, &rel32, sizeof(rel32));
 }
 
 static bool emit_call_abs(rv32_jit_writer_t *w, uintptr_t func)
@@ -250,7 +546,7 @@ static bool emit_prologue(rv32_jit_writer_t *w)
    * aligns the stack before any helper call made inside the block.
    */
   return emit_u8(w, 0x48) && emit_u8(w, 0x83) && emit_u8(w, 0xec)
-      && emit_u8(w, 0x08);
+      && emit_u8(w, 0x08) && emit_load_cpu_base(w);
 }
 
 static bool emit_epilogue_return_count(rv32_jit_writer_t *w, uint32_t count)
@@ -299,6 +595,7 @@ static bool emit_load_store_instr(rv32_jit_writer_t *w, uint32_t instr)
         && emit_u8(w, 0xbe) && emit_u32(w, len)
         && emit_u8(w, 0xba) && emit_u32(w, sign_ext)
         && emit_call_abs(w, (uintptr_t)jit_load)
+        && emit_load_cpu_base(w)
         && emit_store_gpr_eax(w, rd);
   }
 
@@ -322,7 +619,8 @@ static bool emit_load_store_instr(rv32_jit_writer_t *w, uint32_t instr)
         && emit_u8(w, 0xbe) && emit_u32(w, len)
         && emit_load_gpr_eax(w, rs2)
         && emit_u8(w, 0x89) && emit_u8(w, 0xc2)
-        && emit_call_abs(w, (uintptr_t)jit_store);
+        && emit_call_abs(w, (uintptr_t)jit_store)
+        && emit_load_cpu_base(w);
   }
 
   return false;
@@ -333,7 +631,91 @@ static bool jit_instr_is_store(uint32_t instr)
   return (instr & 0x7fu) == 0x23;
 }
 
-static bool emit_alu_instr(rv32_jit_writer_t *w, uint32_t instr)
+static bool jit_instr_is_control_flow(uint32_t instr)
+{
+  const uint32_t opcode = instr & 0x7fu;
+  return opcode == 0x63 || opcode == 0x6f || opcode == 0x67;
+}
+
+static bool emit_branch_instr(rv32_jit_writer_t *w, uint32_t instr, vaddr_t pc)
+{
+  const uint32_t funct3 = bits(instr, 14, 12);
+  const uint32_t rs1 = bits(instr, 19, 15);
+  const uint32_t rs2 = bits(instr, 24, 20);
+  uint8_t jcc = 0;
+
+  switch (funct3)
+  {
+    case 0x0: jcc = 0x84; break; /* JE  */
+    case 0x1: jcc = 0x85; break; /* JNE */
+    case 0x4: jcc = 0x8c; break; /* JL, signed */
+    case 0x5: jcc = 0x8d; break; /* JGE, signed */
+    case 0x6: jcc = 0x82; break; /* JB, unsigned */
+    case 0x7: jcc = 0x83; break; /* JAE, unsigned */
+    default: return false;
+  }
+
+  uint8_t *taken_disp = NULL;
+  uint8_t *end_disp = NULL;
+  const vaddr_t fallthrough = pc + 4u;
+  const vaddr_t target = pc + imm_b(instr);
+
+  if (!emit_load_gpr_eax(w, rs1) || !emit_load_gpr_ecx(w, rs2) ||
+      !emit_cmp_eax_ecx(w) || !emit_jcc_rel32_placeholder(w, jcc, &taken_disp) ||
+      !emit_set_pc_imm(w, fallthrough) ||
+      !emit_jmp_rel32_placeholder(w, &end_disp))
+  {
+    return false;
+  }
+
+  patch_rel32(taken_disp, w->cur);
+  if (!emit_set_pc_imm(w, target))
+  {
+    return false;
+  }
+
+  patch_rel32(end_disp, w->cur);
+  return true;
+}
+
+static bool emit_control_flow_instr(rv32_jit_writer_t *w, uint32_t instr,
+    vaddr_t pc)
+{
+  const uint32_t opcode = instr & 0x7fu;
+  const uint32_t rd = bits(instr, 11, 7);
+  const uint32_t funct3 = bits(instr, 14, 12);
+  const uint32_t rs1 = bits(instr, 19, 15);
+
+  if (opcode == 0x63)
+  {
+    return emit_branch_instr(w, instr, pc);
+  }
+
+  if (opcode == 0x6f)
+  {
+    return emit_mov_eax_imm(w, pc + 4u)
+        && emit_store_gpr_eax(w, rd)
+        && emit_set_pc_imm(w, pc + imm_j(instr));
+  }
+
+  if (opcode == 0x67 && funct3 == 0)
+  {
+    /*
+     * JALR computes the target from the old rs1 value, then writes the link
+     * register. Storing cpu.pc before rd preserves rd == rs1 behaviour.
+     */
+    return emit_load_gpr_eax(w, rs1)
+        && emit_u8(w, 0x05) && emit_u32(w, (uint32_t)imm_i(instr))
+        && emit_u8(w, 0x25) && emit_u32(w, 0xfffffffeu)
+        && emit_store_pc_eax(w)
+        && emit_mov_eax_imm(w, pc + 4u)
+        && emit_store_gpr_eax(w, rd);
+  }
+
+  return false;
+}
+
+static bool emit_alu_instr(rv32_jit_writer_t *w, uint32_t instr, vaddr_t cur_pc)
 {
   const uint32_t opcode = instr & 0x7fu;
   const uint32_t rd = bits(instr, 11, 7);
@@ -345,7 +727,12 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, uint32_t instr)
   if (opcode == 0x37)
   {
     /* LUI places the U-immediate directly in rd. */
-    return emit_u8(w, 0xb8) && emit_u32(w, imm_u(instr))
+    return emit_mov_eax_imm(w, imm_u(instr)) && emit_store_gpr_eax(w, rd);
+  }
+
+  if (opcode == 0x17)
+  {
+    return emit_mov_eax_imm(w, cur_pc + imm_u(instr))
         && emit_store_gpr_eax(w, rd);
   }
 
@@ -360,7 +747,32 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, uint32_t instr)
     switch (funct3)
     {
       case 0x0: return emit_u8(w, 0x05) && emit_u32(w, imm) && emit_store_gpr_eax(w, rd);
+      case 0x1:
+        if (bits(instr, 31, 25) != 0x00)
+        {
+          return false;
+        }
+        return emit_u8(w, 0xc1) && emit_u8(w, 0xe0)
+            && emit_u8(w, bits(instr, 24, 20)) && emit_store_gpr_eax(w, rd);
+      case 0x2:
+        return emit_cmp_eax_imm(w, imm) && emit_setcc_eax(w, 0x9c)
+            && emit_store_gpr_eax(w, rd);
+      case 0x3:
+        return emit_cmp_eax_imm(w, imm) && emit_setcc_eax(w, 0x92)
+            && emit_store_gpr_eax(w, rd);
       case 0x4: return emit_u8(w, 0x35) && emit_u32(w, imm) && emit_store_gpr_eax(w, rd);
+      case 0x5:
+        if (bits(instr, 31, 25) == 0x00)
+        {
+          return emit_u8(w, 0xc1) && emit_u8(w, 0xe8)
+              && emit_u8(w, bits(instr, 24, 20)) && emit_store_gpr_eax(w, rd);
+        }
+        if (bits(instr, 31, 25) == 0x20)
+        {
+          return emit_u8(w, 0xc1) && emit_u8(w, 0xf8)
+              && emit_u8(w, bits(instr, 24, 20)) && emit_store_gpr_eax(w, rd);
+        }
+        return false;
       case 0x6: return emit_u8(w, 0x0d) && emit_u32(w, imm) && emit_store_gpr_eax(w, rd);
       case 0x7: return emit_u8(w, 0x25) && emit_u32(w, imm) && emit_store_gpr_eax(w, rd);
       default: return false;
@@ -379,9 +791,26 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, uint32_t instr)
     {
       case 0x000: return emit_u8(w, 0x01) && emit_u8(w, 0xc8) && emit_store_gpr_eax(w, rd);
       case 0x100: return emit_u8(w, 0x29) && emit_u8(w, 0xc8) && emit_store_gpr_eax(w, rd);
+      case 0x001: return emit_u8(w, 0xd3) && emit_u8(w, 0xe0) && emit_store_gpr_eax(w, rd);
+      case 0x002: return emit_cmp_eax_ecx(w) && emit_setcc_eax(w, 0x9c) && emit_store_gpr_eax(w, rd);
+      case 0x003: return emit_cmp_eax_ecx(w) && emit_setcc_eax(w, 0x92) && emit_store_gpr_eax(w, rd);
       case 0x004: return emit_u8(w, 0x31) && emit_u8(w, 0xc8) && emit_store_gpr_eax(w, rd);
+      case 0x005: return emit_u8(w, 0xd3) && emit_u8(w, 0xe8) && emit_store_gpr_eax(w, rd);
+      case 0x105: return emit_u8(w, 0xd3) && emit_u8(w, 0xf8) && emit_store_gpr_eax(w, rd);
       case 0x006: return emit_u8(w, 0x09) && emit_u8(w, 0xc8) && emit_store_gpr_eax(w, rd);
       case 0x007: return emit_u8(w, 0x21) && emit_u8(w, 0xc8) && emit_store_gpr_eax(w, rd);
+      case 0x008: return emit_u8(w, 0x0f) && emit_u8(w, 0xaf) && emit_u8(w, 0xc1)
+          && emit_store_gpr_eax(w, rd);
+      case 0x009:
+      case 0x00a:
+      case 0x00b:
+      case 0x00c:
+      case 0x00d:
+      case 0x00e:
+      case 0x00f:
+        return emit_u8(w, 0xbf) && emit_u32(w, instr)
+            && emit_call_abs(w, (uintptr_t)jit_op_complex)
+            && emit_load_cpu_base(w);
       default: return false;
     }
   }
@@ -409,6 +838,11 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
     return;
   }
 
+  if (!jit_write_may_touch_source_page(addr, len))
+  {
+    return;
+  }
+
   const paddr_t end = addr + (paddr_t)len;
   for (size_t i = 0; i < RV32_JIT_CACHE_SIZE; i++)
   {
@@ -421,7 +855,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
     const paddr_t block_end = block->paddr_start + block->source_len;
     if (addr < block_end && end > block->paddr_start)
     {
-      block->valid = false;
+      jit_block_discard(block);
     }
   }
 }
@@ -461,6 +895,7 @@ static rv32_jit_block_t *jit_cache_slot(vaddr_t pc)
 static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, uint32_t source_len)
 {
   rv32_jit_block_t *block = jit_cache_slot(pc);
+  jit_block_discard(block);
   *block = (rv32_jit_block_t) {
     .valid = true,
     .pc = pc,
@@ -504,6 +939,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
   vaddr_t cur_pc = pc;
   uint32_t count = 0;
   uint32_t source_len = 0;
+  bool block_sets_pc = false;
 
   while (count < max_insns && count < RV32_JIT_BLOCK_MAX_INSNS)
   {
@@ -521,7 +957,19 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
     const uint32_t instr = vaddr_ifetch(cur_pc, 4);
     uint8_t *instr_start = w.cur;
-    if (!emit_alu_instr(&w, instr) && !emit_load_store_instr(&w, instr))
+    bool end_block = false;
+    if (jit_instr_is_control_flow(instr))
+    {
+      if (!emit_control_flow_instr(&w, instr, cur_pc))
+      {
+        w.cur = instr_start;
+        break;
+      }
+      block_sets_pc = true;
+      end_block = true;
+    }
+    else if (!emit_alu_instr(&w, instr, cur_pc) &&
+        !emit_load_store_instr(&w, instr))
     {
       /*
        * Emitters may fail after writing a prefix of an x86 instruction. Roll
@@ -543,6 +991,11 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
        */
       break;
     }
+
+    if (end_block)
+    {
+      break;
+    }
   }
 
   if (count == 0)
@@ -551,7 +1004,8 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     return NULL;
   }
 
-  if (!emit_set_pc_imm(&w, cur_pc) || !emit_epilogue_return_count(&w, count))
+  if ((!block_sets_pc && !emit_set_pc_imm(&w, cur_pc)) ||
+      !emit_epilogue_return_count(&w, count))
   {
     return NULL;
   }
@@ -559,6 +1013,8 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
   __builtin___clear_cache((char *)w.start, (char *)w.cur);
 
   rv32_jit_block_t *block = jit_cache_slot(pc);
+  jit_block_discard(block);
+  jit_source_pages_ref(first_paddr, source_len);
   *block = (rv32_jit_block_t) {
     .valid = true,
     .pc = pc,
