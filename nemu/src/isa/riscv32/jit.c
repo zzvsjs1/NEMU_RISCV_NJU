@@ -771,6 +771,40 @@ static void patch_direct_pmem_guard(const rv32_jit_pmem_guard_patch_t *patch,
   patch_rel32(patch->range_slow_disp, slow_path);
 }
 
+static bool emit_direct_pmem_load_eax(rv32_jit_writer_t *w, uint32_t funct3)
+{
+  if (!emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)))
+  {
+    return false;
+  }
+
+  switch (funct3)
+  {
+    case 0x0:
+      /* movsx eax, byte ptr [r10 + rdx] */
+      return emit_u8(w, 0x41) && emit_u8(w, 0x0f) && emit_u8(w, 0xbe)
+          && emit_u8(w, 0x04) && emit_u8(w, 0x12);
+    case 0x1:
+      /* movsx eax, word ptr [r10 + rdx] */
+      return emit_u8(w, 0x41) && emit_u8(w, 0x0f) && emit_u8(w, 0xbf)
+          && emit_u8(w, 0x04) && emit_u8(w, 0x12);
+    case 0x2:
+      /* mov eax, dword ptr [r10 + rdx] */
+      return emit_u8(w, 0x41) && emit_u8(w, 0x8b)
+          && emit_u8(w, 0x04) && emit_u8(w, 0x12);
+    case 0x4:
+      /* movzx eax, byte ptr [r10 + rdx] */
+      return emit_u8(w, 0x41) && emit_u8(w, 0x0f) && emit_u8(w, 0xb6)
+          && emit_u8(w, 0x04) && emit_u8(w, 0x12);
+    case 0x5:
+      /* movzx eax, word ptr [r10 + rdx] */
+      return emit_u8(w, 0x41) && emit_u8(w, 0x0f) && emit_u8(w, 0xb7)
+          && emit_u8(w, 0x04) && emit_u8(w, 0x12);
+    default:
+      return false;
+  }
+}
+
 static bool emit_prologue(rv32_jit_writer_t *w)
 {
   /*
@@ -796,37 +830,57 @@ static bool emit_addr_eax_from_rs1_imm(rv32_jit_writer_t *w, uint32_t rs1,
       && emit_u8(w, 0x05) && emit_u32(w, (uint32_t)imm);
 }
 
+static bool emit_load_instr(rv32_jit_writer_t *w, uint32_t instr)
+{
+  const uint32_t rd = bits(instr, 11, 7);
+  const uint32_t funct3 = bits(instr, 14, 12);
+  const uint32_t rs1 = bits(instr, 19, 15);
+
+  uintptr_t helper = 0;
+  uint32_t len = 0;
+  switch (funct3)
+  {
+    case 0x0: helper = (uintptr_t)jit_load_i8; len = 1; break;
+    case 0x1: helper = (uintptr_t)jit_load_i16; len = 2; break;
+    case 0x2: helper = (uintptr_t)jit_load_u32; len = 4; break;
+    case 0x4: helper = (uintptr_t)jit_load_u8; len = 1; break;
+    case 0x5: helper = (uintptr_t)jit_load_u16; len = 2; break;
+    default: return false;
+  }
+
+  rv32_jit_pmem_guard_patch_t guard = {0};
+  uint8_t *done_disp = NULL;
+  if (!emit_addr_eax_from_rs1_imm(w, rs1, imm_i(instr)) ||
+      !emit_direct_pmem_guard(w, len, &guard) ||
+      !emit_direct_pmem_load_eax(w, funct3) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp))
+  {
+    return false;
+  }
+
+  const uint8_t *slow_path = w->cur;
+  patch_direct_pmem_guard(&guard, slow_path);
+  if (!emit_u8(w, 0x89) || !emit_u8(w, 0xc7) ||
+      !emit_call_abs(w, helper) ||
+      !emit_load_cpu_base(w))
+  {
+    return false;
+  }
+
+  patch_rel32(done_disp, w->cur);
+  return emit_store_gpr_eax(w, rd);
+}
+
 static bool emit_load_store_instr(rv32_jit_writer_t *w, uint32_t instr)
 {
   const uint32_t opcode = instr & 0x7fu;
-  const uint32_t rd = bits(instr, 11, 7);
   const uint32_t funct3 = bits(instr, 14, 12);
   const uint32_t rs1 = bits(instr, 19, 15);
   const uint32_t rs2 = bits(instr, 24, 20);
 
   if (opcode == 0x03)
   {
-    uintptr_t helper = 0;
-    switch (funct3)
-    {
-      case 0x0: helper = (uintptr_t)jit_load_i8; break;
-      case 0x1: helper = (uintptr_t)jit_load_i16; break;
-      case 0x2: helper = (uintptr_t)jit_load_u32; break;
-      case 0x4: helper = (uintptr_t)jit_load_u8; break;
-      case 0x5: helper = (uintptr_t)jit_load_u16; break;
-      default: return false;
-    }
-
-    /*
-     * C helper arguments follow the x86-64 SysV ABI. The load width and
-     * sign-extension mode are selected by choosing a specialised helper, so the
-     * generated hot path only has to pass the guest virtual address in edi.
-     */
-    return emit_addr_eax_from_rs1_imm(w, rs1, imm_i(instr))
-        && emit_u8(w, 0x89) && emit_u8(w, 0xc7)
-        && emit_call_abs(w, helper)
-        && emit_load_cpu_base(w)
-        && emit_store_gpr_eax(w, rd);
+    return emit_load_instr(w, instr);
   }
 
   if (opcode == 0x23)
