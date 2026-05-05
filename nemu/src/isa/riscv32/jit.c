@@ -203,7 +203,7 @@ static bool jit_runtime_disabled(void)
   return jit_env_disable;
 }
 
-static uint32_t jit_load(vaddr_t addr, uint32_t len, uint32_t sign_ext)
+static uint32_t jit_load_raw(vaddr_t addr, uint32_t len)
 {
   JIT_STAT_INC(helper_loads);
 
@@ -219,19 +219,36 @@ static uint32_t jit_load(vaddr_t addr, uint32_t len, uint32_t sign_ext)
     JIT_STAT_INC(helper_load_slow);
     value = vaddr_read(addr, (int)len);
   }
-  if (sign_ext && len == 1)
-  {
-    value = (uint32_t)(int32_t)(int8_t)value;
-  }
-  else if (sign_ext && len == 2)
-  {
-    value = (uint32_t)(int32_t)(int16_t)value;
-  }
 
   return value;
 }
 
-static void jit_store(vaddr_t addr, uint32_t len, uint32_t data)
+static uint32_t jit_load_i8(vaddr_t addr)
+{
+  return (uint32_t)(int32_t)(int8_t)jit_load_raw(addr, 1);
+}
+
+static uint32_t jit_load_i16(vaddr_t addr)
+{
+  return (uint32_t)(int32_t)(int16_t)jit_load_raw(addr, 2);
+}
+
+static uint32_t jit_load_u32(vaddr_t addr)
+{
+  return jit_load_raw(addr, 4);
+}
+
+static uint32_t jit_load_u8(vaddr_t addr)
+{
+  return jit_load_raw(addr, 1);
+}
+
+static uint32_t jit_load_u16(vaddr_t addr)
+{
+  return jit_load_raw(addr, 2);
+}
+
+static void jit_store_raw(vaddr_t addr, uint32_t len, uint32_t data)
 {
   JIT_STAT_INC(helper_stores);
 
@@ -246,6 +263,21 @@ static void jit_store(vaddr_t addr, uint32_t len, uint32_t data)
 
   JIT_STAT_INC(helper_store_slow);
   vaddr_write(addr, (int)len, data);
+}
+
+static void jit_store_u8(vaddr_t addr, uint32_t data)
+{
+  jit_store_raw(addr, 1, data);
+}
+
+static void jit_store_u16(vaddr_t addr, uint32_t data)
+{
+  jit_store_raw(addr, 2, data);
+}
+
+static void jit_store_u32(vaddr_t addr, uint32_t data)
+{
+  jit_store_raw(addr, 4, data);
 }
 
 static uint32_t jit_op_complex(uint32_t instr)
@@ -677,39 +709,37 @@ static bool emit_load_store_instr(rv32_jit_writer_t *w, uint32_t instr)
 
   if (opcode == 0x03)
   {
-    uint32_t len = 0;
-    uint32_t sign_ext = 0;
+    uintptr_t helper = 0;
     switch (funct3)
     {
-      case 0x0: len = 1; sign_ext = 1; break;
-      case 0x1: len = 2; sign_ext = 1; break;
-      case 0x2: len = 4; sign_ext = 0; break;
-      case 0x4: len = 1; sign_ext = 0; break;
-      case 0x5: len = 2; sign_ext = 0; break;
+      case 0x0: helper = (uintptr_t)jit_load_i8; break;
+      case 0x1: helper = (uintptr_t)jit_load_i16; break;
+      case 0x2: helper = (uintptr_t)jit_load_u32; break;
+      case 0x4: helper = (uintptr_t)jit_load_u8; break;
+      case 0x5: helper = (uintptr_t)jit_load_u16; break;
       default: return false;
     }
 
     /*
-     * C helper arguments follow the x86-64 SysV ABI:
-     *   edi = guest virtual address, esi = width, edx = sign-extension flag.
+     * C helper arguments follow the x86-64 SysV ABI. The load width and
+     * sign-extension mode are selected by choosing a specialised helper, so the
+     * generated hot path only has to pass the guest virtual address in edi.
      */
     return emit_addr_eax_from_rs1_imm(w, rs1, imm_i(instr))
         && emit_u8(w, 0x89) && emit_u8(w, 0xc7)
-        && emit_u8(w, 0xbe) && emit_u32(w, len)
-        && emit_u8(w, 0xba) && emit_u32(w, sign_ext)
-        && emit_call_abs(w, (uintptr_t)jit_load)
+        && emit_call_abs(w, helper)
         && emit_load_cpu_base(w)
         && emit_store_gpr_eax(w, rd);
   }
 
   if (opcode == 0x23)
   {
-    uint32_t len = 0;
+    uintptr_t helper = 0;
     switch (funct3)
     {
-      case 0x0: len = 1; break;
-      case 0x1: len = 2; break;
-      case 0x2: len = 4; break;
+      case 0x0: helper = (uintptr_t)jit_store_u8; break;
+      case 0x1: helper = (uintptr_t)jit_store_u16; break;
+      case 0x2: helper = (uintptr_t)jit_store_u32; break;
       default: return false;
     }
 
@@ -719,10 +749,9 @@ static bool emit_load_store_instr(rv32_jit_writer_t *w, uint32_t instr)
      */
     return emit_addr_eax_from_rs1_imm(w, rs1, imm_s(instr))
         && emit_u8(w, 0x89) && emit_u8(w, 0xc7)
-        && emit_u8(w, 0xbe) && emit_u32(w, len)
         && emit_load_gpr_eax(w, rs2)
-        && emit_u8(w, 0x89) && emit_u8(w, 0xc2)
-        && emit_call_abs(w, (uintptr_t)jit_store)
+        && emit_u8(w, 0x89) && emit_u8(w, 0xc6)
+        && emit_call_abs(w, helper)
         && emit_load_cpu_base(w);
   }
 
