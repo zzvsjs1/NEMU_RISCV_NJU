@@ -6,6 +6,7 @@
 #include "local-include/reg.h"
 
 #include <stddef.h>
+#include <stdlib.h>
 
 #if defined(__x86_64__) && defined(CONFIG_ISA_riscv32) && \
     defined(CONFIG_TARGET_NATIVE_ELF) && !defined(CONFIG_TRACE) && \
@@ -24,6 +25,9 @@
 #define RV32_JIT_CODE_ALIGN 16u
 #define RV32_JIT_PMEM_PAGE_COUNT \
   (((size_t)CONFIG_MSIZE + (size_t)PAGE_SIZE - 1u) / (size_t)PAGE_SIZE)
+#ifndef RV32_JIT_STATS
+#define RV32_JIT_STATS 0
+#endif
 
 typedef uint32_t (*rv32_jit_entry_t)(void);
 
@@ -50,6 +54,54 @@ static uint16_t jit_source_page_refs[RV32_JIT_PMEM_PAGE_COUNT];
 static uint8_t *jit_code = NULL;
 static size_t jit_code_used = 0;
 static bool jit_disabled = false;
+static bool jit_env_disable = false;
+static bool jit_runtime_options_ready = false;
+static bool jit_stats_enabled = false;
+
+#if RV32_JIT_STATS
+typedef struct
+{
+  uint64_t exec_requests;
+  uint64_t cache_hits;
+  uint64_t cache_misses;
+  uint64_t unsupported_hits;
+  uint64_t blocks_executed;
+  uint64_t executed_insns;
+
+  uint64_t compile_requests;
+  uint64_t blocks_compiled;
+  uint64_t compiled_insns;
+  uint64_t blocks_unsupported;
+  uint64_t arena_resets;
+
+  uint64_t invalidation_requests;
+  uint64_t invalidation_page_skips;
+  uint64_t invalidated_blocks;
+
+  uint64_t helper_loads;
+  uint64_t helper_load_direct;
+  uint64_t helper_load_slow;
+  uint64_t helper_stores;
+  uint64_t helper_store_direct;
+  uint64_t helper_store_slow;
+  uint64_t helper_complex_ops;
+} rv32_jit_stats_t;
+
+static rv32_jit_stats_t jit_stats;
+
+#define JIT_STAT_INC(field) \
+  do { \
+    jit_stats.field++; \
+  } while (0)
+
+#define JIT_STAT_ADD(field, value) \
+  do { \
+    jit_stats.field += (value); \
+  } while (0)
+#else
+#define JIT_STAT_INC(field) do { } while (0)
+#define JIT_STAT_ADD(field, value) do { } while (0)
+#endif
 
 static uint32_t bits(uint32_t value, int hi, int lo)
 {
@@ -117,12 +169,45 @@ static bool jit_direct_pmem_range(vaddr_t addr, uint32_t len, paddr_t *paddr)
   return true;
 }
 
+static bool jit_env_flag_enabled(const char *name)
+{
+  const char *value = getenv(name);
+  return value != NULL && value[0] != '\0' &&
+      !(value[0] == '0' && value[1] == '\0');
+}
+
+static void jit_init_runtime_options(void)
+{
+  if (!jit_runtime_options_ready)
+  {
+    jit_env_disable = jit_env_flag_enabled("NEMU_DISABLE_JIT");
+    jit_stats_enabled = jit_env_flag_enabled("NEMU_JIT_STATS");
+    jit_runtime_options_ready = true;
+  }
+}
+
+static bool jit_runtime_disabled(void)
+{
+  jit_init_runtime_options();
+  return jit_env_disable;
+}
+
 static uint32_t jit_load(vaddr_t addr, uint32_t len, uint32_t sign_ext)
 {
+  JIT_STAT_INC(helper_loads);
+
   paddr_t paddr = 0;
-  uint32_t value = jit_direct_pmem_range(addr, len, &paddr)
-      ? (uint32_t)host_read(guest_to_host(paddr), (int)len)
-      : vaddr_read(addr, (int)len);
+  uint32_t value = 0;
+  if (jit_direct_pmem_range(addr, len, &paddr))
+  {
+    JIT_STAT_INC(helper_load_direct);
+    value = (uint32_t)host_read(guest_to_host(paddr), (int)len);
+  }
+  else
+  {
+    JIT_STAT_INC(helper_load_slow);
+    value = vaddr_read(addr, (int)len);
+  }
   if (sign_ext && len == 1)
   {
     value = (uint32_t)(int32_t)(int8_t)value;
@@ -137,19 +222,25 @@ static uint32_t jit_load(vaddr_t addr, uint32_t len, uint32_t sign_ext)
 
 static void jit_store(vaddr_t addr, uint32_t len, uint32_t data)
 {
+  JIT_STAT_INC(helper_stores);
+
   paddr_t paddr = 0;
   if (jit_direct_pmem_range(addr, len, &paddr))
   {
+    JIT_STAT_INC(helper_store_direct);
     host_write(guest_to_host(paddr), (int)len, data);
     isa_jit_invalidate_paddr(paddr, (int)len);
     return;
   }
 
+  JIT_STAT_INC(helper_store_slow);
   vaddr_write(addr, (int)len, data);
 }
 
 static uint32_t jit_op_complex(uint32_t instr)
 {
+  JIT_STAT_INC(helper_complex_ops);
+
   const uint32_t rd = bits(instr, 11, 7);
   const uint32_t funct3 = bits(instr, 14, 12);
   const uint32_t rs1 = bits(instr, 19, 15);
@@ -375,6 +466,7 @@ static bool jit_code_init(void)
 
 static void jit_arena_reset(void)
 {
+  JIT_STAT_INC(arena_resets);
   jit_code_used = 0;
   jit_cache_clear();
 }
@@ -820,7 +912,8 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, uint32_t instr, vaddr_t cur_pc)
 
 bool isa_jit_available(void)
 {
-  return RV32_JIT_ENABLED && !jit_disabled && jit_code_init();
+  return !jit_runtime_disabled() && RV32_JIT_ENABLED && !jit_disabled &&
+      jit_code_init();
 }
 
 void isa_jit_flush_all(void)
@@ -833,6 +926,8 @@ void isa_jit_flush_all(void)
 
 void isa_jit_invalidate_paddr(paddr_t addr, int len)
 {
+  JIT_STAT_INC(invalidation_requests);
+
   if (len <= 0)
   {
     return;
@@ -840,6 +935,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
 
   if (!jit_write_may_touch_source_page(addr, len))
   {
+    JIT_STAT_INC(invalidation_page_skips);
     return;
   }
 
@@ -855,6 +951,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
     const paddr_t block_end = block->paddr_start + block->source_len;
     if (addr < block_end && end > block->paddr_start)
     {
+      JIT_STAT_INC(invalidated_blocks);
       jit_block_discard(block);
     }
   }
@@ -894,6 +991,8 @@ static rv32_jit_block_t *jit_cache_slot(vaddr_t pc)
 
 static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, uint32_t source_len)
 {
+  JIT_STAT_INC(blocks_unsupported);
+
   rv32_jit_block_t *block = jit_cache_slot(pc);
   jit_block_discard(block);
   *block = (rv32_jit_block_t) {
@@ -909,6 +1008,8 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, uint32_t source_len)
 
 static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 {
+  JIT_STAT_INC(compile_requests);
+
   if (!jit_code_init() || max_insns == 0)
   {
     return NULL;
@@ -1015,6 +1116,8 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
   rv32_jit_block_t *block = jit_cache_slot(pc);
   jit_block_discard(block);
   jit_source_pages_ref(first_paddr, source_len);
+  JIT_STAT_INC(blocks_compiled);
+  JIT_STAT_ADD(compiled_insns, count);
   *block = (rv32_jit_block_t) {
     .valid = true,
     .pc = pc,
@@ -1032,10 +1135,22 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed)
 {
   *executed = 0;
-  if (!isa_jit_available() || remaining == 0 || device_budget == 0)
+  if (remaining == 0 || device_budget == 0)
   {
     return false;
   }
+
+  /*
+   * cpu_exec() already asks isa_jit_available() before entering its hot loop.
+   * Keep the repeated block-dispatch path cheap, but still handle direct calls
+   * before initialisation.
+   */
+  if (jit_code == NULL && !isa_jit_available())
+  {
+    return false;
+  }
+
+  JIT_STAT_INC(exec_requests);
 
   uint32_t max_insns = remaining > RV32_JIT_BLOCK_MAX_INSNS
       ? RV32_JIT_BLOCK_MAX_INSNS : (uint32_t)remaining;
@@ -1048,16 +1163,127 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
   if (!block->valid || block->pc != cpu.pc || block->satp != cpu.csr.satp ||
       block->insn_count > max_insns)
   {
+    JIT_STAT_INC(cache_misses);
     block = jit_compile_block(cpu.pc, max_insns);
+  }
+  else
+  {
+    JIT_STAT_INC(cache_hits);
   }
 
   if (block == NULL || !block->valid || block->entry == NULL)
   {
+    if (block != NULL && block->valid && block->entry == NULL)
+    {
+      JIT_STAT_INC(unsupported_hits);
+    }
     return false;
   }
 
   const uint32_t ran = block->entry();
   Assert(ran > 0 && ran <= max_insns, "jit: invalid executed count %u", ran);
+  JIT_STAT_INC(blocks_executed);
+  JIT_STAT_ADD(executed_insns, ran);
   *executed = ran;
   return true;
+}
+
+#if RV32_JIT_STATS
+static uint64_t jit_ratio_x100(uint64_t numerator, uint64_t denominator)
+{
+  if (denominator == 0)
+  {
+    return 0;
+  }
+  return (numerator * 100u + denominator / 2u) / denominator;
+}
+
+static uint64_t jit_percent_x100(uint64_t numerator, uint64_t denominator)
+{
+  if (denominator == 0)
+  {
+    return 0;
+  }
+  return (numerator * 10000u + denominator / 2u) / denominator;
+}
+#endif
+
+void isa_jit_dump_stats(void)
+{
+  jit_init_runtime_options();
+
+  if (jit_runtime_disabled())
+  {
+    Log("jit: disabled by NEMU_DISABLE_JIT=1");
+    return;
+  }
+
+#if RV32_JIT_STATS
+  if (!jit_stats_enabled || !RV32_JIT_ENABLED ||
+      (jit_code == NULL && jit_stats.exec_requests == 0))
+  {
+    return;
+  }
+
+  const uint64_t cache_total = jit_stats.cache_hits + jit_stats.cache_misses;
+  const uint64_t cache_hit_pct =
+      jit_percent_x100(jit_stats.cache_hits, cache_total);
+  const uint64_t avg_compile_len =
+      jit_ratio_x100(jit_stats.compiled_insns, jit_stats.blocks_compiled);
+  const uint64_t avg_exec_len =
+      jit_ratio_x100(jit_stats.executed_insns, jit_stats.blocks_executed);
+  const uint64_t load_direct_pct =
+      jit_percent_x100(jit_stats.helper_load_direct, jit_stats.helper_loads);
+  const uint64_t store_direct_pct =
+      jit_percent_x100(jit_stats.helper_store_direct, jit_stats.helper_stores);
+
+  Log("jit: exec requests = %" PRIu64
+      ", cache hits = %" PRIu64
+      ", misses = %" PRIu64
+      ", hit rate = %" PRIu64 ".%02" PRIu64 "%%",
+      jit_stats.exec_requests,
+      jit_stats.cache_hits,
+      jit_stats.cache_misses,
+      cache_hit_pct / 100u,
+      cache_hit_pct % 100u);
+  Log("jit: compiled blocks = %" PRIu64
+      ", unsupported blocks = %" PRIu64
+      ", avg compiled length = %" PRIu64 ".%02" PRIu64 " insn",
+      jit_stats.blocks_compiled,
+      jit_stats.blocks_unsupported,
+      avg_compile_len / 100u,
+      avg_compile_len % 100u);
+  Log("jit: executed blocks = %" PRIu64
+      ", JIT instructions = %" PRIu64
+      ", avg executed block = %" PRIu64 ".%02" PRIu64 " insn"
+      ", unsupported hits = %" PRIu64,
+      jit_stats.blocks_executed,
+      jit_stats.executed_insns,
+      avg_exec_len / 100u,
+      avg_exec_len % 100u,
+      jit_stats.unsupported_hits);
+  Log("jit: helper loads = %" PRIu64
+      " (%" PRIu64 ".%02" PRIu64 "%% direct PMEM), stores = %" PRIu64
+      " (%" PRIu64 ".%02" PRIu64 "%% direct PMEM), complex ops = %" PRIu64,
+      jit_stats.helper_loads,
+      load_direct_pct / 100u,
+      load_direct_pct % 100u,
+      jit_stats.helper_stores,
+      store_direct_pct / 100u,
+      store_direct_pct % 100u,
+      jit_stats.helper_complex_ops);
+  Log("jit: invalidation requests = %" PRIu64
+      ", page-filter skips = %" PRIu64
+      ", invalidated blocks = %" PRIu64
+      ", arena resets = %" PRIu64,
+      jit_stats.invalidation_requests,
+      jit_stats.invalidation_page_skips,
+      jit_stats.invalidated_blocks,
+      jit_stats.arena_resets);
+#else
+  if (jit_stats_enabled)
+  {
+    Log("jit: stats requested, but this binary was built without RV32_JIT_STATS=1");
+  }
+#endif
 }
