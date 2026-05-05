@@ -67,9 +67,34 @@ static int32_t imm_i(uint32_t instr)
   return sext(bits(instr, 31, 20), 12);
 }
 
+static int32_t imm_s(uint32_t instr)
+{
+  return sext(bits(instr, 11, 7) | (bits(instr, 31, 25) << 5), 12);
+}
+
 static uint32_t imm_u(uint32_t instr)
 {
   return instr & 0xfffff000u;
+}
+
+static uint32_t jit_load(vaddr_t addr, uint32_t len, uint32_t sign_ext)
+{
+  uint32_t value = vaddr_read(addr, (int)len);
+  if (sign_ext && len == 1)
+  {
+    value = (uint32_t)(int32_t)(int8_t)value;
+  }
+  else if (sign_ext && len == 2)
+  {
+    value = (uint32_t)(int32_t)(int16_t)value;
+  }
+
+  return value;
+}
+
+static void jit_store(vaddr_t addr, uint32_t len, uint32_t data)
+{
+  vaddr_write(addr, (int)len, data);
 }
 
 static size_t jit_align_up(size_t value, size_t align)
@@ -210,10 +235,102 @@ static bool emit_set_pc_imm(rv32_jit_writer_t *w, vaddr_t pc)
       && emit_u32(w, off) && emit_u32(w, pc);
 }
 
-static bool emit_return_count(rv32_jit_writer_t *w, uint32_t count)
+static bool emit_call_abs(rv32_jit_writer_t *w, uintptr_t func)
 {
-  /* mov eax, count; ret */
-  return emit_u8(w, 0xb8) && emit_u32(w, count) && emit_u8(w, 0xc3);
+  /* movabs rax, func; call rax */
+  return emit_u8(w, 0x48) && emit_u8(w, 0xb8)
+      && emit_u64(w, (uint64_t)func)
+      && emit_u8(w, 0xff) && emit_u8(w, 0xd0);
+}
+
+static bool emit_prologue(rv32_jit_writer_t *w)
+{
+  /*
+   * System V enters this generated function with rsp % 16 == 8. Subtracting 8
+   * aligns the stack before any helper call made inside the block.
+   */
+  return emit_u8(w, 0x48) && emit_u8(w, 0x83) && emit_u8(w, 0xec)
+      && emit_u8(w, 0x08);
+}
+
+static bool emit_epilogue_return_count(rv32_jit_writer_t *w, uint32_t count)
+{
+  /* mov eax, count; add rsp, 8; ret */
+  return emit_u8(w, 0xb8) && emit_u32(w, count)
+      && emit_u8(w, 0x48) && emit_u8(w, 0x83) && emit_u8(w, 0xc4)
+      && emit_u8(w, 0x08) && emit_u8(w, 0xc3);
+}
+
+static bool emit_addr_eax_from_rs1_imm(rv32_jit_writer_t *w, uint32_t rs1,
+    int32_t imm)
+{
+  return emit_load_gpr_eax(w, rs1)
+      && emit_u8(w, 0x05) && emit_u32(w, (uint32_t)imm);
+}
+
+static bool emit_load_store_instr(rv32_jit_writer_t *w, uint32_t instr)
+{
+  const uint32_t opcode = instr & 0x7fu;
+  const uint32_t rd = bits(instr, 11, 7);
+  const uint32_t funct3 = bits(instr, 14, 12);
+  const uint32_t rs1 = bits(instr, 19, 15);
+  const uint32_t rs2 = bits(instr, 24, 20);
+
+  if (opcode == 0x03)
+  {
+    uint32_t len = 0;
+    uint32_t sign_ext = 0;
+    switch (funct3)
+    {
+      case 0x0: len = 1; sign_ext = 1; break;
+      case 0x1: len = 2; sign_ext = 1; break;
+      case 0x2: len = 4; sign_ext = 0; break;
+      case 0x4: len = 1; sign_ext = 0; break;
+      case 0x5: len = 2; sign_ext = 0; break;
+      default: return false;
+    }
+
+    /*
+     * C helper arguments follow the x86-64 SysV ABI:
+     *   edi = guest virtual address, esi = width, edx = sign-extension flag.
+     */
+    return emit_addr_eax_from_rs1_imm(w, rs1, imm_i(instr))
+        && emit_u8(w, 0x89) && emit_u8(w, 0xc7)
+        && emit_u8(w, 0xbe) && emit_u32(w, len)
+        && emit_u8(w, 0xba) && emit_u32(w, sign_ext)
+        && emit_call_abs(w, (uintptr_t)jit_load)
+        && emit_store_gpr_eax(w, rd);
+  }
+
+  if (opcode == 0x23)
+  {
+    uint32_t len = 0;
+    switch (funct3)
+    {
+      case 0x0: len = 1; break;
+      case 0x1: len = 2; break;
+      case 0x2: len = 4; break;
+      default: return false;
+    }
+
+    /*
+     * Stores go through vaddr_write(), so MMU, MMIO and code-cache
+     * invalidation stay in the existing memory system.
+     */
+    return emit_addr_eax_from_rs1_imm(w, rs1, imm_s(instr))
+        && emit_u8(w, 0x89) && emit_u8(w, 0xc7)
+        && emit_u8(w, 0xbe) && emit_u32(w, len)
+        && emit_load_gpr_eax(w, rs2)
+        && emit_u8(w, 0x89) && emit_u8(w, 0xc2)
+        && emit_call_abs(w, (uintptr_t)jit_store);
+  }
+
+  return false;
+}
+
+static bool jit_instr_is_store(uint32_t instr)
+{
+  return (instr & 0x7fu) == 0x23;
 }
 
 static bool emit_alu_instr(rv32_jit_writer_t *w, uint32_t instr)
@@ -379,6 +496,10 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     .cur = jit_code + jit_code_used,
     .end = jit_code + RV32_JIT_CODE_SIZE,
   };
+  if (!emit_prologue(&w))
+  {
+    return NULL;
+  }
 
   vaddr_t cur_pc = pc;
   uint32_t count = 0;
@@ -400,7 +521,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
     const uint32_t instr = vaddr_ifetch(cur_pc, 4);
     uint8_t *instr_start = w.cur;
-    if (!emit_alu_instr(&w, instr))
+    if (!emit_alu_instr(&w, instr) && !emit_load_store_instr(&w, instr))
     {
       /*
        * Emitters may fail after writing a prefix of an x86 instruction. Roll
@@ -413,6 +534,15 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     cur_pc += 4;
     source_len += 4;
     count++;
+    if (jit_instr_is_store(instr))
+    {
+      /*
+       * A store can modify code bytes or page-table memory. Ending the native
+       * block immediately after the store lets invalidation take effect before
+       * the next guest fetch, preserving self-modifying-code behaviour.
+       */
+      break;
+    }
   }
 
   if (count == 0)
@@ -421,7 +551,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     return NULL;
   }
 
-  if (!emit_set_pc_imm(&w, cur_pc) || !emit_return_count(&w, count))
+  if (!emit_set_pc_imm(&w, cur_pc) || !emit_epilogue_return_count(&w, count))
   {
     return NULL;
   }
