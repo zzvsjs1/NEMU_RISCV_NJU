@@ -212,23 +212,64 @@ static bool handle_foreground_hotkey(AM_INPUT_KEYBRD_T *keyboard)
   }
 }
 
-size_t serial_write(const void *buf, size_t offset, size_t len) 
+static const char *mouse_button_name(int button)
 {
-  const char* buff = (const char*)buf;
-  for (size_t i = 0; i < len; i++)
+  switch (button)
   {
-    putch(buff[i]);
+    case AM_MOUSE_BUTTON_LEFT: return "LEFT";
+    case AM_MOUSE_BUTTON_MIDDLE: return "MIDDLE";
+    case AM_MOUSE_BUTTON_RIGHT: return "RIGHT";
+    case AM_MOUSE_BUTTON_WHEELUP: return "WHEELUP";
+    case AM_MOUSE_BUTTON_WHEELDOWN: return "WHEELDOWN";
+    default: return "NONE";
   }
-
-  return len;
 }
 
-size_t events_read(void *buf, size_t offset, size_t len) 
+static size_t format_mouse_event(char *event, size_t event_size, AM_INPUT_MOUSE_T mouse)
 {
-  // Get keyborad ouput.
-  AM_INPUT_KEYBRD_T keyboard = io_read(AM_INPUT_KEYBRD);
+  int format_len = 0;
 
-  // Ignore NONE key.
+  switch (mouse.type)
+  {
+    case AM_MOUSE_MOVE:
+      format_len = snprintf(event, event_size, "mm %d %d %d\n",
+          mouse.x, mouse.y, mouse.buttons);
+      break;
+    case AM_MOUSE_BUTTON_DOWN:
+      format_len = snprintf(event, event_size, "md %s %d %d %d\n",
+          mouse_button_name(mouse.button), mouse.x, mouse.y, mouse.buttons);
+      break;
+    case AM_MOUSE_BUTTON_UP:
+      format_len = snprintf(event, event_size, "mu %s %d %d %d\n",
+          mouse_button_name(mouse.button), mouse.x, mouse.y, mouse.buttons);
+      break;
+    case AM_MOUSE_WHEEL:
+      format_len = snprintf(event, event_size, "mw %d %d %d %d %d\n",
+          mouse.wheel_x, mouse.wheel_y, mouse.x, mouse.y, mouse.buttons);
+      break;
+    default:
+      return 0;
+  }
+
+  if (format_len < 0 || (size_t)format_len >= event_size)
+  {
+    Log("format_mouse_event failed, len=%d", format_len);
+    return 0;
+  }
+
+  return (size_t)format_len;
+}
+
+static size_t copy_event_record(void *buf, size_t len, const char *event, size_t event_len)
+{
+  const size_t write_len = event_len > len ? len : event_len;
+  memcpy(buf, event, write_len);
+  return write_len;
+}
+
+static size_t read_keyboard_event(void *buf, size_t len)
+{
+  AM_INPUT_KEYBRD_T keyboard = io_read(AM_INPUT_KEYBRD);
   if (keyboard.keycode == AM_KEY_NONE)
   {
     return 0;
@@ -239,28 +280,68 @@ size_t events_read(void *buf, size_t offset, size_t len)
     return 0;
   }
 
-  // Determine the event type string: "kd" for key down, "ku" for key up.
   const char *prefix = keyboard.keydown ? "kd" : "ku";
-
-  // Look up the key name from the pre-defined keyname array.
   const char *name = keyname[keyboard.keycode];
-
-  // 5. Format the event into a temporary buffer, e.g. "kd A\n".
   char event[32];
-  const int formatLen = sprintf(event, "%s %s\n", prefix, name);
-  if (formatLen < 0) 
+  const int format_len = snprintf(event, sizeof(event), "%s %s\n", prefix, name);
+  if (format_len < 0 || format_len >= (int)sizeof(event))
   {
-    Log("events_read fail with formatLen=%d\n", formatLen);
-    // sprintf failed for some reason
+    Log("read_keyboard_event format failed, len=%d", format_len);
     return 0;
   }
 
-  // Only write up to len bytes into the user’s buffer.
-  const size_t writeLen = (formatLen > (int)len) ? len : (size_t)formatLen;
-  memcpy(buf, event, writeLen);
+  return copy_event_record(buf, len, event, (size_t)format_len);
+}
 
-  // Return the actual number of bytes written
-  return writeLen;
+static size_t read_mouse_event(void *buf, size_t len)
+{
+  AM_INPUT_MOUSE_T mouse = io_read(AM_INPUT_MOUSE);
+  if (mouse.type == AM_MOUSE_NONE)
+  {
+    return 0;
+  }
+
+  char event[64];
+  const size_t event_len = format_mouse_event(event, sizeof(event), mouse);
+  if (event_len == 0)
+  {
+    return 0;
+  }
+
+  return copy_event_record(buf, len, event, event_len);
+}
+
+size_t serial_write(const void *buf, size_t offset, size_t len)
+{
+  const char* buff = (const char*)buf;
+  for (size_t i = 0; i < len; i++)
+  {
+    putch(buff[i]);
+  }
+
+  return len;
+}
+
+size_t events_read(void *buf, size_t offset, size_t len)
+{
+  static bool prefer_mouse = false;
+  (void)offset;
+
+  // Alternate the first-polled source so bursts from one device cannot starve the other.
+  size_t n = 0;
+  if (prefer_mouse)
+  {
+    n = read_mouse_event(buf, len);
+    if (n == 0) n = read_keyboard_event(buf, len);
+  }
+  else
+  {
+    n = read_keyboard_event(buf, len);
+    if (n == 0) n = read_mouse_event(buf, len);
+  }
+
+  prefer_mouse = !prefer_mouse;
+  return n;
 }
 
 size_t dispinfo_read(void *buf, size_t offset, size_t len) 
