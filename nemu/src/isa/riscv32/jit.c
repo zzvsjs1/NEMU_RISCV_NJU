@@ -32,8 +32,19 @@
 #define RV32_JIT_CACHE_SIZE 4096u
 #define RV32_JIT_CODE_SIZE (4u * 1024u * 1024u)
 #define RV32_JIT_CODE_ALIGN 16u
-#define RV32_JIT_PMEM_PAGE_COUNT \
-  (((size_t)CONFIG_MSIZE + (size_t)PAGE_SIZE - 1u) / (size_t)PAGE_SIZE)
+/*
+ * Store continuation needs to know whether a write can touch translated source
+ * bytes.  A whole 4 KiB page is too coarse for small AM images, where .text,
+ * .rodata, .data and .bss can share one page.  Track source ownership in
+ * 128-byte chunks instead: this is still cheap, but it avoids forcing normal
+ * data stores in the same page as code through the helper-and-exit path.
+ */
+#define RV32_JIT_SOURCE_CHUNK_SHIFT 7u
+#define RV32_JIT_SOURCE_CHUNK_SIZE (1u << RV32_JIT_SOURCE_CHUNK_SHIFT)
+#define RV32_JIT_SOURCE_CHUNK_MASK (RV32_JIT_SOURCE_CHUNK_SIZE - 1u)
+#define RV32_JIT_PMEM_CHUNK_COUNT \
+  (((size_t)CONFIG_MSIZE + (size_t)RV32_JIT_SOURCE_CHUNK_SIZE - 1u) / \
+      (size_t)RV32_JIT_SOURCE_CHUNK_SIZE)
 #ifdef CONFIG_RV32_JIT_STATS
 #define RV32_JIT_STATS 1
 #else
@@ -61,7 +72,7 @@ typedef struct
 } rv32_jit_block_t;
 
 static rv32_jit_block_t jit_cache[RV32_JIT_CACHE_SIZE];
-static uint16_t jit_source_page_refs[RV32_JIT_PMEM_PAGE_COUNT];
+static uint16_t jit_source_chunk_refs[RV32_JIT_PMEM_CHUNK_COUNT];
 static uint8_t *jit_code = NULL;
 static size_t jit_code_used = 0;
 static bool jit_disabled = false;
@@ -349,18 +360,19 @@ static uint32_t jit_hash(vaddr_t pc, word_t satp)
   return ((pc >> 2) ^ satp ^ (satp >> 12)) & (RV32_JIT_CACHE_SIZE - 1u);
 }
 
-static bool jit_pmem_page_index(paddr_t addr, size_t *idx)
+static bool jit_pmem_source_chunk_index(paddr_t addr, size_t *idx)
 {
   if (!in_pmem(addr))
   {
     return false;
   }
 
-  *idx = ((size_t)(addr - (paddr_t)CONFIG_MBASE)) >> PAGE_SHIFT;
-  return *idx < RV32_JIT_PMEM_PAGE_COUNT;
+  *idx = ((size_t)(addr - (paddr_t)CONFIG_MBASE)) >>
+      RV32_JIT_SOURCE_CHUNK_SHIFT;
+  return *idx < RV32_JIT_PMEM_CHUNK_COUNT;
 }
 
-static void jit_source_pages_ref(paddr_t addr, uint32_t len)
+static void jit_source_chunks_ref(paddr_t addr, uint32_t len)
 {
   if (len == 0)
   {
@@ -369,21 +381,22 @@ static void jit_source_pages_ref(paddr_t addr, uint32_t len)
 
   size_t first = 0;
   size_t last = 0;
-  if (!jit_pmem_page_index(addr, &first) ||
-      !jit_pmem_page_index(addr + (paddr_t)len - 1u, &last))
+  const paddr_t end = addr + (paddr_t)len - 1u;
+  if (end < addr || !jit_pmem_source_chunk_index(addr, &first) ||
+      !jit_pmem_source_chunk_index(end, &last))
   {
     return;
   }
 
   for (size_t i = first; i <= last; i++)
   {
-    Assert(jit_source_page_refs[i] != UINT16_MAX,
-        "jit: too many source blocks on PMEM page %zu", i);
-    jit_source_page_refs[i]++;
+    Assert(jit_source_chunk_refs[i] != UINT16_MAX,
+        "jit: too many source blocks in PMEM source chunk %zu", i);
+    jit_source_chunk_refs[i]++;
   }
 }
 
-static void jit_source_pages_unref(paddr_t addr, uint32_t len)
+static void jit_source_chunks_unref(paddr_t addr, uint32_t len)
 {
   if (len == 0)
   {
@@ -392,21 +405,22 @@ static void jit_source_pages_unref(paddr_t addr, uint32_t len)
 
   size_t first = 0;
   size_t last = 0;
-  if (!jit_pmem_page_index(addr, &first) ||
-      !jit_pmem_page_index(addr + (paddr_t)len - 1u, &last))
+  const paddr_t end = addr + (paddr_t)len - 1u;
+  if (end < addr || !jit_pmem_source_chunk_index(addr, &first) ||
+      !jit_pmem_source_chunk_index(end, &last))
   {
     return;
   }
 
   for (size_t i = first; i <= last; i++)
   {
-    Assert(jit_source_page_refs[i] > 0,
-        "jit: source page refcount underflow on PMEM page %zu", i);
-    jit_source_page_refs[i]--;
+    Assert(jit_source_chunk_refs[i] > 0,
+        "jit: source chunk refcount underflow on PMEM source chunk %zu", i);
+    jit_source_chunk_refs[i]--;
   }
 }
 
-static bool jit_write_may_touch_source_page(paddr_t addr, int len)
+static bool jit_write_may_touch_source_chunk(paddr_t addr, int len)
 {
   if (len <= 0)
   {
@@ -438,15 +452,15 @@ static bool jit_write_may_touch_source_page(paddr_t addr, int len)
 
   size_t first = 0;
   size_t last = 0;
-  if (!jit_pmem_page_index(start, &first) ||
-      !jit_pmem_page_index(end, &last))
+  if (!jit_pmem_source_chunk_index(start, &first) ||
+      !jit_pmem_source_chunk_index(end, &last))
   {
     return true;
   }
 
   for (size_t i = first; i <= last; i++)
   {
-    if (jit_source_page_refs[i] != 0)
+    if (jit_source_chunk_refs[i] != 0)
     {
       return true;
     }
@@ -464,7 +478,7 @@ static void jit_block_discard(rv32_jit_block_t *block)
 
   if (block->entry != NULL && block->source_len != 0)
   {
-    jit_source_pages_unref(block->paddr_start, block->source_len);
+    jit_source_chunks_unref(block->paddr_start, block->source_len);
   }
 
   block->valid = false;
@@ -476,7 +490,7 @@ static void jit_block_discard(rv32_jit_block_t *block)
 static void jit_cache_clear(void)
 {
   memset(jit_cache, 0, sizeof(jit_cache));
-  memset(jit_source_page_refs, 0, sizeof(jit_source_page_refs));
+  memset(jit_source_chunk_refs, 0, sizeof(jit_source_chunk_refs));
 }
 
 static bool jit_code_init(void)
@@ -739,7 +753,7 @@ static bool emit_cmp_satp_zero(rv32_jit_writer_t *w)
       && emit_u32(w, off) && emit_u8(w, 0x00);
 }
 
-static bool emit_cmp_source_page_ref_zero(rv32_jit_writer_t *w)
+static bool emit_cmp_source_chunk_ref_zero(rv32_jit_writer_t *w)
 {
   /* cmp word ptr [r9 + r8 * 2], 0 */
   return emit_u8(w, 0x66) && emit_u8(w, 0x43) && emit_u8(w, 0x83)
@@ -831,25 +845,26 @@ static bool emit_direct_pmem_store_from_ecx(rv32_jit_writer_t *w, uint32_t len)
   }
 }
 
-static bool emit_store_source_page_guard(rv32_jit_writer_t *w, uint32_t len,
-    uint8_t **cross_page_disp, uint8_t **source_page_disp)
+static bool emit_store_source_chunk_guard(rv32_jit_writer_t *w, uint32_t len,
+    uint8_t **cross_chunk_disp, uint8_t **source_chunk_disp)
 {
   Assert(len >= 1 && len <= 4, "jit: unsupported direct store width %u", len);
 
   /*
-   * Direct continuing stores only handle one PMEM page. Cross-page stores are
-   * rare in the benchmark loops and use the helper path to keep invalidation
-   * conservative.
+   * Direct continuing stores only handle one source-tracking chunk. Crossing a
+   * chunk boundary is rare for byte/halfword/word stores, and the helper path
+   * remains the conservative choice because it can perform exact invalidation
+   * and return to cpu_exec() before the next guest fetch.
    */
   return emit_mov_r8d_edx(w)
-      && emit_and_r8d_imm(w, PAGE_MASK)
-      && emit_cmp_r8d_imm(w, PAGE_SIZE - len)
-      && emit_jcc_rel32_placeholder(w, 0x87, cross_page_disp)
+      && emit_and_r8d_imm(w, RV32_JIT_SOURCE_CHUNK_MASK)
+      && emit_cmp_r8d_imm(w, RV32_JIT_SOURCE_CHUNK_SIZE - len)
+      && emit_jcc_rel32_placeholder(w, 0x87, cross_chunk_disp)
       && emit_mov_r8d_edx(w)
-      && emit_shr_r8d_imm(w, PAGE_SHIFT)
-      && emit_movabs_r9(w, (uint64_t)(uintptr_t)jit_source_page_refs)
-      && emit_cmp_source_page_ref_zero(w)
-      && emit_jcc_rel32_placeholder(w, 0x85, source_page_disp);
+      && emit_shr_r8d_imm(w, RV32_JIT_SOURCE_CHUNK_SHIFT)
+      && emit_movabs_r9(w, (uint64_t)(uintptr_t)jit_source_chunk_refs)
+      && emit_cmp_source_chunk_ref_zero(w)
+      && emit_jcc_rel32_placeholder(w, 0x85, source_chunk_disp);
 }
 
 static bool emit_prologue(rv32_jit_writer_t *w)
@@ -936,14 +951,14 @@ static bool emit_store_instr(rv32_jit_writer_t *w, uint32_t instr,
   }
 
   rv32_jit_pmem_guard_patch_t guard = {0};
-  uint8_t *cross_page_disp = NULL;
-  uint8_t *source_page_disp = NULL;
+  uint8_t *cross_chunk_disp = NULL;
+  uint8_t *source_chunk_disp = NULL;
   uint8_t *done_disp = NULL;
   if (!emit_addr_eax_from_rs1_imm(w, rs1, imm_s(instr)) ||
       !emit_load_gpr_ecx(w, rs2) ||
       !emit_direct_pmem_guard(w, len, &guard) ||
-      !emit_store_source_page_guard(w, len, &cross_page_disp,
-          &source_page_disp) ||
+      !emit_store_source_chunk_guard(w, len, &cross_chunk_disp,
+          &source_chunk_disp) ||
       !emit_direct_pmem_store_from_ecx(w, len) ||
       !emit_jmp_rel32_placeholder(w, &done_disp))
   {
@@ -952,11 +967,11 @@ static bool emit_store_instr(rv32_jit_writer_t *w, uint32_t instr,
 
   const uint8_t *slow_path = w->cur;
   patch_direct_pmem_guard(&guard, slow_path);
-  patch_rel32(cross_page_disp, slow_path);
-  patch_rel32(source_page_disp, slow_path);
+  patch_rel32(cross_chunk_disp, slow_path);
+  patch_rel32(source_chunk_disp, slow_path);
 
   /*
-   * The helper path handles MMIO, paging, cross-page direct stores, and source
+   * The helper path handles MMIO, paging, cross-chunk direct stores, and source
    * code invalidation. It exits before the next guest fetch so side effects are
    * observed at the same boundary as the old store-ending block policy.
    */
@@ -1202,7 +1217,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
     return;
   }
 
-  if (!jit_write_may_touch_source_page(addr, len))
+  if (!jit_write_may_touch_source_chunk(addr, len))
   {
     JIT_STAT_INC(invalidation_page_skips);
     return;
@@ -1375,7 +1390,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
   rv32_jit_block_t *block = jit_cache_slot(pc);
   jit_block_discard(block);
-  jit_source_pages_ref(first_paddr, source_len);
+  jit_source_chunks_ref(first_paddr, source_len);
   JIT_STAT_INC(blocks_compiled);
   JIT_STAT_ADD(compiled_insns, count);
   *block = (rv32_jit_block_t) {

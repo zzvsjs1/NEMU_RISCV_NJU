@@ -4,6 +4,9 @@
 #include <stdbool.h>
 #include <math.h>
 #include <device/map.h>
+#include <isa.h>
+#include <memory/paddr.h>
+#include <utils.h>
 
 enum {
   reg_freq,       // Audio frequency (Hz)
@@ -12,10 +15,17 @@ enum {
   reg_sbuf_size,  // Total size of the stream buffer
   reg_init,       // Write to initialise audio
   reg_count,      // Read used bytes; write the number of newly appended bytes
+  reg_bulk_src,   // Guest pointer for bulk stream-buffer append
+  reg_bulk_len,   // Number of bytes to append from reg_bulk_src
+  reg_bulk_cmd,   // Write AUDIO_BULK_CMD_APPEND to commit the append
   nr_reg
 };
 
 #define MIN(a, b) (((a) > (b)) ? (b) : (a))
+#define AUDIO_PAGE_SIZE 4096u
+#define AUDIO_PAGE_MASK (AUDIO_PAGE_SIZE - 1u)
+#define AUDIO_BULK_CMD_APPEND 1u
+#define AUDIO_STATS_INTERVAL_US 5000000ull
 
 #ifndef CONFIG_AUDIO_DUMMY
 static SDL_AudioSpec spec = {0};
@@ -28,6 +38,72 @@ static uint32_t *audio_base = NULL;
 
 static uint32_t audio_count = 0;
 static uint32_t sbufReadIndex = 0;
+static bool audio_stats_enabled = false;
+static uint64_t audio_stats_last_us = 0;
+static uint64_t audio_stats_appends = 0;
+static uint64_t audio_stats_append_bytes = 0;
+static uint64_t audio_stats_callbacks = 0;
+static uint64_t audio_stats_played_bytes = 0;
+static uint64_t audio_stats_underrun_callbacks = 0;
+static uint64_t audio_stats_underrun_bytes = 0;
+static uint32_t audio_stats_max_count = 0;
+
+static bool audio_env_flag_enabled(const char *name)
+{
+    const char *env = getenv(name);
+    return env != NULL && env[0] != '\0' && strcmp(env, "0") != 0;
+}
+
+static void audio_note_count(void)
+{
+    if (audio_count > audio_stats_max_count)
+    {
+        audio_stats_max_count = audio_count;
+    }
+}
+
+static void audio_stats_maybe_print(void)
+{
+    if (!audio_stats_enabled)
+    {
+        return;
+    }
+
+    const uint64_t now = get_time();
+    if (audio_stats_last_us == 0)
+    {
+        audio_stats_last_us = now;
+        return;
+    }
+
+    const uint64_t elapsed = now - audio_stats_last_us;
+    if (elapsed < AUDIO_STATS_INTERVAL_US)
+    {
+        return;
+    }
+
+    const double seconds = (double)elapsed / 1000000.0;
+    const double append_kib = (double)audio_stats_append_bytes / 1024.0;
+    const double played_kib = (double)audio_stats_played_bytes / 1024.0;
+    const double underrun_kib = (double)audio_stats_underrun_bytes / 1024.0;
+    printf("[audio] elapsed=%.3f s appends=%" PRIu64 " append=%.1f KiB "
+           "callbacks=%" PRIu64 " played=%.1f KiB underruns=%" PRIu64
+           " underrun=%.1f KiB count=%u max_count=%u\n",
+           seconds, audio_stats_appends, append_kib,
+           audio_stats_callbacks, played_kib,
+           audio_stats_underrun_callbacks, underrun_kib,
+           audio_count, audio_stats_max_count);
+    fflush(stdout);
+
+    audio_stats_last_us = now;
+    audio_stats_appends = 0;
+    audio_stats_append_bytes = 0;
+    audio_stats_callbacks = 0;
+    audio_stats_played_bytes = 0;
+    audio_stats_underrun_callbacks = 0;
+    audio_stats_underrun_bytes = 0;
+    audio_stats_max_count = audio_count;
+}
 
 static void publish_audio_count(void)
 {
@@ -80,6 +156,7 @@ static void reset_audio_stream(void)
 {
     sbufReadIndex = 0;
     audio_count = 0;
+    audio_note_count();
     publish_audio_count();
 #ifndef CONFIG_AUDIO_DUMMY
     memset(&spec, 0, sizeof(spec));
@@ -99,6 +176,7 @@ static void sdlAudioCallback(void *userdata, Uint8 *stream, int len)
     // Determine how many bytes we can copy from the audio buffer.
     const uint32_t currentSizeOfData = audio_count;
     const uint32_t filledBytes = MIN((uint32_t)len, currentSizeOfData);
+    const uint32_t missingBytes = (uint32_t)len - filledBytes;
 
     // Calculate new index with wrap-around logic.
     const uint32_t endIndex = (sbufReadIndex + filledBytes) % CONFIG_SB_SIZE;
@@ -118,9 +196,122 @@ static void sdlAudioCallback(void *userdata, Uint8 *stream, int len)
     // Update the read index and the count of audio data.
     sbufReadIndex = endIndex;
     audio_count -= filledBytes;
+    audio_stats_callbacks++;
+    audio_stats_played_bytes += filledBytes;
+    if (missingBytes > 0)
+    {
+        audio_stats_underrun_callbacks++;
+        audio_stats_underrun_bytes += missingBytes;
+    }
+    audio_note_count();
     publish_audio_count();
 }
 #endif
+
+static bool audio_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
+        size_t *len)
+{
+    if (wanted == 0)
+    {
+        return false;
+    }
+
+    paddr_t paddr = 0;
+    const int mmu = isa_mmu_check(addr, 1, MEM_TYPE_READ);
+    if (mmu == MMU_DIRECT)
+    {
+        paddr = (paddr_t)addr;
+    }
+    else if (mmu == MMU_TRANSLATE)
+    {
+        const paddr_t ret = isa_mmu_translate(addr, 1, MEM_TYPE_READ);
+        if ((ret & (paddr_t)AUDIO_PAGE_MASK) != MEM_RET_OK)
+        {
+            return false;
+        }
+        paddr = (ret & ~(paddr_t)AUDIO_PAGE_MASK) | (paddr_t)(addr & AUDIO_PAGE_MASK);
+    }
+    else
+    {
+        return false;
+    }
+
+    if (!in_pmem(paddr))
+    {
+        return false;
+    }
+
+    size_t chunk = AUDIO_PAGE_SIZE - (size_t)(addr & AUDIO_PAGE_MASK);
+    const paddr_t pmem_end = (paddr_t)CONFIG_MBASE + (paddr_t)CONFIG_MSIZE;
+    if ((paddr_t)(paddr + chunk) > pmem_end)
+    {
+        chunk = (size_t)(pmem_end - paddr);
+    }
+    if (chunk > wanted)
+    {
+        chunk = wanted;
+    }
+
+    *host = guest_to_host(paddr);
+    *len = chunk;
+    return chunk > 0;
+}
+
+static void append_audio_bytes(vaddr_t src, uint32_t len)
+{
+    if (len == 0)
+    {
+        return;
+    }
+
+#ifdef CONFIG_AUDIO_DUMMY
+    Assert(len <= CONFIG_SB_SIZE,
+            "Dummy audio append is larger than the stream buffer: append=%u size=%u",
+            len, CONFIG_SB_SIZE);
+    audio_stats_appends++;
+    audio_stats_append_bytes += len;
+    audio_count = 0;
+    publish_audio_count();
+#else
+    lock_audio_counter();
+    Assert(audio_count <= CONFIG_SB_SIZE,
+            "Audio stream buffer count is invalid: count=%u size=%u",
+            audio_count, CONFIG_SB_SIZE);
+    Assert(len <= CONFIG_SB_SIZE - audio_count,
+            "Audio stream buffer overflow: count=%u append=%u size=%u",
+            audio_count, len, CONFIG_SB_SIZE);
+
+    uint32_t writeIndex = (sbufReadIndex + audio_count) % CONFIG_SB_SIZE;
+    size_t done = 0;
+    while (done < len)
+    {
+        uint8_t *host = NULL;
+        size_t src_chunk = 0;
+        Assert(audio_guest_read_chunk(src + (vaddr_t)done, (size_t)len - done,
+                    &host, &src_chunk),
+                "audio: cannot translate bulk source vaddr=0x%08x",
+                src + (vaddr_t)done);
+
+        size_t dst_chunk = CONFIG_SB_SIZE - writeIndex;
+        if (dst_chunk > src_chunk)
+        {
+            dst_chunk = src_chunk;
+        }
+        memcpy(sbuf + writeIndex, host, dst_chunk);
+        writeIndex = (writeIndex + dst_chunk) % CONFIG_SB_SIZE;
+        done += dst_chunk;
+    }
+
+    audio_count += len;
+    audio_stats_appends++;
+    audio_stats_append_bytes += len;
+    audio_note_count();
+    publish_audio_count();
+    unlock_audio_counter();
+#endif
+
+    audio_stats_maybe_print();
+}
 
 static void audio_io_handler(uint32_t offset, int len, bool is_write) 
 {
@@ -146,6 +337,11 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
             }
 
             case reg_samples: {
+                break;
+            }
+
+            case reg_bulk_src:
+            case reg_bulk_len: {
                 break;
             }
 
@@ -181,6 +377,15 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
                 publish_audio_count();
                 unlock_audio_counter();
 #endif
+                break;
+            }
+
+            case reg_bulk_cmd: {
+                Assert(val == AUDIO_BULK_CMD_APPEND,
+                        "Unsupported audio bulk command: %u", val);
+                append_audio_bytes((vaddr_t)audio_base[reg_bulk_src],
+                        audio_base[reg_bulk_len]);
+                audio_base[reg_bulk_cmd] = 0;
                 break;
             }
 
@@ -244,6 +449,14 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
 
 void init_audio() 
 {
+  audio_stats_enabled = audio_env_flag_enabled("NEMU_AUDIO_STATS");
+  audio_stats_last_us = get_time();
+  if (audio_stats_enabled)
+  {
+      Log("audio: host stats enabled, print interval = %" PRIu64 " us",
+          (uint64_t)AUDIO_STATS_INTERVAL_US);
+  }
+
   uint32_t space_size = sizeof(uint32_t) * nr_reg;
   audio_base = (uint32_t *)new_space(space_size);
 

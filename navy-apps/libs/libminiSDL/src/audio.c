@@ -21,7 +21,20 @@ static int g_bytes_per_frame = 0;        // channels * bytes_per_sample
 volatile int g_in_audio_cb = 0;
 
 #define MAX_PUSH_BYTES   (64 * 1024)
-#define BURST_CALLBACKS  4
+
+/*
+ * PAL drives miniSDL audio from places such as SDL_Delay() and event polling,
+ * not from a dedicated guest audio thread.  At 800x600 a video frame can take
+ * long enough that one audio pump is effectively the only chance to feed the
+ * device before the host SDL callback wakes several times.
+ *
+ * With PAL's common 44.1 kHz, stereo, S16 format, one 1024-sample callback is
+ * 1024 * 2 channels * 2 bytes = 4096 bytes.  Four bursts at a 10 Hz game pump
+ * can only produce roughly 160 KiB/s, below the 172 KiB/s the host consumes.
+ * Eight bursts gives enough headroom for slow frames while the 64 KiB device
+ * buffer still bounds worst-case queued audio latency.
+ */
+#define BURST_CALLBACKS  8
 
 void CallbackHelper(void);
 

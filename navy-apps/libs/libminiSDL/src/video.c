@@ -5,6 +5,49 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+static uint32_t *update_argb_buf = NULL;
+static size_t update_argb_cap = 0;
+
+static uint32_t *ensure_update_argb_buffer(size_t pixels)
+{
+  if (pixels <= update_argb_cap) {
+    return update_argb_buf;
+  }
+
+  uint32_t *new_buf = realloc(update_argb_buf, pixels * sizeof(uint32_t));
+  assert(new_buf);
+  update_argb_buf = new_buf;
+  update_argb_cap = pixels;
+  return update_argb_buf;
+}
+
+static void build_palette_argb_lut(const SDL_Palette *palette, uint32_t lut[256])
+{
+  assert(palette);
+  assert(palette->colors);
+
+  int ncolors = palette->ncolors;
+  if (ncolors < 0) ncolors = 0;
+  if (ncolors > 256) ncolors = 256;
+
+  /*
+   * Convert the 256-entry palette once per update.  PAL's 8-bit screen path
+   * otherwise packs r/g/b/a again for every destination pixel, so a full
+   * 800x600 frame repeats the same 256 choices 480,000 times.
+   */
+  for (int i = 0; i < ncolors; i++) {
+    const SDL_Color c = palette->colors[i];
+    lut[i] = ((uint32_t)c.a << 24) |
+             ((uint32_t)c.r << 16) |
+             ((uint32_t)c.g << 8) |
+             (uint32_t)c.b;
+  }
+
+  for (int i = ncolors; i < 256; i++) {
+    lut[i] = 0;
+  }
+}
+
 // Performs a fast blit from the source surface to the destination surface.
 // 
 // Copy from https://wiki.libsdl.org/SDL2/SDL_BlitSurface
@@ -266,30 +309,31 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h) {
       // 8-bit palette path
       const int pitch = s->pitch;
       uint8_t *src = (uint8_t *)s->pixels + y * pitch + x;
-      uint32_t *buf = malloc(sizeof(uint32_t) * w * h);
-      assert(buf);
+      const size_t pixels = (size_t)w * (size_t)h;
+      uint32_t *buf = ensure_update_argb_buffer(pixels);
 
-      // The actual ARGB color array.
-      SDL_Color *palette = s->format->palette->colors;
+      uint32_t palette_argb[256];
+      build_palette_argb_lut(s->format->palette, palette_argb);
+
+      /*
+       * NDL_DrawRect() consumes 32-bit ARGB pixels, while PAL keeps its real
+       * screen as an 8-bit indexed surface.  Reuse one conversion buffer and
+       * look up pre-packed colours; this removes a malloc/free pair per frame
+       * and replaces four byte-field loads/shifts per pixel with one table
+       * lookup.
+       */
       for (int row = 0; row < h; ++row) 
       {
           uint8_t *rowp = src + row * pitch;
           uint32_t *dstp = buf + row * w;
           for (int col = 0; col < w; ++col) 
           {
-              const uint8_t idx = rowp[col];
-              SDL_Color c = palette[idx];
-              // Pack into 0xAARRGGBB.
-              dstp[col] = (c.a << 24) | (c.r << 16) | (c.g << 8) | c.b;
+              dstp[col] = palette_argb[rowp[col]];
           }
       }
 
       // Draw it.
       NDL_DrawRect(buf, x, y, w, h);
-
-      // Don't forget to free the buffer.
-      // Maybe cache the buffer???
-      free(buf);
   }
   else 
   {
@@ -474,14 +518,46 @@ void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_
     return;
   }
 
+  /*
+   * Scale with integer error accumulators instead of doing one division for
+   * every destination pixel.  For a 320x200 -> 800x600 PAL frame this removes
+   * 480,000 inner-loop divisions while preserving the same floor-based nearest
+   * neighbour mapping:
+   *
+   *   source column = floor((output column - area x) * source width /
+   *                         destination width)
+   *
+   * The error value is the remainder of that division.  Adding src_w each
+   * output pixel and carrying whenever it reaches dst_w is the same arithmetic
+   * as the formula above, just spread over the row.
+   */
+  int y_num = (clip_y0 - dst_y) * src_h;
+  int src_row = y_num / dst_h;
+  int y_err = y_num % dst_h;
+
   for (int dy = clip_y0; dy < clip_y1; dy++) {
-    const int src_row = src_y + (dy - dst_y) * src_h / dst_h;
-    const uint8_t *src_rowp = (const uint8_t *)src->pixels + src_row * src->pitch + src_x;
+    const uint8_t *src_rowp = (const uint8_t *)src->pixels
+      + (src_y + src_row) * src->pitch + src_x;
     uint8_t *dst_rowp = (uint8_t *)dst->pixels + dy * dst->pitch + clip_x0;
 
+    int x_num = (clip_x0 - dst_x) * src_w;
+    int src_col = x_num / dst_w;
+    int x_err = x_num % dst_w;
+
     for (int dx = clip_x0; dx < clip_x1; dx++) {
-      const int src_col = (dx - dst_x) * src_w / dst_w;
       dst_rowp[dx - clip_x0] = src_rowp[src_col];
+
+      x_err += src_w;
+      while (x_err >= dst_w) {
+        x_err -= dst_w;
+        src_col++;
+      }
+    }
+
+    y_err += src_h;
+    while (y_err >= dst_h) {
+      y_err -= dst_h;
+      src_row++;
     }
   }
 
@@ -491,6 +567,123 @@ void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_
     dstrect->w = (uint16_t)(clip_x1 - clip_x0);
     dstrect->h = (uint16_t)(clip_y1 - clip_y0);
   }
+}
+
+void SDL_SoftStretchUpdate(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_Rect *dstrect) {
+  assert(src && dst);
+  assert(src->format);
+  assert(dst->format);
+
+  if (!(dst->flags & SDL_HWSURFACE) ||
+      src->format->BitsPerPixel != 8 ||
+      dst->format->BitsPerPixel != 8) {
+    SDL_SoftStretch(src, srcrect, dst, dstrect);
+    if (dstrect != NULL) {
+      SDL_UpdateRect(dst, dstrect->x, dstrect->y, dstrect->w, dstrect->h);
+    } else {
+      SDL_UpdateRect(dst, 0, 0, 0, 0);
+    }
+    return;
+  }
+
+  const int src_x = (srcrect == NULL ? 0 : srcrect->x);
+  const int src_y = (srcrect == NULL ? 0 : srcrect->y);
+  const int src_w = (srcrect == NULL ? src->w : srcrect->w);
+  const int src_h = (srcrect == NULL ? src->h : srcrect->h);
+
+  SDL_Rect dst_full = {
+    .x = 0,
+    .y = 0,
+    .w = (uint16_t)dst->w,
+    .h = (uint16_t)dst->h,
+  };
+  SDL_Rect *dst_area = dstrect == NULL ? &dst_full : dstrect;
+
+  if (src_w <= 0 || src_h <= 0 || dst_area->w <= 0 || dst_area->h <= 0) {
+    return;
+  }
+
+  assert(src_x >= 0 && src_y >= 0);
+  assert(src_x + src_w <= src->w && src_y + src_h <= src->h);
+
+  const int dst_x = dst_area->x;
+  const int dst_y = dst_area->y;
+  const int dst_w = dst_area->w;
+  const int dst_h = dst_area->h;
+
+  int clip_x0 = dst_x < 0 ? 0 : dst_x;
+  int clip_y0 = dst_y < 0 ? 0 : dst_y;
+  int clip_x1 = dst_x + dst_w;
+  int clip_y1 = dst_y + dst_h;
+  if (clip_x1 > dst->w) clip_x1 = dst->w;
+  if (clip_y1 > dst->h) clip_y1 = dst->h;
+
+  if (clip_x0 >= clip_x1 || clip_y0 >= clip_y1) {
+    if (dstrect != NULL) {
+      dstrect->x = clip_x0;
+      dstrect->y = clip_y0;
+      dstrect->w = 0;
+      dstrect->h = 0;
+    }
+    return;
+  }
+
+  const int out_w = clip_x1 - clip_x0;
+  const int out_h = clip_y1 - clip_y0;
+  uint32_t *argb = ensure_update_argb_buffer((size_t)out_w * (size_t)out_h);
+  uint32_t palette_argb[256];
+  build_palette_argb_lut(dst->format->palette, palette_argb);
+
+  /*
+   * PAL normally does SDL_SoftStretch() into an 8-bit hardware surface and then
+   * SDL_UpdateRect(), which reads the same 800x600 indexed pixels back to build
+   * a 32-bit framebuffer image.  This combined path writes both outputs in one
+   * nearest-neighbour pass:
+   *
+   *   - dst->pixels stays current, so later palette-only refreshes still work;
+   *   - argb is sent to /dev/fb immediately, avoiding a second full-screen pass.
+   */
+  int y_num = (clip_y0 - dst_y) * src_h;
+  int src_row = y_num / dst_h;
+  int y_err = y_num % dst_h;
+
+  for (int dy = clip_y0; dy < clip_y1; dy++) {
+    const uint8_t *src_rowp = (const uint8_t *)src->pixels
+      + (src_y + src_row) * src->pitch + src_x;
+    uint8_t *dst_rowp = (uint8_t *)dst->pixels + dy * dst->pitch + clip_x0;
+    uint32_t *argb_rowp = argb + (size_t)(dy - clip_y0) * (size_t)out_w;
+
+    int x_num = (clip_x0 - dst_x) * src_w;
+    int src_col = x_num / dst_w;
+    int x_err = x_num % dst_w;
+
+    for (int dx = clip_x0; dx < clip_x1; dx++) {
+      const uint8_t idx = src_rowp[src_col];
+      dst_rowp[dx - clip_x0] = idx;
+      argb_rowp[dx - clip_x0] = palette_argb[idx];
+
+      x_err += src_w;
+      while (x_err >= dst_w) {
+        x_err -= dst_w;
+        src_col++;
+      }
+    }
+
+    y_err += src_h;
+    while (y_err >= dst_h) {
+      y_err -= dst_h;
+      src_row++;
+    }
+  }
+
+  if (dstrect != NULL) {
+    dstrect->x = clip_x0;
+    dstrect->y = clip_y0;
+    dstrect->w = (uint16_t)out_w;
+    dstrect->h = (uint16_t)out_h;
+  }
+
+  NDL_DrawRect(argb, clip_x0, clip_y0, out_w, out_h);
 }
 
 void SDL_SetPalette(SDL_Surface *s, int flags, SDL_Color *colors, int firstcolor, int ncolors) {
