@@ -45,6 +45,7 @@ typedef struct {
 static MouseEvent mouse_queue[MOUSE_QUEUE_LEN];
 static int mouse_f = 0;
 static int mouse_r = 0;
+static int mouse_count = 0;
 static MouseEvent mouse_latched;
 static uint32_t *mouse_base = NULL;
 static uint32_t mouse_x = 0;
@@ -64,20 +65,26 @@ static uint32_t mouse_button_bit(uint32_t button)
 
 static void mouse_enqueue(MouseEvent event)
 {
+  /*
+   * Keep an explicit occupancy count so front == rear can represent both
+   * "empty" and "all 1024 slots are full" without sacrificing one slot.
+   */
+  Assert(mouse_count < MOUSE_QUEUE_LEN, "mouse queue overflow!");
   mouse_queue[mouse_r] = event;
   mouse_r = (mouse_r + 1) % MOUSE_QUEUE_LEN;
-  Assert(mouse_r != mouse_f, "mouse queue overflow!");
+  mouse_count ++;
 }
 
 static MouseEvent mouse_dequeue(void)
 {
-  if (mouse_f == mouse_r)
+  if (mouse_count == 0)
   {
     return (MouseEvent) { .type = MOUSE_EVENT_NONE };
   }
 
   MouseEvent event = mouse_queue[mouse_f];
   mouse_f = (mouse_f + 1) % MOUSE_QUEUE_LEN;
+  mouse_count --;
   return event;
 }
 
