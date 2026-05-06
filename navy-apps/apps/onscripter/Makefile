@@ -1,6 +1,8 @@
 REPO_PATH = repo
+PATCH_FILE = $(abspath patch/mouse.diff)
 ifeq ($(wildcard repo/include/ONScripter.h),)
   $(shell git clone --depth=1 git@github.com:NJU-ProjectN/onscripter-navy.git $(REPO_PATH))
+  $(shell cd $(REPO_PATH) && git apply $(PATCH_FILE))
 endif
 
 NAME = onscripter

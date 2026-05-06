@@ -1,0 +1,73 @@
+diff --git a/include/ONScripter.h b/include/ONScripter.h
+--- a/include/ONScripter.h
++++ b/include/ONScripter.h
+@@ -528,9 +528,7 @@ private:
+     bool waitEvent(int count);
+     bool trapHandler();
+     bool mouseMoveEvent(uint16_t x, uint16_t y);
+-#ifndef __NAVY__
+     bool mousePressEvent( SDL_MouseButtonEvent *event );
+-#endif
+     void variableEditMode( SDL_KeyboardEvent *event );
+     void shiftCursorOnButton( int diff );
+     bool keyDownEvent( SDL_KeyboardEvent *event );
+diff --git a/src/system/ONScripter.cpp b/src/system/ONScripter.cpp
+--- a/src/system/ONScripter.cpp
++++ b/src/system/ONScripter.cpp
+@@ -880,11 +880,9 @@ void ONScripter::refreshMouseOverButton()
+     current_over_button = -1;
+     shift_over_button = -1;
+     current_button_link = root_button_link.next;
+-#ifndef __NAVY__
+     SDL_GetMouseState( &mx, &my );
+-#endif
+     mx = mx * screen_width / screen_device_width;
+-    my = my * screen_width / screen_device_width;
++    my = my * screen_height / screen_device_height;
+     mouseOverCheck( mx, my );
+ }
+ 
+diff --git a/src/system/ONScripter_event.cpp b/src/system/ONScripter_event.cpp
+--- a/src/system/ONScripter_event.cpp
++++ b/src/system/ONScripter_event.cpp
+@@ -295,7 +295,6 @@ bool ONScripter::mouseMoveEvent(uint16_t x, uint16_t y)
+     return false;
+ }
+ 
+-#ifndef __NAVY__
+ bool ONScripter::mousePressEvent( SDL_MouseButtonEvent *event )
+ {
+     if ( variable_edit_mode ) return false;
+@@ -395,7 +394,6 @@ bool ONScripter::mousePressEvent( SDL_MouseButtonEvent *event )
+ 
+     return false;
+ }
+-#endif
+ 
+ 
+ void ONScripter::variableEditMode( SDL_KeyboardEvent *event )
+@@ -1005,7 +1003,6 @@ void ONScripter::runEventLoop()
+ #endif
+ 
+         switch (event.type) {
+-#ifndef __NAVY__
+           case SDL_MOUSEMOTION:
+             if (mouseMoveEvent(event.motion.x, event.motion.y )) return;
+             if (btndown_flag){
+@@ -1017,6 +1014,8 @@ void ONScripter::runEventLoop()
+                     break;
+ 
+                 tmp_event.button.type = SDL_MOUSEBUTTONDOWN;
++                tmp_event.button.x = event.motion.x;
++                tmp_event.button.y = event.motion.y;
+                 ret = mousePressEvent( &tmp_event.button );
+                 if (ret) return;
+             }
+@@ -1033,6 +1032,7 @@ void ONScripter::runEventLoop()
+             if (ret) return;
+             break;
+ 
++#ifndef __NAVY__
+           case SDL_ACTIVEEVENT:
+             if ( !event.active.gain ){
+                 // the mouse cursor leaves the window
