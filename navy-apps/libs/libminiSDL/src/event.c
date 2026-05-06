@@ -160,6 +160,8 @@ static void pumpInputEvents(void)
       if (strcmp(prefix, "mm") == 0 &&
           sscanf(buf, "%*s %d %d %d", &x, &y, &buttons) == 3)
       {
+        /* NDL reports physical framebuffer coordinates; SDL apps see the canvas. */
+        NDL_TranslateMouse(&x, &y);
         SDL_Event ev = {};
         ev.type = SDL_MOUSEMOTION;
         ev.motion.x = x;
@@ -174,6 +176,8 @@ static void pumpInputEvents(void)
       if ((strcmp(prefix, "md") == 0 || strcmp(prefix, "mu") == 0) &&
           sscanf(buf, "%*s %15s %d %d %d", button_name, &x, &y, &buttons) == 4)
       {
+        /* Remove the centred canvas border before publishing the button event. */
+        NDL_TranslateMouse(&x, &y);
         SDL_Event ev = {};
         ev.type = strcmp(prefix, "md") == 0 ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
         ev.button.button = lookupMouseButton(button_name);
@@ -192,6 +196,8 @@ static void pumpInputEvents(void)
           continue;
         }
 
+        /* Wheel pseudo-buttons keep normal button semantics but use canvas-local x/y. */
+        NDL_TranslateMouse(&x, &y);
         SDL_Event ev = {};
         ev.type = SDL_MOUSEBUTTONDOWN;
         ev.button.button = dy > 0 ? SDL_BUTTON_WHEELUP : SDL_BUTTON_WHEELDOWN;

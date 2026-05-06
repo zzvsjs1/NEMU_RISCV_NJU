@@ -140,6 +140,34 @@ void NDL_OpenCanvas(int *w, int *h)
   clear_full_framebuffer(screen_w, screen_h);
 }
 
+void NDL_TranslateMouse(int *x, int *y)
+{
+  /*
+   * Mouse devices report physical framebuffer positions, but apps draw inside
+   * the centred canvas. Convert to canvas-local coordinates and keep edge
+   * input inside the drawable area once a canvas size is known.
+   */
+  if (x != NULL)
+  {
+    *x -= canvas_x;
+    if (canvas_w > 0)
+    {
+      if (*x < 0) *x = 0;
+      if (*x >= canvas_w) *x = canvas_w - 1;
+    }
+  }
+
+  if (y != NULL)
+  {
+    *y -= canvas_y;
+    if (canvas_h > 0)
+    {
+      if (*y < 0) *y = 0;
+      if (*y >= canvas_h) *y = canvas_h - 1;
+    }
+  }
+}
+
 void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h) 
 {
   assert(fbFd >= 0);
