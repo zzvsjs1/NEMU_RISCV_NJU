@@ -30,6 +30,9 @@ enum {
   MOUSE_BUTTON_RIGHT_MASK = 1u << 2,
 };
 
+#define MOUSE_SUPPORTED_BUTTON_MASK \
+  (MOUSE_BUTTON_LEFT_MASK | MOUSE_BUTTON_MIDDLE_MASK | MOUSE_BUTTON_RIGHT_MASK)
+
 typedef struct {
   uint32_t type;
   uint32_t x;
@@ -61,6 +64,11 @@ static uint32_t mouse_button_bit(uint32_t button)
     case MOUSE_BUTTON_RIGHT: return MOUSE_BUTTON_RIGHT_MASK;
     default: return 0;
   }
+}
+
+static uint32_t normalise_mouse_buttons(uint32_t buttons)
+{
+  return buttons & MOUSE_SUPPORTED_BUTTON_MASK;
 }
 
 static void mouse_enqueue(MouseEvent event)
@@ -107,7 +115,7 @@ void send_mouse_motion(int x, int y, uint32_t buttons)
 {
   mouse_x = x < 0 ? 0 : (uint32_t)x;
   mouse_y = y < 0 ? 0 : (uint32_t)y;
-  mouse_buttons = buttons;
+  mouse_buttons = normalise_mouse_buttons(buttons);
 
   mouse_enqueue((MouseEvent) {
     .type = MOUSE_EVENT_MOVE,
@@ -184,6 +192,27 @@ static void mouse_data_io_handler(uint32_t offset, int len, bool is_write)
 }
 
 #ifndef CONFIG_TARGET_AM
+static bool script_button_to_sdl(const char *button, uint8_t *sdl_button)
+{
+  if (strcmp(button, "left") == 0)
+  {
+    *sdl_button = SDL_BUTTON_LEFT;
+    return true;
+  }
+  if (strcmp(button, "middle") == 0)
+  {
+    *sdl_button = SDL_BUTTON_MIDDLE;
+    return true;
+  }
+  if (strcmp(button, "right") == 0)
+  {
+    *sdl_button = SDL_BUTTON_RIGHT;
+    return true;
+  }
+
+  return false;
+}
+
 static void enqueue_script_event(const char *token)
 {
   int x = 0;
@@ -198,17 +227,19 @@ static void enqueue_script_event(const char *token)
   }
   else if (sscanf(token, "down:%15[^;]", button) == 1)
   {
-    uint8_t sdl_button = SDL_BUTTON_LEFT;
-    if (strcmp(button, "middle") == 0) sdl_button = SDL_BUTTON_MIDDLE;
-    else if (strcmp(button, "right") == 0) sdl_button = SDL_BUTTON_RIGHT;
-    send_mouse_button(sdl_button, true, mouse_x, mouse_y);
+    uint8_t sdl_button = 0;
+    if (script_button_to_sdl(button, &sdl_button))
+    {
+      send_mouse_button(sdl_button, true, mouse_x, mouse_y);
+    }
   }
   else if (sscanf(token, "up:%15[^;]", button) == 1)
   {
-    uint8_t sdl_button = SDL_BUTTON_LEFT;
-    if (strcmp(button, "middle") == 0) sdl_button = SDL_BUTTON_MIDDLE;
-    else if (strcmp(button, "right") == 0) sdl_button = SDL_BUTTON_RIGHT;
-    send_mouse_button(sdl_button, false, mouse_x, mouse_y);
+    uint8_t sdl_button = 0;
+    if (script_button_to_sdl(button, &sdl_button))
+    {
+      send_mouse_button(sdl_button, false, mouse_x, mouse_y);
+    }
   }
   else if (sscanf(token, "wheel:%d,%d", &dx, &dy) == 2)
   {
@@ -225,13 +256,16 @@ static void load_mouse_script(void)
    * strtok() mutates its buffer, so copy the environment variable before
    * splitting it into deterministic events for headless tests.
    */
-  char buf[512];
-  snprintf(buf, sizeof(buf), "%s", script);
+  char *buf = (char *)malloc(strlen(script) + 1);
+  Assert(buf != NULL, "failed to allocate mouse script buffer");
+  strcpy(buf, script);
 
   for (char *token = strtok(buf, ";"); token != NULL; token = strtok(NULL, ";"))
   {
     enqueue_script_event(token);
   }
+
+  free(buf);
 }
 #else
 static void load_mouse_script(void) {}
