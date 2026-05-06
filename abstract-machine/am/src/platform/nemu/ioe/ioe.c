@@ -5,6 +5,7 @@ void __am_timer_init();
 void __am_gpu_init();
 void __am_audio_init();
 void __am_input_keybrd(AM_INPUT_KEYBRD_T *);
+void __am_input_mouse(AM_INPUT_MOUSE_T *);
 void __am_timer_rtc(AM_TIMER_RTC_T *);
 void __am_timer_uptime(AM_TIMER_UPTIME_T *);
 void __am_gpu_config(AM_GPU_CONFIG_T *);
@@ -30,6 +31,7 @@ static void *lut[128] = {
   [AM_TIMER_UPTIME] = __am_timer_uptime,
   [AM_INPUT_CONFIG] = __am_input_config,
   [AM_INPUT_KEYBRD] = __am_input_keybrd,
+  [AM_INPUT_MOUSE ] = __am_input_mouse,
   [AM_GPU_CONFIG  ] = __am_gpu_config,
   [AM_GPU_FBDRAW  ] = __am_gpu_fbdraw,
   [AM_GPU_STATUS  ] = __am_gpu_status,

@@ -145,6 +145,16 @@ static void input_keybrd(AM_INPUT_KEYBRD_T *ev) {
   }
 }
 
+static void input_mouse(AM_INPUT_MOUSE_T *mouse) {
+  mouse->type = AM_MOUSE_NONE;
+  mouse->x = 0;
+  mouse->y = 0;
+  mouse->button = AM_MOUSE_BUTTON_NONE;
+  mouse->buttons = 0;
+  mouse->wheel_x = 0;
+  mouse->wheel_y = 0;
+}
+
 // GPU (Frame Buffer and 2D Accelerated Graphics)
 // ====================================================
 
@@ -316,6 +326,7 @@ static void *lut[128] = {
   [AM_TIMER_UPTIME] = timer_uptime,
   [AM_INPUT_CONFIG] = input_config,
   [AM_INPUT_KEYBRD] = input_keybrd,
+  [AM_INPUT_MOUSE ] = input_mouse,
   [AM_GPU_CONFIG  ] = gpu_config,
   [AM_GPU_FBDRAW  ] = gpu_fbdraw,
   [AM_GPU_STATUS  ] = gpu_status,

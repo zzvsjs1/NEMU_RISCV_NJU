@@ -31,6 +31,7 @@ AM_DEVREG(21, NET_CONFIG,   RD, bool present);
 AM_DEVREG(22, NET_STATUS,   RD, int rx_len, tx_len);
 AM_DEVREG(23, NET_TX,       WR, Area buf);
 AM_DEVREG(24, NET_RX,       WR, Area buf);
+AM_DEVREG(25, INPUT_MOUSE, RD, int type; int x, y; int button; int buttons; int wheel_x, wheel_y);
 
 // Input
 
@@ -47,6 +48,29 @@ AM_DEVREG(24, NET_RX,       WR, Area buf);
 enum {
   AM_KEY_NONE = 0,
   AM_KEYS(AM_KEY_NAMES)
+};
+
+enum {
+  AM_MOUSE_NONE = 0,
+  AM_MOUSE_MOVE = 1,
+  AM_MOUSE_BUTTON_DOWN = 2,
+  AM_MOUSE_BUTTON_UP = 3,
+  AM_MOUSE_WHEEL = 4,
+};
+
+enum {
+  AM_MOUSE_BUTTON_NONE = 0,
+  AM_MOUSE_BUTTON_LEFT = 1,
+  AM_MOUSE_BUTTON_MIDDLE = 2,
+  AM_MOUSE_BUTTON_RIGHT = 3,
+  AM_MOUSE_BUTTON_WHEELUP = 4,
+  AM_MOUSE_BUTTON_WHEELDOWN = 5,
+};
+
+enum {
+  AM_MOUSE_BUTTON_LEFT_MASK = 1 << 0,
+  AM_MOUSE_BUTTON_MIDDLE_MASK = 1 << 1,
+  AM_MOUSE_BUTTON_RIGHT_MASK = 1 << 2,
 };
 
 // GPU
