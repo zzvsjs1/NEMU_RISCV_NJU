@@ -20,10 +20,20 @@ enum SDL_Keys {
 enum SDL_EventType {
   SDL_KEYDOWN,
   SDL_KEYUP,
+  SDL_MOUSEMOTION,
+  SDL_MOUSEBUTTONDOWN,
+  SDL_MOUSEBUTTONUP,
   SDL_USEREVENT,
 };
 
 #define SDL_EVENTMASK(ev_type) (1u << (ev_type))
+
+#define SDL_BUTTON_LEFT      1
+#define SDL_BUTTON_MIDDLE    2
+#define SDL_BUTTON_RIGHT     3
+#define SDL_BUTTON_WHEELUP   4
+#define SDL_BUTTON_WHEELDOWN 5
+#define SDL_BUTTON(x)        (1u << ((x) - 1))
 
 enum SDL_EventAction {
   SDL_ADDEVENT,
@@ -42,6 +52,20 @@ typedef struct {
 
 typedef struct {
   uint8_t type;
+  uint8_t state;
+  uint16_t x, y;
+  int16_t xrel, yrel;
+} SDL_MouseMotionEvent;
+
+typedef struct {
+  uint8_t type;
+  uint8_t button;
+  uint8_t state;
+  uint16_t x, y;
+} SDL_MouseButtonEvent;
+
+typedef struct {
+  uint8_t type;
   int code;
   void *data1;
   void *data2;
@@ -50,6 +74,8 @@ typedef struct {
 typedef union {
   uint8_t type;
   SDL_KeyboardEvent key;
+  SDL_MouseMotionEvent motion;
+  SDL_MouseButtonEvent button;
   SDL_UserEvent user;
 } SDL_Event;
 
@@ -58,5 +84,6 @@ int SDL_PollEvent(SDL_Event *ev);
 int SDL_WaitEvent(SDL_Event *ev);
 int SDL_PeepEvents(SDL_Event *ev, int numevents, int action, uint32_t mask);
 uint8_t* SDL_GetKeyState(int *numkeys);
+uint8_t SDL_GetMouseState(int *x, int *y);
 
 #endif

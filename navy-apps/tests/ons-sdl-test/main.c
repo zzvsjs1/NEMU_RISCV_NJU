@@ -63,6 +63,36 @@ static void check_events(void)
   assert(SDL_PeepEvents(&got, 1, SDL_GETEVENT, SDL_EVENTMASK(SDL_USEREVENT)) == 0);
 }
 
+static void check_mouse_events(void)
+{
+  SDL_Event pushed = {};
+  SDL_Event got = {};
+
+  pushed.type = SDL_MOUSEMOTION;
+  pushed.motion.x = 11;
+  pushed.motion.y = 22;
+  pushed.motion.state = SDL_BUTTON(SDL_BUTTON_LEFT);
+  assert(SDL_PushEvent(&pushed) == 0);
+  assert(SDL_PeepEvents(&got, 1, SDL_GETEVENT, SDL_EVENTMASK(SDL_MOUSEMOTION)) == 1);
+  assert(got.motion.x == 11 && got.motion.y == 22);
+  assert(got.motion.state == SDL_BUTTON(SDL_BUTTON_LEFT));
+
+  pushed = (SDL_Event) {};
+  pushed.type = SDL_MOUSEBUTTONDOWN;
+  pushed.button.button = SDL_BUTTON_RIGHT;
+  pushed.button.x = 33;
+  pushed.button.y = 44;
+  assert(SDL_PushEvent(&pushed) == 0);
+  assert(SDL_PeepEvents(&got, 1, SDL_GETEVENT, SDL_EVENTMASK(SDL_MOUSEBUTTONDOWN)) == 1);
+  assert(got.button.button == SDL_BUTTON_RIGHT);
+  assert(got.button.x == 33 && got.button.y == 44);
+
+  int x = 0, y = 0;
+  uint8_t state = SDL_GetMouseState(&x, &y);
+  assert(x == 33 && y == 44);
+  assert((state & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0);
+}
+
 static void check_timer(void)
 {
   SDL_TimerID id = SDL_AddTimer(1, timer_once, &timer_hits);
@@ -126,6 +156,8 @@ int main(void)
   check_file_rwops();
   TRACE("events");
   check_events();
+  TRACE("mouse");
+  check_mouse_events();
   TRACE("timer");
   check_timer();
   TRACE("image");
