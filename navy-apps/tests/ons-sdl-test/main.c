@@ -91,6 +91,30 @@ static void check_mouse_events(void)
   uint8_t state = SDL_GetMouseState(&x, &y);
   assert(x == 33 && y == 44);
   assert((state & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0);
+
+  pushed = (SDL_Event) {};
+  pushed.type = SDL_MOUSEBUTTONDOWN;
+  pushed.button.button = SDL_BUTTON_RIGHT;
+  pushed.button.x = 55;
+  pushed.button.y = 66;
+  assert(SDL_PushEvent(&pushed) == 0);
+
+  pushed = (SDL_Event) {};
+  pushed.type = SDL_MOUSEMOTION;
+  pushed.motion.x = 77;
+  pushed.motion.y = 88;
+  pushed.motion.state = SDL_BUTTON(SDL_BUTTON_LEFT);
+  assert(SDL_PushEvent(&pushed) == 0);
+  assert(SDL_PeepEvents(&got, 1, SDL_GETEVENT, SDL_EVENTMASK(SDL_MOUSEMOTION)) == 1);
+
+  x = 0;
+  y = 0;
+  state = SDL_GetMouseState(&x, &y);
+  assert(x == 77 && y == 88);
+  assert((state & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0);
+  assert((state & SDL_BUTTON(SDL_BUTTON_RIGHT)) == 0);
+
+  assert(SDL_PeepEvents(&got, 1, SDL_GETEVENT, SDL_EVENTMASK(SDL_MOUSEBUTTONDOWN)) == 1);
 }
 
 static void check_timer(void)

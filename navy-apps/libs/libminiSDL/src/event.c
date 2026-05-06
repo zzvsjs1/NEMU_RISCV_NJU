@@ -84,11 +84,9 @@ static void updateMouseStateFromEvent(const SDL_Event *ev)
   }
 }
 
-/* Enqueue, dropping the oldest event if the fixed queue is full. */
-static void enqueueEvent(const SDL_Event *ev) 
+/* Append an event without changing derived input state. */
+static void enqueueEventRaw(const SDL_Event *ev)
 {
-  updateMouseStateFromEvent(ev);
-
   const int next = (queueTail + 1) % EVENT_QUEUE_SIZE;
   if (next == queueHead) 
   {
@@ -98,6 +96,13 @@ static void enqueueEvent(const SDL_Event *ev)
 
   eventQueue[queueTail] = *ev;
   queueTail = next;
+}
+
+/* Enqueue, dropping the oldest event if the fixed queue is full. */
+static void enqueueEvent(const SDL_Event *ev)
+{
+  updateMouseStateFromEvent(ev);
+  enqueueEventRaw(ev);
 }
 
 /* Dequeue one event. Return 1 on success and 0 when the queue is empty. */
@@ -182,6 +187,11 @@ static void pumpInputEvents(void)
       if (strcmp(prefix, "mw") == 0 &&
           sscanf(buf, "%*s %d %d %d %d %d", &dx, &dy, &x, &y, &buttons) == 5)
       {
+        if (dy == 0)
+        {
+          continue;
+        }
+
         SDL_Event ev = {};
         ev.type = SDL_MOUSEBUTTONDOWN;
         ev.button.button = dy > 0 ? SDL_BUTTON_WHEELUP : SDL_BUTTON_WHEELDOWN;
@@ -291,7 +301,7 @@ int SDL_PeepEvents(SDL_Event *ev, int numevents, int action, uint32_t mask)
   }
 
   queueHead = queueTail = 0;
-  for (int i = 0; i < tmp_count; i++) enqueueEvent(&tmp[i]);
+  for (int i = 0; i < tmp_count; i++) enqueueEventRaw(&tmp[i]);
 
   return matched;
 }
