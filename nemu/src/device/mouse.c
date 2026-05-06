@@ -55,6 +55,11 @@ static uint32_t mouse_x = 0;
 static uint32_t mouse_y = 0;
 static uint32_t mouse_buttons = 0;
 
+static int mouse_prev_index(int index)
+{
+  return (index + MOUSE_QUEUE_LEN - 1) % MOUSE_QUEUE_LEN;
+}
+
 static uint32_t mouse_button_bit(uint32_t button)
 {
   switch (button)
@@ -71,13 +76,49 @@ static uint32_t normalise_mouse_buttons(uint32_t buttons)
   return buttons & MOUSE_SUPPORTED_BUTTON_MASK;
 }
 
+static bool mouse_coalesce_motion(MouseEvent event)
+{
+  int index = mouse_prev_index(mouse_r);
+  for (int i = 0; i < mouse_count; i ++)
+  {
+    if (mouse_queue[index].type == MOUSE_EVENT_MOVE)
+    {
+      mouse_queue[index] = event;
+      return true;
+    }
+    index = mouse_prev_index(index);
+  }
+
+  return false;
+}
+
 static void mouse_enqueue(MouseEvent event)
 {
   /*
    * Keep an explicit occupancy count so front == rear can represent both
    * "empty" and "all 1024 slots are full" without sacrificing one slot.
    */
-  Assert(mouse_count < MOUSE_QUEUE_LEN, "mouse queue overflow!");
+  if (mouse_count == MOUSE_QUEUE_LEN)
+  {
+    if (event.type == MOUSE_EVENT_MOVE)
+    {
+      /*
+       * Real host motion can arrive faster than the guest polls.  Keep the
+       * newest position by replacing the latest queued motion, or drop this
+       * motion if the full queue contains only button and wheel events.
+       */
+      mouse_coalesce_motion(event);
+      return;
+    }
+
+    /*
+     * Button and wheel events are more useful than stale backlog entries, so
+     * make room by discarding the oldest queued event.
+     */
+    mouse_f = (mouse_f + 1) % MOUSE_QUEUE_LEN;
+    mouse_count --;
+  }
+
   mouse_queue[mouse_r] = event;
   mouse_r = (mouse_r + 1) % MOUSE_QUEUE_LEN;
   mouse_count ++;
