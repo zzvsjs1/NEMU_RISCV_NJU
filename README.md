@@ -63,6 +63,7 @@ own checkout.
 | Serial | Supported | Guest output is written through NEMU's serial device. |
 | Clock / RTC | Supported | 64-bit microsecond timer and AM uptime support. |
 | Keyboard | Supported | SDL scancode queue mapped to AM key events. |
+| Mouse | Supported | SDL motion, left/middle/right buttons, and wheel events exposed through AM and `/dev/events`. |
 | VGA / framebuffer | Supported | ARGB8888 framebuffer with SDL display output. |
 | Audio | Supported | SDL audio backend, optional dummy backend for headless runs. |
 | Disk | Supported | Disk-backed Navy ramdisk image with embedded ramdisk fallback in Nanos-lite. |
@@ -80,6 +81,7 @@ defines the guest-visible addresses in
 | Serial | `0xa00003f8` |
 | Keyboard | `0xa0000060` |
 | RTC | `0xa0000048` |
+| Mouse | `0xa0000070` |
 | VGA control | `0xa0000100` |
 | Audio control | `0xa0000200` |
 | Disk control | `0xa0000300` |
@@ -121,6 +123,23 @@ ku A
 
 F1, F2, and F3 are intercepted by Nanos-lite for foreground application
 switching. Those hotkeys do not pass through to user applications.
+
+### Mouse
+
+The mouse device is an MMIO event FIFO at `MOUSE_ADDR`. Host SDL motion,
+button, and wheel events are latched into one event record per AM read. AM
+exposes the record through `AM_INPUT_MOUSE`, and Nanos-lite emits `/dev/events`
+records:
+
+```text
+mm X Y BUTTONS
+md BUTTON X Y BUTTONS
+mu BUTTON X Y BUTTONS
+mw DX DY X Y BUTTONS
+```
+
+`NEMU_MOUSE_SCRIPT` can inject deterministic mouse events for dummy-driver test
+runs when no real host pointer is available.
 
 ### VGA and Framebuffer
 

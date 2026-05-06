@@ -86,7 +86,19 @@ If assertion failure is not suitable, you can have it call `exit()` instead.
 Navy expects the OS to support the following device files:
 
 1. Device files:
- * `/dev/events`: Read-only device for key events. Events are separated by `'\n'`, and key names are all uppercase, matching SDL scan codes (see `nwm/native` for examples). For instance, `kd RETURN` means pressing Enter, `ku A` means releasing A.
+ * `/dev/events`: Read-only device for key and mouse events. Events are separated by `'\n'`, and key names are all uppercase, matching SDL scan codes (see `nwm/native` for examples). For instance, `kd RETURN` means pressing Enter, `ku A` means releasing A.
+
+   Mouse records use these forms:
+
+   ```text
+   mm X Y BUTTONS
+   md BUTTON X Y BUTTONS
+   mu BUTTON X Y BUTTONS
+   mw DX DY X Y BUTTONS
+   ```
+
+   `BUTTON` is `LEFT`, `MIDDLE`, `RIGHT`, `WHEELUP`, or `WHEELDOWN`. `BUTTONS` is
+   the held-button bitmask using the AM mouse button mask values.
  * `/dev/fb`: Write-only device representing a W * H * 4-byte pixel array, row-major order, with each pixel in `00rrggbb` format (8-bit color). Supports `lseek`. Screen size is obtained from `/proc/dispinfo`.
  * `/dev/sbctl` (optional): Read-write device.
    * On write, the app must write 3 `int`s (12 bytes total) representing `freq`, `channels`, and `samples`, used to initialize the sound card.
