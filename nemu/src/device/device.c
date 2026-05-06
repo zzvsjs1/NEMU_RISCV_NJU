@@ -10,12 +10,16 @@ void init_serial();
 void init_timer();
 void init_vga();
 void init_i8042();
+void init_mouse();
 void init_audio();
 void init_disk();
 void init_sdcard();
 void init_alarm();
 
 void send_key(uint8_t, bool);
+void send_mouse_motion(int, int, uint32_t);
+void send_mouse_button(uint8_t, bool, int, int);
+void send_mouse_wheel(int, int);
 void vga_update_screen();
 
 void device_update() {
@@ -45,6 +49,20 @@ void device_update() {
         break;
       }
 #endif
+#ifdef CONFIG_HAS_MOUSE
+      case SDL_MOUSEMOTION:
+        send_mouse_motion(event.motion.x, event.motion.y, event.motion.state);
+        break;
+      case SDL_MOUSEBUTTONDOWN:
+      case SDL_MOUSEBUTTONUP:
+        send_mouse_button(event.button.button,
+            event.button.type == SDL_MOUSEBUTTONDOWN,
+            event.button.x, event.button.y);
+        break;
+      case SDL_MOUSEWHEEL:
+        send_mouse_wheel(event.wheel.x, event.wheel.y);
+        break;
+#endif
       default: break;
     }
   }
@@ -66,6 +84,7 @@ void init_device() {
   IFDEF(CONFIG_HAS_TIMER, init_timer());
   IFDEF(CONFIG_HAS_VGA, init_vga());
   IFDEF(CONFIG_HAS_KEYBOARD, init_i8042());
+  IFDEF(CONFIG_HAS_MOUSE, init_mouse());
   IFDEF(CONFIG_HAS_AUDIO, init_audio());
   IFDEF(CONFIG_HAS_DISK, init_disk());
   IFDEF(CONFIG_HAS_SDCARD, init_sdcard());
