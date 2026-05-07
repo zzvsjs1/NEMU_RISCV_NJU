@@ -2,6 +2,9 @@
 
 #ifndef CONFIG_TARGET_AM
 #include <isa.h>
+#ifdef CONFIG_ISA_riscv32
+#include <isa-jit.h>
+#endif
 #include <memory/paddr.h>
 #include <stdio.h>
 
@@ -114,6 +117,14 @@ void load_snapshot(const char *path) {
   cpu = saved_cpu;
   nemu_state = saved_state;
   g_nr_guest_instr = header.nr_guest_instr;
+#ifdef CONFIG_ISA_riscv32
+  /*
+   * Snapshot loading replaces PMEM wholesale. Any native block compiled before
+   * the restore describes old source bytes, even if the restored CPU state has
+   * the same pc and satp, so discard the JIT cache before execution resumes.
+   */
+  isa_jit_flush_all();
+#endif
   printf("Loaded snapshot: %s\n", path);
 }
 #endif

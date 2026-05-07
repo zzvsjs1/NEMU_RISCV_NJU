@@ -1,6 +1,7 @@
 #ifndef __RISCV32_FAST_EXEC_H__
 #define __RISCV32_FAST_EXEC_H__
 
+#include <isa-jit.h>
 #include <isa.h>
 #include <memory/host.h>
 #include <memory/paddr.h>
@@ -639,13 +640,22 @@ static inline void rv32_fast_write_or_fallback(vaddr_t addr, int len, word_t dat
 
 /*
  * satp is CSR 0x180. Changing it can replace the whole active address space, so
- * all cached virtual-to-physical translations become suspect.
+ * all cached virtual-to-physical translations and translated JIT source
+ * mappings become suspect.
  */
 static inline void rv32_fast_tlb_flush_if_satp(word_t csr_addr)
 {
   if (unlikely(csr_addr == 0x180u))
   {
     rv32_fast_tlb_flush();
+#ifdef CONFIG_RV32_JIT
+    /*
+     * Fast CSR execution bypasses the interpreter helper that already flushes
+     * the JIT on satp writes. Keep both execution engines consistent: a changed
+     * address space must not reuse native blocks compiled for old mappings.
+     */
+    isa_jit_flush_all();
+#endif
   }
 }
 

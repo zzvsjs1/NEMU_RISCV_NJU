@@ -892,7 +892,7 @@ static bool emit_addr_eax_from_rs1_imm(rv32_jit_writer_t *w, uint32_t rs1,
       && emit_u8(w, 0x05) && emit_u32(w, (uint32_t)imm);
 }
 
-static bool emit_load_instr(rv32_jit_writer_t *w, uint32_t instr)
+static bool emit_load_instr(rv32_jit_writer_t *w, uint32_t instr, vaddr_t cur_pc)
 {
   const uint32_t rd = bits(instr, 11, 7);
   const uint32_t funct3 = bits(instr, 14, 12);
@@ -922,7 +922,13 @@ static bool emit_load_instr(rv32_jit_writer_t *w, uint32_t instr)
 
   const uint8_t *slow_path = w->cur;
   patch_direct_pmem_guard(&guard, slow_path);
-  if (!emit_u8(w, 0x89) || !emit_u8(w, 0xc7) ||
+  /*
+   * The slow helper may enter the normal vaddr path, which can report MMIO,
+   * translation, or bounds failures using cpu.pc. EAX still holds the guest
+   * address here, so writing cpu.pc first does not disturb the helper argument.
+   */
+  if (!emit_set_pc_imm(w, cur_pc) ||
+      !emit_u8(w, 0x89) || !emit_u8(w, 0xc7) ||
       !emit_call_abs(w, helper) ||
       !emit_load_cpu_base(w))
   {
@@ -934,7 +940,7 @@ static bool emit_load_instr(rv32_jit_writer_t *w, uint32_t instr)
 }
 
 static bool emit_store_instr(rv32_jit_writer_t *w, uint32_t instr,
-    vaddr_t next_pc, uint32_t exit_count)
+    vaddr_t cur_pc, vaddr_t next_pc, uint32_t exit_count)
 {
   const uint32_t funct3 = bits(instr, 14, 12);
   const uint32_t rs1 = bits(instr, 19, 15);
@@ -972,10 +978,13 @@ static bool emit_store_instr(rv32_jit_writer_t *w, uint32_t instr,
 
   /*
    * The helper path handles MMIO, paging, cross-chunk direct stores, and source
-   * code invalidation. It exits before the next guest fetch so side effects are
-   * observed at the same boundary as the old store-ending block policy.
+   * code invalidation. Set cpu.pc to the store itself before the call so faults
+   * and MMIO diagnostics identify the correct guest instruction. After a
+   * successful helper return, advance cpu.pc and leave the native block; the JIT
+   * dispatcher may run another block, but it will start from the post-store PC.
    */
-  if (!emit_u8(w, 0x89) || !emit_u8(w, 0xc7) ||
+  if (!emit_set_pc_imm(w, cur_pc) ||
+      !emit_u8(w, 0x89) || !emit_u8(w, 0xc7) ||
       !emit_u8(w, 0x89) || !emit_u8(w, 0xce) ||
       !emit_call_abs(w, helper) ||
       !emit_load_cpu_base(w) ||
@@ -996,12 +1005,12 @@ static bool emit_load_store_instr(rv32_jit_writer_t *w, uint32_t instr,
 
   if (opcode == 0x03)
   {
-    return emit_load_instr(w, instr);
+    return emit_load_instr(w, instr, cur_pc);
   }
 
   if (opcode == 0x23)
   {
-    return emit_store_instr(w, instr, cur_pc + 4u, exit_count);
+    return emit_store_instr(w, instr, cur_pc, cur_pc + 4u, exit_count);
   }
 
   return false;
@@ -1268,6 +1277,40 @@ static bool jit_translate_ifetch(vaddr_t pc, paddr_t *paddr)
   return false;
 }
 
+static bool jit_block_matches(const rv32_jit_block_t *block, vaddr_t pc)
+{
+  /*
+   * Cheap tag checks come first. Unsupported markers also pass this test when
+   * their PC and satp still match; the caller will see entry == NULL and fall
+   * back without trying to execute native code.
+   */
+  if (!block->valid || block->pc != pc || block->satp != cpu.csr.satp)
+  {
+    return false;
+  }
+
+  /*
+   * satp alone is not enough in paged mode: a guest can rewrite page tables so
+   * the same virtual PC points at different physical source bytes. Re-translate
+   * the first instruction before trusting cached native code.
+   */
+  if ((cpu.csr.satp & 0x80000000u) != 0)
+  {
+    paddr_t now = 0;
+    /*
+     * A translation failure is treated as a cache miss. That keeps the JIT out
+     * of cases where the normal interpreter path needs to raise or report the
+     * underlying memory problem.
+     */
+    if (!jit_translate_ifetch(pc, &now) || now != block->paddr_start)
+    {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 static rv32_jit_block_t *jit_cache_slot(vaddr_t pc)
 {
   return &jit_cache[jit_hash(pc, cpu.csr.satp)];
@@ -1334,8 +1377,11 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
       break;
     }
 
-    if ((cur_paddr & ~(paddr_t)PAGE_MASK) !=
-        (first_paddr & ~(paddr_t)PAGE_MASK))
+    /*
+     * Source invalidation records one physical byte range. Stop if virtual
+     * aliases make the next guest instruction non-contiguous in PMEM.
+     */
+    if (cur_paddr != first_paddr + (paddr_t)source_len)
     {
       break;
     }
@@ -1444,15 +1490,23 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
     }
 
     rv32_jit_block_t *block = jit_cache_slot(cpu.pc);
-    if (!block->valid || block->pc != cpu.pc || block->satp != cpu.csr.satp ||
-        block->insn_count > block_budget)
+    if (jit_block_matches(block, cpu.pc))
     {
-      JIT_STAT_INC(cache_misses);
-      block = jit_compile_block(cpu.pc, block_budget);
+      /*
+       * A valid longer block is useful cache state. If the current batch budget
+       * cannot run it, return to cpu_exec() rather than replacing it with a
+       * shorter budget-limited variant that would hurt later hot executions.
+       */
+      if (block->entry != NULL && block->insn_count > block_budget)
+      {
+        break;
+      }
+      JIT_STAT_INC(cache_hits);
     }
     else
     {
-      JIT_STAT_INC(cache_hits);
+      JIT_STAT_INC(cache_misses);
+      block = jit_compile_block(cpu.pc, block_budget);
     }
 
     if (block == NULL || !block->valid || block->entry == NULL)

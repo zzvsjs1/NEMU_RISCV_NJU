@@ -227,7 +227,7 @@ ons-game-data:
 	@ln -sfn -T "$(ONS_GAME_SRC)" "$(ONS_GAME_DST)"
 
 fsimg: $(addprefix apps/, $(APPS)) $(addprefix tests/, $(TESTS))
-	-for t in $^; do $(MAKE) -s -C $(NAVY_HOME)/$$t install; done
+	for t in $^; do $(MAKE) -s -C $(NAVY_HOME)/$$t install; done
 	@$(MAKE) -s -C $(NAVY_HOME) ons-game-data
 
 RAMDISK = build/ramdisk.img
