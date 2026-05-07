@@ -16,6 +16,7 @@ void init_disk();
 void init_sdcard();
 void init_alarm();
 
+void vga_translate_mouse_position(int *, int *);
 void send_key(uint8_t, bool);
 void send_mouse_motion(int, int, uint32_t);
 void send_mouse_button(uint8_t, bool, int, int);
@@ -50,15 +51,27 @@ void device_update() {
       }
 #endif
 #ifdef CONFIG_HAS_MOUSE
-      case SDL_MOUSEMOTION:
-        send_mouse_motion(event.motion.x, event.motion.y, event.motion.state);
+      case SDL_MOUSEMOTION: {
+        int x = event.motion.x;
+        int y = event.motion.y;
+#ifdef CONFIG_HAS_VGA
+        vga_translate_mouse_position(&x, &y);
+#endif
+        send_mouse_motion(x, y, event.motion.state);
         break;
+      }
       case SDL_MOUSEBUTTONDOWN:
-      case SDL_MOUSEBUTTONUP:
+      case SDL_MOUSEBUTTONUP: {
+        int x = event.button.x;
+        int y = event.button.y;
+#ifdef CONFIG_HAS_VGA
+        vga_translate_mouse_position(&x, &y);
+#endif
         send_mouse_button(event.button.button,
             event.button.type == SDL_MOUSEBUTTONDOWN,
-            event.button.x, event.button.y);
+            x, y);
         break;
+      }
       case SDL_MOUSEWHEEL:
         send_mouse_wheel(event.wheel.x, event.wheel.y);
         break;

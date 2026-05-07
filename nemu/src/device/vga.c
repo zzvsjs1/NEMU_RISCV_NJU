@@ -391,6 +391,39 @@ static SDL_Rect screen_dst_rect() {
 	return dst;
 }
 
+void vga_translate_mouse_position(int *x, int *y) {
+	assert(x != NULL && y != NULL);
+
+	SDL_Rect dst = screen_dst_rect();
+	const int width = (int)screen_width();
+	const int height = (int)screen_height();
+
+	if (dst.w <= 0 || dst.h <= 0 || width <= 0 || height <= 0) {
+		*x = 0;
+		*y = 0;
+		return;
+	}
+
+	/*
+	 * SDL reports mouse positions in resized window coordinates.  The guest
+	 * framebuffer is rendered into screen_dst_rect(), which may be letterboxed
+	 * when the window aspect ratio differs from the guest aspect ratio.  Undo
+	 * that render transform before exposing the position through the mouse
+	 * device, otherwise ONScripter sees a cursor shifted away from the visual
+	 * image after the host window is resized.
+	 */
+	int64_t guest_x = (int64_t)(*x - dst.x) * (int64_t)width / (int64_t)dst.w;
+	int64_t guest_y = (int64_t)(*y - dst.y) * (int64_t)height / (int64_t)dst.h;
+
+	if (guest_x < 0) guest_x = 0;
+	if (guest_y < 0) guest_y = 0;
+	if (guest_x >= width) guest_x = width - 1;
+	if (guest_y >= height) guest_y = height - 1;
+
+	*x = (int)guest_x;
+	*y = (int)guest_y;
+}
+
 static inline void update_screen() {
 	upload_dirty_texture();
 	SDL_RenderClear(renderer);
@@ -401,6 +434,12 @@ static inline void update_screen() {
 #else
 static void init_screen() {}
 
+void vga_translate_mouse_position(int *x, int *y) {
+	assert(x != NULL && y != NULL);
+	if (*x < 0) *x = 0;
+	if (*y < 0) *y = 0;
+}
+
 static inline void update_screen() {
 	io_write(AM_GPU_FBDRAW, 0, 0, vmem, screen_width(), screen_height(), true);
 }
@@ -408,6 +447,12 @@ static inline void update_screen() {
 #endif
 
 #ifndef CONFIG_VGA_SHOW_SCREEN
+void vga_translate_mouse_position(int *x, int *y) {
+	assert(x != NULL && y != NULL);
+	if (*x < 0) *x = 0;
+	if (*y < 0) *y = 0;
+}
+
 static inline void update_screen() {}
 #endif
 
