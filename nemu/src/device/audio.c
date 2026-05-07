@@ -29,7 +29,6 @@ enum {
 
 #ifndef CONFIG_AUDIO_DUMMY
 static SDL_AudioSpec spec = {0};
-static SDL_AudioSpec specOut = {0};
 static bool audio_opened = false;
 #endif
 
@@ -160,7 +159,6 @@ static void reset_audio_stream(void)
     publish_audio_count();
 #ifndef CONFIG_AUDIO_DUMMY
     memset(&spec, 0, sizeof(spec));
-    memset(&specOut, 0, sizeof(specOut));
 #endif
 }
 
@@ -171,19 +169,22 @@ static void reset_audio_stream(void)
 static void sdlAudioCallback(void *userdata, Uint8 *stream, int len) 
 {
     // Fill the stream buffer with silence.
-    SDL_memset(stream, specOut.silence, len);
+    SDL_memset(stream, spec.silence, len);
 
     // Determine how many bytes we can copy from the audio buffer.
     const uint32_t currentSizeOfData = audio_count;
     const uint32_t filledBytes = MIN((uint32_t)len, currentSizeOfData);
     const uint32_t missingBytes = (uint32_t)len - filledBytes;
 
-    // Calculate new index with wrap-around logic.
-    const uint32_t endIndex = (sbufReadIndex + filledBytes) % CONFIG_SB_SIZE;
-
-    // Determine how many bytes to copy before and after the buffer wrap.
-    const uint32_t firstHalfLen = (endIndex < sbufReadIndex) ? (CONFIG_SB_SIZE - sbufReadIndex) : filledBytes;
+    /*
+     * Copy at most to the physical end of the ring before wrapping.  The old
+     * endIndex comparison could not distinguish "no wrap" from "wrapped
+     * exactly back to the same index"; with a full-buffer callback and a
+     * non-zero read index, that would try to copy past the end of sbuf.
+     */
+    const uint32_t firstHalfLen = MIN(filledBytes, CONFIG_SB_SIZE - sbufReadIndex);
     const uint32_t secondHalfLen = filledBytes - firstHalfLen;
+    const uint32_t endIndex = (sbufReadIndex + filledBytes) % CONFIG_SB_SIZE;
 
     // printf("Len%d datasize: %d\n", len, (int)filledBytes);
 
@@ -404,7 +405,19 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
                 spec.callback = sdlAudioCallback;
                 spec.userdata = NULL;
 
-                if (SDL_OpenAudio(&spec, &specOut) < 0) 
+                /*
+                 * NEMU stores guest PCM bytes exactly as they were written to
+                 * /dev/sb.  There is no conversion layer between the guest ring
+                 * buffer and this callback, so the callback stream must stay in
+                 * the same S16SYS/frequency/channel layout requested by the
+                 * guest.  Passing a non-NULL obtained spec lets SDL change the
+                 * callback format on some hosts; copying guest S16 bytes into
+                 * that changed format can make PAL audio sound warped or
+                 * distorted.  With obtained == NULL, SDL keeps the callback
+                 * format as requested and converts to the real hardware format
+                 * internally when needed.
+                 */
+                if (SDL_OpenAudio(&spec, NULL) < 0) 
                 {
                     printf("SDL_OpenAudio error: %s\n", SDL_GetError());
                     exit(1);
