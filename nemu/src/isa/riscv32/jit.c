@@ -634,41 +634,6 @@ static bool emit_load_cpu_base(rv32_jit_writer_t *w)
   return emit_movabs_r11(w, (uint64_t)(uintptr_t)&cpu);
 }
 
-static bool emit_load_gpr_eax(rv32_jit_writer_t *w, uint32_t reg)
-{
-  const uint32_t off = (uint32_t)offsetof(CPU_state, gpr)
-      + reg * sizeof(cpu.gpr[0]);
-
-  /* mov eax, dword ptr [r11 + off]. r11 holds &cpu inside native blocks. */
-  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) && emit_u8(w, 0x83)
-      && emit_u32(w, off);
-}
-
-static bool emit_load_gpr_ecx(rv32_jit_writer_t *w, uint32_t reg)
-{
-  const uint32_t off = (uint32_t)offsetof(CPU_state, gpr)
-      + reg * sizeof(cpu.gpr[0]);
-
-  /* mov ecx, dword ptr [r11 + off]. r11 holds &cpu inside native blocks. */
-  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) && emit_u8(w, 0x8b)
-      && emit_u32(w, off);
-}
-
-static bool emit_store_gpr_eax(rv32_jit_writer_t *w, uint32_t reg)
-{
-  if (reg == 0)
-  {
-    return true;
-  }
-
-  const uint32_t off = (uint32_t)offsetof(CPU_state, gpr)
-      + reg * sizeof(cpu.gpr[0]);
-
-  /* mov dword ptr [r11 + off], eax. Writes to x0 are ignored above. */
-  return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0x83)
-      && emit_u32(w, off);
-}
-
 static bool emit_store_pc_eax(rv32_jit_writer_t *w)
 {
   const uint32_t off = (uint32_t)offsetof(CPU_state, pc);
@@ -1303,14 +1268,8 @@ static bool emit_epilogue_return_count(rv32_jit_writer_t *w, uint32_t count)
       && emit_u8(w, 0xc3);
 }
 
-static bool emit_addr_eax_from_rs1_imm(rv32_jit_writer_t *w, uint32_t rs1,
-    int32_t imm)
-{
-  return emit_load_gpr_eax(w, rs1)
-      && emit_u8(w, 0x05) && emit_u32(w, (uint32_t)imm);
-}
-
-static bool emit_load_instr(rv32_jit_writer_t *w, uint32_t instr, vaddr_t cur_pc)
+static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
+    uint32_t instr, vaddr_t cur_pc)
 {
   const uint32_t rd = bits(instr, 11, 7);
   const uint32_t funct3 = bits(instr, 14, 12);
@@ -1330,7 +1289,8 @@ static bool emit_load_instr(rv32_jit_writer_t *w, uint32_t instr, vaddr_t cur_pc
 
   rv32_jit_pmem_guard_patch_t guard = {0};
   uint8_t *done_disp = NULL;
-  if (!emit_addr_eax_from_rs1_imm(w, rs1, imm_i(instr)) ||
+  if (!jit_reg_read_eax(w, regs, rs1) ||
+      !emit_u8(w, 0x05) || !emit_u32(w, (uint32_t)imm_i(instr)) ||
       !emit_direct_pmem_guard(w, len, &guard) ||
       !emit_direct_pmem_load_eax(w, funct3) ||
       !emit_jmp_rel32_placeholder(w, &done_disp))
@@ -1345,7 +1305,8 @@ static bool emit_load_instr(rv32_jit_writer_t *w, uint32_t instr, vaddr_t cur_pc
    * translation, or bounds failures using cpu.pc. EAX still holds the guest
    * address here, so writing cpu.pc first does not disturb the helper argument.
    */
-  if (!emit_set_pc_imm(w, cur_pc) ||
+  if (!jit_reg_emit_flush_all_dirty(w, regs) ||
+      !emit_set_pc_imm(w, cur_pc) ||
       !emit_u8(w, 0x89) || !emit_u8(w, 0xc7) ||
       !emit_call_abs(w, helper) ||
       !emit_load_cpu_base(w))
@@ -1354,11 +1315,11 @@ static bool emit_load_instr(rv32_jit_writer_t *w, uint32_t instr, vaddr_t cur_pc
   }
 
   patch_rel32(done_disp, w->cur);
-  return emit_store_gpr_eax(w, rd);
+  return jit_reg_write_eax(w, regs, rd);
 }
 
-static bool emit_store_instr(rv32_jit_writer_t *w, uint32_t instr,
-    vaddr_t cur_pc, vaddr_t next_pc, uint32_t exit_count)
+static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
+    uint32_t instr, vaddr_t cur_pc, vaddr_t next_pc, uint32_t exit_count)
 {
   const uint32_t funct3 = bits(instr, 14, 12);
   const uint32_t rs1 = bits(instr, 19, 15);
@@ -1384,8 +1345,9 @@ static bool emit_store_instr(rv32_jit_writer_t *w, uint32_t instr,
    * bytes divert to the helper, which invalidates by physical address and exits
    * before the dispatcher performs the next block lookup.
    */
-  if (!emit_addr_eax_from_rs1_imm(w, rs1, imm_s(instr)) ||
-      !emit_load_gpr_ecx(w, rs2) ||
+  if (!jit_reg_read_eax(w, regs, rs1) ||
+      !emit_u8(w, 0x05) || !emit_u32(w, (uint32_t)imm_s(instr)) ||
+      !jit_reg_read_ecx(w, regs, rs2) ||
       !emit_direct_pmem_guard(w, len, &guard) ||
       !emit_store_source_chunk_guard(w, len, &cross_chunk_disp,
           &source_chunk_disp) ||
@@ -1407,7 +1369,8 @@ static bool emit_store_instr(rv32_jit_writer_t *w, uint32_t instr,
    * successful helper return, advance cpu.pc and leave the native block; the JIT
    * dispatcher may run another block, but it will start from the post-store PC.
    */
-  if (!emit_set_pc_imm(w, cur_pc) ||
+  if (!jit_reg_emit_flush_all_dirty(w, regs) ||
+      !emit_set_pc_imm(w, cur_pc) ||
       !emit_u8(w, 0x89) || !emit_u8(w, 0xc7) ||
       !emit_u8(w, 0x89) || !emit_u8(w, 0xce) ||
       !emit_call_abs(w, helper) ||
@@ -1422,19 +1385,20 @@ static bool emit_store_instr(rv32_jit_writer_t *w, uint32_t instr,
   return true;
 }
 
-static bool emit_load_store_instr(rv32_jit_writer_t *w, uint32_t instr,
-    vaddr_t cur_pc, uint32_t exit_count)
+static bool emit_load_store_instr(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t instr, vaddr_t cur_pc,
+    uint32_t exit_count)
 {
   const uint32_t opcode = instr & 0x7fu;
 
   if (opcode == 0x03)
   {
-    return emit_load_instr(w, instr, cur_pc);
+    return emit_load_instr(w, regs, instr, cur_pc);
   }
 
   if (opcode == 0x23)
   {
-    return emit_store_instr(w, instr, cur_pc, cur_pc + 4u, exit_count);
+    return emit_store_instr(w, regs, instr, cur_pc, cur_pc + 4u, exit_count);
   }
 
   return false;
@@ -1446,7 +1410,8 @@ static bool jit_instr_is_control_flow(uint32_t instr)
   return opcode == 0x63 || opcode == 0x6f || opcode == 0x67;
 }
 
-static bool emit_branch_instr(rv32_jit_writer_t *w, uint32_t instr, vaddr_t pc)
+static bool emit_branch_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
+    uint32_t instr, vaddr_t pc)
 {
   const uint32_t funct3 = bits(instr, 14, 12);
   const uint32_t rs1 = bits(instr, 19, 15);
@@ -1469,8 +1434,9 @@ static bool emit_branch_instr(rv32_jit_writer_t *w, uint32_t instr, vaddr_t pc)
   const vaddr_t fallthrough = pc + 4u;
   const vaddr_t target = pc + imm_b(instr);
 
-  if (!emit_load_gpr_eax(w, rs1) || !emit_load_gpr_ecx(w, rs2) ||
+  if (!jit_reg_read_eax(w, regs, rs1) || !jit_reg_read_ecx(w, regs, rs2) ||
       !emit_cmp_eax_ecx(w) || !emit_jcc_rel32_placeholder(w, jcc, &taken_disp) ||
+      !jit_reg_emit_flush_all_dirty(w, regs) ||
       !emit_set_pc_imm(w, fallthrough) ||
       !emit_jmp_rel32_placeholder(w, &end_disp))
   {
@@ -1478,7 +1444,7 @@ static bool emit_branch_instr(rv32_jit_writer_t *w, uint32_t instr, vaddr_t pc)
   }
 
   patch_rel32(taken_disp, w->cur);
-  if (!emit_set_pc_imm(w, target))
+  if (!jit_reg_emit_flush_all_dirty(w, regs) || !emit_set_pc_imm(w, target))
   {
     return false;
   }
@@ -1487,8 +1453,8 @@ static bool emit_branch_instr(rv32_jit_writer_t *w, uint32_t instr, vaddr_t pc)
   return true;
 }
 
-static bool emit_control_flow_instr(rv32_jit_writer_t *w, uint32_t instr,
-    vaddr_t pc)
+static bool emit_control_flow_instr(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t instr, vaddr_t pc)
 {
   const uint32_t opcode = instr & 0x7fu;
   const uint32_t rd = bits(instr, 11, 7);
@@ -1497,13 +1463,14 @@ static bool emit_control_flow_instr(rv32_jit_writer_t *w, uint32_t instr,
 
   if (opcode == 0x63)
   {
-    return emit_branch_instr(w, instr, pc);
+    return emit_branch_instr(w, regs, instr, pc);
   }
 
   if (opcode == 0x6f)
   {
     return emit_mov_eax_imm(w, pc + 4u)
-        && emit_store_gpr_eax(w, rd)
+        && jit_reg_write_eax(w, regs, rd)
+        && jit_reg_emit_flush_all_dirty(w, regs)
         && emit_set_pc_imm(w, pc + imm_j(instr));
   }
 
@@ -1513,12 +1480,13 @@ static bool emit_control_flow_instr(rv32_jit_writer_t *w, uint32_t instr,
      * JALR computes the target from the old rs1 value, then writes the link
      * register. Storing cpu.pc before rd preserves rd == rs1 behaviour.
      */
-    return emit_load_gpr_eax(w, rs1)
+    return jit_reg_read_eax(w, regs, rs1)
         && emit_u8(w, 0x05) && emit_u32(w, (uint32_t)imm_i(instr))
         && emit_u8(w, 0x25) && emit_u32(w, 0xfffffffeu)
         && emit_store_pc_eax(w)
         && emit_mov_eax_imm(w, pc + 4u)
-        && emit_store_gpr_eax(w, rd);
+        && jit_reg_write_eax(w, regs, rd)
+        && jit_reg_emit_flush_all_dirty(w, regs);
   }
 
   return false;
@@ -1872,8 +1840,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     bool end_block = false;
     if (jit_instr_is_control_flow(instr))
     {
-      if (!jit_reg_flush_all_dirty(&w, &regs) ||
-          !emit_control_flow_instr(&w, instr, cur_pc))
+      if (!emit_control_flow_instr(&w, &regs, instr, cur_pc))
       {
         w.cur = instr_start;
         jit_reg_cache_restore(&regs, &regs_start);
@@ -1886,8 +1853,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     {
       w.cur = instr_start;
       jit_reg_cache_restore(&regs, &regs_start);
-      if (!jit_reg_flush_all_dirty(&w, &regs) ||
-          !emit_load_store_instr(&w, instr, cur_pc, count + 1u))
+      if (!emit_load_store_instr(&w, &regs, instr, cur_pc, count + 1u))
       {
         /*
          * Emitters may fail after writing a prefix of an x86 instruction. Roll
@@ -1897,13 +1863,6 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         jit_reg_cache_restore(&regs, &regs_start);
         break;
       }
-      /*
-       * Load/store code still accesses cpu.gpr[] directly in this task. Drop
-       * the compile-time cache after a successful direct emitter because loads
-       * may have written a guest register that would otherwise leave a clean
-       * but stale cache slot alive for later ALU instructions.
-       */
-      jit_reg_invalidate_all(&regs);
     }
 
     cur_pc += 4;
