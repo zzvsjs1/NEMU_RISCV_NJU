@@ -759,6 +759,351 @@ typedef struct
   uint8_t *range_slow_disp;
 } rv32_jit_pmem_guard_patch_t;
 
+typedef enum
+{
+  RV32_JIT_HREG_R12 = 0,
+  RV32_JIT_HREG_R13,
+  RV32_JIT_HREG_R14,
+  RV32_JIT_HREG_R15,
+  RV32_JIT_HREG_COUNT,
+} rv32_jit_hreg_t;
+
+typedef struct
+{
+  bool valid;
+  bool loaded;
+  bool dirty;
+  uint32_t guest_reg;
+  uint32_t age;
+  rv32_jit_hreg_t hreg;
+} rv32_jit_reg_slot_t;
+
+typedef struct
+{
+  rv32_jit_reg_slot_t slots[RV32_JIT_HREG_COUNT];
+  uint32_t next_age;
+} rv32_jit_reg_cache_t;
+
+static uint8_t jit_hreg_modrm_mem(rv32_jit_hreg_t hreg)
+{
+  return (uint8_t)(0xa3u + (uint8_t)hreg * 8u);
+}
+
+static uint8_t jit_hreg_modrm_to_eax(rv32_jit_hreg_t hreg)
+{
+  return (uint8_t)(0xe0u + (uint8_t)hreg * 8u);
+}
+
+static uint8_t jit_hreg_modrm_to_ecx(rv32_jit_hreg_t hreg)
+{
+  return (uint8_t)(0xe1u + (uint8_t)hreg * 8u);
+}
+
+static uint8_t jit_hreg_modrm_from_eax(rv32_jit_hreg_t hreg)
+{
+  return (uint8_t)(0xc4u + (uint8_t)hreg);
+}
+
+static uint8_t jit_hreg_modrm_from_ecx(rv32_jit_hreg_t hreg)
+{
+  return (uint8_t)(0xccu + (uint8_t)hreg);
+}
+
+static bool emit_push_saved_hregs(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x41) && emit_u8(w, 0x54)
+      && emit_u8(w, 0x41) && emit_u8(w, 0x55)
+      && emit_u8(w, 0x41) && emit_u8(w, 0x56)
+      && emit_u8(w, 0x41) && emit_u8(w, 0x57);
+}
+
+static bool emit_pop_saved_hregs(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x41) && emit_u8(w, 0x5f)
+      && emit_u8(w, 0x41) && emit_u8(w, 0x5e)
+      && emit_u8(w, 0x41) && emit_u8(w, 0x5d)
+      && emit_u8(w, 0x41) && emit_u8(w, 0x5c);
+}
+
+static bool __attribute__((unused)) emit_load_gpr_hreg(rv32_jit_writer_t *w,
+    rv32_jit_hreg_t hreg, uint32_t reg)
+{
+  const uint32_t off = (uint32_t)offsetof(CPU_state, gpr)
+      + reg * sizeof(cpu.gpr[0]);
+
+  /* mov r12d-r15d, dword ptr [r11 + off] */
+  return emit_u8(w, 0x45) && emit_u8(w, 0x8b)
+      && emit_u8(w, jit_hreg_modrm_mem(hreg)) && emit_u32(w, off);
+}
+
+static bool __attribute__((unused)) emit_store_gpr_hreg(rv32_jit_writer_t *w,
+    uint32_t reg, rv32_jit_hreg_t hreg)
+{
+  const uint32_t off = (uint32_t)offsetof(CPU_state, gpr)
+      + reg * sizeof(cpu.gpr[0]);
+
+  /* mov dword ptr [r11 + off], r12d-r15d */
+  return emit_u8(w, 0x45) && emit_u8(w, 0x89)
+      && emit_u8(w, jit_hreg_modrm_mem(hreg)) && emit_u32(w, off);
+}
+
+static bool __attribute__((unused)) emit_mov_eax_hreg(rv32_jit_writer_t *w,
+    rv32_jit_hreg_t hreg)
+{
+  /* mov eax, r12d-r15d */
+  return emit_u8(w, 0x44) && emit_u8(w, 0x89)
+      && emit_u8(w, jit_hreg_modrm_to_eax(hreg));
+}
+
+static bool __attribute__((unused)) emit_mov_ecx_hreg(rv32_jit_writer_t *w,
+    rv32_jit_hreg_t hreg)
+{
+  /* mov ecx, r12d-r15d */
+  return emit_u8(w, 0x44) && emit_u8(w, 0x89)
+      && emit_u8(w, jit_hreg_modrm_to_ecx(hreg));
+}
+
+static bool __attribute__((unused)) emit_mov_hreg_eax(rv32_jit_writer_t *w,
+    rv32_jit_hreg_t hreg)
+{
+  /* mov r12d-r15d, eax */
+  return emit_u8(w, 0x41) && emit_u8(w, 0x89)
+      && emit_u8(w, jit_hreg_modrm_from_eax(hreg));
+}
+
+static bool __attribute__((unused)) emit_mov_hreg_ecx(rv32_jit_writer_t *w,
+    rv32_jit_hreg_t hreg)
+{
+  /* mov r12d-r15d, ecx */
+  return emit_u8(w, 0x41) && emit_u8(w, 0x89)
+      && emit_u8(w, jit_hreg_modrm_from_ecx(hreg));
+}
+
+static void jit_reg_cache_init(rv32_jit_reg_cache_t *regs)
+{
+  regs->next_age = 1;
+  for (uint32_t i = 0; i < RV32_JIT_HREG_COUNT; i++)
+  {
+    regs->slots[i] = (rv32_jit_reg_slot_t) {
+      .valid = false,
+      .loaded = false,
+      .dirty = false,
+      .guest_reg = 0,
+      .age = 0,
+      .hreg = (rv32_jit_hreg_t)i,
+    };
+  }
+}
+
+static void jit_reg_cache_restore(rv32_jit_reg_cache_t *regs,
+    const rv32_jit_reg_cache_t *snapshot)
+{
+  *regs = *snapshot;
+}
+
+static rv32_jit_reg_slot_t *__attribute__((unused)) jit_reg_find(
+    rv32_jit_reg_cache_t *regs, uint32_t reg)
+{
+  for (uint32_t i = 0; i < RV32_JIT_HREG_COUNT; i++)
+  {
+    rv32_jit_reg_slot_t *slot = &regs->slots[i];
+    if (slot->valid && slot->guest_reg == reg)
+    {
+      return slot;
+    }
+  }
+
+  return NULL;
+}
+
+static bool __attribute__((unused)) jit_reg_emit_flush_slot(
+    rv32_jit_writer_t *w, const rv32_jit_reg_slot_t *slot)
+{
+  if (!slot->valid || !slot->loaded || !slot->dirty || slot->guest_reg == 0)
+  {
+    return true;
+  }
+
+  return emit_store_gpr_hreg(w, slot->guest_reg, slot->hreg);
+}
+
+static bool __attribute__((unused)) jit_reg_flush_slot(rv32_jit_writer_t *w,
+    rv32_jit_reg_slot_t *slot)
+{
+  if (!jit_reg_emit_flush_slot(w, slot))
+  {
+    return false;
+  }
+
+  slot->dirty = false;
+  return true;
+}
+
+static bool __attribute__((unused)) jit_reg_emit_flush_all_dirty(
+    rv32_jit_writer_t *w, const rv32_jit_reg_cache_t *regs)
+{
+  for (uint32_t i = 0; i < RV32_JIT_HREG_COUNT; i++)
+  {
+    if (!jit_reg_emit_flush_slot(w, &regs->slots[i]))
+    {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static bool __attribute__((unused)) jit_reg_flush_all_dirty(
+    rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs)
+{
+  for (uint32_t i = 0; i < RV32_JIT_HREG_COUNT; i++)
+  {
+    if (!jit_reg_flush_slot(w, &regs->slots[i]))
+    {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static void __attribute__((unused)) jit_reg_invalidate_all(
+    rv32_jit_reg_cache_t *regs)
+{
+  for (uint32_t i = 0; i < RV32_JIT_HREG_COUNT; i++)
+  {
+    regs->slots[i].valid = false;
+    regs->slots[i].loaded = false;
+    regs->slots[i].dirty = false;
+    regs->slots[i].guest_reg = 0;
+    regs->slots[i].age = 0;
+  }
+}
+
+static rv32_jit_reg_slot_t *__attribute__((unused)) jit_reg_choose_slot(
+    rv32_jit_reg_cache_t *regs)
+{
+  rv32_jit_reg_slot_t *oldest = &regs->slots[0];
+  for (uint32_t i = 0; i < RV32_JIT_HREG_COUNT; i++)
+  {
+    rv32_jit_reg_slot_t *slot = &regs->slots[i];
+    if (!slot->valid)
+    {
+      return slot;
+    }
+
+    if (slot->age < oldest->age)
+    {
+      oldest = slot;
+    }
+  }
+
+  return oldest;
+}
+
+static rv32_jit_reg_slot_t *__attribute__((unused)) jit_reg_alloc(
+    rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs, uint32_t reg)
+{
+  rv32_jit_reg_slot_t *slot = jit_reg_find(regs, reg);
+  if (slot != NULL)
+  {
+    slot->age = regs->next_age++;
+    return slot;
+  }
+
+  slot = jit_reg_choose_slot(regs);
+  if (!jit_reg_flush_slot(w, slot))
+  {
+    return NULL;
+  }
+
+  slot->valid = true;
+  slot->loaded = false;
+  slot->dirty = false;
+  slot->guest_reg = reg;
+  slot->age = regs->next_age++;
+  return slot;
+}
+
+static bool __attribute__((unused)) jit_reg_read_eax(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t reg)
+{
+  if (reg == 0)
+  {
+    return emit_mov_eax_imm(w, 0);
+  }
+
+  rv32_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+  if (slot == NULL)
+  {
+    return false;
+  }
+
+  if (!slot->loaded)
+  {
+    if (!emit_load_gpr_hreg(w, slot->hreg, reg))
+    {
+      return false;
+    }
+    slot->loaded = true;
+  }
+
+  slot->age = regs->next_age++;
+  return emit_mov_eax_hreg(w, slot->hreg);
+}
+
+static bool __attribute__((unused)) jit_reg_read_ecx(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t reg)
+{
+  if (reg == 0)
+  {
+    return emit_u8(w, 0x31) && emit_u8(w, 0xc9);
+  }
+
+  rv32_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+  if (slot == NULL)
+  {
+    return false;
+  }
+
+  if (!slot->loaded)
+  {
+    if (!emit_load_gpr_hreg(w, slot->hreg, reg))
+    {
+      return false;
+    }
+    slot->loaded = true;
+  }
+
+  slot->age = regs->next_age++;
+  return emit_mov_ecx_hreg(w, slot->hreg);
+}
+
+static bool __attribute__((unused)) jit_reg_write_eax(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t reg)
+{
+  if (reg == 0)
+  {
+    return true;
+  }
+
+  rv32_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+  if (slot == NULL)
+  {
+    return false;
+  }
+
+  if (!emit_mov_hreg_eax(w, slot->hreg))
+  {
+    return false;
+  }
+
+  slot->loaded = true;
+  slot->dirty = true;
+  slot->age = regs->next_age++;
+  return true;
+}
+
 static bool emit_movabs_r9(rv32_jit_writer_t *w, uint64_t value)
 {
   /* movabs r9, imm64 */
@@ -945,19 +1290,23 @@ static bool emit_store_source_chunk_guard(rv32_jit_writer_t *w, uint32_t len,
 static bool emit_prologue(rv32_jit_writer_t *w)
 {
   /*
-   * System V enters this generated function with rsp % 16 == 8. Subtracting 8
-   * aligns the stack before any helper call made inside the block.
+   * System V enters generated code with rsp % 16 == 8. Four pushes keep that
+   * alignment at 8, then subtracting 8 aligns the stack before helper calls.
+   * r12-r15 are callee-saved and hold the block-local guest register cache.
    */
-  return emit_u8(w, 0x48) && emit_u8(w, 0x83) && emit_u8(w, 0xec)
+  return emit_push_saved_hregs(w)
+      && emit_u8(w, 0x48) && emit_u8(w, 0x83) && emit_u8(w, 0xec)
       && emit_u8(w, 0x08) && emit_load_cpu_base(w);
 }
 
 static bool emit_epilogue_return_count(rv32_jit_writer_t *w, uint32_t count)
 {
-  /* mov eax, count; add rsp, 8; ret */
+  /* mov eax, count; add rsp, 8; pop r15-r12; ret */
   return emit_u8(w, 0xb8) && emit_u32(w, count)
       && emit_u8(w, 0x48) && emit_u8(w, 0x83) && emit_u8(w, 0xc4)
-      && emit_u8(w, 0x08) && emit_u8(w, 0xc3);
+      && emit_u8(w, 0x08)
+      && emit_pop_saved_hregs(w)
+      && emit_u8(w, 0xc3);
 }
 
 static bool emit_addr_eax_from_rs1_imm(rv32_jit_writer_t *w, uint32_t rs1,
@@ -1461,6 +1810,9 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     .cur = jit_code + jit_code_used,
     .end = jit_code + RV32_JIT_CODE_SIZE,
   };
+  rv32_jit_reg_cache_t regs;
+  jit_reg_cache_init(&regs);
+
   if (!emit_prologue(&w))
   {
     return NULL;
@@ -1495,12 +1847,18 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
     const uint32_t instr = vaddr_ifetch(cur_pc, 4);
     uint8_t *instr_start = w.cur;
+    /*
+     * Native bytes and compile-time register-cache metadata describe the same
+     * partial instruction, so both must roll back together if emission fails.
+     */
+    rv32_jit_reg_cache_t regs_start = regs;
     bool end_block = false;
     if (jit_instr_is_control_flow(instr))
     {
       if (!emit_control_flow_instr(&w, instr, cur_pc))
       {
         w.cur = instr_start;
+        jit_reg_cache_restore(&regs, &regs_start);
         break;
       }
       block_sets_pc = true;
@@ -1514,6 +1872,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
        * back to the last complete native instruction before falling back.
        */
       w.cur = instr_start;
+      jit_reg_cache_restore(&regs, &regs_start);
       break;
     }
 
