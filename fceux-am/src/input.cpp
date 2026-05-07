@@ -159,6 +159,9 @@ void FCEU_DrawInput(uint8 *buf)
 
 void FCEU_UpdateInput(void)
 {
+	// The platform driver writes the current button state into the pointers
+	// registered by FCEUI_SetInput.  This poll happens once per emulated frame
+	// before CPU/PPU execution consumes the serialised controller bits.
 	//tell all drivers to poll input and set up their logical states
   for(int port=0;port<2;port++){
     joyports[port].driver->Update(port,joyports[port].ptr,joyports[port].attrib);
@@ -226,6 +229,11 @@ void InitializeInput(void)
 	memset(joy,0,sizeof(joy));
 	LastStrobe = 0;
 
+		// NES input is exposed through CPU registers $4016-$4017.  The AM/Navy
+		// side only supplies logical button bytes; this layer handles the console's
+		// strobe and serial read behaviour through the normal memory map.  Keeping
+		// device translation out of mapper/CPU code matches the Navy SDL event work,
+		// where public app contracts stay stable while the backend changes.
   SetReadHandler(0x4016,0x4017,JPRead);
 
 	SetWriteHandler(0x4016,0x4016,B4016);

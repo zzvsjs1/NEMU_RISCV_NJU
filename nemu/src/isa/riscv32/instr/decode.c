@@ -101,6 +101,11 @@ static def_DopHelper(r)
 {
     bool is_write = flag;
     static word_t zero_null = 0;
+    /*
+     * x0 is hardwired to zero.  Decode writes to x0 target a private sink so
+     * instruction helpers can write through ddest uniformly without checking
+     * the destination register every time.
+     */
     op->preg = (is_write && val == 0) ? &zero_null : &gpr(val);
 }
 
@@ -133,6 +138,11 @@ static def_DHelper(S)
 
 static def_DHelper(B)
 {
+    /*
+     * Branch immediates are kept raw in s0 until the execution helper.  That
+     * lets every branch helper share the same sign-extension and pc-relative
+     * target calculation next to its comparison operation.
+     */
     // rs1
     decode_op_r(s, id_src1, rv32_rs1(s), false);
     
@@ -267,6 +277,11 @@ def_THelper(BRANCH)
 
 def_THelper(SYSTEM)
 {
+    /*
+     * SYSTEM uses funct3 == 0 for exact instruction encodings such as ecall and
+     * mret.  CSR instructions share the same opcode but are selected by funct3,
+     * so the exact-match cases must be handled before the CSR table below.
+     */
     if (rv32_funct3(s) == 0x0)
     {
         switch (get_instr(s))
@@ -337,6 +352,11 @@ def_THelper(main)
 
 int isa_fetch_decode(Decode *s)
 {
+    /*
+     * RISC-V32 base instructions are fixed at 32 bits in this decoder.  The
+     * fetch helper advances snpc before table_main() fills operands, while
+     * control-transfer helpers later overwrite dnpc when a jump or branch wins.
+     */
     s->isa.instr.val = instr_fetch(&s->snpc, (int) sizeof(word_t));
     int idx = table_main(s);
     return idx;

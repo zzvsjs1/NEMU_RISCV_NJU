@@ -78,6 +78,12 @@ static uint32_t normalise_mouse_buttons(uint32_t buttons)
 
 static bool mouse_coalesce_motion(MouseEvent event)
 {
+  /*
+   * Mouse motion is level-like: the newest position is normally what the app
+   * needs.  Search backwards so overflow pressure replaces the most recent
+   * queued motion, preserving older button/wheel ordering while avoiding a fatal
+   * queue overflow during fast host movement or slow guest polling.
+   */
   int index = mouse_prev_index(mouse_r);
   for (int i = 0; i < mouse_count; i ++)
   {
@@ -190,6 +196,11 @@ void send_mouse_button(uint8_t sdl_button, bool is_down, int x, int y)
 
 void send_mouse_wheel(int dx, int dy)
 {
+  /*
+   * Keep wheel movement separate from the button-state bitmask.  miniSDL later
+   * converts wheel records to SDL 1.x pseudo-buttons, but the physical pressed
+   * buttons should still describe only left/middle/right state.
+   */
   uint32_t button = MOUSE_BUTTON_NONE;
   if (dy > 0) button = MOUSE_BUTTON_WHEELUP;
   else if (dy < 0) button = MOUSE_BUTTON_WHEELDOWN;

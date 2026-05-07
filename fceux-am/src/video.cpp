@@ -53,6 +53,11 @@ void FCEU_KillVirtualVideo(void)
 **/
 int FCEU_InitVirtualVideo(void)
 {
+		// XBuf is the shared 256-byte-stride frame buffer returned from
+		// FCEUI_Emulate.  The AM/Navy display path consumes it directly, so this
+		// allocation must remain stable for the lifetime of the loaded emulator.
+		// The larger 800x600 Navy display work improved the outer blit/scaling path;
+		// the NES core deliberately stays at its native 256-wide buffer contract.
 	//Some driver code may allocate XBuf externally.
 	//256 bytes per scanline, * 240 scanline maximum, +16 for alignment,
 	if(XBuf)

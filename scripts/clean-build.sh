@@ -12,6 +12,9 @@ export ARCH="${ARCH:-riscv32-nemu}"
 
 clean_nemu=0
 
+# NEMU's menuconfig output is deliberately preserved by default.  Most local
+# runs depend on the current .config, while Navy/AM/Nanos generated files are
+# cheap to rebuild and are the usual source of stale-image confusion.
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [--nemu] [--help]
@@ -60,6 +63,8 @@ for generated in \
   "${repo_root}/nanos-lite/src/files.h" \
   "${repo_root}/nanos-lite/src/syscall.h" \
   "${repo_root}/nanos-lite/build/ramdisk.img"; do
+  # These compatibility symlinks may point into Navy build output.  Remove only
+  # symlinks here so a real checked-in file with the same name is never deleted.
   if [[ -L "${generated}" ]]; then
     echo "Removing generated symlink ${generated}"
     rm -f "${generated}"

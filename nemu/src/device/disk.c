@@ -270,6 +270,13 @@ static void do_blkio(void)
   } else {
     read_blocks(buf, blkno, blkcnt);
 #ifdef CONFIG_ISA_riscv32
+    /*
+     * Disk reads are DMA into guest PMEM, bypassing paddr_write(). If the guest
+     * loads code from the ramdisk, translated blocks covering that destination
+     * range must be invalidated just like ordinary self-modifying stores. The
+     * physical address returned by guest_buffer_to_host() is reused here so the
+     * JIT sees the same PMEM byte interval that the DMA copy just replaced.
+     */
     Assert(bytes <= INT32_MAX, "disk: DMA read is too large for JIT invalidation");
     isa_jit_invalidate_paddr(dma_paddr, (int)bytes);
 #endif

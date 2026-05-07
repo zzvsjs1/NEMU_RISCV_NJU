@@ -13,6 +13,10 @@
 #define AUDIO_BULK_CMD_ADDR   (AUDIO_ADDR + 0x20)
 #define AUDIO_BULK_CMD_APPEND 1u
 
+/* Cached after AM_AUDIO_CONFIG so AM_AUDIO_PLAY can check ring-buffer capacity
+ * without rereading the mostly-static configuration register on every poll.
+ * NEMU owns the live occupancy count; AM only keeps the immutable capacity.
+ */
 static volatile uint32_t bufferSize = 0;
 
 void __am_audio_init() 
@@ -37,6 +41,9 @@ void __am_audio_status(AM_AUDIO_STATUS_T *stat)
 
 void __am_audio_ctrl(AM_AUDIO_CTRL_T *ctrl) 
 {
+    /* The init register is the commit point: NEMU samples the three format
+     * registers when this is written, then recreates the host audio stream.
+     */
     outl(AUDIO_FREQ_ADDR, ctrl->freq);
     outl(AUDIO_CHANNELS_ADDR, ctrl->channels);
     outl(AUDIO_SAMPLES_ADDR, ctrl->samples);
@@ -56,6 +63,12 @@ void __am_audio_play(AM_AUDIO_PLAY_T *ctl)
     // Wait until buffer is free.
     while (bufferSize - bufferBeUsed < len)
     {
+        /*
+         * This poll reads NEMU's published occupancy only.  AM deliberately does
+         * not compute a new absolute count after copying data; the host callback
+         * may drain bytes while the guest is spinning, so NEMU must be the sole
+         * owner of the live count.
+         */
         bufferBeUsed = inl(AUDIO_COUNT_ADDR);
     }
 

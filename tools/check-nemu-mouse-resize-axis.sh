@@ -4,6 +4,9 @@ set -eu
 vga_c="nemu/src/device/vga.c"
 device_c="nemu/src/device/device.c"
 
+# Resized SDL windows report host-window coordinates, but Navy apps expect
+# guest framebuffer coordinates.  These checks pin the translation path and the
+# clamping rules that keep the right/bottom edges inside the guest screen.
 grep -Fq "vga_translate_mouse_position" "$vga_c"
 grep -Fq "SDL_GetRendererOutputSize" "$vga_c"
 grep -Fq "screen_dst_rect()" "$vga_c"

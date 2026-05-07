@@ -49,6 +49,9 @@ struct INPUTCFC
 
 extern struct JOYPORT
 {
+	// ptr points at driver-owned button state, normally filled by the AM/Navy
+	// event layer.  The core never owns that storage; it only samples it during
+	// FCEU_UpdateInput and converts it to NES serial controller reads.
 	JOYPORT(int _w)
 		: w(_w)
 	{}

@@ -5,6 +5,13 @@ static inline void csr_flush_jit_if_satp(word_t csr_addr)
 {
     if (csr_addr == 0x180u)
     {
+        /*
+         * satp selects the active Sv32 page-table root.  A translated block is
+         * tagged with the address translation that was valid when it was
+         * compiled, so any satp write can make both instruction fetches and
+         * direct-PMEM assumptions stale.  A full flush is conservative, but it
+         * keeps the JIT and interpreter on the same virtual-memory boundary.
+         */
         isa_jit_flush_all();
     }
 }

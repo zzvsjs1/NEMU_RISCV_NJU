@@ -12,6 +12,10 @@ static PCB pcb[MAX_NR_PROC] __attribute__((used)) = {};
 static PCB pcb_boot = {};
 PCB *current = NULL;
 static PCB *fg_pcb = &pcb[0];
+/* The foreground app normally runs continuously.  If the optional background
+ * slot is loaded, this small budget lets it make progress without giving it
+ * ownership of foreground-only devices such as /dev/fb and /dev/sb.
+ */
 static int foreground_budget = FOREGROUND_QUANTA;
 
 void switch_boot_pcb() { current = &pcb_boot; }
@@ -47,6 +51,11 @@ int foreground_pcb_index(void)
 
 void switch_fg_pcb(int index)
 {
+  /*
+   * Foreground switching is a policy decision, not a new address-space
+   * primitive. The selected PCB will become active on the next schedule()
+   * return, and the trap return path will then load that PCB's saved satp.
+   */
   assert(index >= 0 && index < NR_FOREGROUND_PROC);
 
   PCB *next = &pcb[index];
@@ -54,6 +63,10 @@ void switch_fg_pcb(int index)
 
   if (fg_pcb != next)
   {
+    /* Reset the budget and defer audio restoration until the selected process
+     * is actually scheduled.  The old foreground process may still be inside a
+     * syscall while handling the hotkey.
+     */
     fg_pcb = next;
     foreground_budget = FOREGROUND_QUANTA;
     device_note_foreground_switch();
@@ -127,10 +140,16 @@ Context *schedule(Context *prev)
   // First switch: from boot PCB to the selected foreground process.
   if (current == &pcb_boot) 
   {
+    // First entry into user space: keep boot as a fake previous owner so the
+    // scheduler has somewhere to save the boot trap context.
     current = fg_pcb;
   } 
   else if (current == fg_pcb)
   {
+    /* Only the optional background slot is time-shared here.  Other foreground
+     * apps remain dormant until selected, so their framebuffer/audio state can
+     * be restored as a simple foreground switch instead of a true compositor.
+     */
     if (pcb_runnable(&pcb[HELLO_PROC]) && foreground_budget-- <= 0)
     {
       foreground_budget = FOREGROUND_QUANTA;
@@ -145,6 +164,11 @@ Context *schedule(Context *prev)
   assert(pcb_runnable(current));
   if (current == fg_pcb)
   {
+    // Shared foreground devices are restored only when the selected foreground
+    // PCB is about to run. This avoids restoring audio/video while another PCB
+    // is still finishing the syscall that requested the switch.
+    // It also prevents the old app's final callback/poll from using the new
+    // app's restored device format after an F1/F2/F3 hand-off.
     device_restore_foreground_on_schedule();
   }
 

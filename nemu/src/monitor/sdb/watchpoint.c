@@ -31,6 +31,11 @@ void init_wp_pool()
 
 static WP* new_wp()
 {
+	/*
+	 * Watchpoints move from the free list to the active list by pointer relink
+	 * only.  Their stable NO field is never rewritten, so monitor output remains
+	 * tied to the original pool slot rather than list order.
+	 */
 	WP* ret = free_;
 	free_ = ret->next;
 	ret->next = head;
@@ -134,6 +139,11 @@ void delWp(const int n)
 
 bool checkEachWpAndPrint()
 {
+	/*
+	 * Expressions are re-evaluated after each execution batch.  A watchpoint
+	 * triggers on value change, then stores the new value so repeated checks only
+	 * stop again when the expression changes another time.
+	 */
 	bool ret = false;
 
 	for (WP* cur = head; cur; cur = cur->next)

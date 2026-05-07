@@ -13,6 +13,11 @@ static const char *keyname[] = {
 
 static uint8_t keyStates[KEANAME_COUNT] = { 0 };
 
+/*
+ * Key and mouse state are derived when events enter the SDL queue.  This lets
+ * SDL_GetKeyState()/SDL_GetMouseState() reflect input that has been pumped but
+ * not yet consumed by SDL_PollEvent(), which is what SDL 1.x apps expect.
+ */
 static int mouseX = 0;
 static int mouseY = 0;
 static uint8_t mouseButtons = 0;
@@ -39,6 +44,11 @@ static int eventMatchesMask(const SDL_Event *ev, uint32_t mask)
 
 static uint8_t lookupMouseButton(const char *name)
 {
+  /*
+   * NDL names wheel movement as input records, while old SDL exposes wheel
+   * ticks through synthetic button numbers.  Translate at the boundary so
+   * application code can stay SDL-compatible.
+   */
   if (strcmp(name, "LEFT") == 0) return SDL_BUTTON_LEFT;
   if (strcmp(name, "MIDDLE") == 0) return SDL_BUTTON_MIDDLE;
   if (strcmp(name, "RIGHT") == 0) return SDL_BUTTON_RIGHT;
@@ -49,6 +59,11 @@ static uint8_t lookupMouseButton(const char *name)
 
 static uint8_t translateMouseButtons(int buttons)
 {
+  /*
+   * NDL reports a compact physical-button bitfield.  SDL stores button state
+   * as SDL_BUTTON(n) masks, so keep that representation inside queued events
+   * and the cached mouse state.
+   */
   uint8_t state = 0;
   if (buttons & NDL_MOUSE_LEFT_MASK) state |= SDL_BUTTON(SDL_BUTTON_LEFT);
   if (buttons & NDL_MOUSE_MIDDLE_MASK) state |= SDL_BUTTON(SDL_BUTTON_MIDDLE);
@@ -129,6 +144,11 @@ static void enqueueEvent(const SDL_Event *ev)
 
 static void enqueueMouseMotionEvent(const SDL_Event *ev)
 {
+  /*
+   * Motion can be coalesced only after updating cached state.  SDL_GetMouseState()
+   * should expose the latest cursor position even if the older motion event is
+   * replaced before the app polls it.
+   */
   updateMouseStateFromEvent(ev);
   if (replacePendingMouseMotion(ev)) return;
   enqueueEventRaw(ev);
@@ -189,7 +209,11 @@ static void pumpInputEvents(void)
       if (strcmp(prefix, "mm") == 0 &&
           sscanf(buf, "%*s %d %d %d", &x, &y, &buttons) == 3)
       {
-        /* NDL reports physical framebuffer coordinates; SDL apps see the canvas. */
+        /*
+         * NDL reports physical framebuffer coordinates.  NEMU may already have
+         * undone host-window resize scaling, but SDL apps still draw inside the
+         * centred NDL canvas, so this second translation removes the canvas border.
+         */
         NDL_TranslateMouse(&x, &y);
         SDL_Event ev = {};
         ev.type = SDL_MOUSEMOTION;
@@ -270,6 +294,11 @@ static void pumpInputEvents(void)
 int SDL_PushEvent(SDL_Event *ev) 
 {
   if (ev == NULL) return -1;
+  /*
+   * User events share the same queue as device events.  Updating derived state
+   * here is harmless for non-input events and keeps manually injected input
+   * consistent with events read from NDL.
+   */
   enqueueEvent(ev);
   return 0;
 }
@@ -278,6 +307,11 @@ void SDL_PumpEvents(void)
 {
   void SDL_CheckTimers(void);
 
+  /*
+   * miniSDL has no background event thread.  Polling events is also the safe
+   * point for timers and audio because games call it frequently and all three
+   * services remain serialised on the main thread.
+   */
   pumpInputEvents();
   SDL_CheckTimers();
 
@@ -292,6 +326,11 @@ int SDL_PollEvent(SDL_Event *ev)
 
 int SDL_WaitEvent(SDL_Event *event) 
 {
+  /*
+   * The Navy environment does not provide a blocking SDL wait primitive.  The
+   * busy wait still calls SDL_PollEvent(), so timers and audio continue to be
+   * pumped while the application waits for input.
+   */
   while (!SDL_PollEvent(event)) { /* busy-wait */ }
   return 1;
 }

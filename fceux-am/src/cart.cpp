@@ -61,6 +61,11 @@ uint32 CHRmask2[32];
 uint32 CHRmask4[32];
 uint32 CHRmask8[32];
 
+	// Page stores CPU-visible 2 KiB PRG windows as base-offset pointers, so the
+	// fast read path can use Page[A >> 11][A].  Mapper code changes these windows
+	// instead of copying ROM data, which keeps bank switching cheap on AM/Navy and
+	// avoids extra pressure on the same memory budget that large Navy apps had to
+	// protect by moving assets out to disk images.
 static INLINE void setpageptr(int s, uint32 A, uint8 *p, int ram) {
 	uint32 AB = A >> 11;
 	int x;
@@ -81,6 +86,9 @@ static uint8 nothing[8192];
 void ResetCartMapping(void) {
 	int x;
 
+	// Reset mapping to harmless dummy pages before a cartridge installs its
+	// mapper.  This keeps early CPU/PPU reads deterministic even if a loader
+	// fails part-way through initialisation.
 	PPU_ResetHooks();
 
 	for (x = 0; x < 32; x++) {

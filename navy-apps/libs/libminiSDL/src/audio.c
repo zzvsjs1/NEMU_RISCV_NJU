@@ -48,6 +48,10 @@ static inline int16_t clampS16(int x)
 
 static int readExact(int fd, void *buf, size_t n) 
 {
+    /*
+     * WAV chunk headers are tiny but must be complete.  Keep retrying across
+     * EINTR so a signal cannot make a valid asset look truncated to the loader.
+     */
     uint8_t *p = (uint8_t *)buf;
     size_t got = 0;
     while (got < n) 
@@ -92,6 +96,11 @@ static int bytesPerSampleFromFormat(uint16_t fmt)
 int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained) 
 {
     assert(desired);
+    /*
+     * miniSDL accepts the caller's requested format as the obtained format.
+     * The NDL sound device only receives frequency, channel count, and buffer
+     * size, so format conversion is deliberately handled above this layer.
+     */
     memset(&g_spec, 0, sizeof(g_spec));
     g_spec = *desired;
 
@@ -131,7 +140,11 @@ void SDL_PauseAudio(int pause_on)
     if (!g_paused) 
     {
         g_last_cb_ms = 0;
-        // Prefill a few times so the pipe is warm
+        /*
+         * Prefill synchronously on unpause.  There is no background audio thread
+         * in miniSDL, so waiting for the next event/timer poll can leave NEMU's
+         * host callback with silence immediately after SDL_PauseAudio(0).
+         */
         for (int i = 0; i < BURST_CALLBACKS; ++i) 
         {
             if (!g_in_audio_cb) CallbackHelper();
@@ -217,6 +230,11 @@ SDL_AudioSpec *SDL_LoadWAV(
         char id[4];
         uint32_t sz;
 
+        /*
+         * RIFF chunks may appear in either order and can include metadata that
+         * SDL applications do not care about.  Walk the chunk list instead of
+         * assuming a fixed 44-byte header layout.
+         */
         ssize_t r = read(fd, id, 4);
         if (r == 0) break;              // EOF
         if (r < 0) { if (errno == EINTR) continue; break; }
@@ -312,6 +330,11 @@ void SDL_FreeWAV(uint8_t *audio_buf)
 void SDL_LockAudio() 
 {
 
+    /*
+     * Navy currently pumps audio synchronously from SDL APIs instead of using
+     * a pre-emptive callback thread.  Locking is therefore a compatibility
+     * no-op: callbacks cannot run concurrently with normal application code.
+     */
 }
 
 void SDL_UnlockAudio() 
@@ -332,6 +355,12 @@ void CallbackHelper(void)
     if (g_in_audio_cb) return;
 
     // Query free space first, skip if none
+    /*
+     * NDL_QueryAudio() returns free bytes in the device queue, not queued
+     * bytes.  Only ask the application for samples that can be accepted soon;
+     * this keeps the blocking /dev/sb write bounded and prevents latency from
+     * growing beyond the emulated device buffer.
+     */
     int free_bytes = NDL_QueryAudio();
     if (free_bytes <= 0) return;
 
@@ -350,6 +379,11 @@ void CallbackHelper(void)
     int fed_any = 0;
 
     // Enter reentrancy-protected region
+    /*
+     * Some game audio callbacks call back into SDL APIs that may pump events or
+     * timers.  The guard keeps that from nesting another CallbackHelper() and
+     * overproducing samples against the same free-space snapshot.
+     */
     g_in_audio_cb = 1;
 
     // Feed several chunks back to back, until space drops, or we hit limits
@@ -366,6 +400,11 @@ void CallbackHelper(void)
         g_spec.callback(g_spec.userdata, buf, chunk);
 
         // Push to device, /dev/sb is blocking per write, but we cap size
+        /*
+         * /dev/sb accepts a byte stream.  The frame alignment above preserves
+         * interleaved channel boundaries, so a partial refill cannot swap left
+         * and right samples on the next callback.
+         */
         NDL_PlayAudio(buf, chunk);
 
         fed_any = 1;

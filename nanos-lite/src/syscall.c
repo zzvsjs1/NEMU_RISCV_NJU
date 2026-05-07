@@ -14,6 +14,11 @@ static volatile int context_replaced = 0;
 // Called by do_event() to test and clear the reschedule request.
 int syscall_need_resched_and_clear(void) 
 {
+  /*
+   * SYS_yield is handled after do_syscall() returns to the CTE handler. Calling
+   * yield() inside the syscall handler would nest another ecall on the same
+   * trap frame, so this one-shot flag keeps scheduling at a single boundary.
+   */
   const int v = need_resched;
   need_resched = 0;
   return v;
@@ -21,6 +26,10 @@ int syscall_need_resched_and_clear(void)
 
 Context *syscall_replacement_context_and_clear(void)
 {
+  /* execve() rebuilds current->cp in-place.  The trap handler uses this flag to
+   * return through that new context instead of resuming the syscall frame that
+   * belonged to the replaced image.
+   */
   if (!context_replaced)
   {
     return NULL;
@@ -93,6 +102,10 @@ static void strace_log(uintptr_t num, uintptr_t arg1, uintptr_t arg2, uintptr_t 
 
 void do_syscall(Context *c) 
 {
+  /* Abstract-machine traps pass the syscall number and first three arguments in
+   * guest registers GPR1-GPR4.  Each case translates that minimal ABI into the
+   * small Nanos service layer and writes the user-visible return value to GPRx.
+   */
   const uintptr_t num  = c->GPR1;
   const uintptr_t arg1 = c->GPR2;
   const uintptr_t arg2 = c->GPR3;
@@ -198,6 +211,9 @@ void do_syscall(Context *c)
       char *const *envp = (char *const *)arg3;
 
       // Check existence, execvp will probe multiple candidates
+      // Nanos-lite reports a small errno-like negative value here, but success
+      // follows Unix execve semantics: the caller's image disappears and does
+      // not receive a normal return value.
       int fd = fs_open((char *)filename, 0, 0);
       if (fd < 0) 
       {

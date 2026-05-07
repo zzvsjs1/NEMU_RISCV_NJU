@@ -25,6 +25,9 @@ static int colors[] = {
 };
 
 Terminal::Pattern Terminal::esc_seqs[] = {
+  // These sequences are a compact ANSI subset used by Busybox-style tools
+  // on Navy. The custom raw/cooked toggles stand in for terminal ioctl state,
+  // which this teaching OS does not provide.
   {"\033[1t", &Terminal::esc_cookmode}, // added by us
   {"\033[2t", &Terminal::esc_rawmode}, // added by us
 
@@ -205,6 +208,11 @@ size_t Terminal::write_escape(const char *str, size_t count) {
     bool match = false;
     int len = 0, args[4], narg = 0;
 
+  // Patterns use '#' as a decimal argument slot. This keeps the parser small
+  // but still covers cursor movement and colour attributes emitted by the
+  // apps we expect to run inside NTerm.  The terminal is deliberately a compact
+  // app-level shim, not a full POSIX terminal emulator, because Navy only needs
+  // enough escape handling to bridge process output to miniSDL drawing.
     for (const char *cur = p.pattern, *s = str; ; cur ++) {
       if (*cur == '\0') { // found a match.
         match = true; break;
@@ -267,10 +275,15 @@ void Terminal::write(const char *str, size_t count) {
 const char *Terminal::keypress(char ch) {
   if (ch == '\0') return nullptr;
   if (mode == Mode::raw) {
+    // Raw mode models a minimal terminal driver: every accepted key becomes a
+    // one-byte string for the child process, and no echoing is done locally.
     input[0] = ch;
     input[1] = '\0';
     return input;
   } else if (mode == Mode::cook) {
+    // Cooked mode is deliberately local to NTerm. It provides simple echo,
+    // backspace, and newline submission so the shell can run without a real
+    // TTY line discipline in nanos-lite.
     const char *ret = nullptr;
     switch (ch) {
       case '\033':

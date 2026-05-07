@@ -147,6 +147,11 @@ static int cmd_print_program_info(char* args)
 
 static int cmd_scan_memory(char* args)
 {
+	/*
+	 * `x N EXPR` deliberately evaluates EXPR once, then walks forward by machine
+	 * word size.  This mirrors the monitor contract from PA: the expression is a
+	 * base address, not a per-row expression re-evaluated after each read.
+	 */
 	size_t lenOfStr;
 	size_t i;
 	char* exprStr = NULL;
@@ -303,6 +308,11 @@ static int cmd_help(char *args)
 
 static int cmd_set_register_val(char* args)
 {
+	/*
+	 * Register writes are monitor operations, so they go through the ISA helper
+	 * rather than poking cpu directly.  That keeps hardwired-register and pc
+	 * special cases owned by the RISC-V register layer.
+	 */
 	if (!args)
 	{
 		null_cmd();

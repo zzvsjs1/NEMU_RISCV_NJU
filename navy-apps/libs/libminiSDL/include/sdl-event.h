@@ -18,6 +18,10 @@ enum SDL_Keys {
 };
 
 enum SDL_EventType {
+  /*
+   * Keep the small SDL 1.x event subset densely numbered because
+   * SDL_EVENTMASK() builds masks by shifting the type value.
+   */
   SDL_KEYDOWN,
   SDL_KEYUP,
   SDL_MOUSEMOTION,
@@ -72,6 +76,11 @@ typedef struct {
 } SDL_UserEvent;
 
 typedef union {
+  /*
+   * The first byte of every event structure is the type field.  This mirrors
+   * SDL's tagged-union layout and lets queue code inspect ev.type before
+   * choosing the detailed event member.
+   */
   uint8_t type;
   SDL_KeyboardEvent key;
   SDL_MouseMotionEvent motion;

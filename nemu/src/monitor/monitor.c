@@ -37,6 +37,11 @@ static long load_img()
 {
     if (img_file == NULL)
     {
+        /*
+         * init_isa() has already copied the built-in image to RESET_VECTOR.
+         * Reporting a small non-zero size lets DiffTest initialise consistently
+         * even when the user starts NEMU without an external binary.
+         */
         Log("No image is given. Use the default build-in image.");
         return 4096; // built-in image size
     }
@@ -103,6 +108,12 @@ static int parse_args(int argc, char *argv[])
 
 static void exprTest()
 {
+    /*
+     * Expression tests are consumed before the interactive banner so automated
+     * runs get deterministic output: each line begins with the expected value,
+     * followed by the expression evaluated by the same parser used by `p` and
+     * watchpoints.
+     */
     FILE* f = fopen(expr_test_file, "r");
     if (!f)
 	{

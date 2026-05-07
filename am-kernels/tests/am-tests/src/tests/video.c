@@ -16,6 +16,9 @@ static int used[N][N];
 static uint32_t color_buf[32 * 32];
 
 void redraw() {
+  // The canvas is logical N by N cells, while AM_GPU_FBDRAW works in pixels.
+  // Each logical colour is expanded into a temporary block before being copied
+  // to the framebuffer.
   int w = io_read(AM_GPU_CONFIG).width / N;
   int h = io_read(AM_GPU_CONFIG).height / N;
   int block_size = w * h;
@@ -39,6 +42,9 @@ static uint32_t p(int tsc) {
 }
 
 void update() {
+  // Generate a deterministic spiral pattern rather than random pixels. That
+  // makes visual regressions repeatable while still changing enough pixels to
+  // exercise framebuffer updates.
   static int tsc = 0;
   static int dx[4] = {0, 1, 0, -1};
   static int dy[4] = {1, 0, -1, 0};
@@ -73,6 +79,8 @@ void video_test() {
   int fps = 0;
 
   while (1) {
+    // AM_TIMER_UPTIME is in microseconds; convert to milliseconds so the frame
+    // pacing arithmetic stays small and easy to inspect in printf output.
     unsigned long upt = io_read(AM_TIMER_UPTIME).us / 1000;
     if (upt - last > 1000 / FPS) {
       update();

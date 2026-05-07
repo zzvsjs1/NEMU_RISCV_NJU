@@ -55,6 +55,11 @@ typedef uint32_t (*rv32_jit_entry_t)(void);
 
 typedef struct
 {
+  /*
+   * The writer owns a half-open native-code interval [start, end). cur always
+   * points at the next byte to fill, so failed emitters can report overflow
+   * without publishing a partial block into the cache.
+   */
   uint8_t *start;
   uint8_t *cur;
   uint8_t *end;
@@ -62,9 +67,21 @@ typedef struct
 
 typedef struct
 {
+  /*
+   * valid means this slot is meaningful for its pc/satp tag. entry == NULL is
+   * a deliberate negative-cache marker for unsupported instructions, not a
+   * corrupt block; it prevents repeatedly trying to compile the same slow path.
+   * Such markers are still checked against the current mapping before reuse, but
+   * they do not own source refs because there is no native code to invalidate.
+   */
   bool valid;
   vaddr_t pc;
   word_t satp;
+  /*
+   * Native code is invalidated by physical writes, so the translated source is
+   * recorded as one contiguous PMEM range. The compiler stops a block before
+   * the next instruction if virtual translation would make this range split.
+   */
   paddr_t paddr_start;
   uint32_t source_len;
   uint32_t insn_count;
@@ -175,6 +192,13 @@ static int32_t imm_j(uint32_t instr)
 
 static bool jit_direct_pmem_range(vaddr_t addr, uint32_t len, paddr_t *paddr)
 {
+  /*
+   * Helpers may be called from generated code where the fast inline PMEM guard
+   * rejected the access. Re-check here rather than trusting the emitter: paging,
+   * wrap-around, and MMIO must all fall through to the normal memory path. This
+   * keeps the direct-PMEM optimisation a proof of the ordinary RAM case, not a
+   * second memory model with subtly different fault or device behaviour.
+   */
   if ((cpu.csr.satp & 0x80000000u) != 0 || len == 0)
   {
     return false;
@@ -218,6 +242,11 @@ static uint32_t jit_load_raw(vaddr_t addr, uint32_t len)
 {
   JIT_STAT_INC(helper_loads);
 
+  /*
+   * The direct helper path is still semantically a memory access by the guest:
+   * it is allowed only for Bare-mode PMEM. Anything that might involve Sv32,
+   * devices, or exception reporting delegates to vaddr_read().
+   */
   paddr_t paddr = 0;
   uint32_t value = 0;
   if (jit_direct_pmem_range(addr, len, &paddr))
@@ -263,6 +292,12 @@ static void jit_store_raw(vaddr_t addr, uint32_t len, uint32_t data)
 {
   JIT_STAT_INC(helper_stores);
 
+  /*
+   * A direct helper store has to do the invalidation normally performed by
+   * paddr_write(). Generated code may keep running after ordinary data stores,
+   * so this is the point where self-modifying code is noticed before any later
+   * block lookup can reuse stale native code.
+   */
   paddr_t paddr = 0;
   if (jit_direct_pmem_range(addr, len, &paddr))
   {
@@ -374,6 +409,11 @@ static bool jit_pmem_source_chunk_index(paddr_t addr, size_t *idx)
 
 static void jit_source_chunks_ref(paddr_t addr, uint32_t len)
 {
+  /*
+   * Refcounts are per PMEM chunk, not per cache slot. Multiple blocks may cover
+   * the same source bytes through different PCs or satp values, so a chunk is
+   * considered interesting until the last owning block is discarded.
+   */
   if (len == 0)
   {
     return;
@@ -422,6 +462,11 @@ static void jit_source_chunks_unref(paddr_t addr, uint32_t len)
 
 static bool jit_write_may_touch_source_chunk(paddr_t addr, int len)
 {
+  /*
+   * This is a fast pre-filter before scanning every cache entry. Returning true
+   * for ambiguous ranges is acceptable because it only costs extra invalidation
+   * work; returning false for real source bytes would be a stale-code bug.
+   */
   if (len <= 0)
   {
     return false;
@@ -476,6 +521,11 @@ static void jit_block_discard(rv32_jit_block_t *block)
     return;
   }
 
+  /*
+   * Only compiled blocks own source chunks. Unsupported markers have entry ==
+   * NULL and therefore no refcount to release, even though they still carry a
+   * source address for cache matching.
+   */
   if (block->entry != NULL && block->source_len != 0)
   {
     jit_source_chunks_unref(block->paddr_start, block->source_len);
@@ -530,6 +580,11 @@ static void jit_arena_reset(void)
 
 static bool emit_u8(rv32_jit_writer_t *w, uint8_t value)
 {
+  /*
+   * All x86-64 emitters are written as boolean builders. A false result means
+   * "do not publish this block"; callers either roll back to a known boundary or
+   * abandon the translation before the cache entry becomes executable.
+   */
   if (w->cur >= w->end)
   {
     return false;
@@ -571,6 +626,11 @@ static bool emit_movabs_r11(rv32_jit_writer_t *w, uint64_t value)
 
 static bool emit_load_cpu_base(rv32_jit_writer_t *w)
 {
+  /*
+   * Generated blocks keep &cpu in r11 across straight-line code. Helper calls
+   * use the host ABI and may clobber caller-saved registers, so call sites
+   * reload r11 before continuing to access guest state.
+   */
   return emit_movabs_r11(w, (uint64_t)(uintptr_t)&cpu);
 }
 
@@ -673,6 +733,11 @@ static bool emit_jmp_rel32_placeholder(rv32_jit_writer_t *w, uint8_t **disp)
 
 static void patch_rel32(uint8_t *disp, const uint8_t *target)
 {
+  /*
+   * x86 relative branches are measured from the byte after the displacement.
+   * The code arena is small enough that rel32 should always be sufficient; the
+   * assertion catches accidental jumps outside the emitted block.
+   */
   const int64_t rel = target - (disp + 4);
   Assert(rel >= INT32_MIN && rel <= INT32_MAX,
       "jit: x86 branch displacement out of range");
@@ -787,6 +852,11 @@ static void patch_direct_pmem_guard(const rv32_jit_pmem_guard_patch_t *patch,
 
 static bool emit_direct_pmem_load_eax(rv32_jit_writer_t *w, uint32_t funct3)
 {
+  /*
+   * EDX is the PMEM offset produced by emit_direct_pmem_guard().  The native
+   * loads below mirror the RV32 load family exactly: byte/halfword signedness is
+   * encoded in the x86 instruction, while LW naturally writes a 32-bit result.
+   */
   if (!emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)))
   {
     return false;
@@ -821,6 +891,11 @@ static bool emit_direct_pmem_load_eax(rv32_jit_writer_t *w, uint32_t funct3)
 
 static bool emit_direct_pmem_store_from_ecx(rv32_jit_writer_t *w, uint32_t len)
 {
+  /*
+   * Stores use the low part of ECX so SB/SH truncate in the same way host_write()
+   * does. The caller has already proved Bare-mode PMEM and checked source-chunk
+   * refs before taking this continuation path.
+   */
   if (!emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)))
   {
     return false;
@@ -960,6 +1035,12 @@ static bool emit_store_instr(rv32_jit_writer_t *w, uint32_t instr,
   uint8_t *cross_chunk_disp = NULL;
   uint8_t *source_chunk_disp = NULL;
   uint8_t *done_disp = NULL;
+  /*
+   * Stores have two native continuations. Plain PMEM data stores commit inline
+   * and continue in the same block; stores that might touch translated source
+   * bytes divert to the helper, which invalidates by physical address and exits
+   * before the dispatcher performs the next block lookup.
+   */
   if (!emit_addr_eax_from_rs1_imm(w, rs1, imm_s(instr)) ||
       !emit_load_gpr_ecx(w, rs2) ||
       !emit_direct_pmem_guard(w, len, &guard) ||
@@ -1211,6 +1292,11 @@ bool isa_jit_available(void)
 
 void isa_jit_flush_all(void)
 {
+  /*
+   * A full flush drops native code and source refs together. This is used when
+   * an address-space change makes virtual PCs difficult to relate to the old
+   * physical source ranges cheaply.
+   */
   if (jit_code != NULL)
   {
     jit_arena_reset();
@@ -1221,6 +1307,11 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
 {
   JIT_STAT_INC(invalidation_requests);
 
+  /*
+   * Invalidations are keyed by physical bytes because writes can arrive through
+   * the interpreter, JIT helper stores, or devices. The half-open write interval
+   * below is compared with each compiled block's physical source interval.
+   */
   if (len <= 0)
   {
     return;
@@ -1320,6 +1411,17 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, uint32_t source_len)
 {
   JIT_STAT_INC(blocks_unsupported);
 
+  /*
+   * Negative cache entries still include satp and the first physical source
+   * address so paged-mode lookups can reject them after a remap. They do not
+   * own source-chunk refs because no native code can become stale; at worst, a
+   * later overwrite keeps this PC on the interpreter path until normal slot
+   * eviction or a full flush gives compilation another chance.
+   *
+   * The trade-off is deliberate: unsupported code is correctness-neutral because
+   * it falls back immediately, while source-refcounting it would make every data
+   * write near that instruction pay invalidation cost for no executable block.
+   */
   rv32_jit_block_t *block = jit_cache_slot(pc);
   jit_block_discard(block);
   *block = (rv32_jit_block_t) {
@@ -1371,6 +1473,11 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
   while (count < max_insns && count < RV32_JIT_BLOCK_MAX_INSNS)
   {
+    /*
+     * Re-translate every guest instruction, even inside one block. This keeps
+     * the block metadata honest across page boundaries and avoids assuming that
+     * adjacent virtual PCs are adjacent physical bytes.
+     */
     paddr_t cur_paddr = 0;
     if (!jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr))
     {
@@ -1434,6 +1541,11 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
   __builtin___clear_cache((char *)w.start, (char *)w.cur);
 
+  /*
+   * Publish the block only after the instruction cache has been synchronised
+   * and the old slot's source refs have been released. From this point onward,
+   * writes to the recorded PMEM chunks must be able to find this block.
+   */
   rv32_jit_block_t *block = jit_cache_slot(pc);
   jit_block_discard(block);
   jit_source_chunks_ref(first_paddr, source_len);
@@ -1483,6 +1595,11 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
   uint32_t total = 0;
   while (total < batch_budget)
   {
+    /*
+     * Each native block reports how many guest instructions it completed. The
+     * dispatcher uses that count, rather than assuming a fixed block length, so
+     * helper exits and control-flow terminators keep device timing bounded.
+     */
     uint32_t block_budget = batch_budget - total;
     if (block_budget > RV32_JIT_BLOCK_MAX_INSNS)
     {

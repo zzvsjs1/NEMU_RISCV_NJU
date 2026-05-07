@@ -18,6 +18,8 @@ f(10) f(11) f(12) f(13) f(14) f(15) f(16) f(17) f(18) f(19) \
 f(20) f(21) f(22) f(23) f(24) f(25) f(26) f(27) f(28) f(29) \
 f(30) f(31)
 
+// x0 is constant zero and x2 is saved separately as the interrupted stack
+// pointer, so the bulk save/restore list covers every other general register.
 #define PUSH(n) STORE concat(x, n), (n * XLEN)(sp);
 #define POP(n)  LOAD  concat(x, n), (n * XLEN)(sp);
 
@@ -29,15 +31,22 @@ f(30) f(31)
 #define OFFSET_KSP    (36 * XLEN)
 #define OFFSET_NP     (37 * XLEN)
 
+// These offsets must stay in lock-step with the C Context layout. The assembly
+// path cannot use field names, so all trap entry and return code depends on
+// this compact positional contract.
 .align 3
 .globl __am_asm_trap
 __am_asm_trap:
   // If mscratch is non-zero, we trapped from user mode and it holds the
   // kernel stack top. If it is zero, we trapped while already in kernel mode.
+  // csrrw performs two jobs atomically: it gives the handler a kernel stack and
+  // preserves the interrupted user x2 in mscratch until it is saved below.
   csrrw sp, mscratch, sp
   bnez sp, 1f
 
   // Kernel trap: restore the interrupted kernel sp from mscratch.
+  // In this path the earlier csrrw wrote the interrupted kernel sp into
+  // mscratch and left sp as zero, so read it back before allocating Context.
   csrr sp, mscratch
   addi sp, sp, -CONTEXT_SIZE
   MAP(REGS, PUSH)
@@ -89,6 +98,9 @@ __am_asm_trap:
   call __am_switch
 
   // Prepare mscratch for the privilege mode we are about to resume.
+  // User return: mscratch must contain this context's kernel stack top for the
+  // next trap. Kernel return: mscratch must stay zero so nested traps do not
+  // reinterpret a kernel sp as a saved user sp.
   LOAD t0, OFFSET_NP(sp)
   beqz t0, 3f
   addi t0, sp, CONTEXT_SIZE

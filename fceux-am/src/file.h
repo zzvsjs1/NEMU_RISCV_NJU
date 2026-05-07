@@ -9,6 +9,9 @@
 extern bool bindSavestate;
 
 struct FCEUFILE {
+	// Thin wrapper around EMUFILE_FILE used by the ROM loader.  The stream is
+	// allocated by the AM/Navy file boundary and released here, so ownership is
+	// transferred to FCEUFILE as soon as FCEU_fopen succeeds.
 	//the stream you can use to access the data
 	//std::iostream *stream;
 	EMUFILE_FILE *stream;

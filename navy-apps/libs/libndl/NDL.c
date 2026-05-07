@@ -62,6 +62,11 @@ uint32_t NDL_GetTicks()
 
 int NDL_PollEvent(char *buf, int len) 
 {
+  /*
+   * /dev/events already serialises keyboard and mouse records as short text
+   * lines.  NDL leaves the text format intact; miniSDL is the layer that maps
+   * names and coordinates to SDL event structures.
+   */
   // Open keyborad file.
   if (eventsFd == -1)
   {
@@ -85,6 +90,11 @@ void NDL_OpenCanvas(int *w, int *h)
 
   if (getenv("NWM_APP")) 
   {
+    /*
+     * Under NWM, file descriptors 3/4/5 are part of the window-manager ABI:
+     * fd 4 requests the window size, fd 3 reports mmap readiness, and fd 5 is
+     * the framebuffer.  Standalone Navy apps skip this path and use /dev/fb.
+     */
     int fbctl = 4;
     fbdev = 5;
     screen_w = *w; screen_h = *h;
@@ -145,7 +155,10 @@ void NDL_TranslateMouse(int *x, int *y)
   /*
    * Mouse devices report physical framebuffer positions, but apps draw inside
    * the centred canvas. Convert to canvas-local coordinates and keep edge
-   * input inside the drawable area once a canvas size is known.
+   * input inside the drawable area once a canvas size is known.  This is the
+   * second half of mouse coordinate normalisation: NEMU first maps resized host
+   * window positions back to framebuffer space, then NDL maps framebuffer space
+   * to the app canvas.
    */
   if (x != NULL)
   {
@@ -215,6 +228,11 @@ void NDL_OpenAudio(int freq, int channels, int samples)
   cfg[0] = (uint32_t)freq;
   cfg[1] = (uint32_t)channels;
   cfg[2] = (uint32_t)samples;
+  /*
+   * The sound-control device treats this three-word write as the complete
+   * stream configuration.  SDL's sample format is not sent here; callers must
+   * ensure the byte stream written to /dev/sb matches the device expectation.
+   */
   // Write exactly 12 bytes
   ssize_t w = write(sbctlFd, cfg, sizeof(cfg));
   assert(w == (ssize_t)sizeof(cfg));
@@ -235,7 +253,11 @@ void NDL_CloseAudio()
 int NDL_PlayAudio(void *buf, int len) 
 {
   assert(sbFd >= 0);
-  // /dev/sb write is blocking until all bytes are accepted
+  /*
+   * /dev/sb write is blocking until all bytes are accepted.  Looping here keeps
+   * miniSDL's audio pump simple: once it has queried enough free space, it can
+   * treat a short write as progress rather than rebuilding the callback buffer.
+   */
   int written = 0;
   while (written < len) 
   {
@@ -257,6 +279,11 @@ int NDL_QueryAudio()
   }
 
   int free_bytes = 0;
+  /*
+   * The control device returns remaining writable capacity in bytes.  SDL uses
+   * that value to avoid overfilling the queue before making a blocking write to
+   * /dev/sb.
+   */
   ssize_t r = read(sbctlFd, &free_bytes, sizeof(free_bytes));
   if (r < (ssize_t)sizeof(free_bytes)) return 0;
   return free_bytes;

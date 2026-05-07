@@ -12,6 +12,9 @@
 #define _CONCAT(x, y)       x ## y
 #define CONCAT(x, y)        _CONCAT(x, y)
 
+// These statement-expression helpers are intended for AM's GCC/Clang-based
+// freestanding builds. They keep device calls compact while still evaluating
+// each register-specific temporary with the exact AM structure type.
 #define putstr(s) \
 	({ for (const char *p = s; *p; p++) putch(*p); })
 
@@ -27,6 +30,8 @@
 #define static_assert(const_cond) \
 	static char CONCAT(_static_assert_, __LINE__) [(const_cond) ? 1 : -1] __attribute__((unused))
 
+// panic() avoids libc formatting so it remains usable very early in startup,
+// before malloc, stdio buffers, or a full kernel console have been initialised.
 #define panic_on(cond, s) \
 	({ if (cond) { \
 			putstr("AM Panic: "); putstr(s); \

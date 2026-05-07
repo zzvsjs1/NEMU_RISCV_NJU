@@ -2,6 +2,9 @@
 #define CART_H
 
 typedef struct {
+	// Filled by the ROM loader and mapper initialiser, then used by the generic
+	// core for save RAM, mirroring and board lifecycle callbacks.  Board tables
+	// should only depend on this summary, not on platform file details.
 	// Set by mapper/board code:
 	void (*Power)(void);
 	void (*Reset)(void);

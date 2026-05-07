@@ -10,6 +10,11 @@ static int captured_y = -1;
 static int captured_w = -1;
 static int captured_h = -1;
 
+/*
+ * The test replaces NDL's canvas calls with capture stubs, then includes
+ * miniSDL video.c directly. That keeps the assertions focused on SDL's update
+ * rectangle packing instead of on the real framebuffer device.
+ */
 static void reset_capture(void)
 {
   captured_x = -1;
@@ -65,6 +70,11 @@ int main(void)
 
   reset_capture();
   SDL_UpdateRect(surface, 0, 0, 0, 0);
+  /*
+   * SDL's zero width/height convention means "the whole surface", which is what
+   * ONScripter uses after repainting a screen region.  The backend must expand
+   * that before handing the rectangle to NDL.
+   */
   assert(captured_x == 0);
   assert(captured_y == 0);
   assert(captured_w == 4);
@@ -72,6 +82,11 @@ int main(void)
 
   reset_capture();
   SDL_UpdateRect(surface, 1, 1, 0, 2);
+  /*
+   * A partially zero rectangle is empty, not "full surface".  This distinction
+   * prevents cursor and dirty-rectangle code from accidentally flushing more of
+   * the framebuffer than the caller requested.
+   */
   assert(captured_w == -1);
   assert(captured_h == -1);
 

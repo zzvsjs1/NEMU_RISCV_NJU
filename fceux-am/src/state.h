@@ -20,6 +20,9 @@
 
 struct SFORMAT
 {
+	// Save-state records point directly at live emulator globals.  Callers must
+	// register stable storage, because save/load walks these pointers rather
+	// than taking ownership or copying declarations.
 	//a void* to the data or a void** to the data
 	void *v;
 

@@ -9,6 +9,9 @@
 extern "C" {
 #endif
 
+// Klib is the freestanding C library used by AM guests when no hosted libc is
+// available. The declarations are deliberately small and match the subset used
+// by kernels and tests in this repository.
 //#define __NATIVE_USE_KLIB__
 
 // string.h
@@ -44,6 +47,7 @@ int    vsnprintf (char *str, size_t size, const char *format, va_list ap);
 #else
   #define assert(cond) \
 	do { \
+	  /* Assertions halt through AM so failures are visible to NEMU's exit path. */ \
 	  if (!(cond)) { \
 		printf("Assertion fail at %s:%d\n", __FILE__, __LINE__); \
 		halt(1); \

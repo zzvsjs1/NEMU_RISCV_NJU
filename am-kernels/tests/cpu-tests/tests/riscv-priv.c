@@ -8,6 +8,12 @@ volatile uint32_t riscv_priv_trap_seen = 0;
 volatile uint32_t riscv_priv_saved_mstatus = 0;
 volatile uint32_t riscv_priv_restore_mtvec = 0;
 
+/*
+ * The vector table is written in inline assembly so the test controls exact
+ * instruction placement and avoids compiler-generated prologue code. mtvec
+ * vectored mode still sends synchronous exceptions to BASE, so slot zero must
+ * be the only handler reached by the ecall test.
+ */
 asm(
   ".section .text\n"
   ".option push\n"
@@ -89,6 +95,11 @@ static inline void write_mtvec(uintptr_t v)
 
 static void test_csr_immediate(void)
 {
+  /*
+   * CSR immediate instructions use a five-bit unsigned immediate encoded in the
+   * instruction itself. mscratch is safe scratch state for this test because the
+   * cpu-test harness does not rely on AM's trap nesting convention here.
+   */
   uintptr_t old;
 
   asm volatile("csrw mscratch, %0" : : "r"(0x13579u) : "memory");
@@ -108,6 +119,11 @@ static void test_csr_immediate(void)
 
 static void test_vectored_mtvec_keeps_sync_exception_at_base(void)
 {
+  /*
+   * RISC-V vectored mtvec applies its per-cause offset only to interrupts.
+   * Synchronous exceptions such as ecall must jump to BASE, which is exactly
+   * what this test records through riscv_priv_trap_seen.
+   */
   uintptr_t old_mtvec = read_mtvec();
 
   riscv_priv_trap_seen = 0;
@@ -121,6 +137,11 @@ static void test_vectored_mtvec_keeps_sync_exception_at_base(void)
 
 static void test_mret_clears_mprv_when_returning_to_u_mode(void)
 {
+  /*
+   * The privileged spec requires mret to clear MPRV when returning below
+   * machine mode. NEMU must implement that side effect or later memory accesses
+   * can run with stale effective privilege.
+   */
   uintptr_t old_mstatus = read_mstatus();
   uintptr_t old_mtvec = read_mtvec();
   uintptr_t mstatus = old_mstatus;

@@ -12,6 +12,11 @@ const char *FCEUD_GetCompilerString();
 
 #define FCEUI_printf(msg) FCEU_printf(msg "\n")
 
+// FCEUD_* symbols are the host-facing boundary of this port.  The FCEUX core
+// calls them when it needs services from the AM/Navy side, while FCEUI_* keeps
+// the core-facing API used by the driver and application entry points.  Keeping
+// this boundary narrow avoids leaking desktop FCEUX assumptions such as archive
+// pickers, writable save directories, or host window management into Navy.
 //Video interface
 void FCEUD_SetPalette(uint8 index, uint8 r, uint8 g, uint8 b);
 void FCEUD_GetPalette(uint8 i,uint8 *r, uint8 *g, uint8 *b);
@@ -94,6 +99,9 @@ FCEUGI *FCEUI_LoadGameVirtual(const char *name, int OverwriteVidMode, bool silen
 bool FCEUI_Initialize();
 
 //Emulates a frame.
+// Emulates one NES frame and hands ownership of the produced buffers back to
+// the caller.  The video pointer is XBuf unless the frame is skipped; the audio
+// pointer is the mixed sample buffer unless sound is disabled or skipped.
 void FCEUI_Emulate(uint8 **, int32 **, int32 *, int);
 
 //Closes currently loaded game

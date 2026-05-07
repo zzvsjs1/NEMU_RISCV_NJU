@@ -160,6 +160,10 @@ void fetch_decode(Decode *s, vaddr_t pc)
 static inline word_t query_pending_intr()
 {
 #ifdef CONFIG_ISA_riscv32
+    /*
+     * Most fast/JIT batches have no pending interrupt. Avoid the heavier ISA
+     * query unless the latched CPU flag says there is real work to inspect.
+     */
     if (likely(!cpu.INTR))
     {
         return INTR_EMPTY;
@@ -171,6 +175,11 @@ static inline word_t query_pending_intr()
 #ifdef CONFIG_DEVICE
 static inline bool should_update_device_after(uint32_t *counter, uint32_t executed)
 {
+    /*
+     * JIT blocks may retire more than one guest instruction per loop iteration.
+     * Accounting in batches keeps device polling close to interpreter timing
+     * without forcing a return after every translated instruction.
+     */
     *counter += executed;
     if (*counter >= DEVICE_UPDATE_CHECK_INTERVAL || g_print_step)
     {
@@ -247,6 +256,14 @@ void cpu_exec(uint64_t n)
 #ifdef CONFIG_ISA_riscv32
         if (jit_exec)
         {
+            /*
+             * device_budget is the remaining instruction count before the next
+             * mandatory device update. The JIT must not run past it, otherwise
+             * timers and DMA-visible device state could lag behind the
+             * interpreter's observable schedule. The JIT has its own smaller
+             * block and batch caps, but this outer budget is the one tied to
+             * NEMU's device polling contract.
+             */
             uint32_t device_budget = UINT32_MAX;
 #ifdef CONFIG_DEVICE
             device_budget = DEVICE_UPDATE_CHECK_INTERVAL - device_update_counter;
@@ -257,6 +274,14 @@ void cpu_exec(uint64_t n)
 
         if (jit_done)
         {
+            /*
+             * A successful JIT call has already updated cpu.pc inside generated
+             * code or helper exits. cpu_exec() only updates global accounting
+             * here, then performs the same device and interrupt checks used by
+             * the interpreter path. Keeping this ownership in cpu_exec() is why
+             * translated blocks return an instruction count instead of polling
+             * devices or raising interrupts themselves.
+             */
             Assert(executed > 0, "JIT reported success without executing instructions");
             n -= executed;
             g_nr_guest_instr += executed;

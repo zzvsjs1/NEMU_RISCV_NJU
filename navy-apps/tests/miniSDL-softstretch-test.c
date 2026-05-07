@@ -19,6 +19,11 @@ void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
   (void)h;
 }
 
+/*
+ * Pull in the implementation under test after stubbing NDL. The surface data
+ * stays in process memory, so failures point at SDL_SoftStretch arithmetic
+ * rather than display output.
+ */
 #include "../libs/libminiSDL/src/video.c"
 
 static void fill_source(SDL_Surface *src)
@@ -32,6 +37,12 @@ static void fill_source(SDL_Surface *src)
 
 static void check_scaled_pixels(SDL_Surface *dst)
 {
+  /*
+   * Use tiny labelled pixels so the expected 2x stretch is easy to audit:
+   * each source pixel expands into a 2x2 block, and row order must remain
+   * top-to-bottom.  This guards the PAL compatibility path used on larger Navy
+   * displays.
+   */
   static const uint8_t expected[16] = {
     1, 1, 2, 2,
     1, 1, 2, 2,
@@ -61,7 +72,8 @@ int main(void)
 
   /*
    * PAL has compatibility paths that pass a NULL destination rectangle. Treat
-   * that as "stretch into the whole destination surface" rather than asserting.
+   * that as "stretch into the whole destination surface" rather than asserting,
+   * so old apps keep using the current miniSDL contract after the 800x600 work.
    */
   SDL_SoftStretch(src, NULL, dst_null_rect, NULL);
   check_scaled_pixels(dst_null_rect);

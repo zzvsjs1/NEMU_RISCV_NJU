@@ -6,6 +6,8 @@ static uintptr_t st = 0;
 static int first_trap = 1;
 
 void *simple_pgalloc(int size) {
+  // The VM test only needs monotonically allocated pages. Aligning by walking st
+  // is slow but explicit, which makes the page-size assumption easy to see.
   if (st == 0) { st = (uintptr_t)heap.start; }
   while (st % size != 0) st++;
   void *ret = (void *)st;
@@ -17,6 +19,9 @@ void simple_pgfree(void *ptr) {
 }
 
 Context* vm_handler(Event ev, Context *ctx) {
+  // The first trap is used as a controlled transition into the freshly built
+  // user context. Later traps return the context that was interrupted, allowing
+  // the tiny user image to keep issuing syscalls.
   switch (ev.event) {
     case EVENT_YIELD:
       break;
@@ -54,6 +59,9 @@ uint8_t code[] = {
   0xff, 0x14, 0x25, 0x00, 0x00, 0x10, 0x00, // call *0x100000
   0xeb, 0xf4,             // jmp 2
 #else
+  // Non-native AM tests still use x86 bytes here; vm_test() rejects other ISAs
+  // before execution. Keeping the blob local documents the historical x86-only
+  // nature of this test.
   0x31, 0xc0,             // xor %eax, %eax
   0x8d, 0xb6,             // lea 0(%esi), %esi
   0x00, 0x00, 0x00, 0x00,
@@ -65,6 +73,9 @@ uint8_t code[] = {
 };
 
 void vm_test() {
+  // This test validates the AM VME API shape rather than every architecture.
+  // Unsupported ISAs return early so their test suites can still include the
+  // source file without executing incompatible instruction bytes.
   if (!strncmp(__ISA__, "x86", 3) == 0 &&
       !strcmp(__ISA__, "native") == 0) {
     printf("Not supported architecture.\n");
@@ -79,6 +90,9 @@ void vm_test() {
   void *pg = simple_pgalloc(prot.pgsize);
   memcpy(pg, code, sizeof(code));
 
+  // The mapping deliberately separates the user virtual address from the host C
+  // pointer used to seed the page. It catches bugs where VME code accidentally
+  // treats user VA and physical/kernel pointer as interchangeable.
   map(&prot, ptr, pg, MMAP_WRITE | MMAP_READ);
   printf("Code copied to %p (physical %p) execute\n", ptr, pg);
 

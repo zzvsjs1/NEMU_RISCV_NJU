@@ -40,6 +40,9 @@ static void draw_rect(int x, int y, int w, int h, uint32_t colour)
 {
   static uint32_t pixels[800 * 64];
 
+  // The scratch buffer is intentionally capped. Large clears are split by
+  // fill_screen(), which keeps stack and data usage predictable on small AM
+  // targets while still exercising AM_GPU_FBDRAW.
   assert(w > 0);
   assert(h > 0);
   assert(w <= 800);
@@ -80,6 +83,9 @@ static void draw_button_indicator(int index, int mask)
 
 static void draw_scene(void)
 {
+  // Redraw the whole scene after each mouse event. That is simple but useful for
+  // this device test because it verifies both input state changes and the GPU
+  // sync path in the same loop.
   fill_screen(0x00111111);
 
   for (int i = 0; i < (int)LENGTH(targets); i ++) {
@@ -122,6 +128,9 @@ static void update_mouse_state(AM_INPUT_MOUSE_T mouse)
 
 void mouse_test(void)
 {
+  // Mouse coordinates are interpreted in framebuffer pixels. Reading GPU config
+  // first lets the same test run across NEMU window sizes without hard-coding a
+  // particular display resolution.
   AM_GPU_CONFIG_T gpu = io_read(AM_GPU_CONFIG);
   screen_w = gpu.width;
   screen_h = gpu.height;

@@ -42,6 +42,11 @@ static int utoa_base(unsigned long long value,
                      int                 base,
                      int                 uppercase)
 {
+    /*
+     * Conversion is done backwards into a small local buffer, then reversed
+     * into the caller buffer. That keeps division logic simple and avoids heap
+     * allocation inside printf paths used during panic reporting.
+     */
     static const char *digits_lc = "0123456789abcdef";
     static const char *digits_uc = "0123456789ABCDEF";
     const char       *digits     = uppercase ? digits_uc : digits_lc;
@@ -118,6 +123,11 @@ static void write_repeat(char         ch,
                          size_t      *out_pos,
                          size_t      *total_written)
 {
+    /*
+     * out_pos tracks the would-have-written position, while total_written is the
+     * return value required by snprintf-style APIs. Writes are clipped to leave
+     * space for the final NUL byte.
+     */
     for (int i = 0; i < count; i++)
     {
         if (*out_pos + 1 < n)
@@ -173,6 +183,11 @@ int vsnprintf(char       *out,
               const char *fmt,
               va_list     ap)
 {
+    /*
+     * The implementation follows the hosted snprintf rule: formatting continues
+     * after the output buffer fills, so the return value still reports the full
+     * length that would have been produced.
+     */
     size_t total_written = 0U;
     size_t out_pos       = 0U;
 

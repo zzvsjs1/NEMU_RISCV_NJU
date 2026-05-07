@@ -23,6 +23,11 @@ typedef struct {
   int64_t pos;
 } MemoryRW;
 
+/*
+ * This test drives SDL_mixer without a real ONScripter process. It checks the
+ * callback and RWops contracts that script sound effects and music playback
+ * depend on inside Navy.
+ */
 static int music_finished_count = 0;
 static int channel_finished_index = -1;
 
@@ -147,6 +152,11 @@ static void put_u32le(uint8_t *p, uint32_t value)
 
 static uint8_t *make_mono_wav(size_t *size)
 {
+  /*
+   * Generate a tiny valid PCM WAV in memory so the mixer test does not depend
+   * solely on external OGG assets. Little-endian fields are written by helper
+   * functions to match the file format exactly.
+   */
   const uint16_t channels = 1;
   const uint16_t bits = 16;
   const uint32_t rate = 11025;
@@ -189,6 +199,11 @@ int main(void)
 
   CHECK(Mix_OpenAudio(22050, MIX_DEFAULT_FORMAT, 2, 512) == 0);
 
+  /*
+   * The query immediately after opening locks down the audio format that the
+   * rest of the test assumes. A mismatch here would make later channel and
+   * callback checks hard to interpret.
+   */
   int frequency = 0;
   uint16_t format = 0;
   int channels = 0;
@@ -204,6 +219,11 @@ int main(void)
   size_t ogg_size = 0;
   uint8_t *ogg = read_whole_file("/share/music/rhythm/empty.ogg", &ogg_size);
   SDL_RWops *ogg_rw = open_memory_rw(ogg, ogg_size);
+  /*
+   * The empty music file reaches end-of-stream quickly but still has to trigger
+   * the normal music-finished callback.  This catches scene-transition cases
+   * where ONS stops or swaps BGM while the mixer is being pumped by SDL_Delay().
+   */
   Mix_Music *music = Mix_LoadMUS_RW(ogg_rw);
   CHECK(music != NULL);
   CHECK(SDL_RWclose(ogg_rw) == 0);
@@ -226,6 +246,11 @@ int main(void)
 
   ogg = read_whole_file("/share/music/rhythm/Do.ogg", &ogg_size);
   ogg_rw = open_memory_rw(ogg, ogg_size);
+  /*
+   * ONS uses short OGG clips as sound effects, not only as streamed music.  The
+   * chunk path must therefore decode through Mix_LoadWAV_RW, report a concrete
+   * PCM format, and still drive the channel-finished callback.
+   */
   Mix_Chunk *ogg_chunk = Mix_LoadWAV_RW(ogg_rw, 1);
   CHECK(ogg_chunk != NULL);
   CHECK(ogg_chunk->format == AUDIO_S16SYS);

@@ -228,6 +228,13 @@ static void vga_blit_from_guest(vaddr_t src, int x, int y, int w, int h) {
 
 	const size_t row_bytes = (size_t)w * sizeof(uint32_t);
 	for (int row = 0; row < h; row++) {
+		/*
+		 * The source pointer comes from guest software, so it may be a user
+		 * virtual address rather than a host pointer.  Translate a page at a
+		 * time and copy into NEMU-owned framebuffer memory; treating it as a
+		 * direct host address was tempting for batching but breaks once paging
+		 * or user buffers enter the path.
+		 */
 		size_t done = 0;
 		uint8_t *dst = (uint8_t *)vmem
 			+ ((size_t)(y + row) * (size_t)sw + (size_t)x) * sizeof(uint32_t);
@@ -376,6 +383,11 @@ static SDL_Rect screen_dst_rect() {
 	int64_t w_from_height = (int64_t)out_h * SCREEN_W / SCREEN_H;
 	int64_t h_from_width = (int64_t)out_w * SCREEN_H / SCREEN_W;
 
+	/*
+	 * Preserve the guest aspect ratio in a resizable host window.  This is a
+	 * visual rule and an input rule: vga_translate_mouse_position() uses the same
+	 * rectangle to undo letterboxing before mouse coordinates reach the guest.
+	 */
 	if (h_from_width <= out_h) {
 		dst.w = out_w;
 		dst.h = (int)h_from_width;
@@ -449,6 +461,11 @@ static inline void update_screen() {
 #ifndef CONFIG_VGA_SHOW_SCREEN
 void vga_translate_mouse_position(int *x, int *y) {
 	assert(x != NULL && y != NULL);
+	/*
+	 * Headless VGA still exposes framebuffer/control MMIO because AM probes the
+	 * device even during performance runs.  With no host window transform to
+	 * undo, translation only normalises negative scripted coordinates.
+	 */
 	if (*x < 0) *x = 0;
 	if (*y < 0) *y = 0;
 }

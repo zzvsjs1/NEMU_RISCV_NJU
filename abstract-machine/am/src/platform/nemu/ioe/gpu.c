@@ -15,6 +15,10 @@ static int H;
 void __am_gpu_init() 
 {
 	const uint32_t vgainfo = inl(VGACTL_ADDR);
+	/* VGACTL packs width in the high half-word and height in the low half-word.
+	 * Cache both values because the guest-visible display mode is fixed after
+	 * NEMU starts, and later config reads should not pay another MMIO access.
+	 */
 	W = vgainfo >> 16;
 	H = (vgainfo << 16) >> 16;
 }
@@ -41,9 +45,14 @@ void __am_gpu_fbdraw(AM_GPU_FBDRAW_T *ctl)
 		 * control registers.  Use it to avoid one MMIO write per pixel; PAL can
 		 * update tens of thousands of pixels per frame, so a single command per
 		 * AM_GPU_FBDRAW call removes a large amount of guest instruction and
-		 * device-dispatch overhead.
+		 * device-dispatch overhead.  The command is still synchronous from AM's
+		 * view: the source pointer and rectangle are fully published before the
+		 * copy command is written.
 		 */
 		outl(BLIT_SRC_ADDR, (uintptr_t)pixel);
+		/* Position and size are packed as y:x and h:w.  Width/x are masked to
+		 * 16 bits to match the device register layout used by NEMU.
+		 */
 		outl(BLIT_POS_ADDR, ((uint32_t)ctl->y << 16) | (uint32_t)(uint16_t)ctl->x);
 		outl(BLIT_SIZE_ADDR, ((uint32_t)ctl->h << 16) | (uint32_t)(uint16_t)ctl->w);
 		outl(BLIT_CMD_ADDR, BLIT_CMD_COPY);

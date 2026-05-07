@@ -12,6 +12,11 @@
 #define PERF_MIDDLE 1
 #define PERF_HIGH   2
 
+// The AM/Navy port selects a conservative feature profile at compile time.
+// Native and QEMU builds can keep full audio and no frame skipping, while
+// NEMU uses a lighter profile so the emulator remains responsive there.  This
+// mirrors the Navy performance work for PAL/ONScripter: keep the app contract
+// unchanged, but reduce emulator-side CPU/audio work on the slowest backend.
 #if defined(__ARCH_NATIVE) || defined(__PLATFORM_QEMU)
 # define PERF_CONFIG PERF_HIGH
 #elif defined(__PLATFORM_NEMU)

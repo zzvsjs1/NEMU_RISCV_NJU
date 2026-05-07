@@ -34,6 +34,11 @@ static bool write_cmd = 0;
 static bool read_ext_csd = false;
 
 static void prepare_rw(int is_write) {
+  /*
+   * The emulated BCM2835 path is programmed one command at a time.  Once a
+   * multi-block command arrives, SDDATA accesses stream sequential 512-byte
+   * sectors from the image file starting at SDARG.
+   */
   blk_addr = base[SDARG];
   addr = 0;
   if (fp) fseek(fp, blk_addr << 9, SEEK_SET);
@@ -85,6 +90,11 @@ static void sdcard_io_handler(uint32_t offset, int len, bool is_write) {
       break;
     case SDDATA:
        if (read_ext_csd) {
+         /*
+          * Linux probes EXT_CSD as a 512-byte register file.  Only the fields
+          * used by this teaching device are populated; all other words read as
+          * zero, which is enough for capacity and revision discovery.
+          */
          // See section 8.1 JEDEC Standard JED84-A441
          uint32_t data;
          switch (addr) {

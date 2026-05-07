@@ -47,6 +47,9 @@ void SetSoundVariables(void);
 int GetSoundBuffer(int32 **W);
 int FlushEmulateSound(void);
 extern int32 Wave[2048+512];
+// WaveFinal is the mixed frame audio buffer returned to the platform layer.
+// Its valid sample count is supplied separately by FlushEmulateSound, because
+// PAL/NTSC timing and frame skipping change the amount produced per frame.
 extern int32 WaveFinal[2048+512];
 extern int32 WaveHi[];
 extern uint32 soundtsinc;

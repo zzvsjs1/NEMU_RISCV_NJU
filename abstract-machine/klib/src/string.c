@@ -26,6 +26,9 @@ char *strcpy(char *dst, const char *src)
 char *strncpy(char *dst, const char *src, size_t n)
 {
 	size_t i = 0;
+    // strncpy() differs from strcpy(): if src ends early, the remaining bytes
+    // up to n must be padded with NULs. This matters for fixed-size buffers that
+    // are compared byte-for-byte in tests.
     // Copy characters from src until n characters have been copied or a null is encountered.
     for (; i < n && src[i] != '\0'; i++)
 	{
@@ -115,6 +118,9 @@ int strcmp(const char *s1, const char *s2)
 
 int strncmp(const char *s1, const char *s2, size_t n)
 {
+	// A zero-length comparison succeeds without reading either string. The loop
+	// condition keeps that property, which is important when callers pass NULL
+	// only with n == 0 in libc-compatible edge cases.
 	const char* str1 = s1;
 	const char* str2 = s2;
 
@@ -189,6 +195,9 @@ void *memmove(void *dst, const void *src, size_t n)
 
 void *memcpy(void *out, const void *in, size_t n)
 {
+	// memcpy() assumes the ranges do not overlap, matching the C contract. Use
+	// memmove() for overlapping regions, where copy direction must be selected
+	// to preserve bytes that have not been read yet.
 	char* po = (char*)out;
 	const char* pi = (const char*)in;
 

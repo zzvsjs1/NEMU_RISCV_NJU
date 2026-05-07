@@ -18,6 +18,11 @@ static Context* do_event(Event e, Context* c)
       void do_syscall(Context *c);
       do_syscall(c);
 
+      /*
+       * execve() is special: it replaces the current PCB's saved Context on
+       * the same kernel stack. Returning the old syscall frame would resume
+       * memory that now belongs to the new image's initial context.
+       */
       Context *replacement = syscall_replacement_context_and_clear();
       if (replacement != NULL)
       {
@@ -34,6 +39,8 @@ static Context* do_event(Event e, Context* c)
     }
 
     case EVENT_IRQ_TIMER: {
+      // Timer IRQs are the pre-emptive path. They do not need a syscall return
+      // value, only a scheduler decision based on the interrupted context.
       return schedule(c);
     }
 

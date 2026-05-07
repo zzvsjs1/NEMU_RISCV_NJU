@@ -19,7 +19,9 @@ int main(int argc, char *argv[]) {
 
   // Open the whole physical display, then derive a character grid that fits
   // the selected bitmap font. This keeps NTerm in sync with 800x600 without
-  // baking one fixed terminal size into the application.
+  // baking one fixed terminal size into the application.  The display contract
+  // belongs to miniSDL/NDL, so terminal geometry is treated as a result of that
+  // contract rather than a separate hard-coded app policy.
   screen = SDL_SetVideoMode(0, 0, 32, SDL_HWSURFACE);
   assert(screen);
 
@@ -52,6 +54,9 @@ int main(int argc, char *argv[]) {
 }
 
 static void draw_ch(int x, int y, char ch, uint32_t fg, uint32_t bg) {
+  // Each character is rendered through the BDF helper as a short-lived SDL
+  // surface. The terminal keeps only character and colour state, so this is
+  // the narrow boundary between terminal emulation and miniSDL drawing.
   SDL_Surface *s = BDF_CreateSurface(font, ch, fg, bg);
   SDL_Rect dstrect = { .x = (int16_t)x, .y = (int16_t)y };
   SDL_BlitSurface(s, NULL, screen, &dstrect);
@@ -147,6 +152,9 @@ char handle_key(const char *buf) {
   static int shift = 0;
   sscanf(buf + 2, "%s", key);
 
+  // The /dev/events text protocol reports key names, so this path translates
+  // Navy's window-manager events into the same characters used by the SDL
+  // event path below.
   if (strcmp(key, "LSHIFT") == 0 || strcmp(key, "RSHIFT") == 0)  { shift ^= 1; return '\0'; }
 
   if (buf[0] == 'd') {
@@ -167,6 +175,9 @@ char handle_key(const char *buf) {
 char handle_key(SDL_Event *ev) {
   static int shift = 0;
   int key = ev->key.keysym.sym;
+  // Built-in shell mode receives miniSDL key symbols directly. Keeping this
+  // mapping parallel with the textual event mapping lets external and built-in
+  // modes share Terminal::keypress() without extra OS support.
   if (key == SDLK_LSHIFT || key == SDLK_RSHIFT) { shift ^= 1; return '\0'; }
 
   if (ev->type == SDL_KEYDOWN) {

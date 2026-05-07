@@ -10,6 +10,13 @@
 #include "../local-include/reg.h"
 
 /*
+ * This header is included into cpu-exec.c so the fast executor can be inlined
+ * into the main dispatch loop. It is deliberately conservative: every shortcut
+ * either proves that the access is plain PMEM with valid translation state, or
+ * returns to the interpreter helpers that own the complete device/MMU semantics.
+ */
+
+/*
  * RISC-V32 Sv32 puts the address-translation mode in satp[31]. When this bit
  * is clear, virtual addresses are physical addresses in this NEMU target. The
  * lower 22 bits hold the root page-table physical page number when paging is
@@ -622,7 +629,8 @@ static inline void rv32_fast_write_or_fallback(vaddr_t addr, int len, word_t dat
 
   /*
    * Store widths are also constant at call sites. Unsupported widths are not
-   * guessed here; they go to vaddr_write(), preserving the slow-path behaviour.
+   * guessed here; they go to vaddr_write(), preserving the slow-path behaviour
+   * and the central PMEM/JIT invalidation hooks used outside this fast path.
    */
   switch (len)
   {
@@ -653,6 +661,12 @@ static inline void rv32_fast_tlb_flush_if_satp(word_t csr_addr)
      * Fast CSR execution bypasses the interpreter helper that already flushes
      * the JIT on satp writes. Keep both execution engines consistent: a changed
      * address space must not reuse native blocks compiled for old mappings.
+     *
+     * This is intentionally a full flush rather than selective invalidation.
+     * The fast executor does not know which virtual PCs changed meaning, and the
+     * JIT cache is keyed by virtual pc plus satp before it revalidates source
+     * bytes. Dropping all metadata is simple and rare compared with normal hot
+     * instruction dispatch.
      */
     isa_jit_flush_all();
 #endif

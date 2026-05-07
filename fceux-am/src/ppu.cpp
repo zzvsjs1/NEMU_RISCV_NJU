@@ -1660,6 +1660,11 @@ int FCEUPPU_Loop(int skip) {
 		return FCEUX_PPU_Loop(skip);
 	}
 
+	// This is the top-level frame scheduler.  It advances CPU time, raises NMI,
+	// renders scanlines into XBuf when not skipped, and leaves sound timing for
+	// FlushEmulateSound after the frame returns to FCEUI_Emulate.  The skip flag is
+	// a port-level performance lever; it must avoid drawing work without changing
+	// CPU-visible timing for games.
 	//Needed for Knight Rider, possibly others.
 	if (ppudead) {
 		memset(XBuf, 0x80, 256 * 240);

@@ -8,5 +8,10 @@
 extern int _syscall_(int, uintptr_t, uintptr_t, uintptr_t);
 
 int main() {
+  /*
+   * This tiny binary reaches the syscall trampoline directly. It is useful
+   * when checking that nanos-lite can load a user image and return from SYS_yield
+   * without involving libc wrappers.
+   */
   return _syscall_(SYS_yield, 0, 0, 0);
 }

@@ -709,6 +709,9 @@ BMAPPINGLocal bmap[] = {
 int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode) {
 	struct md5_context md5;
 
+	// iNES loading is the main ROM path for the AM/Navy port.  It parses the
+	// 16-byte header, allocates PRG/CHR storage, applies compatibility fixes,
+	// then binds the mapper callbacks used by the rest of the emulator.
 	if (FCEU_fread(&head, 1, 16, fp) != 16 || memcmp(&head, "NES\x1A", 4))
 		return 0;
 
@@ -777,6 +780,11 @@ int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode) {
 		FCEU_fread(trainerpoo, 512, 1, fp);
 	}
 
+		// The ROM bytes are kept in owned buffers for the whole game session.
+		// Mapper code receives those buffers through SetupCart*Mapping and performs
+		// bank switching by redirecting page pointers rather than re-reading files.
+		// That makes the loader the only place that depends on file position, which
+		// keeps later emulation independent from host or Navy filesystem latency.
 	ResetCartMapping();
 	//ResetExState(0, 0);
 
@@ -907,6 +915,9 @@ static int iNES_Init(int num) {
 
 	CHRRAMSize = -1;
 
+	// Mapper selection is intentionally centralised here.  The bulk board
+	// implementations stay platform-neutral; this loader supplies CartInfo and
+	// the already-allocated ROM/CHR memory they need to install handlers.
 	while (tmp->init) {
 		if (num == tmp->number) {
 			UNIFchrrama = 0;	// need here for compatibility with UNIF mapper code

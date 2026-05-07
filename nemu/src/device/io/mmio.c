@@ -16,6 +16,11 @@ void add_mmio_map(const char *name, paddr_t addr, void *space, uint32_t len, io_
 {
   assert(nr_map < NR_MAP);
 
+  /*
+   * MMIO maps live in the physical address space and are selected by paddr.c
+   * when an access is outside PMEM.  Ranges are inclusive because map_read() and
+   * map_write() check the final byte address against high.
+   */
   maps[nr_map] = (IOMap){ .name = name, .low = addr, .high = addr + len - 1,
     .space = space, .callback = callback };
 

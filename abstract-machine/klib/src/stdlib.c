@@ -25,6 +25,9 @@ int abs(int x)
 int atoi(const char* nptr) 
 {
 	int x = 0;
+	// This tiny atoi() only accepts leading spaces followed by decimal digits.
+	// Signs, overflow handling, and locale rules are outside klib's required
+	// subset for the AM tests.
 	while (*nptr == ' ') 
 	{ 
 		nptr ++; 
@@ -49,6 +52,9 @@ void *malloc(size_t size)
   // Therefore do not call panic() here, else it will yield a dead recursion:
   //   panic() -> putchar() -> (glibc) -> malloc() -> panic()
 #if !(defined(__ISA_NATIVE__) && defined(__NATIVE_USE_KLIB__))
+  // The allocator is a bump pointer over AM's heap area. It never reuses memory,
+  // which is acceptable for the short-lived bare-metal tests and avoids needing
+  // metadata before a kernel has its own memory manager.
   uintptr_t addr = ROUNDUP((uintptr_t)heap.start + si, MALLOC_ALIGN);
   uintptr_t next = ROUNDUP(addr + size, MALLOC_ALIGN);
   assert(next <= (uintptr_t)heap.end);

@@ -6,6 +6,9 @@
 _nemu_env_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _nemu_env_repo_root="$(cd "${_nemu_env_script_dir}/.." && pwd)"
 
+# Keep all exported paths tied to the checkout that owns this script.  That
+# avoids accidentally mixing NEMU, AM, and Navy directories from different
+# clones when several NJU/NEMU trees are open in one shell.
 export AM_HOME="${_nemu_env_repo_root}/abstract-machine"
 export NEMU_HOME="${_nemu_env_repo_root}/nemu"
 export NAVY_HOME="${_nemu_env_repo_root}/navy-apps"

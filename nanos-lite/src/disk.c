@@ -32,6 +32,10 @@ static void check_disk_range(size_t offset, size_t len)
 {
   const size_t size = disk_size();
 
+  /* The public disk_* API accepts byte ranges even though the AM device only
+   * transfers whole blocks.  Validate before block arithmetic so the partial
+   * first/last-block paths never wrap past the emulated image.
+   */
   assert(offset <= size);
   assert(len <= size - offset);
 }
@@ -56,6 +60,9 @@ static void disk_transfer_blocks(bool write, size_t blkno, size_t blkcnt)
 size_t disk_read(void *buf, size_t offset, size_t len)
 {
   if (!disk_present) {
+    /* Keep old ramdisk-only images working when NEMU has no external disk
+     * device.  The filesystem layer does not need to know which backend won.
+     */
     return ramdisk_read(buf, offset, len);
   }
 
@@ -88,6 +95,11 @@ size_t disk_read(void *buf, size_t offset, size_t len)
       continue;
     }
 
+    /*
+     * The first unaligned piece must still read a whole disk block into the
+     * bounce buffer, then copy only the requested tail.  This keeps the public
+     * byte-addressed filesystem API while the AM/NEMU device remains block-based.
+     */
     const size_t chunk = min_size(len - done, blksz - blkoff);
 
     disk_transfer_blocks(false, blkno, 1);
@@ -102,6 +114,9 @@ size_t disk_read(void *buf, size_t offset, size_t len)
 size_t disk_write(const void *buf, size_t offset, size_t len)
 {
   if (!disk_present) {
+    /* Writes follow the same fallback as reads so tests using the embedded
+     * ramdisk still observe a coherent storage backend.
+     */
     return ramdisk_write(buf, offset, len);
   }
 
@@ -147,6 +162,11 @@ void init_disk(void)
   }
 
   assert(disk_cfg.blksz <= DISK_BLOCK_BUF_SIZE);
+  /*
+   * The buffer-size assertion is also a performance contract: if a future device
+   * uses larger blocks than the bounce buffer, batching would silently collapse
+   * back to one partial command or fail to preserve surrounding bytes on writes.
+   */
   Log("disk info: block size = %d bytes, blocks = %d, size = %zu bytes",
       disk_cfg.blksz, disk_cfg.blkcnt, disk_size());
 }

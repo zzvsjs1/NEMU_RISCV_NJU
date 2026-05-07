@@ -7,6 +7,9 @@ int SaveSnapshot(char[]);
 void ResetScreenshotsCounter();
 uint32 GetScreenPixel(int x, int y, bool usebackup);
 int GetScreenPixelPalette(int x, int y, bool usebackup);
+// XBuf is the core's indexed-colour frame buffer.  The platform layer should
+// treat it as read-only between FCEUI_Emulate returns, because the PPU rewrites
+// it in-place on the next frame.
 extern uint8 *XBuf;
 extern uint8 *XBackBuf;
 extern uint8 *XDBuf;

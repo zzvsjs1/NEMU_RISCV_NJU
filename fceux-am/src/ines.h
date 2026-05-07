@@ -43,6 +43,9 @@ extern const TMasterRomInfo* MasterRomInfo;
 
 //mbg merge 7/19/06 changed to c++ decl format
 struct iNES_HEADER {
+	// Raw on-cartridge header layout.  Keep this structure byte-for-byte
+	// compatible with the file format; loader policy and compatibility fixes
+	// belong in iNESLoad, not in extra fields here.
 	char ID[4]; /*NES^Z*/        // 0-3
 	uint8 ROM_size;              // 4
 	uint8 VROM_size;             // 5

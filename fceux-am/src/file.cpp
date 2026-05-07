@@ -36,6 +36,13 @@ FCEUFILE * FCEU_fopen(const char *path, const char *ipsfn, const char *mode, cha
 
   assert(ipsfn == NULL);
 
+		// The AM/Navy port keeps ROM access as plain host-file streaming.  Archive,
+		// IPS patching and write paths from desktop FCEUX are intentionally absent,
+		// so callers should only expect direct "rb" loading here.  This follows the
+		// same port rule used by the ONS disk work: app code should open the logical
+		// file it was given and let the platform decide whether bytes come from a
+		// ramdisk, disk image, or native file, instead of probing host filesystem
+		// layout itself.
 	bool read = !strcmp(mode, "rb");
 	bool write = !strcmp(mode, "wb");
 	if((read && write) || (!read && !write))

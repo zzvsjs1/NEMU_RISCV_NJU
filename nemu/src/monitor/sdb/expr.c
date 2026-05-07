@@ -241,6 +241,12 @@ static void copySubStrToTokens(char* src, const int destIndex, const int length)
 
 static bool make_token(char *e)
 {
+    /*
+     * Tokenisation is longest-rule-by-order rather than a parser generator.
+     * Multi-character operators and numeric prefixes therefore appear before
+     * their shorter alternatives in rules[], and every match must start at the
+     * current input position.
+     */
     numOfTokens = 0;
 
     int position = 0;
@@ -415,6 +421,12 @@ static word_t unaryOperation(const TokenType op, const word_t val, bool* success
 
 static int getMainBiOp(int start, int end, bool* success)
 {
+    /*
+     * Lower C precedence is represented by a larger number in getOpPrecedence().
+     * The main operator is the rightmost operator with the weakest precedence
+     * outside parentheses, which gives left-associative binary evaluation after
+     * the recursive split.
+     */
     int inBracket = 0;
     int minOpPrecedence = -1;
     const int backUpEnd = end;
@@ -580,6 +592,11 @@ static int getNextUnaryOperation(int start, const int end)
 
 static word_t eval(int start, int end, bool* success)
 {
+    /*
+     * eval() works on an inclusive token range.  Each recursion either removes
+     * one matching outer parenthesis pair, applies one unary operator at the
+     * front, or splits around the main binary operator.
+     */
     if (end < start)
     {
         // Do not access tokens[start] or tokens[end] here, the range is invalid.
@@ -761,6 +778,11 @@ static word_t eval(int start, int end, bool* success)
 
 static void preProcess()
 {
+  /*
+   * Unary '-' and dereference '*' share tokens with binary operators.  The
+   * previous token decides the role: after an operand they remain binary,
+   * otherwise they become prefix unary operators.
+   */
   for (size_t i = 0; i < numOfTokens; i++)
   {
     const TokenType type = tokens[i].type;
@@ -832,6 +854,11 @@ static word_t calculate(bool* success)
     *success = isAllParenthesesMatch(0, numOfTokens - 1);
     if (!*success)
     {
+        /*
+         * Balance is checked once before recursive evaluation.  Whether an
+         * outer pair encloses the full expression is narrower and handled by
+         * eval() with getNextMatchParenthesesFromRight().
+         */
         PRI_ERR_E("Bad expression: unmatched parentheses.\n");
         return -1;
     }

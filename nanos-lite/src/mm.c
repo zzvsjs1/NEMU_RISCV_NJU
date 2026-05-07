@@ -78,7 +78,9 @@ int mm_brk(uintptr_t brk)
     // New heap pages must be zero-filled.
     memset(pa, 0, PGSIZE);
 
-    // prot is ignored in your map(), pass 0 here.
+    // prot is ignored in this AM map() implementation. Passing 0 keeps the
+    // caller-side policy simple: any mapped user heap page receives the usual
+    // readable/writable/executable Sv32 leaf flags inside map().
     map(&current->as, (void *)va, pa, 0);
   }
 

@@ -136,6 +136,9 @@ typedef int64 s64;
 
 #include <klib.h>
 
+// In the AM/Navy build these logging hooks collapse to klib printf.  Code that
+// calls the desktop-style FCEUX message API should assume console output only,
+// not a blocking GUI dialog or host notification.
 #define FCEU_printf printf
 #define FCEU_PrintError printf
 #define FCEU_DispMessage(msg) printf(msg "\n")

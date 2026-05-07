@@ -79,6 +79,8 @@ static inline int pte_is_leaf(PTE pte) {
 // Return the mapped physical page base for a given user virtual page base.
 // Return NULL if not mapped.
 // This is a software page-table walk for Sv32, independent of NEMU MMU.
+// The loader uses it while constructing an address space, before the CPU is
+// necessarily running with that address space in satp.
 static void *lookup_pa_page(AddrSpace *as, uintptr_t page_va) 
 {
     // page_va must be 4 KiB aligned.
@@ -173,6 +175,8 @@ static uintptr_t loader(PCB *pcb, const char *filename)
         for (uintptr_t page_va = page_va_begin; page_va < page_va_end; page_va += PGSIZE) 
         {
             // Reuse an existing mapping if this page VA was already mapped by another segment.
+            // ELF segments can share a page at their boundary; allocating a
+            // fresh page here would lose bytes copied for the previous segment.
             void *page_pa = lookup_pa_page(&pcb->as, page_va);
             if (page_pa == NULL) 
             {
@@ -236,7 +240,9 @@ uintptr_t build_user_stack(uintptr_t ustack_va_end, uintptr_t ustack_pa_end, cha
     uintptr_t sp_pa = ustack_pa_end;
 
     // Copy strings into the stack memory.
-    // Writes go to physical addresses, recorded pointers are user virtual addresses.
+    // Writes go to physical addresses because the kernel is building another
+    // address space. The saved argv/envp pointers must be user virtual
+    // addresses, because crt0 will dereference them after mret under satp.
     for (int i = 0; i < argc; i++) 
     {
         const size_t len = strlen(argv[i]) + 1;
@@ -323,6 +329,9 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
     uintptr_t args_va = build_user_stack(ustack_va_end, ustack_pa_end, argv, envp);
 
     // 5) Create user context on kernel stack.
+    // The Context itself must live on the PCB kernel stack, not on the user
+    // stack. trap.S and the scheduler need to read it while running in machine
+    // mode, even if satp is still pointing at a different process.
     Area kstack = (Area){ .start = pcb->stack, .end = pcb + 1 };
     pcb->cp = ucontext(&pcb->as, kstack, (void *)entry);
 

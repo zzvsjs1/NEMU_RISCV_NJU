@@ -202,6 +202,11 @@ def_EHelper(mulhu)
 
 def_EHelper(div) 
 {
+    /*
+     * RISC-V defines integer divide edge cases explicitly.  Divide-by-zero and
+     * signed overflow do not trap, so they are handled here before calling the
+     * generic RTL division helpers.
+     */
     const sword_t dividend = (sword_t)*dsrc1;
     const sword_t divisor  = (sword_t)*dsrc2;
     // Divide-by-zero -> quotient = all 1s

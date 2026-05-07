@@ -21,6 +21,9 @@ typedef struct {
   char *name;
   size_t size;
   size_t disk_offset;
+  /* Non-null callbacks mark synthetic device/proc files.  Regular files leave
+   * both callbacks null and are served from disk.c using disk_offset + offset.
+   */
   ReadFn read;
   WriteFn write;
 } Finfo;
@@ -119,6 +122,7 @@ static int find_regular_file(const char *pathname)
 void init_fs() 
 {
   // Initialise the size of /dev/fb
+  // The AM display contract reports this as a byte count for the linear framebuffer.
   const AM_GPU_CONFIG_T gpuConfig = io_read(AM_GPU_CONFIG);
   // Must present
   assert(gpuConfig.present);
@@ -134,6 +138,10 @@ int fs_open(const char *pathname, int flags, int mode)
   int fd = find_special_file(pathname);
   if (fd < 0)
   {
+    /*
+     * Keep device files out of the binary search.  They are hand-written before
+     * files.h and are not part of the sorted generated regular-file range.
+     */
     fd = find_regular_file(pathname);
   }
 
@@ -169,6 +177,10 @@ size_t fs_read(int fd, void *buf, size_t len)
   // If read is not supported, return 0 (e.g., stdin not implemented)
   if (f->read != NULL) 
   {
+    /* Device files own their offset semantics.  For example /dev/events is
+     * poll-like and /proc/dispinfo is synthetic, so openOffset is intentionally
+     * not advanced on this path.
+     */
     return f->read(buf, offset, len);
   }
 
@@ -197,6 +209,11 @@ size_t fs_write(int fd, const void *buf, size_t len)
   // If handle existed.
   if (f->write != NULL) 
   {
+    /* Device writers receive the current open offset so stream-like devices can
+     * ignore it while memory-mapped-style devices such as /dev/fb can translate
+     * it into a screen position.  The offset is not advanced here because some
+     * devices, especially /dev/sb, define their own stream semantics.
+     */
     return f->write(buf, openOffset[fd], len);
   }
 

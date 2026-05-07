@@ -84,6 +84,12 @@ static void init_fb_shadow(void)
 // Mirror the current foreground app's linear /dev/fb write into its shadow.
 static void update_current_fb_shadow(const void *buf, size_t offset, size_t len)
 {
+  /*
+   * Mirror the exact byte range that userspace wrote, rather than reconstructing
+   * rows from width/height.  Later performance work batches full-width images as
+   * multi-row writes, and this byte-range mirror keeps the foreground restore
+   * path independent of how the write was grouped.
+   */
   if (!fb_shadow_ready || buf == NULL || len == 0)
   {
     return;
@@ -129,6 +135,11 @@ static void audio_program(uint32_t freq, uint32_t channels, uint32_t samples)
 
 static void audio_remember_current(uint32_t freq, uint32_t channels, uint32_t samples)
 {
+  /*
+   * Userspace SDL state survives a foreground switch, but the single physical
+   * NEMU audio backend does not.  Remember only the hardware format here; queued
+   * sample bytes are intentionally discarded when a foreground owner is restored.
+   */
   const int owner = current_pcb_index();
   if (owner < 0 || owner >= NR_FOREGROUND_PROC)
   {
@@ -185,6 +196,10 @@ void device_restore_foreground_on_schedule(void)
 
 static bool handle_foreground_hotkey(AM_INPUT_KEYBRD_T *keyboard)
 {
+  /* F1-F3 are kernel-owned hotkeys.  They switch the visible foreground app and
+   * are not forwarded to userspace, which prevents games from treating a window
+   * switch as normal input.
+   */
   switch (keyboard->keycode) {
     case AM_KEY_F1:
       if (keyboard->keydown)
@@ -262,6 +277,9 @@ static size_t format_mouse_event(char *event, size_t event_size, AM_INPUT_MOUSE_
 
 static size_t copy_event_record(void *buf, size_t len, const char *event, size_t event_len)
 {
+  /* /dev/events is a byte stream in navy apps.  A short userspace buffer may
+   * receive a truncated record; the caller decides when to poll again.
+   */
   const size_t write_len = event_len > len ? len : event_len;
   memcpy(buf, event, write_len);
   return write_len;
@@ -327,7 +345,11 @@ size_t events_read(void *buf, size_t offset, size_t len)
   static bool prefer_mouse = false;
   (void)offset;
 
-  // Alternate the first-polled source so bursts from one device cannot starve the other.
+  /*
+   * Keyboard hotkeys and mouse movement share one text device.  Alternating the
+   * first source is a small fairness rule: rapid mouse motion should not delay
+   * F1/F2/F3 foreground switches, and a held key should not hide cursor updates.
+   */
   size_t n = 0;
   if (prefer_mouse)
   {
@@ -346,6 +368,10 @@ size_t events_read(void *buf, size_t offset, size_t len)
 
 size_t dispinfo_read(void *buf, size_t offset, size_t len) 
 {
+  /* /proc/dispinfo is regenerated on every read from the current AM GPU
+   * config, so it stays correct even if the display size is supplied by NEMU.
+   * The existing simple procfs model ignores offset for this synthetic file.
+   */
   const AM_GPU_CONFIG_T gpuConfig = io_read(AM_GPU_CONFIG);
   assert(gpuConfig.present);
 
@@ -405,6 +431,10 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
   }
   else
   {
+    /* Userspace framebuffer writes are expected to describe one linear span.
+     * Non-full-width spans cannot wrap across rows here, so preserving the old
+     * one-row draw keeps MiniSDL's simple /dev/fb contract intact.
+     */
     assert(pixelCount <= (size_t)INT32_MAX);
     io_write(AM_GPU_FBDRAW, col, row, (void *)buf, (int)pixelCount, 1, true);
   }
@@ -465,6 +495,10 @@ size_t sb_write(const void *buf, size_t offset, size_t len)
 
 size_t sbctl_write(const void *buf, size_t offset, size_t len)
 {
+  /* MiniSDL writes exactly freq/channels/samples as three 32-bit words.  Any
+   * other length is rejected because a partial audio format would leave NEMU's
+   * host stream in a state no app can reason about.
+   */
   if (len != 3 * sizeof(uint32_t)) 
   {
     // Not supported
@@ -484,6 +518,9 @@ size_t sbctl_write(const void *buf, size_t offset, size_t len)
 
 size_t sbctl_read(void *buf, size_t offset, size_t len)
 {
+  /* /dev/sbctl exposes writable space, not used space, matching MiniSDL's
+   * expectation that a positive value means another /dev/sb write can proceed.
+   */
   AM_AUDIO_STATUS_T st = io_read(AM_AUDIO_STATUS);
   AM_AUDIO_CONFIG_T cfg = io_read(AM_AUDIO_CONFIG);
   int32_t free_bytes = (int32_t)cfg.bufsize - (int32_t)st.count;

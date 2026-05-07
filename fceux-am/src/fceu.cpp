@@ -336,6 +336,9 @@ FCEUGI *FCEUI_LoadGameVirtual(const char *name, int OverwriteVidMode, bool silen
 
 	const char* romextensions[] = { "nes", "fds", 0 };
 
+	// ROM loading enters through the driver file shim, then stays inside the
+	// FCEUX core.  By the time iNESLoad returns, GameInfo, mapper callbacks and
+	// PRG/CHR mappings are ready for PowerNES to reset the emulated hardware.
 	// indicator for if the operaton was canceled by user
 	// currently there's only one situation:
 	// the user clicked cancel form the open from archive dialog
@@ -497,6 +500,11 @@ void FCEUI_Emulate(uint8 **pXBuf, int32 **SoundBuf, int32 *SoundBufSize, int ski
 
 	FCEU_UpdateInput();
 
+		// This is the frame handoff point used by the AM/Navy side: input is latched
+		// first, the PPU drives CPU/audio timing for one frame, then the generated
+		// XBuf and WaveFinal pointers are returned without copying.  The same shape
+		// was used in the ONS performance work: keep long-lived buffers owned by the
+		// producer and let the platform glue push only the dirty or current data.
 	FCEUPPU_Loop(skip);
 
   if (skip != 2) ssize = FlushEmulateSound();  //If skip = 2 we are skipping sound processing
@@ -572,6 +580,9 @@ void PowerNES(void) {
 	SetReadHandler(0x800, 0x1FFF, ARAMH);	// Part of a little
 	SetWriteHandler(0x800, 0x1FFF, BRAMH);	//hack for a small speed boost.
 
+	// Power-on initialisation assumes the cartridge mapper is already installed
+	// by the loader.  Internal devices bind their CPU handlers first, then the
+	// mapper gets GI_POWER so board-specific registers can override as needed.
 	InitializeInput();
 	FCEUSND_Power();
 	FCEUPPU_Power();

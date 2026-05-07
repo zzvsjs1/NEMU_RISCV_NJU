@@ -17,6 +17,11 @@ def_EHelper(jal)
 	rtl_add(s, s0, &s->pc, s0);
 
 	// RISC-V ABI uses x1(ra) and x5(t0) as link registers for calls.
+	/*
+	 * ftrace follows ABI call/return conventions, not every possible indirect
+	 * control transfer.  Limiting call records to x1/x5 keeps ordinary computed
+	 * jumps from corrupting the visual call stack.
+	 */
 	if (s->isa.instr.j.rd == 1 || s->isa.instr.j.rd == 5)
 	{
 		ftrace_call(s->pc, *s0);
@@ -49,7 +54,11 @@ def_EHelper(jalr)
 	// setting the least-significant bit of the result to zero
 	rtl_andi(s, s0, s0, ~1);
 
-	// ret is encoded as jalr x0, 0(x1/x5); jalr to x1/x5 records a call.
+	/*
+	 * ret is encoded as jalr x0, 0(x1/x5); jalr to x1/x5 records a call.
+	 * The tests below must use the original instruction fields because the RTL
+	 * operands only hold values after register reads and immediate decoding.
+	 */
 	if (s->isa.instr.i.rd == 0 &&
 		(s->isa.instr.i.rs1 == 1 || s->isa.instr.i.rs1 == 5) &&
 		s->isa.instr.i.simm11_0 == 0)

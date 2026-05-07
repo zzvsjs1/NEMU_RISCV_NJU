@@ -3,6 +3,9 @@ set -eu
 
 patch_file="navy-apps/apps/onscripter/patch/mouse.diff"
 
+# The ONScripter port carries its mouse cursor as a patch.  Keep the overlay
+# save/restore helpers visible here so the generated patch is not accidentally
+# refreshed without the cursor damage-repair path.
 grep -q "showNavyMouseCursor" "$patch_file"
 grep -q "hideNavyMouseCursor" "$patch_file"
 grep -q "last_mouse_cursor_rect" "$patch_file"

@@ -39,6 +39,11 @@ static uint64_t get_time_internal() {
 }
 
 uint64_t get_time() {
+  /*
+   * All device time is reported relative to the first call, not the host epoch.
+   * This keeps snapshots, logs, and RTC reads small and monotonic within one
+   * NEMU process regardless of which host clock backend is configured.
+   */
   if (boot_time == 0) boot_time = get_time_internal();
   uint64_t now = get_time_internal();
   return now - boot_time;

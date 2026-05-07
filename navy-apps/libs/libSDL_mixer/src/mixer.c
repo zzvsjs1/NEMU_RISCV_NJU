@@ -110,6 +110,11 @@ static uint8_t clamp_u8_audio(int value)
 
 static void mix_sample(uint8_t *frame, int channel, int16_t sample, int volume)
 {
+  /*
+   * Mix internally in signed 16-bit space even when the opened SDL device is
+   * AUDIO_U8.  The final store converts back to the device's silence midpoint
+   * and clamps so overlapping effects cannot wrap around.
+   */
   if (volume <= 0) return;
 
   int scaled = ((int)sample * volume) / MIX_MAX_VOLUME;
@@ -206,6 +211,11 @@ static int refill_music(Mix_Music *music)
   if (out_channels < 1 || out_channels > MAX_OUTPUT_CHANNELS) return 0;
 
   for (;;) {
+    /*
+     * Stream music is decoded in small blocks inside the SDL audio callback.
+     * Keeping the encoded Ogg data alive lets stb_vorbis seek back to the start
+     * for loops without holding a fully decoded song in memory.
+     */
     int frames = stb_vorbis_get_samples_short_interleaved(
         music->vorbis, out_channels, music->decoded,
         MUSIC_DECODE_FRAMES * out_channels);
@@ -324,6 +334,10 @@ static void mixer_callback(void *userdata, uint8_t *stream, int len)
     return;
   }
 
+  /*
+   * Start from the correct silence value for the device format.  Every active
+   * music stream and chunk then adds into this buffer with saturation.
+   */
   memset(stream, device.format == AUDIO_U8 ? 128 : 0, len);
 
   int frames = len / frame_bytes;
@@ -357,6 +371,11 @@ static int allocate_channels_locked(int numchans)
     }
   }
 
+  /*
+   * SDL_mixer keeps existing channel state when the channel count changes.
+   * Copy the overlapping prefix, initialise new channels to full volume, and
+   * finish truncated channels so their completion hooks still fire.
+   */
   int copy = mix_channel_count < numchans ? mix_channel_count : numchans;
   for (int i = 0; i < copy; i++) {
     next[i] = mix_channels[i];
@@ -431,6 +450,11 @@ static uint8_t *read_rwops_data(SDL_RWops *src, int *out_len)
 
   *out_len = 0;
 
+  /*
+   * Mix_LoadWAV_RW() and Mix_LoadMUS_RW() consume from the current RWops
+   * position.  If the stream can report its size, read exactly the remaining
+   * bytes; otherwise grow a buffer until EOF.
+   */
   int64_t start = 0;
   if (src->seek != NULL) {
     start = src->seek(src, 0, RW_SEEK_CUR);
@@ -542,6 +566,11 @@ static Mix_Chunk *load_wav_from_memory(const uint8_t *data, int len)
   uint32_t pcm_len = 0;
   int pos = 12;
 
+  /*
+   * The loader only accepts uncompressed 8/16-bit PCM.  It still walks RIFF
+   * chunks generically because real WAV files often contain optional metadata
+   * before or after the data chunk.
+   */
   while (pos + 8 <= len) {
     const uint8_t *chunk = data + pos;
     uint32_t chunk_len = read_u32le(chunk + 4);
@@ -617,6 +646,11 @@ static Mix_Chunk *load_ogg_chunk_from_memory(const uint8_t *data, int len)
   int frequency = 0;
   short *pcm = NULL;
 
+  /*
+   * Short sound effects are decoded completely at load time.  That makes the
+   * callback path simple and avoids doing full-file Ogg decoding while the
+   * device queue is waiting for more samples.
+   */
   int frames = stb_vorbis_decode_memory(data, len, &channels, &frequency, &pcm);
   if (frames <= 0 || pcm == NULL) {
     free(pcm);
@@ -763,6 +797,11 @@ Mix_Chunk *Mix_LoadWAV_RW(SDL_RWops *src, int freesrc)
 
   if (data == NULL) return NULL;
 
+  /*
+   * This small mixer recognises Ogg effects by their capture pattern and treats
+   * everything else as WAV.  It is enough for the Navy ports without carrying
+   * SDL_mixer's full codec registry.
+   */
   Mix_Chunk *chunk = NULL;
   if (len >= 4 && memcmp(data, "OggS", 4) == 0) {
     chunk = load_ogg_chunk_from_memory(data, len);

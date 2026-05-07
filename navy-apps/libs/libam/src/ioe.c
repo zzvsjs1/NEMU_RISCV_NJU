@@ -2,6 +2,11 @@
 
 bool ioe_init() 
 {
+  /*
+   * This Navy libam layer is a compatibility shim for apps that expect AM
+   * symbols. Device-backed implementations are intentionally sparse here
+   * because most Navy apps reach the OS through NDL or libc instead.
+   */
   return true;
 }
 
@@ -68,6 +73,11 @@ static void __am_uart_config(AM_UART_CONFIG_T *cfg)   { cfg->present = false; }
 static void __am_net_config (AM_NET_CONFIG_T *cfg)    { cfg->present = false; }
 
 typedef void (*handler_t)(void *buf);
+/*
+ * AM register numbers are dispatched through a small lookup table, matching
+ * the common AbstractMachine interface while allowing Navy to provide only the
+ * services that are meaningful above nanos-lite.
+ */
 static void *lut[128] = {
   [AM_TIMER_CONFIG] = __am_timer_config,
   [AM_TIMER_RTC   ] = __am_timer_rtc,

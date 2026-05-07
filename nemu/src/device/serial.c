@@ -10,6 +10,10 @@ static uint8_t *serial_base = NULL;
 
 
 static void serial_putc(char ch) {
+  /*
+   * Serial output is NEMU's simplest host-visible device: guest byte writes are
+   * forwarded immediately, with no transmit FIFO or line-status register model.
+   */
   MUXDEF(CONFIG_TARGET_AM, putch(ch), putc(ch, stderr));
 }
 

@@ -9,6 +9,11 @@
 
 class Terminal {
 private:
+  // Terminal owns an in-memory character grid, not the SDL surface itself.
+  // The renderer reads dirty cells from this grid and turns them into bitmap
+  // font blits, keeping process I/O and display refresh loosely coupled.  This
+  // mirrors the wider Navy device contracts: app state is stable in memory, and
+  // the platform layer decides when pixels are pushed to the device.
   struct Pattern {
     const char *pattern;
     void (Terminal::*handle)(int *args);
@@ -44,6 +49,9 @@ private:
 
 public:
   enum class Mode {
+    // Raw mode forwards each keypress immediately to the child process.
+    // Cooked mode buffers a line locally so the built-in shell can edit and
+    // submit commands without needing kernel-side terminal discipline.
     raw,
     cook,
   } mode;

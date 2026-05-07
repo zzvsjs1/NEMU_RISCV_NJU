@@ -12,7 +12,11 @@ static inline bool rv32_mmu_direct_mode()
 }
 #endif
 
-// translate returns (pg_paddr | status), pg_paddr is page-aligned so low 12 bits are free
+/*
+ * isa_mmu_translate() packs a page-aligned physical page address with a small
+ * status code in the low PAGE_MASK bits.  Splitting those two parts here keeps
+ * the virtual-memory users from depending on the exact bit layout directly.
+ */
 static int mem_ret_status(paddr_t ret) 
 {
     return (int)(ret & (paddr_t)PAGE_MASK);
@@ -26,6 +30,11 @@ static paddr_t mem_ret_pgaddr(paddr_t ret)
 word_t vaddr_ifetch(vaddr_t addr, int len) 
 {
 #ifdef CONFIG_ISA_riscv32
+    /*
+     * Bare-mode RISC-V instruction fetch is the hot path.  Bypass the generic
+     * MMU check when satp.MODE is clear; paged mode still goes through the
+     * common translation path so faults and cross-page limits stay centralised.
+     */
     if (rv32_mmu_direct_mode())
     {
         return paddr_ifetch((paddr_t)addr);
@@ -120,6 +129,13 @@ word_t vaddr_read(vaddr_t addr, int len)
 void vaddr_write(vaddr_t addr, int len, word_t data) 
 {
 #ifdef CONFIG_ISA_riscv32
+    /*
+     * Direct-mode writes intentionally still call paddr_write(), not pmem_write().
+     * Physical memory decoding, device dispatch, and JIT invalidation hooks all
+     * live below this boundary. That boundary matters for Bare-mode JIT tests:
+     * an apparently simple store can still be self-modifying code or MMIO once
+     * the physical address is decoded.
+     */
     if (rv32_mmu_direct_mode())
     {
         paddr_write((paddr_t)addr, len, data);

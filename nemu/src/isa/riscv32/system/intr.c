@@ -91,6 +91,13 @@ static void updateMstatus()
     // mstatus (or mstatush) are set according to Table 35. A trap into M-mode also writes fields GVA, MPIE,
     // and MIE in mstatus/mstatush and writes CSRs mepc, mcause, mtval, mtval2, and mtinst.
 
+    /*
+     * Trap entry snapshots the interrupt-enable and privilege state before
+     * switching to M-mode.  Keeping the bit manipulation local avoids spreading
+     * RISC-V's stacked mstatus rules across ecall, timer interrupt, and DiffTest
+     * paths.
+     */
+
     // 1) Read the old mstatus
     uint64_t s = cpu.csr.mstatus;
 
@@ -182,6 +189,11 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc)
 
 word_t isa_query_intr() 
 {
+    /*
+     * The generic CPU loop asks the ISA for one pending interrupt between guest
+     * instructions.  Timer hardware sets cpu.INTR, and this function consumes it
+     * only when machine interrupts are enabled.
+     */
     if (cpu.INTR && (cpu.csr.mstatus & (1u << MSTATUS_MIE_BIT)))
     {
         cpu.INTR = false;

@@ -3,6 +3,9 @@
 
 #ifndef __ISA_NATIVE__
 
+// Minimal C++ ABI hooks let simple C++ objects link in the freestanding AM
+// environment. They intentionally do not implement full destructor registration
+// because AM kernels terminate through halt(), not a hosted C runtime shutdown.
 void __dso_handle() {
 }
 

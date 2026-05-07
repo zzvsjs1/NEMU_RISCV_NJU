@@ -20,6 +20,11 @@ static SDL_Surface *screen = NULL;
 static int cur = 0;
 
 void render() {
+  // Slides are pre-converted into the Navy ramdisk as fixed-size BMP files.
+  // Loading one frame per page keeps this app independent from PDF rendering
+  // and from any filesystem outside /share.  That is the same integration rule
+  // used by the larger ONS data path: runtime code consumes prepared logical
+  // assets, while host-only conversion stays outside the guest contract.
   char fname[256];
   sprintf(fname, path, cur);
   SDL_Surface *slide = SDL_LoadBMP(fname);
@@ -45,6 +50,9 @@ void next(int rep) {
 
 int main() {
   SDL_Init(0);
+  // NDL-backed SDL treats the requested 800x600 surface as the full window.
+  // The slide conversion script must therefore match this size exactly or the
+  // blit would rely on miniSDL clipping rather than on prepared assets.
   screen = SDL_SetVideoMode(W, H, 32, SDL_HWSURFACE);
 
   int rep = 0, g = 0;

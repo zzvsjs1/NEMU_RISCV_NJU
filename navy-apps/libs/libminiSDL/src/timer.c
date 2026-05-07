@@ -20,6 +20,10 @@ static TimerSlot timers[MAX_TIMERS];
 
 static bool tick_reached(uint32_t now, uint32_t target)
 {
+  /*
+   * Ticks are 32-bit milliseconds.  Signed subtraction keeps comparisons
+   * correct across wrap-around as long as intervals stay below 2^31 ms.
+   */
   return (int32_t)(now - target) >= 0;
 }
 
@@ -28,6 +32,11 @@ SDL_TimerID SDL_AddTimer(uint32_t interval, SDL_NewTimerCallback callback, void 
   if (callback == NULL) return NULL;
   if (interval == 0) interval = 1;
 
+  /*
+   * Timers are checked from SDL_Delay() and SDL_PumpEvents(), not from an
+   * interrupt or host thread.  Returning the slot address is stable because the
+   * fixed table never moves.
+   */
   for (int i = 0; i < MAX_TIMERS; i++)
   {
     if (!timers[i].active)
@@ -93,6 +102,10 @@ void SDL_CheckTimers(void)
 
 uint32_t SDL_GetTicks() 
 {
+  /*
+   * SDL exposes time since library initialisation.  NDL already normalises the
+   * host clock to that epoch, so no extra conversion belongs in miniSDL.
+   */
   return NDL_GetTicks();
 }
 
@@ -105,6 +118,10 @@ void SDL_Delay(uint32_t ms)
   while ((SDL_GetTicks() - start) < ms) 
   {
       SDL_CheckTimers();
+      /*
+       * SDL_Delay() is a common idle loop in these apps.  Pump audio here so a
+       * game that is waiting for time rather than events still feeds /dev/sb.
+       */
       SDL_PumpAudio();
       // A very short host sleep would be nice on native OS, but is not required.
   }

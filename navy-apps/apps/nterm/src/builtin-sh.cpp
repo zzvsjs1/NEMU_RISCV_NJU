@@ -20,6 +20,9 @@ static int sh_split_argv(char *s, char *argv[], int max_args)
 {
   int argc = 0;
 
+  // This splitter intentionally handles only whitespace and simple quotes.
+  // The built-in shell is a launcher for ramdisk apps, not a full POSIX shell,
+  // so pipes, redirection, and expansion stay outside its contract.
   while (*s) {
     while (isspace((unsigned char)*s)) s++;
     if (*s == '\0') break;
@@ -52,6 +55,8 @@ static int sh_split_argv(char *s, char *argv[], int max_args)
 
 static const char *sh_resolve_path(const char *cmd, char *buf, size_t bufsz) 
 {
+  // execvp() will search PATH for bare names. We only preserve names and
+  // explicit paths here so ramdisk shortcuts can remain simple and predictable.
   if (cmd == NULL || cmd[0] == '\0') return "";
 
   if (strchr(cmd, '/')) return cmd;

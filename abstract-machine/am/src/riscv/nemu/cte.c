@@ -6,6 +6,9 @@ static Context* (*user_handler)(Event, Context*) = NULL;
 
 enum { NP_KERNEL = 0, NP_USER = 1 };
 
+// NEMU raises the machine timer interrupt with the standard RISC-V interrupt
+// bit set in mcause. The portable AM layer should see EVENT_IRQ_TIMER instead
+// of depending on that raw encoded value.
 #define IRQ_TIMER ((uintptr_t)0x80000007u)
 #define MSTATUS_MIE  (1u << 3)
 #define MSTATUS_MPIE (1u << 7)
@@ -14,6 +17,9 @@ enum { NP_KERNEL = 0, NP_USER = 1 };
 Context* __am_irq_handle(Context *c)
 {
   void __am_get_cur_as(Context *c);
+  // Trap entry runs in machine mode, but the interrupted context may belong to
+  // user space. Refresh c->pdir before dispatch so the OS handler can tell
+  // whether the saved context needs an address-space switch on return.
   __am_get_cur_as(c);
 
   // printf("\n\nc->mcause= 0x%x\n\n", c->mcause);
@@ -25,6 +31,9 @@ Context* __am_irq_handle(Context *c)
       case -1: {
         ev.event = EVENT_YIELD; 
         // Add pc, this must be done by software.
+        // ecall leaves mepc pointing at the trapping instruction. Advancing by
+        // one fixed 32-bit instruction prevents yield() from re-entering the
+        // same software interrupt forever after mret.
         c->mepc += sizeof(uint32_t);
         break;
       }
@@ -43,6 +52,9 @@ Context* __am_irq_handle(Context *c)
     // Is system call?
     if (c->mcause >= 0 && c->mcause <= 19)
     {
+      // In this teaching target, all synchronous exception codes in this range
+      // are presented to the upper layer as syscalls. The specific cause value
+      // remains available in the saved Context if a kernel wants to inspect it.
       ev.event = EVENT_SYSCALL; 
       c->mepc += sizeof(uint32_t);
     }
@@ -59,7 +71,12 @@ extern void __am_asm_trap(void);
 bool cte_init(Context*(*handler)(Event, Context*))
 {
   // initialize exception entry
+  // mtvec must point at the assembly shim because the shim saves all general
+  // registers before C code can safely examine or modify the interrupted state.
   asm volatile("csrw mtvec, %0" : : "r"(__am_asm_trap));
+  // A zero mscratch marks the current execution as kernel mode. User contexts
+  // install their kernel stack top just before mret, so the first trap from a
+  // freshly booted kernel must not be mistaken for a user trap.
   asm volatile("csrw mscratch, zero");
 
   // register event handler
@@ -71,6 +88,9 @@ bool cte_init(Context*(*handler)(Event, Context*))
 Context *kcontext(Area kstack, void (*entry)(void *), void *arg) 
 {
   // Align to 16 bytes.
+  // The saved Context lives at the top of the provided kernel stack. Keeping
+  // the stack 16-byte aligned matches the RISC-V ABI and avoids surprises when
+  // compiled C code spills wider objects.
   uintptr_t sp = (uintptr_t)kstack.end;
   sp &= ~((uintptr_t)0xF);
 
@@ -87,11 +107,16 @@ Context *kcontext(Area kstack, void (*entry)(void *), void *arg)
   // Place the argument.
   c->GPR2 = (uintptr_t)arg;
 
+  // Kernel contexts return through mret too, so MPP must be machine mode.
+  // MPIE is set so interrupts can be enabled again after the return path
+  // restores this synthetic context.
   c->mstatus = MSTATUS_MPP_M | MSTATUS_MPIE;
 
   c->mcause = 0;
   c->pdir = NULL;
   c->ksp = kstack.end;
+  // NP_KERNEL makes trap.S keep mscratch at zero when this context resumes.
+  // That prevents a later kernel timer interrupt from swapping to a user stack.
   c->np = NP_KERNEL;
 
   // Clash now!
@@ -102,11 +127,17 @@ Context *kcontext(Area kstack, void (*entry)(void *), void *arg)
 
 void yield()
 {
+  // The a7 value is an AM-private convention recognised by __am_irq_handle().
+  // Hardware only sees an ecall; the handler converts mcause plus a7 into
+  // EVENT_YIELD for the portable kernel layer.
   asm volatile("li a7, -1; ecall");
 }
 
 bool ienabled()
 {
+  // Interrupt enable is tracked in mstatus.MIE while running in machine mode.
+  // This helper intentionally reports the current hardware bit, not the MPIE
+  // value that will be restored by a future mret.
   uintptr_t mstatus;
   asm volatile("csrr %0, mstatus" : "=r"(mstatus));
   return (mstatus & MSTATUS_MIE) != 0;

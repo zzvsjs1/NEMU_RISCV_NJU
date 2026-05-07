@@ -112,6 +112,12 @@ static void publish_audio_count(void)
 static void lock_audio_counter(void)
 {
 #ifndef CONFIG_AUDIO_DUMMY
+    /*
+     * The SDL callback and the guest MMIO handler are the two writers of the
+     * occupancy counter.  Lock only after the host device is open: before that,
+     * SDL has no callback thread and SDL_LockAudio() would only add host-side
+     * work to the init path.
+     */
     if (audio_opened)
     {
         SDL_LockAudio();
@@ -274,6 +280,13 @@ static void append_audio_bytes(vaddr_t src, uint32_t len)
     audio_count = 0;
     publish_audio_count();
 #else
+    /*
+     * The count register is a delta-commit interface.  NEMU, not AM, owns the
+     * live count because the host callback can consume bytes between two guest
+     * instructions.  Copy the whole guest chunk and publish the new count while
+     * the SDL audio lock is held, so producer and consumer never resurrect a
+     * stale occupancy value.
+     */
     lock_audio_counter();
     Assert(audio_count <= CONFIG_SB_SIZE,
             "Audio stream buffer count is invalid: count=%u size=%u",
@@ -382,6 +395,13 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
             }
 
             case reg_bulk_cmd: {
+                /*
+                 * Bulk append keeps the stream-buffer protocol but avoids the
+                 * historical byte-at-a-time MMIO path.  Large PAL/ONScripter
+                 * callbacks can otherwise spend so long crossing MMIO that the
+                 * host audio callback drains the queue faster than the guest can
+                 * refill it.
+                 */
                 Assert(val == AUDIO_BULK_CMD_APPEND,
                         "Unsupported audio bulk command: %u", val);
                 append_audio_bytes((vaddr_t)audio_base[reg_bulk_src],

@@ -50,6 +50,12 @@ static int key_queue[KEY_QUEUE_LEN] = {0};
 static int key_f = 0, key_r = 0;
 
 static void key_enqueue(uint32_t am_scancode) {
+  /*
+   * The guest observes key events by polling one 32-bit data register.  Queue
+   * host SDL events here so short key presses are not lost between two guest
+   * reads.  Unlike mouse motion there is no safe coalescing rule for key down/up
+   * pairs, so overflow stays fatal rather than silently changing input history.
+   */
   key_queue[key_r] = am_scancode;
   key_r = (key_r + 1) % KEY_QUEUE_LEN;
   Assert(key_r != key_f, "key queue overflow!");
@@ -85,6 +91,10 @@ static uint32_t *i8042_data_port_base = NULL;
 static void i8042_data_io_handler(uint32_t offset, int len, bool is_write) {
   assert(!is_write);
   assert(offset == 0);
+  /*
+   * Reading the data port consumes exactly one queued AM scancode.  A zero value
+   * is the idle contract, so software can poll without a separate status port.
+   */
   i8042_data_port_base[0] = key_dequeue();
 }
 

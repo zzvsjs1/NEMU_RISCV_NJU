@@ -23,6 +23,11 @@ static bool is_cross_page(vaddr_t vaddr, int len)
 
 int isa_mmu_check(vaddr_t vaddr, int len, int type) 
 {
+    /*
+     * This teaching Sv32 model treats satp.MODE as the only mode selector.  The
+     * detailed access checks are deferred to isa_mmu_translate(), so callers get
+     * a cheap direct/translate decision before doing any page-table walks.
+     */
     uint32_t satp = cpu.csr.satp;
     uint32_t mode = (satp & SATP_MODE_MASK) ? 1 : 0;
     return mode ? MMU_TRANSLATE : MMU_DIRECT;
@@ -30,6 +35,11 @@ int isa_mmu_check(vaddr_t vaddr, int len, int type)
 
 paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type) 
 {
+    /*
+     * The current memory helpers handle one translated page per access.  Report
+     * a cross-page status instead of partially walking two leaves; the vaddr
+     * layer owns deciding whether that case is supported.
+     */
     if (is_cross_page(vaddr, len))
     {
         return (paddr_t)MEM_RET_CROSS_PAGE;
@@ -45,7 +55,11 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
     // satp register must be active, i.e., the effective privilege mode must be S-mode or U-mode.
     const paddr_t root = (paddr_t)((satp & SATP_PPN_MASK) * PAGE_SIZE);
 
-    // Sv32 VPN split
+    /*
+     * Sv32 has two 10-bit VPN indexes.  vpn1 selects a level-1 PTE from the root
+     * page table in satp.ppn, then vpn0 selects the leaf PTE from that next
+     * level page table.
+     */
     const word_t vpn1 = (word_t)((vaddr >> 22) & 0x3FFu);
     const word_t vpn0 = (word_t)((vaddr >> 12) & 0x3FFu);
 
@@ -55,6 +69,11 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
     Assert((pte1 & PTE_V) != 0, "Not a valid pte at %u", (word_t)pte1_addr);
 
     uint32_t pte1_rwx = pte1 & (PTE_R | PTE_W | PTE_X);
+    /*
+     * Superpages are deliberately not implemented here.  Requiring a non-leaf
+     * level-1 PTE keeps every successful translation on a normal 4 KiB leaf,
+     * which matches the packed return format used by vaddr.c.
+     */
     Assert(pte1_rwx == 0, "super page");
 
     // next level page table base
@@ -93,6 +112,11 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
         assert((pte0 & PTE_W) != 0);
     }
 
+    /*
+     * Return only the physical page base plus MEM_RET_OK.  The original page
+     * offset is ORed in by vaddr_read/write/ifetch after they have checked the
+     * status bits.
+     */
     const paddr_t pg_paddr = (paddr_t)(((paddr_t)(pte0 >> 10)) << 12);
     return pg_paddr | (paddr_t)MEM_RET_OK;
 }

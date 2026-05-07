@@ -30,6 +30,9 @@ uint32 timestamp;
 uint32 soundtimestamp;
 void (*MapIRQHook)(int a);
 
+	// The CPU loop is the common clock source for PPU and APU work.  Dummy
+	// overclock scanlines intentionally advance CPU time without adding audio time,
+	// so performance profiles can buy headroom without stretching the sound buffer.
 #define ADDCYC(x) \
 {                 \
  int __x=x;       \
@@ -404,6 +407,9 @@ void X6502_Power(void)
 
 void X6502_Run(int32 cycles)
 {
+  // The PPU drives CPU execution in scanline-sized chunks.  ADDCYC updates the
+  // shared video/audio timestamps, so callers must not treat this as an isolated
+  // CPU loop detached from frame timing.
   if(PAL)
    cycles*=15;    // 15*4=60
   else

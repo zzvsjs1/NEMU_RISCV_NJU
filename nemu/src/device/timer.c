@@ -10,6 +10,11 @@ static void rtc_io_handler(uint32_t offset, int len, bool is_write)
 	
 	if (!is_write && offset == 0) 
 	{
+		/*
+		 * The RTC is exposed as two 32-bit words.  Refresh both halves when the
+		 * low word is read so guests that read low then high observe one coherent
+		 * 64-bit microsecond timestamp.
+		 */
 		const uint64_t us = get_time();
 		rtc_port_base[0] = (uint32_t)us;
 		rtc_port_base[1] = us >> 32;
@@ -20,6 +25,11 @@ static void rtc_io_handler(uint32_t offset, int len, bool is_write)
 static void timer_intr() { 
 	if (nemu_state.state == NEMU_RUNNING) 
 	{
+		/*
+		 * Timer signals may arrive while the monitor is stopped.  Only raise a
+		 * pending guest interrupt during RUNNING state so single-step/debugger
+		 * sessions do not accumulate stale timer events.
+		 */
 		extern void dev_raise_intr();
 		dev_raise_intr();
 	}

@@ -44,6 +44,11 @@ typedef struct {
 	uint32_t flags;
 	SDL_PixelFormat *format;
 	int w, h;
+	/*
+	 * pitch is the byte distance between rows in software memory.  NDL_DrawRect()
+	 * receives tightly packed rectangles, so SDL_UpdateRect() repacks dirty
+	 * areas whenever pitch would otherwise skip over pixels outside the rect.
+	 */
 	uint16_t pitch;
 	uint8_t *pixels;
 } SDL_Surface;

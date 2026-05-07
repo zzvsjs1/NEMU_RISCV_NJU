@@ -35,6 +35,11 @@ static void visualize(int16_t *stream, int samples) {
   static int color = 0;
   SDL_FillRect(screen, NULL, 0);
   int center_y = H / 2;
+  /*
+   * The audio callback stores interleaved signed samples and the UI thread
+   * draws the latest saved block. This is a lightweight visualiser contract,
+   * not a synchronised oscilloscope, which is enough for Navy's miniSDL demo.
+   */
   for (i = 0; i < samples; i ++) {
     fixedpt multipler = fixedpt_cos(fixedpt_divi(fixedpt_muli(FIXEDPT_PI, 2 * i), samples));
     int x = i * W / samples;
@@ -63,6 +68,11 @@ static void AdjustVolume(int16_t *stream, int samples) {
 
 void FillAudio(void *userdata, uint8_t *stream, int len) {
   int nbyte = 0;
+  /*
+   * miniSDL asks for a raw PCM buffer. stb_vorbis decodes directly into that
+   * buffer, then any short final read is padded with silence so the audio
+   * device never consumes uninitialised bytes.
+   */
   int samples_per_channel = stb_vorbis_get_samples_short_interleaved(v,
       info.channels, (int16_t *)stream, len / sizeof(int16_t));
   if (samples_per_channel != 0 || len < sizeof(int16_t)) {
@@ -84,6 +94,13 @@ int main(int argc, char *argv[]) {
 
   FILE *fp = fopen(MUSIC_PATH, "r");
   assert(fp);
+  /*
+   * The OGG file lives behind Navy's logical /share path. Reading it into memory
+   * mirrors the small filesystem contract used by several Navy demos and avoids
+   * any dependency on streaming file I/O during callback playback.  The same
+   * "open the app path, do not inspect the host layout" rule keeps disk-backed
+   * ONScripter resources and ramdisk demos interchangeable from app code.
+   */
   fseek(fp, 0, SEEK_END);
   size_t size = ftell(fp);
   void *buf = malloc(size);

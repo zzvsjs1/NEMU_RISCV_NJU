@@ -10,6 +10,11 @@ static size_t update_argb_cap = 0;
 
 static uint32_t *ensure_update_argb_buffer(size_t pixels)
 {
+  /*
+   * Framebuffer updates are serialised through the SDL call path, so one
+   * process-wide scratch buffer is enough.  It grows to the largest dirty
+   * rectangle seen and avoids repeated allocation during palette refreshes.
+   */
   if (pixels <= update_argb_cap) {
     return update_argb_buf;
   }
@@ -284,6 +289,8 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h) {
        * pointer into the middle of the surface only works for full-width
        * updates.  ONScripter often updates small dirty rectangles; pack those
        * rows first so every destination row starts from the correct source row.
+       * Full-width paths stay zero-copy because scene changes are often already
+       * full rows and those writes are batched again by NDL/Nanos/NEMU.
        */
       const int bpp = s->format->BytesPerPixel;
       const int pitch = s->pitch;
@@ -347,6 +354,11 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h) {
 // APIs below are already implemented.
 
 static inline int maskToShift(uint32_t mask) {
+  /*
+   * This miniSDL supports the canonical byte-aligned masks used by Navy apps.
+   * Rejecting arbitrary masks keeps conversion code simple and makes unsupported
+   * formats fail at surface creation rather than during later blits.
+   */
   switch (mask) {
     case 0x000000ff: return 0;
     case 0x0000ff00: return 8;
@@ -408,6 +420,11 @@ SDL_Surface* SDL_CreateRGBSurface(uint32_t flags, int width, int height, int dep
 
 SDL_Surface* SDL_CreateRGBSurfaceFrom(void *pixels, int width, int height, int depth,
     int pitch, uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask) {
+  /*
+   * SDL_PREALLOC means ownership stays with the caller.  The surface metadata
+   * still uses miniSDL's normal format allocation, but SDL_FreeSurface() must
+   * leave the pixel storage alone.
+   */
   SDL_Surface *s = SDL_CreateRGBSurface(SDL_PREALLOC, width, height, depth,
       Rmask, Gmask, Bmask, Amask);
   assert(pitch == s->pitch);
@@ -642,6 +659,9 @@ void SDL_SoftStretchUpdate(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst
    *
    *   - dst->pixels stays current, so later palette-only refreshes still work;
    *   - argb is sent to /dev/fb immediately, avoiding a second full-screen pass.
+   *
+   * That second point matters on NEMU because every extra full-screen pass also
+   * feeds the foreground shadow and VGA dirty-rectangle pipeline.
    */
   int y_num = (clip_y0 - dst_y) * src_h;
   int src_row = y_num / dst_h;
@@ -696,6 +716,11 @@ void SDL_SetPalette(SDL_Surface *s, int flags, SDL_Color *colors, int firstcolor
   memcpy(s->format->palette->colors, colors, sizeof(SDL_Color) * ncolors);
 
   if(s->flags & SDL_HWSURFACE) {
+    /*
+     * The physical framebuffer stores ARGB pixels, not palette indices.  When
+     * a hardware-surface palette changes, every existing index can map to a
+     * new colour, so the whole canvas must be republished through UpdateRect().
+     */
     assert(ncolors == 256);
     for (int i = 0; i < ncolors; i ++) {
       uint8_t r = colors[i].r;
@@ -708,6 +733,11 @@ void SDL_SetPalette(SDL_Surface *s, int flags, SDL_Color *colors, int firstcolor
 }
 
 static void ConvertPixelsARGB_ABGR(void *dst, void *src, int len) {
+  /*
+   * STB image output and Navy's default 32-bit surface masks differ only in red
+   * and blue byte positions.  The alpha and green bytes are copied unchanged,
+   * which is why this helper can be a channel swap rather than a full map.
+   */
   int i;
   uint8_t (*pdst)[4] = dst;
   uint8_t (*psrc)[4] = src;
@@ -757,6 +787,10 @@ uint32_t SDL_MapRGBA(SDL_PixelFormat *fmt, uint8_t r, uint8_t g, uint8_t b, uint
 }
 
 int SDL_LockSurface(SDL_Surface *s) {
+  /*
+   * Surfaces are plain memory buffers in miniSDL.  There is no separate video
+   * backend lock to acquire, so this only preserves the SDL API shape.
+   */
   return 0;
 }
 

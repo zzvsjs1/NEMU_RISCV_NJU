@@ -24,6 +24,11 @@
 
 #define MMIO_BASE 0xa0000000
 
+/* These addresses are part of the guest/device ABI: AM code must treat them
+ * as fixed MMIO registers, while NEMU supplies the implementation behind each
+ * range.  Keep framebuffer and audio sample storage outside the small control
+ * page because bulk pixel/sample traffic would otherwise overlap registers.
+ */
 #define SERIAL_PORT     (DEVICE_BASE + 0x00003f8)
 #define KBD_ADDR        (DEVICE_BASE + 0x0000060)
 #define MOUSE_ADDR      (DEVICE_BASE + 0x0000070)

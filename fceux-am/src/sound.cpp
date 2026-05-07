@@ -1015,6 +1015,12 @@ int FlushEmulateSound(void)
   int x;
   int32 end,left;
 
+	  // Called once after the PPU/CPU frame loop has advanced soundtimestamp.
+	  // It mixes the accumulated APU state into WaveFinal, which the AM/Navy side
+	  // receives from FCEUI_Emulate as a pointer plus sample count.  That explicit
+	  // count matters for slower backends because frame skipping may return no
+	  // sound at all, just as the ONS mixer tests lock down empty and short-buffer
+	  // cases instead of assuming continuous audio.
   if(!soundtimestamp) return(0);
 
   if(!FSettings.SndRate)
@@ -1176,6 +1182,8 @@ void FCEUSND_Power(void)
 {
   int x;
 
+  // Sound registers live in the CPU memory map, so power-on must install the
+  // APU handlers before the CPU starts executing cartridge code for the frame.
   SetNESSoundMap();
   memset(PSG,0x00,sizeof(PSG));
   FCEUSND_Reset();

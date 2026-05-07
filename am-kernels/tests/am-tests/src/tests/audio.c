@@ -31,6 +31,9 @@ static inline bool tag_is(const uint8_t *p, char a, char b, char c, char d) {
   return p[0] == (uint8_t)a && p[1] == (uint8_t)b && p[2] == (uint8_t)c && p[3] == (uint8_t)d;
 }
 
+// The bundled payload may be either a WAV file or raw PCM depending on how the
+// test assets were generated. Parsing only the chunks needed for 16-bit PCM
+// keeps the test freestanding and avoids relying on libc file helpers.
 // No libc calls, parses only 16-bit PCM WAV
 static bool parse_wav(const uint8_t *buf, uint32_t len, WavInfo *out) {
   if (len < 12) return false;
@@ -123,6 +126,9 @@ void audio_test() {
 
   io_write(AM_AUDIO_CTRL, sample_rate, channels, dev_bufsz);
 
+  // AM_AUDIO_PLAY consumes an Area that names bytes in guest memory. The loop
+  // feeds bounded slices so the device ring buffer is exercised repeatedly
+  // instead of only testing one large write.
   uint32_t nplay = 0;
   Area sbuf;
   sbuf.start = (uint8_t *)play_ptr;
@@ -131,6 +137,8 @@ void audio_test() {
     uint32_t remain = play_len - nplay;
     uint32_t len = remain > SIZE ? SIZE : remain;
 
+    // Device backends normally expect whole audio frames. Trimming each chunk to
+    // frame boundaries avoids a final half-sample being interpreted as noise.
     // keep writes aligned to complete sample frames, avoids pops
     if (frame_bytes) {
       uint32_t aligned = SIZE_ALIGNED(len, frame_bytes);

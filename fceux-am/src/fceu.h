@@ -96,6 +96,9 @@ extern int dendy;
 //#include "driver.h"
 
 typedef struct {
+	// Global emulator settings shared by the core and the AM/Navy-facing
+	// driver code.  These values are treated as process-wide state, so a loaded
+	// game must be closed or reset before changing assumptions such as PAL mode.
 	int PAL;
 	int NetworkPlay;
 	int SoundVolume;		//Master volume

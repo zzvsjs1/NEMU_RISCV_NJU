@@ -18,6 +18,11 @@ SDL_Surface* IMG_Load_RW(SDL_RWops *src, int freesrc)
   }
 
   if (src->type == RW_TYPE_MEM) {
+    /*
+     * Memory RWops already expose a contiguous byte range, so decode directly
+     * from the current pointer instead of copying.  Seek to EOF afterwards to
+     * match the "stream has been consumed" behaviour of the file-backed path.
+     */
     int64_t pos = SDL_RWtell(src);
     if (pos < 0 || pos > size || size - pos > INT_MAX) {
       if (freesrc) SDL_RWclose(src);
@@ -61,6 +66,11 @@ SDL_Surface* IMG_Load(const char *filename)
     return NULL;
   }
 
+  /*
+   * IMG_Load is just a file convenience wrapper around STB's memory decoder.
+   * Reading the whole file first keeps all image format handling inside
+   * SDL_stbimage.h and avoids maintaining separate PNG/JPEG file paths here.
+   */
   // 1. Open the file in binary mode
   FILE *fp = fopen(filename, "rb");
   if (!fp) 
@@ -130,6 +140,10 @@ int IMG_isPNG(SDL_RWops *src)
 {
   if (src == NULL) return 0;
 
+  /*
+   * Format probes must not consume bytes.  Save and restore the RWops position
+   * so a later IMG_Load_RW() sees the same stream contents.
+   */
   static const uint8_t png_magic[8] = {
     0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'
   };

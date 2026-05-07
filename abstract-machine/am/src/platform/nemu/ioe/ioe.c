@@ -49,6 +49,9 @@ static void *lut[128] = {
 static void fail(void *buf) { panic("access nonexist register"); }
 
 bool ioe_init() {
+  /* Fill every unimplemented AM register with a trap handler so an accidental
+   * read/write fails at the boundary instead of jumping through a null pointer.
+   */
   for (int i = 0; i < LENGTH(lut); i++)
     if (!lut[i]) lut[i] = fail;
   __am_gpu_init();
