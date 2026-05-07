@@ -656,6 +656,24 @@ static bool emit_mov_eax_imm(rv32_jit_writer_t *w, uint32_t value)
   return emit_u8(w, 0xb8) && emit_u32(w, value);
 }
 
+static bool emit_add_eax_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+  const int32_t signed_value = (int32_t)value;
+  if (signed_value == 0)
+  {
+    return true;
+  }
+
+  if (signed_value >= INT8_MIN && signed_value <= INT8_MAX)
+  {
+    /* add eax, imm8; x86 sign-extends imm8, which matches RV32 immediates. */
+    return emit_u8(w, 0x83) && emit_u8(w, 0xc0)
+        && emit_u8(w, (uint8_t)signed_value);
+  }
+
+  return emit_u8(w, 0x05) && emit_u32(w, value);
+}
+
 static bool emit_cmp_eax_imm(rv32_jit_writer_t *w, uint32_t value)
 {
   return emit_u8(w, 0x3d) && emit_u32(w, value);
@@ -664,6 +682,55 @@ static bool emit_cmp_eax_imm(rv32_jit_writer_t *w, uint32_t value)
 static bool emit_cmp_eax_ecx(rv32_jit_writer_t *w)
 {
   return emit_u8(w, 0x39) && emit_u8(w, 0xc8);
+}
+
+static bool emit_cmp_ecx_imm8(rv32_jit_writer_t *w, uint8_t value)
+{
+  return emit_u8(w, 0x83) && emit_u8(w, 0xf9) && emit_u8(w, value);
+}
+
+static bool emit_test_ecx_ecx(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x85) && emit_u8(w, 0xc9);
+}
+
+static bool emit_xor_edx_edx(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x31) && emit_u8(w, 0xd2);
+}
+
+static bool emit_cdq(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x99);
+}
+
+static bool emit_mov_eax_edx(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x89) && emit_u8(w, 0xd0);
+}
+
+static bool emit_mul_ecx(rv32_jit_writer_t *w)
+{
+  /* Unsigned edx:eax = eax * ecx. */
+  return emit_u8(w, 0xf7) && emit_u8(w, 0xe1);
+}
+
+static bool emit_imul_ecx(rv32_jit_writer_t *w)
+{
+  /* Signed edx:eax = eax * ecx. */
+  return emit_u8(w, 0xf7) && emit_u8(w, 0xe9);
+}
+
+static bool emit_div_ecx(rv32_jit_writer_t *w)
+{
+  /* Unsigned edx:eax / ecx, quotient in eax, remainder in edx. */
+  return emit_u8(w, 0xf7) && emit_u8(w, 0xf1);
+}
+
+static bool emit_idiv_ecx(rv32_jit_writer_t *w)
+{
+  /* Signed edx:eax / ecx, quotient in eax, remainder in edx. */
+  return emit_u8(w, 0xf7) && emit_u8(w, 0xf9);
 }
 
 static bool emit_setcc_eax(rv32_jit_writer_t *w, uint8_t setcc_opcode)
@@ -748,6 +815,7 @@ typedef struct
 {
   rv32_jit_reg_slot_t slots[RV32_JIT_HREG_COUNT];
   uint32_t next_age;
+  bool source_refs_loaded;
 } rv32_jit_reg_cache_t;
 
 static uint8_t jit_hreg_x86_reg(rv32_jit_hreg_t hreg)
@@ -905,6 +973,7 @@ static bool __attribute__((unused)) emit_mov_hreg_ecx(rv32_jit_writer_t *w,
 static void jit_reg_cache_init(rv32_jit_reg_cache_t *regs)
 {
   regs->next_age = 1;
+  regs->source_refs_loaded = false;
   for (uint32_t i = 0; i < RV32_JIT_HREG_COUNT; i++)
   {
     regs->slots[i] = (rv32_jit_reg_slot_t) {
@@ -1350,6 +1419,159 @@ static bool jit_reg_apply_shift_reg(rv32_jit_writer_t *w,
   return true;
 }
 
+static bool emit_rv32_mul_high(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t rd, bool is_signed)
+{
+  return (is_signed ? emit_imul_ecx(w) : emit_mul_ecx(w))
+      && emit_mov_eax_edx(w)
+      && jit_reg_write_eax(w, regs, rd);
+}
+
+static bool emit_rv32_divu(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t rd)
+{
+  uint8_t *zero_disp = NULL;
+  uint8_t *done_disp = NULL;
+
+  /*
+   * RISC-V division by zero is not a trap: DIVU returns all ones. x86 DIV would
+   * fault, so emit an explicit zero-divisor side exit around the native divide.
+   */
+  if (!emit_test_ecx_ecx(w) ||
+      !emit_jcc_rel32_placeholder(w, 0x84, &zero_disp) ||
+      !emit_xor_edx_edx(w) ||
+      !emit_div_ecx(w) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp))
+  {
+    return false;
+  }
+
+  patch_rel32(zero_disp, w->cur);
+  if (!emit_mov_eax_imm(w, UINT32_MAX))
+  {
+    return false;
+  }
+
+  patch_rel32(done_disp, w->cur);
+  return jit_reg_write_eax(w, regs, rd);
+}
+
+static bool emit_rv32_remu(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t rd)
+{
+  uint8_t *done_disp = NULL;
+
+  /*
+   * REMU by zero returns the original dividend. EAX already contains rs1, so
+   * the zero-divisor branch can skip the native divide and keep EAX unchanged.
+   */
+  if (!emit_test_ecx_ecx(w) ||
+      !emit_jcc_rel32_placeholder(w, 0x84, &done_disp) ||
+      !emit_xor_edx_edx(w) ||
+      !emit_div_ecx(w) ||
+      !emit_mov_eax_edx(w))
+  {
+    return false;
+  }
+
+  patch_rel32(done_disp, w->cur);
+  return jit_reg_write_eax(w, regs, rd);
+}
+
+static bool emit_rv32_div(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t rd)
+{
+  uint8_t *zero_disp = NULL;
+  uint8_t *normal_disp = NULL;
+  uint8_t *overflow_disp = NULL;
+  uint8_t *normal_done_disp = NULL;
+  uint8_t *zero_done_disp = NULL;
+
+  /*
+   * x86 IDIV traps on zero divisors and on INT_MIN / -1. RISC-V defines both
+   * cases, so guard them before using the native signed divide.
+   */
+  if (!emit_test_ecx_ecx(w) ||
+      !emit_jcc_rel32_placeholder(w, 0x84, &zero_disp) ||
+      !emit_cmp_eax_imm(w, 0x80000000u) ||
+      !emit_jcc_rel32_placeholder(w, 0x85, &normal_disp) ||
+      !emit_cmp_ecx_imm8(w, 0xff) ||
+      !emit_jcc_rel32_placeholder(w, 0x84, &overflow_disp))
+  {
+    return false;
+  }
+
+  patch_rel32(normal_disp, w->cur);
+  if (!emit_cdq(w) ||
+      !emit_idiv_ecx(w) ||
+      !emit_jmp_rel32_placeholder(w, &normal_done_disp))
+  {
+    return false;
+  }
+
+  patch_rel32(zero_disp, w->cur);
+  if (!emit_mov_eax_imm(w, UINT32_MAX) ||
+      !emit_jmp_rel32_placeholder(w, &zero_done_disp))
+  {
+    return false;
+  }
+
+  patch_rel32(overflow_disp, w->cur);
+  if (!emit_mov_eax_imm(w, 0x80000000u))
+  {
+    return false;
+  }
+
+  patch_rel32(normal_done_disp, w->cur);
+  patch_rel32(zero_done_disp, w->cur);
+  return jit_reg_write_eax(w, regs, rd);
+}
+
+static bool emit_rv32_rem(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t rd)
+{
+  uint8_t *zero_disp = NULL;
+  uint8_t *normal_disp = NULL;
+  uint8_t *overflow_disp = NULL;
+  uint8_t *normal_done_disp = NULL;
+  uint8_t *zero_done_disp = NULL;
+
+  if (!emit_test_ecx_ecx(w) ||
+      !emit_jcc_rel32_placeholder(w, 0x84, &zero_disp) ||
+      !emit_cmp_eax_imm(w, 0x80000000u) ||
+      !emit_jcc_rel32_placeholder(w, 0x85, &normal_disp) ||
+      !emit_cmp_ecx_imm8(w, 0xff) ||
+      !emit_jcc_rel32_placeholder(w, 0x84, &overflow_disp))
+  {
+    return false;
+  }
+
+  patch_rel32(normal_disp, w->cur);
+  if (!emit_cdq(w) ||
+      !emit_idiv_ecx(w) ||
+      !emit_mov_eax_edx(w) ||
+      !emit_jmp_rel32_placeholder(w, &normal_done_disp))
+  {
+    return false;
+  }
+
+  patch_rel32(zero_disp, w->cur);
+  if (!emit_jmp_rel32_placeholder(w, &zero_done_disp))
+  {
+    return false;
+  }
+
+  patch_rel32(overflow_disp, w->cur);
+  if (!emit_mov_eax_imm(w, 0))
+  {
+    return false;
+  }
+
+  patch_rel32(normal_done_disp, w->cur);
+  patch_rel32(zero_done_disp, w->cur);
+  return jit_reg_write_eax(w, regs, rd);
+}
+
 static bool emit_movabs_r9(rv32_jit_writer_t *w, uint64_t value)
 {
   /* movabs r9, imm64 */
@@ -1362,19 +1584,52 @@ static bool emit_movabs_r10(rv32_jit_writer_t *w, uint64_t value)
   return emit_u8(w, 0x49) && emit_u8(w, 0xba) && emit_u64(w, value);
 }
 
-static bool emit_mov_edx_eax(rv32_jit_writer_t *w)
+static bool emit_load_pmem_base(rv32_jit_writer_t *w)
 {
-  return emit_u8(w, 0x89) && emit_u8(w, 0xc2);
+  /*
+   * Direct-PMEM fast paths are common enough that loading this once per native
+   * block is cheaper than repeating a movabs before every translated load or
+   * store. r10 is caller-saved, so helper calls that rejoin the block reload it.
+   */
+  return emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE));
+}
+
+static bool emit_load_source_refs_base(rv32_jit_writer_t *w)
+{
+  /*
+   * r9 holds the source-chunk reference table for direct stores.  It is loaded
+   * lazily because blocks with no stores do not need it, but once a store guard
+   * has needed the table, later stores in the same straight-line block can reuse
+   * the base instead of paying another movabs.
+   */
+  return emit_movabs_r9(w, (uint64_t)(uintptr_t)jit_source_chunk_refs);
+}
+
+static bool jit_reg_ensure_source_refs_base(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs)
+{
+  if (regs->source_refs_loaded)
+  {
+    return true;
+  }
+
+  regs->source_refs_loaded = true;
+  return emit_load_source_refs_base(w);
+}
+
+static bool emit_lea_edx_eax_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+  /*
+   * lea edx, [rax + disp32] computes the low RV32 address bits in one
+   * instruction. With disp32 = -CONFIG_MBASE it replaces mov edx,eax; sub edx,
+   * CONFIG_MBASE in the direct-PMEM guard.
+   */
+  return emit_u8(w, 0x8d) && emit_u8(w, 0x90) && emit_u32(w, value);
 }
 
 static bool emit_mov_r8d_edx(rv32_jit_writer_t *w)
 {
   return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xd0);
-}
-
-static bool emit_sub_edx_imm(rv32_jit_writer_t *w, uint32_t value)
-{
-  return emit_u8(w, 0x81) && emit_u8(w, 0xea) && emit_u32(w, value);
 }
 
 static bool emit_cmp_edx_imm(rv32_jit_writer_t *w, uint32_t value)
@@ -1400,15 +1655,6 @@ static bool emit_shr_r8d_imm(rv32_jit_writer_t *w, uint8_t value)
       && emit_u8(w, value);
 }
 
-static bool emit_cmp_satp_zero(rv32_jit_writer_t *w)
-{
-  const uint32_t off = (uint32_t)offsetof(CPU_state, csr.satp);
-
-  /* cmp dword ptr [r11 + satp_off], 0 */
-  return emit_u8(w, 0x41) && emit_u8(w, 0x83) && emit_u8(w, 0xbb)
-      && emit_u32(w, off) && emit_u8(w, 0x00);
-}
-
 static bool emit_cmp_source_chunk_ref_zero(rv32_jit_writer_t *w)
 {
   /* cmp word ptr [r9 + r8 * 2], 0 */
@@ -1425,11 +1671,21 @@ static bool emit_direct_pmem_guard(rv32_jit_writer_t *w, uint32_t len,
    * Keep the guard stricter than paddr_read(): it only accepts a complete
    * in-PMEM byte range. Any boundary, MMIO, paging, or wraparound case falls
    * back to the existing helper path.
+   *
+   * Blocks are tagged by satp and `jit_block_matches()` rejects a cached block
+   * if satp changes. A block compiled in Bare mode can therefore omit the
+   * runtime satp reload on every memory access; translated-mode blocks still
+   * jump straight to the helper path.
    */
-  return emit_cmp_satp_zero(w)
-      && emit_jcc_rel32_placeholder(w, 0x85, &patch->satp_slow_disp)
-      && emit_mov_edx_eax(w)
-      && emit_sub_edx_imm(w, (uint32_t)CONFIG_MBASE)
+  if ((cpu.csr.satp & 0x80000000u) != 0)
+  {
+    if (!emit_jmp_rel32_placeholder(w, &patch->satp_slow_disp))
+    {
+      return false;
+    }
+  }
+
+  return emit_lea_edx_eax_imm(w, 0u - (uint32_t)CONFIG_MBASE)
       && emit_cmp_edx_imm(w, (uint32_t)CONFIG_MSIZE - len)
       && emit_jcc_rel32_placeholder(w, 0x87, &patch->range_slow_disp);
 }
@@ -1437,7 +1693,10 @@ static bool emit_direct_pmem_guard(rv32_jit_writer_t *w, uint32_t len,
 static void patch_direct_pmem_guard(const rv32_jit_pmem_guard_patch_t *patch,
     const uint8_t *slow_path)
 {
-  patch_rel32(patch->satp_slow_disp, slow_path);
+  if (patch->satp_slow_disp != NULL)
+  {
+    patch_rel32(patch->satp_slow_disp, slow_path);
+  }
   patch_rel32(patch->range_slow_disp, slow_path);
 }
 
@@ -1448,11 +1707,6 @@ static bool emit_direct_pmem_load_eax(rv32_jit_writer_t *w, uint32_t funct3)
    * loads below mirror the RV32 load family exactly: byte/halfword signedness is
    * encoded in the x86 instruction, while LW naturally writes a 32-bit result.
    */
-  if (!emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)))
-  {
-    return false;
-  }
-
   switch (funct3)
   {
     case 0x0:
@@ -1487,11 +1741,6 @@ static bool emit_direct_pmem_store_from_ecx(rv32_jit_writer_t *w, uint32_t len)
    * does. The caller has already proved Bare-mode PMEM and checked source-chunk
    * refs before taking this continuation path.
    */
-  if (!emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)))
-  {
-    return false;
-  }
-
   switch (len)
   {
     case 1:
@@ -1511,8 +1760,9 @@ static bool emit_direct_pmem_store_from_ecx(rv32_jit_writer_t *w, uint32_t len)
   }
 }
 
-static bool emit_store_source_chunk_guard(rv32_jit_writer_t *w, uint32_t len,
-    uint8_t **cross_chunk_disp, uint8_t **source_chunk_disp)
+static bool emit_store_source_chunk_guard(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t len, uint8_t **cross_chunk_disp,
+    uint8_t **source_chunk_disp)
 {
   Assert(len >= 1 && len <= 4, "jit: unsupported direct store width %u", len);
 
@@ -1528,7 +1778,7 @@ static bool emit_store_source_chunk_guard(rv32_jit_writer_t *w, uint32_t len,
       && emit_jcc_rel32_placeholder(w, 0x87, cross_chunk_disp)
       && emit_mov_r8d_edx(w)
       && emit_shr_r8d_imm(w, RV32_JIT_SOURCE_CHUNK_SHIFT)
-      && emit_movabs_r9(w, (uint64_t)(uintptr_t)jit_source_chunk_refs)
+      && jit_reg_ensure_source_refs_base(w, regs)
       && emit_cmp_source_chunk_ref_zero(w)
       && emit_jcc_rel32_placeholder(w, 0x85, source_chunk_disp);
 }
@@ -1540,7 +1790,8 @@ static bool emit_prologue(rv32_jit_writer_t *w)
    * pushes align the stack before helper calls and provide the guest register
    * cache slots.
    */
-  return emit_push_saved_hregs(w) && emit_load_cpu_base(w);
+  return emit_push_saved_hregs(w) && emit_load_cpu_base(w)
+      && emit_load_pmem_base(w);
 }
 
 static bool emit_epilogue_return_count(rv32_jit_writer_t *w, uint32_t count)
@@ -1573,7 +1824,7 @@ static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
   rv32_jit_pmem_guard_patch_t guard = {0};
   uint8_t *done_disp = NULL;
   if (!jit_reg_read_eax(w, regs, rs1) ||
-      !emit_u8(w, 0x05) || !emit_u32(w, (uint32_t)imm_i(instr)) ||
+      !emit_add_eax_imm(w, (uint32_t)imm_i(instr)) ||
       !emit_direct_pmem_guard(w, len, &guard) ||
       !emit_direct_pmem_load_eax(w, funct3) ||
       !emit_jmp_rel32_placeholder(w, &done_disp))
@@ -1592,7 +1843,9 @@ static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
       !emit_set_pc_imm(w, cur_pc) ||
       !emit_u8(w, 0x89) || !emit_u8(w, 0xc7) ||
       !emit_call_abs(w, helper) ||
-      !emit_load_cpu_base(w))
+      !emit_load_cpu_base(w) ||
+      !emit_load_pmem_base(w) ||
+      (regs->source_refs_loaded && !emit_load_source_refs_base(w)))
   {
     return false;
   }
@@ -1629,10 +1882,10 @@ static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
    * before the dispatcher performs the next block lookup.
    */
   if (!jit_reg_read_eax(w, regs, rs1) ||
-      !emit_u8(w, 0x05) || !emit_u32(w, (uint32_t)imm_s(instr)) ||
+      !emit_add_eax_imm(w, (uint32_t)imm_s(instr)) ||
       !jit_reg_read_ecx(w, regs, rs2) ||
       !emit_direct_pmem_guard(w, len, &guard) ||
-      !emit_store_source_chunk_guard(w, len, &cross_chunk_disp,
+      !emit_store_source_chunk_guard(w, regs, len, &cross_chunk_disp,
           &source_chunk_disp) ||
       !emit_direct_pmem_store_from_ecx(w, len) ||
       !emit_jmp_rel32_placeholder(w, &done_disp))
@@ -1764,7 +2017,7 @@ static bool emit_control_flow_instr(rv32_jit_writer_t *w,
      * register. Storing cpu.pc before rd preserves rd == rs1 behaviour.
      */
     return jit_reg_read_eax(w, regs, rs1)
-        && emit_u8(w, 0x05) && emit_u32(w, (uint32_t)imm_i(instr))
+        && emit_add_eax_imm(w, (uint32_t)imm_i(instr))
         && emit_u8(w, 0x25) && emit_u32(w, 0xfffffffeu)
         && emit_store_pc_eax(w)
         && emit_mov_eax_imm(w, pc + 4u)
@@ -1921,7 +2174,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
 
     switch (funct3)
     {
-      case 0x0: return emit_u8(w, 0x05) && emit_u32(w, imm)
+      case 0x0: return emit_add_eax_imm(w, imm)
           && jit_reg_write_eax(w, regs, rd);
       case 0x1:
         if (bits(instr, 31, 25) != 0x00)
@@ -2190,17 +2443,19 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
           && jit_reg_write_eax(w, regs, rd);
       case 0x008: return emit_u8(w, 0x0f) && emit_u8(w, 0xaf) && emit_u8(w, 0xc1)
           && jit_reg_write_eax(w, regs, rd);
-      case 0x009:
+      case 0x009: return emit_rv32_mul_high(w, regs, rd, true);
+      case 0x00b: return emit_rv32_mul_high(w, regs, rd, false);
+      case 0x00c: return emit_rv32_div(w, regs, rd);
+      case 0x00d: return emit_rv32_divu(w, regs, rd);
+      case 0x00e: return emit_rv32_rem(w, regs, rd);
+      case 0x00f: return emit_rv32_remu(w, regs, rd);
       case 0x00a:
-      case 0x00b:
-      case 0x00c:
-      case 0x00d:
-      case 0x00e:
-      case 0x00f:
         return jit_reg_flush_all_dirty(w, regs)
             && emit_u8(w, 0xbf) && emit_u32(w, instr)
             && emit_call_abs(w, (uintptr_t)jit_op_complex)
             && emit_load_cpu_base(w)
+            && emit_load_pmem_base(w)
+            && (!regs->source_refs_loaded || emit_load_source_refs_base(w))
             && (jit_reg_invalidate_all(regs), true)
             && jit_reg_write_eax(w, regs, rd);
       default: return false;
