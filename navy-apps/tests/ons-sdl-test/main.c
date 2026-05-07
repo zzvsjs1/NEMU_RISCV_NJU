@@ -117,6 +117,33 @@ static void check_mouse_events(void)
   assert(SDL_PeepEvents(&got, 1, SDL_GETEVENT, SDL_EVENTMASK(SDL_MOUSEBUTTONDOWN)) == 1);
 }
 
+static void check_mouse_motion_coalescing(void)
+{
+  SDL_Event pushed = {};
+  SDL_Event got = {};
+
+  /*
+   * Raw NDL motion is coalesced inside miniSDL's private pump path, but
+   * SDL_PushEvent() is a public API.  ONScripter and tests that inject events
+   * directly must still get exactly the events they pushed.
+   */
+  pushed.type = SDL_MOUSEMOTION;
+  pushed.motion.x = 101;
+  pushed.motion.y = 102;
+  pushed.motion.state = 0;
+  assert(SDL_PushEvent(&pushed) == 0);
+
+  pushed.motion.x = 201;
+  pushed.motion.y = 202;
+  assert(SDL_PushEvent(&pushed) == 0);
+
+  assert(SDL_PeepEvents(&got, 1, SDL_GETEVENT, SDL_EVENTMASK(SDL_MOUSEMOTION)) == 1);
+  assert(got.motion.x == 101 && got.motion.y == 102);
+  assert(SDL_PeepEvents(&got, 1, SDL_GETEVENT, SDL_EVENTMASK(SDL_MOUSEMOTION)) == 1);
+  assert(got.motion.x == 201 && got.motion.y == 202);
+  assert(SDL_PeepEvents(&got, 1, SDL_GETEVENT, SDL_EVENTMASK(SDL_MOUSEMOTION)) == 0);
+}
+
 static void check_timer(void)
 {
   SDL_TimerID id = SDL_AddTimer(1, timer_once, &timer_hits);
@@ -182,6 +209,8 @@ int main(void)
   check_events();
   TRACE("mouse");
   check_mouse_events();
+  TRACE("mouse-coalesce");
+  check_mouse_motion_coalescing();
   TRACE("timer");
   check_timer();
   TRACE("image");

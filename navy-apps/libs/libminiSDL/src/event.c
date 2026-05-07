@@ -98,10 +98,39 @@ static void enqueueEventRaw(const SDL_Event *ev)
   queueTail = next;
 }
 
+static int previousQueueIndex(int index)
+{
+  return (index + EVENT_QUEUE_SIZE - 1) % EVENT_QUEUE_SIZE;
+}
+
+static int replacePendingMouseMotion(const SDL_Event *ev)
+{
+  if (queueEmpty()) return 0;
+
+  /*
+   * Coalesce only motion events that are still adjacent at the queue tail.
+   * Replacing an older motion across a button, wheel, or key event would move
+   * the cursor event to the wrong side of that input, which can change click
+   * semantics in ONScripter.
+   */
+  const int last = previousQueueIndex(queueTail);
+  if (eventQueue[last].type != SDL_MOUSEMOTION) return 0;
+
+  eventQueue[last] = *ev;
+  return 1;
+}
+
 /* Enqueue, dropping the oldest event if the fixed queue is full. */
 static void enqueueEvent(const SDL_Event *ev)
 {
   updateMouseStateFromEvent(ev);
+  enqueueEventRaw(ev);
+}
+
+static void enqueueMouseMotionEvent(const SDL_Event *ev)
+{
+  updateMouseStateFromEvent(ev);
+  if (replacePendingMouseMotion(ev)) return;
   enqueueEventRaw(ev);
 }
 
@@ -169,7 +198,7 @@ static void pumpInputEvents(void)
         ev.motion.state = translateMouseButtons(buttons);
         ev.motion.xrel = x - mouseX;
         ev.motion.yrel = y - mouseY;
-        enqueueEvent(&ev);
+        enqueueMouseMotionEvent(&ev);
         continue;
       }
 

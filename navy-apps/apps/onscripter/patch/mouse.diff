@@ -1,20 +1,117 @@
 diff --git a/include/ONScripter.h b/include/ONScripter.h
 --- a/include/ONScripter.h
 +++ b/include/ONScripter.h
-@@ -528,9 +528,7 @@ private:
+@@ -338,7 +338,9 @@ private:
+     // variables relevant to button
+     ButtonState current_button_state, last_mouse_state;
+ #ifdef __NAVY__
+     SDL_Surface *mouse_surface, *mouse_save_surface;
++    SDL_Rect last_mouse_cursor_rect;
++    bool last_mouse_cursor_visible;
+ #endif
+
+     ButtonLink root_button_link, *current_button_link, exbtn_d_button_link;
+@@ -528,9 +530,11 @@ private:
      bool waitEvent(int count);
      bool trapHandler();
      bool mouseMoveEvent(uint16_t x, uint16_t y);
 -#ifndef __NAVY__
      bool mousePressEvent( SDL_MouseButtonEvent *event );
--#endif
++#ifdef __NAVY__
++    void hideNavyMouseCursor();
++    void showNavyMouseCursor();
+ #endif
      void variableEditMode( SDL_KeyboardEvent *event );
      void shiftCursorOnButton( int diff );
      bool keyDownEvent( SDL_KeyboardEvent *event );
 diff --git a/src/system/ONScripter.cpp b/src/system/ONScripter.cpp
 --- a/src/system/ONScripter.cpp
 +++ b/src/system/ONScripter.cpp
-@@ -880,11 +880,9 @@ void ONScripter::refreshMouseOverButton()
+@@ -164,6 +164,8 @@ ONScripter::ONScripter()
+      */
+     current_button_state.x = -1;
+     current_button_state.y = -1;
++    last_mouse_cursor_rect = (SDL_Rect) { .x = 0, .y = 0, .w = 0, .h = 0 };
++    last_mouse_cursor_visible = false;
+ #endif
+     vsync = true;
+     texture_format = SDL_PIXELFORMAT_ARGB8888;
+@@ -584,22 +586,61 @@ void ONScripter::flushDirect( SDL_Rect &rect, int refresh_mode )
+     SDL_UpdateRect( screen_surface, dst_rect.x, dst_rect.y, dst_rect.w, dst_rect.h );
+
+ #ifdef __NAVY__
+-    const int mouse_x = current_button_state.x;
+-    const int mouse_y = current_button_state.y;
+-    if (mouse_x >= 0 && mouse_y >= 0 &&
+-        mouse_x + 8 <= screen_surface->w &&
+-        mouse_y + 8 <= screen_surface->h) {
+-        SDL_Rect mouse_rect = { .x = 0, .y = 0, .w = 8, .h = 8 };
+-        mouse_rect.x = mouse_x;
+-        mouse_rect.y = mouse_y;
+-        SDL_BlitSurface(screen_surface, &mouse_rect, mouse_save_surface, NULL);
+-        SDL_BlitSurface(mouse_surface, NULL, screen_surface, &mouse_rect);
+-        SDL_UpdateRect(screen_surface, mouse_rect.x, mouse_rect.y, mouse_rect.w, mouse_rect.h);
+-        SDL_BlitSurface(mouse_save_surface, NULL, screen_surface, &mouse_rect);
+-    }
++    showNavyMouseCursor();
+ #endif
+ }
+
++#ifdef __NAVY__
++void ONScripter::hideNavyMouseCursor()
++{
++    if (!last_mouse_cursor_visible) return;
++
++    /*
++     * The fake cursor is only an overlay.  showNavyMouseCursor() restores
++     * screen_surface immediately after pushing the cursor pixels to the
++     * framebuffer, so this update copies the clean game pixels back over the
++     * previous cursor position.  Without this second framebuffer update, every
++     * old 8x8 cursor remains visible until a later game redraw happens to
++     * touch the same rectangle.
++     */
++    SDL_UpdateRect(screen_surface, last_mouse_cursor_rect.x,
++                   last_mouse_cursor_rect.y, last_mouse_cursor_rect.w,
++                   last_mouse_cursor_rect.h);
++    last_mouse_cursor_visible = false;
++}
++
++void ONScripter::showNavyMouseCursor()
++{
++    hideNavyMouseCursor();
++
++    const int mouse_x = current_button_state.x;
++    const int mouse_y = current_button_state.y;
++    if (mouse_x < 0 || mouse_y < 0 ||
++        mouse_x + 8 > screen_surface->w ||
++        mouse_y + 8 > screen_surface->h) {
++        return;
++    }
++
++    SDL_Rect mouse_rect = { .x = 0, .y = 0, .w = 8, .h = 8 };
++    mouse_rect.x = mouse_x;
++    mouse_rect.y = mouse_y;
++
++    /*
++     * Keep screen_surface as the game-only backing store.  We temporarily
++     * blit the cursor, update the physical framebuffer, then restore the saved
++     * pixels in memory.  The next hideNavyMouseCursor() can then repaint the
++     * old framebuffer rectangle from clean memory.
++     */
++    SDL_BlitSurface(screen_surface, &mouse_rect, mouse_save_surface, NULL);
++    SDL_BlitSurface(mouse_surface, NULL, screen_surface, &mouse_rect);
++    SDL_UpdateRect(screen_surface, mouse_rect.x, mouse_rect.y, mouse_rect.w, mouse_rect.h);
++    SDL_BlitSurface(mouse_save_surface, NULL, screen_surface, &mouse_rect);
++
++    last_mouse_cursor_rect = mouse_rect;
++    last_mouse_cursor_visible = true;
++}
++#endif
++
+
+ void ONScripter::mouseOverCheck( int x, int y )
+ {
+@@ -880,11 +923,9 @@ void ONScripter::refreshMouseOverButton()
      current_over_button = -1;
      shift_over_button = -1;
      current_button_link = root_button_link.next;
@@ -30,7 +127,28 @@ diff --git a/src/system/ONScripter.cpp b/src/system/ONScripter.cpp
 diff --git a/src/system/ONScripter_event.cpp b/src/system/ONScripter_event.cpp
 --- a/src/system/ONScripter_event.cpp
 +++ b/src/system/ONScripter_event.cpp
-@@ -295,7 +295,6 @@ bool ONScripter::mouseMoveEvent(uint16_t x, uint16_t y)
+@@ -279,9 +279,20 @@ bool ONScripter::trapHandler()
+  * **************************************** */
+ bool ONScripter::mouseMoveEvent(uint16_t x, uint16_t y)
+ {
++#ifdef __NAVY__
++    const int old_mouse_x = current_button_state.x;
++    const int old_mouse_y = current_button_state.y;
++#endif
++
+     current_button_state.x = x * screen_width / screen_device_width;
+     current_button_state.y = y * screen_height / screen_device_height;
+
++#ifdef __NAVY__
++    const bool moved = old_mouse_x != current_button_state.x ||
++                       old_mouse_y != current_button_state.y;
++    if (moved) showNavyMouseCursor();
++#endif
++
+     if ( event_mode & WAIT_BUTTON_MODE ){
+         mouseOverCheck( current_button_state.x, current_button_state.y );
+         if (getmouseover_flag &&
+@@ -295,7 +306,6 @@ bool ONScripter::mouseMoveEvent(uint16_t x, uint16_t y)
      return false;
  }
 
@@ -38,15 +156,17 @@ diff --git a/src/system/ONScripter_event.cpp b/src/system/ONScripter_event.cpp
  bool ONScripter::mousePressEvent( SDL_MouseButtonEvent *event )
  {
      if ( variable_edit_mode ) return false;
-@@ -395,7 +394,6 @@ bool ONScripter::mousePressEvent( SDL_MouseButtonEvent *event )
+@@ -395,9 +405,6 @@ bool ONScripter::mousePressEvent( SDL_MouseButtonEvent *event )
 
      return false;
  }
 -#endif
-
-
+-
+-
  void ONScripter::variableEditMode( SDL_KeyboardEvent *event )
-@@ -1005,7 +1003,6 @@ void ONScripter::runEventLoop()
+ {
+     int  i;
+@@ -1005,7 +1012,6 @@ void ONScripter::runEventLoop()
  #endif
 
          switch (event.type) {
@@ -54,7 +174,7 @@ diff --git a/src/system/ONScripter_event.cpp b/src/system/ONScripter_event.cpp
            case SDL_MOUSEMOTION:
              if (mouseMoveEvent(event.motion.x, event.motion.y )) return;
              if (btndown_flag){
-@@ -1017,6 +1014,8 @@ void ONScripter::runEventLoop()
+@@ -1017,6 +1023,8 @@ void ONScripter::runEventLoop()
                      break;
 
                  tmp_event.button.type = SDL_MOUSEBUTTONDOWN;
@@ -63,7 +183,7 @@ diff --git a/src/system/ONScripter_event.cpp b/src/system/ONScripter_event.cpp
                  ret = mousePressEvent( &tmp_event.button );
                  if (ret) return;
              }
-@@ -1033,6 +1032,7 @@ void ONScripter::runEventLoop()
+@@ -1033,6 +1041,7 @@ void ONScripter::runEventLoop()
              if (ret) return;
              break;
 
