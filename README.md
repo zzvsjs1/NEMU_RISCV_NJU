@@ -280,6 +280,37 @@ performance-core / efficiency-core placement can change the result.
 | `master`, JIT enabled | MicroBench | `5069 Marks`, `494,788,583 instr/s` |
 | `master`, JIT enabled | JITBench | `183,037,705 instr/s` |
 
+### Current JIT Performance Improvements
+
+The current RISC-V32 JIT is faster mainly because the translated block now keeps
+hot guest registers in host registers for common RV32I/RV32M instructions. In
+the older JIT path, many instructions loaded guest registers from `cpu.gpr[]`,
+performed one operation, and stored the result back immediately. That is simple
+and correct, but it spends a lot of time moving values between memory and host
+registers. The register cache avoids most of those repeated loads and stores
+inside one translated block, then flushes only the dirty guest registers before
+leaving the block or calling a helper that can observe full CPU state.
+
+Loads, stores, and branches also use the register cache now. This matters for
+MicroBench-style code because tight loops usually repeat the same induction
+variables, addresses, and compare operands. Keeping those values live across
+several emitted x86-64 instructions lets the host CPU execute the loop body with
+less memory traffic and fewer helper calls.
+
+RV32M multiply/divide/remainder instructions are emitted directly where the
+RISC-V edge cases can be represented cheaply in native code. The JIT still
+preserves the specified behaviour for divide-by-zero and signed overflow, but
+ordinary `mul`, `mulh`, `div`, `divu`, `rem`, and `remu` no longer need to exit
+to the generic complex-operation helper in the common case.
+
+The memory fast path is deliberately narrow. Direct PMEM access is used only
+when the address is ordinary guest RAM and the access cannot hit MMIO, device
+state, traps, or unusual translation cases. If a write can modify translated
+code, the invalidation logic discards the affected JIT blocks. This is why the
+same binary can still run bare-metal AM tests, Nanos-lite, Navy applications,
+and disk-loaded code while benefiting from the faster path for normal RAM-heavy
+loops.
+
 Use these commands to collect comparable numbers:
 
 ```bash
