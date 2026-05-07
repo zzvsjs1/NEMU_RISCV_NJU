@@ -726,7 +726,8 @@ typedef struct
 
 typedef enum
 {
-  RV32_JIT_HREG_R12 = 0,
+  RV32_JIT_HREG_RBX = 0,
+  RV32_JIT_HREG_R12,
   RV32_JIT_HREG_R13,
   RV32_JIT_HREG_R14,
   RV32_JIT_HREG_R15,
@@ -749,34 +750,44 @@ typedef struct
   uint32_t next_age;
 } rv32_jit_reg_cache_t;
 
-static uint8_t jit_hreg_modrm_mem(rv32_jit_hreg_t hreg)
+static uint8_t jit_hreg_x86_reg(rv32_jit_hreg_t hreg)
 {
-  return (uint8_t)(0xa3u + (uint8_t)hreg * 8u);
+  switch (hreg)
+  {
+    case RV32_JIT_HREG_RBX: return 3;
+    case RV32_JIT_HREG_R12: return 12;
+    case RV32_JIT_HREG_R13: return 13;
+    case RV32_JIT_HREG_R14: return 14;
+    case RV32_JIT_HREG_R15: return 15;
+    default: Assert(0, "jit: invalid host register slot %d", hreg);
+  }
+  return 3;
 }
 
-static uint8_t jit_hreg_modrm_to_eax(rv32_jit_hreg_t hreg)
+static uint8_t jit_modrm(uint8_t mod, uint8_t reg, uint8_t rm)
 {
-  return (uint8_t)(0xe0u + (uint8_t)hreg * 8u);
+  return (uint8_t)((mod << 6) | ((reg & 7u) << 3) | (rm & 7u));
 }
 
-static uint8_t jit_hreg_modrm_to_ecx(rv32_jit_hreg_t hreg)
+static bool emit_rex32_if_needed(rv32_jit_writer_t *w, uint8_t reg, uint8_t rm)
 {
-  return (uint8_t)(0xe1u + (uint8_t)hreg * 8u);
-}
+  uint8_t rex = 0x40;
+  if ((reg & 8u) != 0)
+  {
+    rex |= 0x04;
+  }
+  if ((rm & 8u) != 0)
+  {
+    rex |= 0x01;
+  }
 
-static uint8_t jit_hreg_modrm_from_eax(rv32_jit_hreg_t hreg)
-{
-  return (uint8_t)(0xc4u + (uint8_t)hreg);
-}
-
-static uint8_t jit_hreg_modrm_from_ecx(rv32_jit_hreg_t hreg)
-{
-  return (uint8_t)(0xccu + (uint8_t)hreg);
+  return rex == 0x40 || emit_u8(w, rex);
 }
 
 static bool emit_push_saved_hregs(rv32_jit_writer_t *w)
 {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x54)
+  return emit_u8(w, 0x53)
+      && emit_u8(w, 0x41) && emit_u8(w, 0x54)
       && emit_u8(w, 0x41) && emit_u8(w, 0x55)
       && emit_u8(w, 0x41) && emit_u8(w, 0x56)
       && emit_u8(w, 0x41) && emit_u8(w, 0x57);
@@ -787,7 +798,8 @@ static bool emit_pop_saved_hregs(rv32_jit_writer_t *w)
   return emit_u8(w, 0x41) && emit_u8(w, 0x5f)
       && emit_u8(w, 0x41) && emit_u8(w, 0x5e)
       && emit_u8(w, 0x41) && emit_u8(w, 0x5d)
-      && emit_u8(w, 0x41) && emit_u8(w, 0x5c);
+      && emit_u8(w, 0x41) && emit_u8(w, 0x5c)
+      && emit_u8(w, 0x5b);
 }
 
 static bool emit_load_gpr_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
@@ -795,10 +807,14 @@ static bool emit_load_gpr_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
 {
   const uint32_t off = (uint32_t)offsetof(CPU_state, gpr)
       + reg * sizeof(cpu.gpr[0]);
+  const uint8_t dst = jit_hreg_x86_reg(hreg);
+  const uint8_t base = 11;
 
-  /* mov r12d-r15d, dword ptr [r11 + off] */
-  return emit_u8(w, 0x45) && emit_u8(w, 0x8b)
-      && emit_u8(w, jit_hreg_modrm_mem(hreg)) && emit_u32(w, off);
+  /* mov hreg32, dword ptr [r11 + off] */
+  return emit_rex32_if_needed(w, dst, base)
+      && emit_u8(w, 0x8b)
+      && emit_u8(w, jit_modrm(2, dst, base))
+      && emit_u32(w, off);
 }
 
 static bool emit_store_gpr_hreg(rv32_jit_writer_t *w, uint32_t reg,
@@ -806,39 +822,84 @@ static bool emit_store_gpr_hreg(rv32_jit_writer_t *w, uint32_t reg,
 {
   const uint32_t off = (uint32_t)offsetof(CPU_state, gpr)
       + reg * sizeof(cpu.gpr[0]);
+  const uint8_t src = jit_hreg_x86_reg(hreg);
+  const uint8_t base = 11;
 
-  /* mov dword ptr [r11 + off], r12d-r15d */
-  return emit_u8(w, 0x45) && emit_u8(w, 0x89)
-      && emit_u8(w, jit_hreg_modrm_mem(hreg)) && emit_u32(w, off);
+  /* mov dword ptr [r11 + off], hreg32 */
+  return emit_rex32_if_needed(w, src, base)
+      && emit_u8(w, 0x89)
+      && emit_u8(w, jit_modrm(2, src, base))
+      && emit_u32(w, off);
 }
 
 static bool emit_mov_eax_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg)
 {
-  /* mov eax, r12d-r15d */
-  return emit_u8(w, 0x44) && emit_u8(w, 0x89)
-      && emit_u8(w, jit_hreg_modrm_to_eax(hreg));
+  const uint8_t src = jit_hreg_x86_reg(hreg);
+
+  /* mov eax, hreg32 */
+  return emit_rex32_if_needed(w, src, 0)
+      && emit_u8(w, 0x89)
+      && emit_u8(w, jit_modrm(3, src, 0));
 }
 
 static bool emit_mov_ecx_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg)
 {
-  /* mov ecx, r12d-r15d */
-  return emit_u8(w, 0x44) && emit_u8(w, 0x89)
-      && emit_u8(w, jit_hreg_modrm_to_ecx(hreg));
+  const uint8_t src = jit_hreg_x86_reg(hreg);
+
+  /* mov ecx, hreg32 */
+  return emit_rex32_if_needed(w, src, 1)
+      && emit_u8(w, 0x89)
+      && emit_u8(w, jit_modrm(3, src, 1));
 }
 
 static bool emit_mov_hreg_eax(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg)
 {
-  /* mov r12d-r15d, eax */
-  return emit_u8(w, 0x41) && emit_u8(w, 0x89)
-      && emit_u8(w, jit_hreg_modrm_from_eax(hreg));
+  const uint8_t dst = jit_hreg_x86_reg(hreg);
+
+  /* mov hreg32, eax */
+  return emit_rex32_if_needed(w, 0, dst)
+      && emit_u8(w, 0x89)
+      && emit_u8(w, jit_modrm(3, 0, dst));
+}
+
+static bool emit_mov_hreg_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t dst,
+    rv32_jit_hreg_t src)
+{
+  const uint8_t dst_reg = jit_hreg_x86_reg(dst);
+  const uint8_t src_reg = jit_hreg_x86_reg(src);
+
+  if (dst == src)
+  {
+    return true;
+  }
+
+  /* mov dst32, src32 */
+  return emit_rex32_if_needed(w, src_reg, dst_reg)
+      && emit_u8(w, 0x89)
+      && emit_u8(w, jit_modrm(3, src_reg, dst_reg));
+}
+
+static bool emit_mov_hreg_imm(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
+    uint32_t value)
+{
+  const uint8_t dst = jit_hreg_x86_reg(hreg);
+
+  /* mov hreg32, imm32 */
+  return emit_rex32_if_needed(w, 0, dst)
+      && emit_u8(w, 0xc7)
+      && emit_u8(w, jit_modrm(3, 0, dst))
+      && emit_u32(w, value);
 }
 
 static bool __attribute__((unused)) emit_mov_hreg_ecx(rv32_jit_writer_t *w,
     rv32_jit_hreg_t hreg)
 {
-  /* mov r12d-r15d, ecx */
-  return emit_u8(w, 0x41) && emit_u8(w, 0x89)
-      && emit_u8(w, jit_hreg_modrm_from_ecx(hreg));
+  const uint8_t dst = jit_hreg_x86_reg(hreg);
+
+  /* mov hreg32, ecx */
+  return emit_rex32_if_needed(w, 1, dst)
+      && emit_u8(w, 0x89)
+      && emit_u8(w, jit_modrm(3, 1, dst));
 }
 
 static void jit_reg_cache_init(rv32_jit_reg_cache_t *regs)
@@ -1063,6 +1124,232 @@ static bool jit_reg_write_eax(rv32_jit_writer_t *w,
   return true;
 }
 
+static bool jit_reg_write_imm(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t reg, uint32_t value)
+{
+  if (reg == 0)
+  {
+    return true;
+  }
+
+  rv32_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+  if (slot == NULL)
+  {
+    return false;
+  }
+
+  if (!emit_mov_hreg_imm(w, slot->hreg, value))
+  {
+    return false;
+  }
+
+  slot->loaded = true;
+  slot->dirty = true;
+  slot->age = regs->next_age++;
+  return true;
+}
+
+static rv32_jit_reg_slot_t *jit_reg_loaded_slot(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t reg)
+{
+  rv32_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+  if (slot == NULL)
+  {
+    return NULL;
+  }
+
+  if (!slot->loaded)
+  {
+    if (!emit_load_gpr_hreg(w, slot->hreg, reg))
+    {
+      return NULL;
+    }
+    slot->loaded = true;
+  }
+
+  slot->age = regs->next_age++;
+  return slot;
+}
+
+static void jit_reg_mark_hreg_dirty(rv32_jit_reg_cache_t *regs,
+    rv32_jit_reg_slot_t *slot)
+{
+  slot->loaded = true;
+  slot->dirty = true;
+  slot->age = regs->next_age++;
+}
+
+static bool emit_hreg_binop_hreg(rv32_jit_writer_t *w, uint8_t opcode,
+    rv32_jit_hreg_t dst, rv32_jit_hreg_t src)
+{
+  const uint8_t dst_reg = jit_hreg_x86_reg(dst);
+  const uint8_t src_reg = jit_hreg_x86_reg(src);
+
+  /* opcode dst, src */
+  return emit_rex32_if_needed(w, src_reg, dst_reg)
+      && emit_u8(w, opcode)
+      && emit_u8(w, jit_modrm(3, src_reg, dst_reg));
+}
+
+static bool emit_hreg_alu_imm(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
+    uint8_t subop, uint32_t imm)
+{
+  const uint8_t dst = jit_hreg_x86_reg(hreg);
+  const int32_t simm = (int32_t)imm;
+  if (simm >= INT8_MIN && simm <= INT8_MAX)
+  {
+    /* 83 /subop ib sign-extends the immediate, matching these RV32 values. */
+    return emit_rex32_if_needed(w, subop, dst)
+        && emit_u8(w, 0x83)
+        && emit_u8(w, jit_modrm(3, subop, dst))
+        && emit_u8(w, (uint8_t)simm);
+  }
+
+  /* 81 /subop id against the cached host register. */
+  return emit_rex32_if_needed(w, subop, dst)
+      && emit_u8(w, 0x81)
+      && emit_u8(w, jit_modrm(3, subop, dst))
+      && emit_u32(w, imm);
+}
+
+static bool emit_hreg_shift_imm(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
+    uint8_t subop, uint8_t amount)
+{
+  const uint8_t dst = jit_hreg_x86_reg(hreg);
+  return emit_rex32_if_needed(w, subop, dst)
+      && emit_u8(w, 0xc1)
+      && emit_u8(w, jit_modrm(3, subop, dst))
+      && emit_u8(w, amount);
+}
+
+static bool emit_hreg_shift_cl(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
+    uint8_t subop)
+{
+  const uint8_t dst = jit_hreg_x86_reg(hreg);
+  return emit_rex32_if_needed(w, subop, dst)
+      && emit_u8(w, 0xd3)
+      && emit_u8(w, jit_modrm(3, subop, dst));
+}
+
+static bool jit_reg_apply_imm(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t reg, uint8_t subop, uint32_t imm)
+{
+  rv32_jit_reg_slot_t *slot = jit_reg_loaded_slot(w, regs, reg);
+  if (slot == NULL)
+  {
+    return false;
+  }
+
+  if (!emit_hreg_alu_imm(w, slot->hreg, subop, imm))
+  {
+    return false;
+  }
+
+  jit_reg_mark_hreg_dirty(regs, slot);
+  return true;
+}
+
+static bool jit_reg_apply_shift_imm(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t reg, uint8_t subop, uint8_t amount)
+{
+  rv32_jit_reg_slot_t *slot = jit_reg_loaded_slot(w, regs, reg);
+  if (slot == NULL)
+  {
+    return false;
+  }
+
+  if (!emit_hreg_shift_imm(w, slot->hreg, subop, amount))
+  {
+    return false;
+  }
+
+  jit_reg_mark_hreg_dirty(regs, slot);
+  return true;
+}
+
+static bool jit_reg_apply_reg(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t dst_reg, uint32_t src_reg,
+    uint8_t opcode)
+{
+  rv32_jit_reg_slot_t *dst = jit_reg_loaded_slot(w, regs, dst_reg);
+  if (dst == NULL)
+  {
+    return false;
+  }
+
+  rv32_jit_reg_slot_t *src = jit_reg_loaded_slot(w, regs, src_reg);
+  if (src == NULL)
+  {
+    return false;
+  }
+
+  if (!emit_hreg_binop_hreg(w, opcode, dst->hreg, src->hreg))
+  {
+    return false;
+  }
+
+  jit_reg_mark_hreg_dirty(regs, dst);
+  return true;
+}
+
+static bool jit_reg_copy(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
+    uint32_t dst_reg, uint32_t src_reg)
+{
+  if (dst_reg == 0)
+  {
+    return true;
+  }
+
+  if (src_reg == 0)
+  {
+    return jit_reg_write_imm(w, regs, dst_reg, 0);
+  }
+
+  rv32_jit_reg_slot_t *src = jit_reg_loaded_slot(w, regs, src_reg);
+  if (src == NULL)
+  {
+    return false;
+  }
+
+  if (dst_reg == src_reg)
+  {
+    return true;
+  }
+
+  rv32_jit_reg_slot_t *dst = jit_reg_alloc(w, regs, dst_reg);
+  if (dst == NULL)
+  {
+    return false;
+  }
+
+  if (!emit_mov_hreg_hreg(w, dst->hreg, src->hreg))
+  {
+    return false;
+  }
+
+  jit_reg_mark_hreg_dirty(regs, dst);
+  return true;
+}
+
+static bool jit_reg_apply_shift_reg(rv32_jit_writer_t *w,
+    rv32_jit_reg_cache_t *regs, uint32_t dst_reg, uint32_t src_reg,
+    uint8_t subop)
+{
+  rv32_jit_reg_slot_t *dst = jit_reg_loaded_slot(w, regs, dst_reg);
+  if (dst == NULL || !jit_reg_read_ecx(w, regs, src_reg))
+  {
+    return false;
+  }
+
+  if (!emit_hreg_shift_cl(w, dst->hreg, subop))
+  {
+    return false;
+  }
+
+  jit_reg_mark_hreg_dirty(regs, dst);
+  return true;
+}
+
 static bool emit_movabs_r9(rv32_jit_writer_t *w, uint64_t value)
 {
   /* movabs r9, imm64 */
@@ -1249,21 +1536,17 @@ static bool emit_store_source_chunk_guard(rv32_jit_writer_t *w, uint32_t len,
 static bool emit_prologue(rv32_jit_writer_t *w)
 {
   /*
-   * System V enters generated code with rsp % 16 == 8. Four pushes keep that
-   * alignment at 8, then subtracting 8 aligns the stack before helper calls.
-   * r12-r15 are callee-saved and hold the block-local guest register cache.
+   * System V enters generated code with rsp % 16 == 8. Five callee-saved
+   * pushes align the stack before helper calls and provide the guest register
+   * cache slots.
    */
-  return emit_push_saved_hregs(w)
-      && emit_u8(w, 0x48) && emit_u8(w, 0x83) && emit_u8(w, 0xec)
-      && emit_u8(w, 0x08) && emit_load_cpu_base(w);
+  return emit_push_saved_hregs(w) && emit_load_cpu_base(w);
 }
 
 static bool emit_epilogue_return_count(rv32_jit_writer_t *w, uint32_t count)
 {
-  /* mov eax, count; add rsp, 8; pop r15-r12; ret */
+  /* mov eax, count; pop saved cache registers; ret */
   return emit_u8(w, 0xb8) && emit_u32(w, count)
-      && emit_u8(w, 0x48) && emit_u8(w, 0x83) && emit_u8(w, 0xc4)
-      && emit_u8(w, 0x08)
       && emit_pop_saved_hregs(w)
       && emit_u8(w, 0xc3);
 }
@@ -1411,7 +1694,7 @@ static bool jit_instr_is_control_flow(uint32_t instr)
 }
 
 static bool emit_branch_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
-    uint32_t instr, vaddr_t pc)
+    uint32_t instr, vaddr_t pc, uint32_t exit_count)
 {
   const uint32_t funct3 = bits(instr, 14, 12);
   const uint32_t rs1 = bits(instr, 19, 15);
@@ -1429,27 +1712,27 @@ static bool emit_branch_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     default: return false;
   }
 
-  uint8_t *taken_disp = NULL;
-  uint8_t *end_disp = NULL;
-  const vaddr_t fallthrough = pc + 4u;
+  uint8_t *fallthrough_disp = NULL;
   const vaddr_t target = pc + imm_b(instr);
 
+  /*
+   * Conditional branches are the first control-flow case that can keep useful
+   * cached registers alive. The untaken path stays in this native block, while
+   * the taken path materialises the same register state into cpu.gpr[] and
+   * returns to the dispatcher at the branch target.
+   */
   if (!jit_reg_read_eax(w, regs, rs1) || !jit_reg_read_ecx(w, regs, rs2) ||
-      !emit_cmp_eax_ecx(w) || !emit_jcc_rel32_placeholder(w, jcc, &taken_disp) ||
+      !emit_cmp_eax_ecx(w) ||
+      !emit_jcc_rel32_placeholder(w, (uint8_t)(jcc ^ 1u),
+          &fallthrough_disp) ||
       !jit_reg_emit_flush_all_dirty(w, regs) ||
-      !emit_set_pc_imm(w, fallthrough) ||
-      !emit_jmp_rel32_placeholder(w, &end_disp))
+      !emit_set_pc_imm(w, target) ||
+      !emit_epilogue_return_count(w, exit_count))
   {
     return false;
   }
 
-  patch_rel32(taken_disp, w->cur);
-  if (!jit_reg_emit_flush_all_dirty(w, regs) || !emit_set_pc_imm(w, target))
-  {
-    return false;
-  }
-
-  patch_rel32(end_disp, w->cur);
+  patch_rel32(fallthrough_disp, w->cur);
   return true;
 }
 
@@ -1463,7 +1746,7 @@ static bool emit_control_flow_instr(rv32_jit_writer_t *w,
 
   if (opcode == 0x63)
   {
-    return emit_branch_instr(w, regs, instr, pc);
+    return false;
   }
 
   if (opcode == 0x6f)
@@ -1505,24 +1788,137 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
   if (opcode == 0x37)
   {
     /* LUI places the U-immediate directly in rd. */
-    return emit_mov_eax_imm(w, imm_u(instr))
-        && jit_reg_write_eax(w, regs, rd);
+    return jit_reg_write_imm(w, regs, rd, imm_u(instr));
   }
 
   if (opcode == 0x17)
   {
-    return emit_mov_eax_imm(w, cur_pc + imm_u(instr))
-        && jit_reg_write_eax(w, regs, rd);
+    return jit_reg_write_imm(w, regs, rd, cur_pc + imm_u(instr));
   }
 
   if (opcode == 0x13)
   {
+    const uint32_t imm = (uint32_t)imm_i(instr);
+    if (rs1 == 0)
+    {
+      switch (funct3)
+      {
+        case 0x0: return jit_reg_write_imm(w, regs, rd, imm);
+        case 0x1:
+          if (bits(instr, 31, 25) != 0x00)
+          {
+            return false;
+          }
+          return jit_reg_write_imm(w, regs, rd, 0);
+        case 0x2:
+          return jit_reg_write_imm(w, regs, rd, (int32_t)0 < imm_i(instr));
+        case 0x3:
+          return jit_reg_write_imm(w, regs, rd, imm != 0);
+        case 0x4: return jit_reg_write_imm(w, regs, rd, imm);
+        case 0x5:
+          if (bits(instr, 31, 25) == 0x00 || bits(instr, 31, 25) == 0x20)
+          {
+            return jit_reg_write_imm(w, regs, rd, 0);
+          }
+          return false;
+        case 0x6: return jit_reg_write_imm(w, regs, rd, imm);
+        case 0x7: return jit_reg_write_imm(w, regs, rd, 0);
+        default: return false;
+      }
+    }
+
+    if (rd != 0 && rd == rs1)
+    {
+      switch (funct3)
+      {
+        case 0x0: return imm == 0 ? true :
+            jit_reg_apply_imm(w, regs, rd, 0, imm);
+        case 0x1:
+          if (bits(instr, 31, 25) != 0x00)
+          {
+            return false;
+          }
+          return jit_reg_apply_shift_imm(w, regs, rd, 4,
+              (uint8_t)bits(instr, 24, 20));
+        case 0x4: return imm == 0 ? true :
+            jit_reg_apply_imm(w, regs, rd, 6, imm);
+        case 0x5:
+          if (bits(instr, 31, 25) == 0x00)
+          {
+            return jit_reg_apply_shift_imm(w, regs, rd, 5,
+                (uint8_t)bits(instr, 24, 20));
+          }
+          if (bits(instr, 31, 25) == 0x20)
+          {
+            return jit_reg_apply_shift_imm(w, regs, rd, 7,
+                (uint8_t)bits(instr, 24, 20));
+          }
+          return false;
+        case 0x6: return imm == 0 ? true :
+            jit_reg_apply_imm(w, regs, rd, 1, imm);
+        case 0x7: return jit_reg_apply_imm(w, regs, rd, 4, imm);
+        default: break;
+      }
+    }
+
+    if (rd != 0)
+    {
+      const uint8_t shamt = (uint8_t)bits(instr, 24, 20);
+
+      /*
+       * The compiler emits many OP-IMM instructions as copies or as a simple
+       * transformation of one live value into a different destination register.
+       * Keep those inside the guest-register cache instead of bouncing through
+       * eax and then copying back to a cache slot.
+       */
+      switch (funct3)
+      {
+        case 0x0:
+          return jit_reg_copy(w, regs, rd, rs1) &&
+              (imm == 0 || jit_reg_apply_imm(w, regs, rd, 0, imm));
+        case 0x1:
+          if (bits(instr, 31, 25) != 0x00)
+          {
+            return false;
+          }
+          return jit_reg_copy(w, regs, rd, rs1) &&
+              (shamt == 0 || jit_reg_apply_shift_imm(w, regs, rd, 4, shamt));
+        case 0x4:
+          return jit_reg_copy(w, regs, rd, rs1) &&
+              (imm == 0 || jit_reg_apply_imm(w, regs, rd, 6, imm));
+        case 0x5:
+          if (bits(instr, 31, 25) == 0x00)
+          {
+            return jit_reg_copy(w, regs, rd, rs1) &&
+                (shamt == 0 ||
+                 jit_reg_apply_shift_imm(w, regs, rd, 5, shamt));
+          }
+          if (bits(instr, 31, 25) == 0x20)
+          {
+            return jit_reg_copy(w, regs, rd, rs1) &&
+                (shamt == 0 ||
+                 jit_reg_apply_shift_imm(w, regs, rd, 7, shamt));
+          }
+          return false;
+        case 0x6:
+          return jit_reg_copy(w, regs, rd, rs1) &&
+              (imm == 0 || jit_reg_apply_imm(w, regs, rd, 1, imm));
+        case 0x7:
+          if (imm == 0)
+          {
+            return jit_reg_write_imm(w, regs, rd, 0);
+          }
+          return jit_reg_copy(w, regs, rd, rs1) &&
+              (imm == UINT32_MAX || jit_reg_apply_imm(w, regs, rd, 4, imm));
+        default: break;
+      }
+    }
+
     if (!jit_reg_read_eax(w, regs, rs1))
     {
       return false;
     }
 
-    const uint32_t imm = (uint32_t)imm_i(instr);
     switch (funct3)
     {
       case 0x0: return emit_u8(w, 0x05) && emit_u32(w, imm)
@@ -1567,13 +1963,209 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
 
   if (opcode == 0x33)
   {
+    const uint32_t key = (funct7 << 3) | funct3;
+    if (rd != 0)
+    {
+      switch (key)
+      {
+        case 0x000:
+          if (rd == rs1 && rs2 != 0)
+          {
+            return jit_reg_apply_reg(w, regs, rd, rs2, 0x01);
+          }
+          if (rd == rs2 && rs1 != 0)
+          {
+            return jit_reg_apply_reg(w, regs, rd, rs1, 0x01);
+          }
+          break;
+        case 0x100:
+          if (rd == rs1 && rs2 != 0)
+          {
+            return jit_reg_apply_reg(w, regs, rd, rs2, 0x29);
+          }
+          break;
+        case 0x001:
+          if (rd == rs1)
+          {
+            return jit_reg_apply_shift_reg(w, regs, rd, rs2, 4);
+          }
+          break;
+        case 0x004:
+          if (rd == rs1 && rs2 != 0)
+          {
+            return jit_reg_apply_reg(w, regs, rd, rs2, 0x31);
+          }
+          if (rd == rs2 && rs1 != 0)
+          {
+            return jit_reg_apply_reg(w, regs, rd, rs1, 0x31);
+          }
+          break;
+        case 0x005:
+          if (rd == rs1)
+          {
+            return jit_reg_apply_shift_reg(w, regs, rd, rs2, 5);
+          }
+          break;
+        case 0x105:
+          if (rd == rs1)
+          {
+            return jit_reg_apply_shift_reg(w, regs, rd, rs2, 7);
+          }
+          break;
+        case 0x006:
+          if (rd == rs1 && rs2 != 0)
+          {
+            return jit_reg_apply_reg(w, regs, rd, rs2, 0x09);
+          }
+          if (rd == rs2 && rs1 != 0)
+          {
+            return jit_reg_apply_reg(w, regs, rd, rs1, 0x09);
+          }
+          break;
+        case 0x007:
+          if (rd == rs1 && rs2 != 0)
+          {
+            return jit_reg_apply_reg(w, regs, rd, rs2, 0x21);
+          }
+          if (rd == rs2 && rs1 != 0)
+          {
+            return jit_reg_apply_reg(w, regs, rd, rs1, 0x21);
+          }
+          break;
+        default: break;
+      }
+
+      /*
+       * If rd is a third guest register, start by copying rs1 into rd and then
+       * apply the second operand in place. This emits one cached-register move
+       * plus the ALU operation, avoiding the old sequence
+       *   cached rs1 -> eax -> ALU -> cached rd.
+       * The rd != rs2 condition is important for shifts and subtraction because
+       * overwriting rd would otherwise destroy the still-needed source value.
+       */
+      switch (key)
+      {
+        case 0x000:
+          if (rs1 == 0)
+          {
+            return jit_reg_copy(w, regs, rd, rs2);
+          }
+          if (rs2 == 0)
+          {
+            return jit_reg_copy(w, regs, rd, rs1);
+          }
+          if (rd != rs1 && rd != rs2)
+          {
+            return jit_reg_copy(w, regs, rd, rs1) &&
+                jit_reg_apply_reg(w, regs, rd, rs2, 0x01);
+          }
+          break;
+        case 0x100:
+          if (rs1 == rs2 || rs2 == 0)
+          {
+            return rs1 == rs2 ? jit_reg_write_imm(w, regs, rd, 0) :
+                jit_reg_copy(w, regs, rd, rs1);
+          }
+          if (rd != rs1 && rd != rs2)
+          {
+            return jit_reg_copy(w, regs, rd, rs1) &&
+                jit_reg_apply_reg(w, regs, rd, rs2, 0x29);
+          }
+          break;
+        case 0x001:
+          if (rs1 == 0)
+          {
+            return jit_reg_write_imm(w, regs, rd, 0);
+          }
+          if (rs2 == 0)
+          {
+            return jit_reg_copy(w, regs, rd, rs1);
+          }
+          if (rd != rs1 && rd != rs2)
+          {
+            return jit_reg_copy(w, regs, rd, rs1) &&
+                jit_reg_apply_shift_reg(w, regs, rd, rs2, 4);
+          }
+          break;
+        case 0x002:
+        case 0x003:
+          if (rs1 == rs2)
+          {
+            return jit_reg_write_imm(w, regs, rd, 0);
+          }
+          break;
+        case 0x004:
+          if (rs1 == rs2)
+          {
+            return jit_reg_write_imm(w, regs, rd, 0);
+          }
+          if (rs1 == 0)
+          {
+            return jit_reg_copy(w, regs, rd, rs2);
+          }
+          if (rs2 == 0)
+          {
+            return jit_reg_copy(w, regs, rd, rs1);
+          }
+          if (rd != rs1 && rd != rs2)
+          {
+            return jit_reg_copy(w, regs, rd, rs1) &&
+                jit_reg_apply_reg(w, regs, rd, rs2, 0x31);
+          }
+          break;
+        case 0x005:
+        case 0x105:
+          if (rs1 == 0)
+          {
+            return jit_reg_write_imm(w, regs, rd, 0);
+          }
+          if (rs2 == 0)
+          {
+            return jit_reg_copy(w, regs, rd, rs1);
+          }
+          if (rd != rs1 && rd != rs2)
+          {
+            return jit_reg_copy(w, regs, rd, rs1) &&
+                jit_reg_apply_shift_reg(w, regs, rd, rs2,
+                    key == 0x005 ? 5 : 7);
+          }
+          break;
+        case 0x006:
+          if (rs1 == 0)
+          {
+            return jit_reg_copy(w, regs, rd, rs2);
+          }
+          if (rs2 == 0)
+          {
+            return jit_reg_copy(w, regs, rd, rs1);
+          }
+          if (rd != rs1 && rd != rs2)
+          {
+            return jit_reg_copy(w, regs, rd, rs1) &&
+                jit_reg_apply_reg(w, regs, rd, rs2, 0x09);
+          }
+          break;
+        case 0x007:
+          if (rs1 == 0 || rs2 == 0)
+          {
+            return jit_reg_write_imm(w, regs, rd, 0);
+          }
+          if (rd != rs1 && rd != rs2)
+          {
+            return jit_reg_copy(w, regs, rd, rs1) &&
+                jit_reg_apply_reg(w, regs, rd, rs2, 0x21);
+          }
+          break;
+        default: break;
+      }
+    }
+
     if (!jit_reg_read_eax(w, regs, rs1) ||
         !jit_reg_read_ecx(w, regs, rs2))
     {
       return false;
     }
 
-    const uint32_t key = (funct7 << 3) | funct3;
     switch (key)
     {
       case 0x000: return emit_u8(w, 0x01) && emit_u8(w, 0xc8)
@@ -1838,7 +2430,17 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
      */
     rv32_jit_reg_cache_t regs_start = regs;
     bool end_block = false;
-    if (jit_instr_is_control_flow(instr))
+    const uint32_t opcode = instr & 0x7fu;
+    if (opcode == 0x63)
+    {
+      if (!emit_branch_instr(&w, &regs, instr, cur_pc, count + 1u))
+      {
+        w.cur = instr_start;
+        jit_reg_cache_restore(&regs, &regs_start);
+        break;
+      }
+    }
+    else if (jit_instr_is_control_flow(instr))
     {
       if (!emit_control_flow_instr(&w, &regs, instr, cur_pc))
       {
