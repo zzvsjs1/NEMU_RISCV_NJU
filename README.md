@@ -242,17 +242,24 @@ source scripts/setup-env.sh
 make -B -C nemu ISA=riscv32
 ```
 
-Useful dependencies include a RISC-V32 Newlib toolchain for
-`-march=rv32im -mabi=ilp32`, LLVM 15, readline, ncurses, flex, and bison.
+Useful dependencies include a RISC-V toolchain that can emit RV32IM with Zicsr
+using `-march=rv32im_zicsr -mabi=ilp32`, plus readline, ncurses, flex, and
+bison. LLVM is only needed for instruction tracing/disassembly builds; this tree
+uses `llvm-config` when `CONFIG_ITRACE` is enabled, and `nemu/llvm.sh` currently
+defaults to LLVM 18 while still accepting explicit supported versions.
 
 ## JIT Configuration
 
-The current branch adds RISC-V32 JIT options under `nemu/menuconfig`:
+The current branch adds RISC-V32 JIT options inside the `RISC-V32 JIT` menu in
+`nemu/menuconfig`. The menu is visible only for RISC-V32 native ELF
+interpreter builds when tracing, watchpoints, memory/function tracing, and
+DiffTest are disabled, because those features require interpreter
+per-instruction hooks.
 
 ```text
-Build Options
-  [*] Enable RISC-V32 JIT
-  [ ] Enable RISC-V32 JIT statistics
+RISC-V32 JIT
+  [*] Enable RISC-V32 x86-64 JIT
+  [ ] Collect RISC-V32 JIT statistics
 ```
 
 Normal performance runs should keep JIT enabled and JIT statistics disabled.
@@ -262,23 +269,26 @@ Runtime controls:
 
 ```bash
 # Force interpreter / non-JIT execution for comparison.
-NEMU_DISABLE_JIT=1 make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
+  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
 
 # Print JIT counters when CONFIG_RV32_JIT_STATS is enabled.
-NEMU_JIT_STATS=1 make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_JIT_STATS=1 \
+  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
 ```
 
 ## Performance Measurements
 
-These are local reference numbers from the current JIT branch. They are useful
-for checking trend direction, but you should re-measure on your own CPU because
-host frequency scaling, scheduler load, thermal limits, and laptop
-performance-core / efficiency-core placement can change the result.
+These are local reference numbers from the current JIT branch, measured in this
+checkout on 2026-05-08 with dummy SDL video/audio drivers. They are useful for
+checking trend direction, but you should re-measure on your own CPU because host
+frequency scaling, scheduler load, thermal limits, and laptop performance-core /
+efficiency-core placement can change the result.
 
 | Branch / mode | Benchmark | Result |
 |---------------|-----------|--------|
-| `master`, JIT enabled | MicroBench | `5069 Marks`, `494,788,583 instr/s` |
-| `master`, JIT enabled | JITBench | `183,037,705 instr/s` |
+| `master`, JIT enabled | MicroBench | `15464 Marks`, `1,529,149,397 instr/s` |
+| `master`, JIT enabled | JITBench | `ALU 17.025 ms`, `Memory 7.738 ms`, `2,746,182,612 instr/s` |
 
 ### Current JIT Performance Improvements
 
@@ -311,27 +321,40 @@ same binary can still run bare-metal AM tests, Nanos-lite, Navy applications,
 and disk-loaded code while benefiting from the faster path for normal RAM-heavy
 loops.
 
-Use these commands to collect comparable numbers:
+For the normal pass/fail performance check, run:
+
+```bash
+scripts/check-rv32-jit-performance.sh
+```
+
+That script sets `SDL_VIDEODRIVER=dummy` and `SDL_AUDIODRIVER=dummy`, then checks
+the current `JITBENCH_ALU_MAX_US` and `MICROBENCH_MIN_MARKS` thresholds. To
+collect comparable raw numbers manually, use the same dummy-driver environment:
 
 ```bash
 source scripts/setup-env.sh
 
 # Current JIT path.
-make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
-make -C am-kernels/benchmarks/jitbench ARCH=riscv32-nemu run
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  make -C am-kernels/benchmarks/jitbench ARCH=riscv32-nemu run
 
 # Current branch with JIT disabled at runtime.
-NEMU_DISABLE_JIT=1 make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
+  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
 
 # Non-JIT performance branch.
 git checkout performance_improve
 source scripts/setup-env.sh
-make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
 
 # Original baseline branch.
 git checkout legacy/baseline-master
 source scripts/setup-env.sh
-make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
 ```
 
 The speed-up calculation is simple division:
@@ -343,7 +366,7 @@ speed-up = faster instr/s / slower instr/s
 Example:
 
 ```text
-494,788,583 / 200,000,000 = 2.47x
+1,529,149,397 / 200,000,000 = 7.65x
 ```
 
 ## Nanos-lite GUI Flow

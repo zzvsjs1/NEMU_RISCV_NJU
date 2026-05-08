@@ -8,6 +8,55 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+/*
+ * RISC-V32 JIT design overview
+ * ----------------------------
+ *
+ * This file translates short RV32I/RV32M basic blocks into x86-64 machine code.
+ * The JIT is intentionally an optimisation layer around the existing NEMU
+ * interpreter semantics, not a separate CPU model. Whenever a case may involve
+ * guest-visible side effects that are hard to prove locally, the emitted code
+ * falls back to the normal memory or execution helpers.
+ *
+ * The execution path has five main stages:
+ *
+ * 1. Availability check:
+ *    `isa_jit_available()` enables the JIT only on x86-64 native ELF builds
+ *    with tracing, watchpoints, memory/function tracing, and DiffTest disabled.
+ *    Those features need per-instruction interpreter hooks, so the JIT stays
+ *    out of their way.
+ *
+ * 2. Dispatch:
+ *    `isa_jit_exec()` is called by the CPU loop with a guest-instruction budget.
+ *    It looks up a cache entry by `(pc, satp)`, compiles a block on a miss, then
+ *    calls the block's native entry point. The native block returns the number
+ *    of guest instructions that completed, which keeps device polling and timer
+ *    work bounded.
+ *
+ * 3. Translation:
+ *    `jit_compile_block()` decodes one RV32 instruction at a time. Straight-line
+ *    ALU, load, store, branch, and jump cases are emitted directly. Unsupported
+ *    instructions are marked with a negative cache entry so the same slow path is
+ *    not repeatedly recompiled.
+ *
+ * 4. Register caching:
+ *    Five callee-saved host registers (`rbx`, `r12`, `r13`, `r14`, `r15`) cache
+ *    hot guest registers inside one translated block. A dirty cached register is
+ *    flushed to `cpu.gpr[]` before any helper call or block exit that can observe
+ *    full CPU state.
+ *
+ * 5. Memory safety and invalidation:
+ *    Direct PMEM load/store code is emitted only for Bare-mode ordinary RAM.
+ *    MMIO, paging, traps, and unusual ranges go through the normal helpers. Each
+ *    compiled block records the physical PMEM bytes that supplied its source
+ *    instructions. Writes from the interpreter, JIT helpers, disk DMA, or full
+ *    flushes invalidate overlapping native blocks before stale code can run.
+ *
+ * The comments below are deliberately explicit about small arithmetic steps.
+ * For example, sign extension and relative-branch patching are written out
+ * because off-by-one or wrong-origin mistakes in a JIT are difficult to debug.
+ */
+
 #if defined(__x86_64__) && defined(CONFIG_RV32_JIT) && \
     defined(CONFIG_TARGET_NATIVE_ELF) && !defined(CONFIG_TRACE) && \
     !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
@@ -55,74 +104,103 @@ typedef uint32_t (*rv32_jit_entry_t)(void);
 
 typedef struct
 {
-  /*
-   * The writer owns a half-open native-code interval [start, end). cur always
-   * points at the next byte to fill, so failed emitters can report overflow
-   * without publishing a partial block into the cache.
-   */
+  /* First byte of the native code being emitted for the current block. */
   uint8_t *start;
+  /* Next free byte in the code arena; every emit helper advances this pointer. */
   uint8_t *cur;
+  /* One-past-last byte available to this writer; emit helpers fail at this bound. */
   uint8_t *end;
 } rv32_jit_writer_t;
 
 typedef struct
 {
-  /*
-   * valid means this slot is meaningful for its pc/satp tag. entry == NULL is
-   * a deliberate negative-cache marker for unsupported instructions, not a
-   * corrupt block; it prevents repeatedly trying to compile the same slow path.
-   * Such markers are still checked against the current mapping before reuse, but
-   * they do not own source refs because there is no native code to invalidate.
-   */
+  /* True when this cache slot contains either native code or an unsupported marker. */
   bool valid;
+  /* Guest virtual PC that starts this translated block. */
   vaddr_t pc;
+  /* Address-space tag; Sv32 can map the same virtual PC to different PMEM bytes. */
   word_t satp;
-  /*
-   * Native code is invalidated by physical writes, so the translated source is
-   * recorded as one contiguous PMEM range. The compiler stops a block before
-   * the next instruction if virtual translation would make this range split.
-   */
+  /* Physical address of the first guest instruction byte translated by this slot. */
   paddr_t paddr_start;
+  /* Number of contiguous source bytes covered by this block, normally 4 * insns. */
   uint32_t source_len;
+  /* Guest instruction count completed when `entry` returns normally. */
   uint32_t insn_count;
+  /*
+   * Native function pointer. NULL with valid == true is a negative cache marker:
+   * the instruction is unsupported by this JIT and should use the interpreter.
+   */
   rv32_jit_entry_t entry;
 } rv32_jit_block_t;
 
+/* Direct-mapped block cache indexed by a hash of guest PC and satp. */
 static rv32_jit_block_t jit_cache[RV32_JIT_CACHE_SIZE];
+/*
+ * Refcount per 128-byte PMEM source chunk. A non-zero value means at least one
+ * native block was compiled from bytes in that chunk, so stores there may need
+ * exact cache invalidation.
+ */
 static uint16_t jit_source_chunk_refs[RV32_JIT_PMEM_CHUNK_COUNT];
+/* Executable arena allocated with mmap(); emitted blocks live here. */
 static uint8_t *jit_code = NULL;
+/* Number of bytes already used in `jit_code`, rounded up before each block. */
 static size_t jit_code_used = 0;
+/* Sticky flag set when executable memory allocation fails. */
 static bool jit_disabled = false;
+/* Cached value of the runtime `NEMU_DISABLE_JIT` environment switch. */
 static bool jit_env_disable = false;
+/* True after runtime environment switches have been read once. */
 static bool jit_runtime_options_ready = false;
+/* Cached value of the runtime `NEMU_JIT_STATS` environment switch. */
 static bool jit_stats_enabled = false;
 
 #if RV32_JIT_STATS
 typedef struct
 {
+  /* Number of times the CPU loop asked the JIT to execute at least one block. */
   uint64_t exec_requests;
+  /* Cache lookup found a valid slot for the current PC/satp tag. */
   uint64_t cache_hits;
+  /* Cache lookup missed and the compiler had to try building a block. */
   uint64_t cache_misses;
+  /* Valid negative-cache slots that redirected execution to the interpreter. */
   uint64_t unsupported_hits;
+  /* Native blocks that were actually entered and returned normally. */
   uint64_t blocks_executed;
+  /* Guest instruction count reported by executed native blocks. */
   uint64_t executed_insns;
 
+  /* Number of block compilation attempts. */
   uint64_t compile_requests;
+  /* Number of successful native blocks published to the cache. */
   uint64_t blocks_compiled;
+  /* Guest instruction count represented by successfully compiled blocks. */
   uint64_t compiled_insns;
+  /* Number of negative-cache markers created for unsupported instructions. */
   uint64_t blocks_unsupported;
+  /* Number of times the executable arena was cleared and reused. */
   uint64_t arena_resets;
 
+  /* Number of physical invalidation requests from stores, DMA, or full flushes. */
   uint64_t invalidation_requests;
+  /* Invalidation requests skipped because no source chunk refcount was present. */
   uint64_t invalidation_page_skips;
+  /* Cached native blocks discarded because their source bytes overlapped a write. */
   uint64_t invalidated_blocks;
 
+  /* Helper load calls made from native code. */
   uint64_t helper_loads;
+  /* Helper loads that could still use direct Bare-mode PMEM access. */
   uint64_t helper_load_direct;
+  /* Helper loads that delegated to the full virtual-memory/device path. */
   uint64_t helper_load_slow;
+  /* Helper store calls made from native code. */
   uint64_t helper_stores;
+  /* Helper stores that wrote ordinary Bare-mode PMEM directly. */
   uint64_t helper_store_direct;
+  /* Helper stores that delegated to the full virtual-memory/device path. */
   uint64_t helper_store_slow;
+  /* Complex RV32M operation helper calls not emitted directly in native code. */
   uint64_t helper_complex_ops;
 } rv32_jit_stats_t;
 
@@ -142,6 +220,7 @@ static rv32_jit_stats_t jit_stats;
 #define JIT_STAT_ADD(field, value) do { } while (0)
 #endif
 
+/* Return inclusive bit range [hi:lo] from a 32-bit instruction or value. */
 static uint32_t bits(uint32_t value, int hi, int lo)
 {
   return (value >> lo) & ((1u << (hi - lo + 1)) - 1u);
@@ -157,16 +236,19 @@ static int32_t sext(uint32_t value, unsigned width)
   return (int32_t)((value ^ sign) - sign);
 }
 
+/* Decode an I-type immediate, used by loads, OP-IMM, JALR, and CSR forms. */
 static int32_t imm_i(uint32_t instr)
 {
   return sext(bits(instr, 31, 20), 12);
 }
 
+/* Decode an S-type store immediate from its split high/low instruction fields. */
 static int32_t imm_s(uint32_t instr)
 {
   return sext(bits(instr, 11, 7) | (bits(instr, 31, 25) << 5), 12);
 }
 
+/* Decode a B-type branch byte offset; bit 0 is implicit because branches align. */
 static int32_t imm_b(uint32_t instr)
 {
   const uint32_t imm = (bits(instr, 11, 8) << 1)
@@ -176,11 +258,13 @@ static int32_t imm_b(uint32_t instr)
   return sext(imm, 13);
 }
 
+/* Decode a U-type immediate; it already occupies instruction bits [31:12]. */
 static uint32_t imm_u(uint32_t instr)
 {
   return instr & 0xfffff000u;
 }
 
+/* Decode a J-type jump byte offset from its shuffled instruction fields. */
 static int32_t imm_j(uint32_t instr)
 {
   const uint32_t imm = (bits(instr, 19, 12) << 12)
@@ -190,6 +274,13 @@ static int32_t imm_j(uint32_t instr)
   return sext(imm, 21);
 }
 
+/*
+ * Prove that a guest virtual byte range is ordinary Bare-mode PMEM.
+ *
+ * Returns true only when the access cannot involve paging, MMIO, wrapping, or a
+ * zero-length operation. On success, `*paddr` receives the physical start
+ * address that can be passed to guest_to_host().
+ */
 static bool jit_direct_pmem_range(vaddr_t addr, uint32_t len, paddr_t *paddr)
 {
   /*
@@ -215,6 +306,12 @@ static bool jit_direct_pmem_range(vaddr_t addr, uint32_t len, paddr_t *paddr)
   return true;
 }
 
+/*
+ * Read a simple boolean environment flag.
+ *
+ * Empty, missing, and exactly "0" mean false; any other non-empty value means
+ * true. This keeps runtime switches easy to use from shell commands.
+ */
 static bool jit_env_flag_enabled(const char *name)
 {
   const char *value = getenv(name);
@@ -222,6 +319,7 @@ static bool jit_env_flag_enabled(const char *name)
       !(value[0] == '0' && value[1] == '\0');
 }
 
+/* Cache runtime environment switches once so hot dispatch does not call getenv(). */
 static void jit_init_runtime_options(void)
 {
   if (!jit_runtime_options_ready)
@@ -232,12 +330,20 @@ static void jit_init_runtime_options(void)
   }
 }
 
+/* Report whether `NEMU_DISABLE_JIT` disabled native execution for this run. */
 static bool jit_runtime_disabled(void)
 {
   jit_init_runtime_options();
   return jit_env_disable;
 }
 
+/*
+ * Shared load helper for generated code.
+ *
+ * The generated block passes a guest virtual address and byte width. This
+ * helper takes a direct PMEM shortcut only when it can prove the normal memory
+ * path would be an ordinary RAM read; otherwise it calls vaddr_read().
+ */
 static uint32_t jit_load_raw(vaddr_t addr, uint32_t len)
 {
   JIT_STAT_INC(helper_loads);
@@ -263,31 +369,43 @@ static uint32_t jit_load_raw(vaddr_t addr, uint32_t len)
   return value;
 }
 
+/* Load one signed byte and extend it to the RV32 register width. */
 static uint32_t jit_load_i8(vaddr_t addr)
 {
   return (uint32_t)(int32_t)(int8_t)jit_load_raw(addr, 1);
 }
 
+/* Load one signed halfword and extend it to the RV32 register width. */
 static uint32_t jit_load_i16(vaddr_t addr)
 {
   return (uint32_t)(int32_t)(int16_t)jit_load_raw(addr, 2);
 }
 
+/* Load one 32-bit word; no extension is needed for RV32. */
 static uint32_t jit_load_u32(vaddr_t addr)
 {
   return jit_load_raw(addr, 4);
 }
 
+/* Load one unsigned byte and zero-extend it to the RV32 register width. */
 static uint32_t jit_load_u8(vaddr_t addr)
 {
   return jit_load_raw(addr, 1);
 }
 
+/* Load one unsigned halfword and zero-extend it to the RV32 register width. */
 static uint32_t jit_load_u16(vaddr_t addr)
 {
   return jit_load_raw(addr, 2);
 }
 
+/*
+ * Shared store helper for generated code.
+ *
+ * Direct PMEM stores still perform JIT invalidation, because they bypass
+ * paddr_write(). Non-ordinary stores delegate to vaddr_write() so device and
+ * virtual-memory side effects remain exactly the interpreter's behaviour.
+ */
 static void jit_store_raw(vaddr_t addr, uint32_t len, uint32_t data)
 {
   JIT_STAT_INC(helper_stores);
@@ -311,21 +429,32 @@ static void jit_store_raw(vaddr_t addr, uint32_t len, uint32_t data)
   vaddr_write(addr, (int)len, data);
 }
 
+/* Store the low byte of `data` to a guest address. */
 static void jit_store_u8(vaddr_t addr, uint32_t data)
 {
   jit_store_raw(addr, 1, data);
 }
 
+/* Store the low halfword of `data` to a guest address. */
 static void jit_store_u16(vaddr_t addr, uint32_t data)
 {
   jit_store_raw(addr, 2, data);
 }
 
+/* Store all 32 bits of `data` to a guest address. */
 static void jit_store_u32(vaddr_t addr, uint32_t data)
 {
   jit_store_raw(addr, 4, data);
 }
 
+/*
+ * Execute RV32M operations that are uncommon or awkward to emit inline.
+ *
+ * The helper decodes the already-fetched OP instruction, reads the architectural
+ * registers from `cpu.gpr[]`, applies exact RISC-V divide/remainder edge cases,
+ * writes rd when it is not x0, and returns the value for callers that also want
+ * to seed the register cache from EAX after the helper call.
+ */
 static uint32_t jit_op_complex(uint32_t instr)
 {
   JIT_STAT_INC(helper_complex_ops);
@@ -385,16 +514,24 @@ static uint32_t jit_op_complex(uint32_t instr)
   return out;
 }
 
+/* Round `value` up to the next `align` boundary; align is a power of two here. */
 static size_t jit_align_up(size_t value, size_t align)
 {
   return (value + align - 1u) & ~(align - 1u);
 }
 
+/* Hash guest PC and address-space tag into the direct-mapped block cache. */
 static uint32_t jit_hash(vaddr_t pc, word_t satp)
 {
   return ((pc >> 2) ^ satp ^ (satp >> 12)) & (RV32_JIT_CACHE_SIZE - 1u);
 }
 
+/*
+ * Convert a PMEM physical address into a source-refcount chunk index.
+ *
+ * The index is measured from CONFIG_MBASE and uses 128-byte chunks, so normal
+ * data stores near code do not unnecessarily invalidate entire 4 KiB pages.
+ */
 static bool jit_pmem_source_chunk_index(paddr_t addr, size_t *idx)
 {
   if (!in_pmem(addr))
@@ -407,6 +544,7 @@ static bool jit_pmem_source_chunk_index(paddr_t addr, size_t *idx)
   return *idx < RV32_JIT_PMEM_CHUNK_COUNT;
 }
 
+/* Add one owning compiled block reference to every source chunk in the range. */
 static void jit_source_chunks_ref(paddr_t addr, uint32_t len)
 {
   /*
@@ -436,6 +574,7 @@ static void jit_source_chunks_ref(paddr_t addr, uint32_t len)
   }
 }
 
+/* Remove one owning compiled block reference from every source chunk in range. */
 static void jit_source_chunks_unref(paddr_t addr, uint32_t len)
 {
   if (len == 0)
@@ -460,6 +599,12 @@ static void jit_source_chunks_unref(paddr_t addr, uint32_t len)
   }
 }
 
+/*
+ * Quickly decide whether a physical write might overlap compiled source bytes.
+ *
+ * False means no source chunk has a refcount and invalidation can be skipped.
+ * True means "scan exact blocks"; it includes ambiguous wrap or boundary cases.
+ */
 static bool jit_write_may_touch_source_chunk(paddr_t addr, int len)
 {
   /*
@@ -514,6 +659,7 @@ static bool jit_write_may_touch_source_chunk(paddr_t addr, int len)
   return false;
 }
 
+/* Drop one cache slot and release the source-chunk references it owns. */
 static void jit_block_discard(rv32_jit_block_t *block)
 {
   if (!block->valid)
@@ -537,12 +683,20 @@ static void jit_block_discard(rv32_jit_block_t *block)
   block->insn_count = 0;
 }
 
+/* Clear every block cache slot and reset all source-chunk refcounts together. */
 static void jit_cache_clear(void)
 {
   memset(jit_cache, 0, sizeof(jit_cache));
   memset(jit_source_chunk_refs, 0, sizeof(jit_source_chunk_refs));
 }
 
+/*
+ * Allocate the executable code arena on first use.
+ *
+ * The arena is RWX because this small teaching JIT emits bytes directly and then
+ * calls them. If allocation fails, the sticky disabled flag avoids repeated mmap
+ * attempts and execution falls back to the interpreter.
+ */
 static bool jit_code_init(void)
 {
 #if RV32_JIT_ENABLED
@@ -571,6 +725,7 @@ static bool jit_code_init(void)
 #endif
 }
 
+/* Reuse the code arena from byte zero and forget all cached native blocks. */
 static void jit_arena_reset(void)
 {
   JIT_STAT_INC(arena_resets);
@@ -578,6 +733,7 @@ static void jit_arena_reset(void)
   jit_cache_clear();
 }
 
+/* Emit one raw x86-64 byte into the current writer. */
 static bool emit_u8(rv32_jit_writer_t *w, uint8_t value)
 {
   /*
@@ -594,6 +750,7 @@ static bool emit_u8(rv32_jit_writer_t *w, uint8_t value)
   return true;
 }
 
+/* Emit a 32-bit little-endian immediate or displacement. */
 static bool emit_u32(rv32_jit_writer_t *w, uint32_t value)
 {
   if ((size_t)(w->end - w->cur) < sizeof(value))
@@ -606,6 +763,7 @@ static bool emit_u32(rv32_jit_writer_t *w, uint32_t value)
   return true;
 }
 
+/* Emit a 64-bit little-endian immediate, mainly for movabs addresses. */
 static bool emit_u64(rv32_jit_writer_t *w, uint64_t value)
 {
   if ((size_t)(w->end - w->cur) < sizeof(value))
@@ -618,12 +776,14 @@ static bool emit_u64(rv32_jit_writer_t *w, uint64_t value)
   return true;
 }
 
+/* Emit `movabs r11, imm64`; r11 is this JIT's CPU-state base register. */
 static bool emit_movabs_r11(rv32_jit_writer_t *w, uint64_t value)
 {
   /* movabs r11, imm64 */
   return emit_u8(w, 0x49) && emit_u8(w, 0xbb) && emit_u64(w, value);
 }
 
+/* Load the address of global `cpu` into r11 for later `[r11 + offset]` access. */
 static bool emit_load_cpu_base(rv32_jit_writer_t *w)
 {
   /*
@@ -634,6 +794,7 @@ static bool emit_load_cpu_base(rv32_jit_writer_t *w)
   return emit_movabs_r11(w, (uint64_t)(uintptr_t)&cpu);
 }
 
+/* Store EAX into `cpu.pc`, used after generated code computes a jump target. */
 static bool emit_store_pc_eax(rv32_jit_writer_t *w)
 {
   const uint32_t off = (uint32_t)offsetof(CPU_state, pc);
@@ -642,6 +803,7 @@ static bool emit_store_pc_eax(rv32_jit_writer_t *w)
       && emit_u32(w, off);
 }
 
+/* Store a known immediate guest PC into `cpu.pc`. */
 static bool emit_set_pc_imm(rv32_jit_writer_t *w, vaddr_t pc)
 {
   const uint32_t off = (uint32_t)offsetof(CPU_state, pc);
@@ -651,11 +813,13 @@ static bool emit_set_pc_imm(rv32_jit_writer_t *w, vaddr_t pc)
       && emit_u32(w, off) && emit_u32(w, pc);
 }
 
+/* Put a 32-bit immediate result into EAX, the normal temporary result register. */
 static bool emit_mov_eax_imm(rv32_jit_writer_t *w, uint32_t value)
 {
   return emit_u8(w, 0xb8) && emit_u32(w, value);
 }
 
+/* Add an RV32 immediate or address offset to EAX, using the short form when safe. */
 static bool emit_add_eax_imm(rv32_jit_writer_t *w, uint32_t value)
 {
   const int32_t signed_value = (int32_t)value;
@@ -674,65 +838,77 @@ static bool emit_add_eax_imm(rv32_jit_writer_t *w, uint32_t value)
   return emit_u8(w, 0x05) && emit_u32(w, value);
 }
 
+/* Compare EAX with an immediate so a following setcc/jcc can consume the flags. */
 static bool emit_cmp_eax_imm(rv32_jit_writer_t *w, uint32_t value)
 {
   return emit_u8(w, 0x3d) && emit_u32(w, value);
 }
 
+/* Compare EAX with ECX for register-register branches and SLT-style results. */
 static bool emit_cmp_eax_ecx(rv32_jit_writer_t *w)
 {
   return emit_u8(w, 0x39) && emit_u8(w, 0xc8);
 }
 
+/* Compare ECX with a sign-extended 8-bit immediate, used by RV32M guards. */
 static bool emit_cmp_ecx_imm8(rv32_jit_writer_t *w, uint8_t value)
 {
   return emit_u8(w, 0x83) && emit_u8(w, 0xf9) && emit_u8(w, value);
 }
 
+/* Test whether ECX is zero without modifying ECX. */
 static bool emit_test_ecx_ecx(rv32_jit_writer_t *w)
 {
   return emit_u8(w, 0x85) && emit_u8(w, 0xc9);
 }
 
+/* Clear EDX before unsigned x86 DIV, which consumes EDX:EAX as the dividend. */
 static bool emit_xor_edx_edx(rv32_jit_writer_t *w)
 {
   return emit_u8(w, 0x31) && emit_u8(w, 0xd2);
 }
 
+/* Sign-extend EAX into EDX:EAX before signed x86 IDIV. */
 static bool emit_cdq(rv32_jit_writer_t *w)
 {
   return emit_u8(w, 0x99);
 }
 
+/* Copy EDX into EAX, used for high multiply halves and remainders. */
 static bool emit_mov_eax_edx(rv32_jit_writer_t *w)
 {
   return emit_u8(w, 0x89) && emit_u8(w, 0xd0);
 }
 
+/* Emit unsigned multiply of EAX by ECX, producing EDX:EAX. */
 static bool emit_mul_ecx(rv32_jit_writer_t *w)
 {
   /* Unsigned edx:eax = eax * ecx. */
   return emit_u8(w, 0xf7) && emit_u8(w, 0xe1);
 }
 
+/* Emit signed multiply of EAX by ECX, producing EDX:EAX. */
 static bool emit_imul_ecx(rv32_jit_writer_t *w)
 {
   /* Signed edx:eax = eax * ecx. */
   return emit_u8(w, 0xf7) && emit_u8(w, 0xe9);
 }
 
+/* Emit unsigned divide of EDX:EAX by ECX after caller has guarded ECX != 0. */
 static bool emit_div_ecx(rv32_jit_writer_t *w)
 {
   /* Unsigned edx:eax / ecx, quotient in eax, remainder in edx. */
   return emit_u8(w, 0xf7) && emit_u8(w, 0xf1);
 }
 
+/* Emit signed divide of EDX:EAX by ECX after caller has guarded x86 trap cases. */
 static bool emit_idiv_ecx(rv32_jit_writer_t *w)
 {
   /* Signed edx:eax / ecx, quotient in eax, remainder in edx. */
   return emit_u8(w, 0xf7) && emit_u8(w, 0xf9);
 }
 
+/* Convert a condition-code result into RV32 boolean 0/1 in EAX. */
 static bool emit_setcc_eax(rv32_jit_writer_t *w, uint8_t setcc_opcode)
 {
   /* setcc al; movzx eax, al */
@@ -740,6 +916,7 @@ static bool emit_setcc_eax(rv32_jit_writer_t *w, uint8_t setcc_opcode)
       && emit_u8(w, 0x0f) && emit_u8(w, 0xb6) && emit_u8(w, 0xc0);
 }
 
+/* Emit a conditional rel32 branch and return the displacement byte location. */
 static bool emit_jcc_rel32_placeholder(rv32_jit_writer_t *w, uint8_t jcc_opcode,
     uint8_t **disp)
 {
@@ -752,6 +929,7 @@ static bool emit_jcc_rel32_placeholder(rv32_jit_writer_t *w, uint8_t jcc_opcode,
   return emit_u32(w, 0);
 }
 
+/* Emit an unconditional rel32 jump and return the displacement byte location. */
 static bool emit_jmp_rel32_placeholder(rv32_jit_writer_t *w, uint8_t **disp)
 {
   if (!emit_u8(w, 0xe9))
@@ -763,6 +941,7 @@ static bool emit_jmp_rel32_placeholder(rv32_jit_writer_t *w, uint8_t **disp)
   return emit_u32(w, 0);
 }
 
+/* Patch a previously emitted rel32 displacement to jump to `target`. */
 static void patch_rel32(uint8_t *disp, const uint8_t *target)
 {
   /*
@@ -777,6 +956,7 @@ static void patch_rel32(uint8_t *disp, const uint8_t *target)
   memcpy(disp, &rel32, sizeof(rel32));
 }
 
+/* Emit an absolute call through RAX, suitable for C helper function addresses. */
 static bool emit_call_abs(rv32_jit_writer_t *w, uintptr_t func)
 {
   /* movabs rax, func; call rax */
@@ -787,37 +967,55 @@ static bool emit_call_abs(rv32_jit_writer_t *w, uintptr_t func)
 
 typedef struct
 {
+  /* Displacement of the slow-path jump emitted when satp is not Bare mode. */
   uint8_t *satp_slow_disp;
+  /* Displacement of the slow-path jump emitted when the PMEM range check fails. */
   uint8_t *range_slow_disp;
 } rv32_jit_pmem_guard_patch_t;
 
 typedef enum
 {
+  /* Callee-saved host register used as a guest-register cache slot. */
   RV32_JIT_HREG_RBX = 0,
+  /* Callee-saved host register used as a guest-register cache slot. */
   RV32_JIT_HREG_R12,
+  /* Callee-saved host register used as a guest-register cache slot. */
   RV32_JIT_HREG_R13,
+  /* Callee-saved host register used as a guest-register cache slot. */
   RV32_JIT_HREG_R14,
+  /* Callee-saved host register used as a guest-register cache slot. */
   RV32_JIT_HREG_R15,
+  /* Number of host registers reserved for guest-register caching. */
   RV32_JIT_HREG_COUNT,
 } rv32_jit_hreg_t;
 
 typedef struct
 {
+  /* This slot currently represents `guest_reg`; false means it can be reused. */
   bool valid;
+  /* The host register contains a real value; false means it is only reserved. */
   bool loaded;
+  /* The host value differs from cpu.gpr[guest_reg] and must be flushed on exit. */
   bool dirty;
+  /* Guest architectural register index stored in this slot. */
   uint32_t guest_reg;
+  /* Monotonic use age for simple least-recently-used replacement. */
   uint32_t age;
+  /* Which callee-saved host register backs this slot. */
   rv32_jit_hreg_t hreg;
 } rv32_jit_reg_slot_t;
 
 typedef struct
 {
+  /* Fixed set of host-register cache slots available within one native block. */
   rv32_jit_reg_slot_t slots[RV32_JIT_HREG_COUNT];
+  /* Next age number assigned when a slot is touched. */
   uint32_t next_age;
+  /* True once r9 has been loaded with `jit_source_chunk_refs` in this block. */
   bool source_refs_loaded;
 } rv32_jit_reg_cache_t;
 
+/* Map one JIT host-register enum value to the x86 register number encoding. */
 static uint8_t jit_hreg_x86_reg(rv32_jit_hreg_t hreg)
 {
   switch (hreg)
@@ -832,11 +1030,13 @@ static uint8_t jit_hreg_x86_reg(rv32_jit_hreg_t hreg)
   return 3;
 }
 
+/* Build an x86 ModRM byte from its three logical fields. */
 static uint8_t jit_modrm(uint8_t mod, uint8_t reg, uint8_t rm)
 {
   return (uint8_t)((mod << 6) | ((reg & 7u) << 3) | (rm & 7u));
 }
 
+/* Emit a REX prefix only when a 32-bit instruction references r8-r15. */
 static bool emit_rex32_if_needed(rv32_jit_writer_t *w, uint8_t reg, uint8_t rm)
 {
   uint8_t rex = 0x40;
@@ -852,6 +1052,7 @@ static bool emit_rex32_if_needed(rv32_jit_writer_t *w, uint8_t reg, uint8_t rm)
   return rex == 0x40 || emit_u8(w, rex);
 }
 
+/* Save all callee-saved host registers that this JIT uses as cache slots. */
 static bool emit_push_saved_hregs(rv32_jit_writer_t *w)
 {
   return emit_u8(w, 0x53)
@@ -861,6 +1062,7 @@ static bool emit_push_saved_hregs(rv32_jit_writer_t *w)
       && emit_u8(w, 0x41) && emit_u8(w, 0x57);
 }
 
+/* Restore host registers in the opposite order of emit_push_saved_hregs(). */
 static bool emit_pop_saved_hregs(rv32_jit_writer_t *w)
 {
   return emit_u8(w, 0x41) && emit_u8(w, 0x5f)
@@ -870,6 +1072,7 @@ static bool emit_pop_saved_hregs(rv32_jit_writer_t *w)
       && emit_u8(w, 0x5b);
 }
 
+/* Load `cpu.gpr[reg]` into one cached host register. */
 static bool emit_load_gpr_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
     uint32_t reg)
 {
@@ -885,6 +1088,7 @@ static bool emit_load_gpr_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
       && emit_u32(w, off);
 }
 
+/* Store one cached host register back into `cpu.gpr[reg]`. */
 static bool emit_store_gpr_hreg(rv32_jit_writer_t *w, uint32_t reg,
     rv32_jit_hreg_t hreg)
 {
@@ -900,6 +1104,7 @@ static bool emit_store_gpr_hreg(rv32_jit_writer_t *w, uint32_t reg,
       && emit_u32(w, off);
 }
 
+/* Copy a cached host-register value into EAX for generic emitters. */
 static bool emit_mov_eax_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg)
 {
   const uint8_t src = jit_hreg_x86_reg(hreg);
@@ -910,6 +1115,7 @@ static bool emit_mov_eax_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg)
       && emit_u8(w, jit_modrm(3, src, 0));
 }
 
+/* Copy a cached host-register value into ECX, often the second ALU operand. */
 static bool emit_mov_ecx_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg)
 {
   const uint8_t src = jit_hreg_x86_reg(hreg);
@@ -920,6 +1126,7 @@ static bool emit_mov_ecx_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg)
       && emit_u8(w, jit_modrm(3, src, 1));
 }
 
+/* Copy the EAX temporary result into a cached host register. */
 static bool emit_mov_hreg_eax(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg)
 {
   const uint8_t dst = jit_hreg_x86_reg(hreg);
@@ -930,6 +1137,7 @@ static bool emit_mov_hreg_eax(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg)
       && emit_u8(w, jit_modrm(3, 0, dst));
 }
 
+/* Copy one cached host register to another when rd and rs are different. */
 static bool emit_mov_hreg_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t dst,
     rv32_jit_hreg_t src)
 {
@@ -947,6 +1155,7 @@ static bool emit_mov_hreg_hreg(rv32_jit_writer_t *w, rv32_jit_hreg_t dst,
       && emit_u8(w, jit_modrm(3, src_reg, dst_reg));
 }
 
+/* Load a constant guest-register value into a cached host register. */
 static bool emit_mov_hreg_imm(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
     uint32_t value)
 {
@@ -959,6 +1168,7 @@ static bool emit_mov_hreg_imm(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
       && emit_u32(w, value);
 }
 
+/* Copy ECX into a cached host register; retained for future ECX-result emitters. */
 static bool __attribute__((unused)) emit_mov_hreg_ecx(rv32_jit_writer_t *w,
     rv32_jit_hreg_t hreg)
 {
@@ -970,6 +1180,7 @@ static bool __attribute__((unused)) emit_mov_hreg_ecx(rv32_jit_writer_t *w,
       && emit_u8(w, jit_modrm(3, 1, dst));
 }
 
+/* Initialise the per-block guest-register cache before emitting instructions. */
 static void jit_reg_cache_init(rv32_jit_reg_cache_t *regs)
 {
   regs->next_age = 1;
@@ -987,12 +1198,14 @@ static void jit_reg_cache_init(rv32_jit_reg_cache_t *regs)
   }
 }
 
+/* Roll back compile-time register-cache metadata after a failed emitter. */
 static void jit_reg_cache_restore(rv32_jit_reg_cache_t *regs,
     const rv32_jit_reg_cache_t *snapshot)
 {
   *regs = *snapshot;
 }
 
+/* Find the host-register cache slot currently assigned to one guest register. */
 static rv32_jit_reg_slot_t *jit_reg_find(rv32_jit_reg_cache_t *regs,
     uint32_t reg)
 {
@@ -1008,6 +1221,7 @@ static rv32_jit_reg_slot_t *jit_reg_find(rv32_jit_reg_cache_t *regs,
   return NULL;
 }
 
+/* Emit a store-back for one dirty slot without mutating compile-time metadata. */
 static bool jit_reg_emit_flush_slot(rv32_jit_writer_t *w,
     const rv32_jit_reg_slot_t *slot)
 {
@@ -1019,6 +1233,7 @@ static bool jit_reg_emit_flush_slot(rv32_jit_writer_t *w,
   return emit_store_gpr_hreg(w, slot->guest_reg, slot->hreg);
 }
 
+/* Flush one slot and mark it clean once the store-back bytes are emitted. */
 static bool jit_reg_flush_slot(rv32_jit_writer_t *w, rv32_jit_reg_slot_t *slot)
 {
   if (!jit_reg_emit_flush_slot(w, slot))
@@ -1030,6 +1245,7 @@ static bool jit_reg_flush_slot(rv32_jit_writer_t *w, rv32_jit_reg_slot_t *slot)
   return true;
 }
 
+/* Emit store-backs for all dirty slots while leaving their dirty bits unchanged. */
 static bool __attribute__((unused)) jit_reg_emit_flush_all_dirty(
     rv32_jit_writer_t *w, const rv32_jit_reg_cache_t *regs)
 {
@@ -1044,6 +1260,7 @@ static bool __attribute__((unused)) jit_reg_emit_flush_all_dirty(
   return true;
 }
 
+/* Flush all dirty guest-register cache slots before helper calls or block exit. */
 static bool jit_reg_flush_all_dirty(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs)
 {
@@ -1058,6 +1275,7 @@ static bool jit_reg_flush_all_dirty(rv32_jit_writer_t *w,
   return true;
 }
 
+/* Forget all cached guest-register mappings after a helper may have changed CPU state. */
 static void jit_reg_invalidate_all(rv32_jit_reg_cache_t *regs)
 {
   for (uint32_t i = 0; i < RV32_JIT_HREG_COUNT; i++)
@@ -1070,6 +1288,7 @@ static void jit_reg_invalidate_all(rv32_jit_reg_cache_t *regs)
   }
 }
 
+/* Select a free slot, or the least-recently-used slot when all are occupied. */
 static rv32_jit_reg_slot_t *jit_reg_choose_slot(rv32_jit_reg_cache_t *regs)
 {
   rv32_jit_reg_slot_t *oldest = &regs->slots[0];
@@ -1090,6 +1309,7 @@ static rv32_jit_reg_slot_t *jit_reg_choose_slot(rv32_jit_reg_cache_t *regs)
   return oldest;
 }
 
+/* Reserve a host-register cache slot for a guest register, flushing if replaced. */
 static rv32_jit_reg_slot_t *jit_reg_alloc(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t reg)
 {
@@ -1114,6 +1334,7 @@ static rv32_jit_reg_slot_t *jit_reg_alloc(rv32_jit_writer_t *w,
   return slot;
 }
 
+/* Materialise a guest register in EAX, loading it into the cache if needed. */
 static bool jit_reg_read_eax(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t reg)
 {
@@ -1141,6 +1362,7 @@ static bool jit_reg_read_eax(rv32_jit_writer_t *w,
   return emit_mov_eax_hreg(w, slot->hreg);
 }
 
+/* Materialise a guest register in ECX, loading it into the cache if needed. */
 static bool jit_reg_read_ecx(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t reg)
 {
@@ -1168,6 +1390,7 @@ static bool jit_reg_read_ecx(rv32_jit_writer_t *w,
   return emit_mov_ecx_hreg(w, slot->hreg);
 }
 
+/* Write the current EAX result to a guest register cache slot. */
 static bool jit_reg_write_eax(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t reg)
 {
@@ -1193,6 +1416,7 @@ static bool jit_reg_write_eax(rv32_jit_writer_t *w,
   return true;
 }
 
+/* Write a compile-time constant value to a guest register cache slot. */
 static bool jit_reg_write_imm(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t reg, uint32_t value)
 {
@@ -1218,6 +1442,7 @@ static bool jit_reg_write_imm(rv32_jit_writer_t *w,
   return true;
 }
 
+/* Return a cache slot whose host register definitely contains the guest value. */
 static rv32_jit_reg_slot_t *jit_reg_loaded_slot(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t reg)
 {
@@ -1240,6 +1465,7 @@ static rv32_jit_reg_slot_t *jit_reg_loaded_slot(rv32_jit_writer_t *w,
   return slot;
 }
 
+/* Mark a slot as containing a new value that must eventually be written back. */
 static void jit_reg_mark_hreg_dirty(rv32_jit_reg_cache_t *regs,
     rv32_jit_reg_slot_t *slot)
 {
@@ -1248,6 +1474,7 @@ static void jit_reg_mark_hreg_dirty(rv32_jit_reg_cache_t *regs,
   slot->age = regs->next_age++;
 }
 
+/* Emit a two-register x86 ALU operation directly between cached host registers. */
 static bool emit_hreg_binop_hreg(rv32_jit_writer_t *w, uint8_t opcode,
     rv32_jit_hreg_t dst, rv32_jit_hreg_t src)
 {
@@ -1260,6 +1487,7 @@ static bool emit_hreg_binop_hreg(rv32_jit_writer_t *w, uint8_t opcode,
       && emit_u8(w, jit_modrm(3, src_reg, dst_reg));
 }
 
+/* Emit an x86 ALU immediate operation against a cached host register. */
 static bool emit_hreg_alu_imm(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
     uint8_t subop, uint32_t imm)
 {
@@ -1281,6 +1509,7 @@ static bool emit_hreg_alu_imm(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
       && emit_u32(w, imm);
 }
 
+/* Emit an x86 shift by immediate against a cached host register. */
 static bool emit_hreg_shift_imm(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
     uint8_t subop, uint8_t amount)
 {
@@ -1291,6 +1520,7 @@ static bool emit_hreg_shift_imm(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
       && emit_u8(w, amount);
 }
 
+/* Emit an x86 shift by CL against a cached host register. */
 static bool emit_hreg_shift_cl(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
     uint8_t subop)
 {
@@ -1300,6 +1530,7 @@ static bool emit_hreg_shift_cl(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
       && emit_u8(w, jit_modrm(3, subop, dst));
 }
 
+/* Apply an immediate ALU operation in place to a cached guest register. */
 static bool jit_reg_apply_imm(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t reg, uint8_t subop, uint32_t imm)
 {
@@ -1318,6 +1549,7 @@ static bool jit_reg_apply_imm(rv32_jit_writer_t *w,
   return true;
 }
 
+/* Apply an immediate shift in place to a cached guest register. */
 static bool jit_reg_apply_shift_imm(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t reg, uint8_t subop, uint8_t amount)
 {
@@ -1336,6 +1568,7 @@ static bool jit_reg_apply_shift_imm(rv32_jit_writer_t *w,
   return true;
 }
 
+/* Apply a register-register ALU operation in place to a cached destination. */
 static bool jit_reg_apply_reg(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t dst_reg, uint32_t src_reg,
     uint8_t opcode)
@@ -1361,6 +1594,7 @@ static bool jit_reg_apply_reg(rv32_jit_writer_t *w,
   return true;
 }
 
+/* Copy one guest register value to another using the host-register cache. */
 static bool jit_reg_copy(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     uint32_t dst_reg, uint32_t src_reg)
 {
@@ -1400,6 +1634,7 @@ static bool jit_reg_copy(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
   return true;
 }
 
+/* Apply a register-count shift in place, using ECX for the x86 CL count. */
 static bool jit_reg_apply_shift_reg(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t dst_reg, uint32_t src_reg,
     uint8_t subop)
@@ -1419,6 +1654,7 @@ static bool jit_reg_apply_shift_reg(rv32_jit_writer_t *w,
   return true;
 }
 
+/* Emit MULH or MULHU by taking the high 32 bits from x86 EDX. */
 static bool emit_rv32_mul_high(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t rd, bool is_signed)
 {
@@ -1427,6 +1663,7 @@ static bool emit_rv32_mul_high(rv32_jit_writer_t *w,
       && jit_reg_write_eax(w, regs, rd);
 }
 
+/* Emit RV32 DIVU, including the defined divide-by-zero all-ones result. */
 static bool emit_rv32_divu(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t rd)
 {
@@ -1456,6 +1693,7 @@ static bool emit_rv32_divu(rv32_jit_writer_t *w,
   return jit_reg_write_eax(w, regs, rd);
 }
 
+/* Emit RV32 REMU, including the defined divide-by-zero dividend result. */
 static bool emit_rv32_remu(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t rd)
 {
@@ -1478,6 +1716,7 @@ static bool emit_rv32_remu(rv32_jit_writer_t *w,
   return jit_reg_write_eax(w, regs, rd);
 }
 
+/* Emit RV32 DIV, guarding both x86 signed-divide trap cases first. */
 static bool emit_rv32_div(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t rd)
 {
@@ -1527,6 +1766,7 @@ static bool emit_rv32_div(rv32_jit_writer_t *w,
   return jit_reg_write_eax(w, regs, rd);
 }
 
+/* Emit RV32 REM, including zero-divisor and INT_MIN / -1 edge cases. */
 static bool emit_rv32_rem(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t rd)
 {
@@ -1572,18 +1812,21 @@ static bool emit_rv32_rem(rv32_jit_writer_t *w,
   return jit_reg_write_eax(w, regs, rd);
 }
 
+/* Emit `movabs r9, imm64`; r9 holds the source-chunk refcount table base. */
 static bool emit_movabs_r9(rv32_jit_writer_t *w, uint64_t value)
 {
   /* movabs r9, imm64 */
   return emit_u8(w, 0x49) && emit_u8(w, 0xb9) && emit_u64(w, value);
 }
 
+/* Emit `movabs r10, imm64`; r10 holds the host PMEM base pointer. */
 static bool emit_movabs_r10(rv32_jit_writer_t *w, uint64_t value)
 {
   /* movabs r10, imm64 */
   return emit_u8(w, 0x49) && emit_u8(w, 0xba) && emit_u64(w, value);
 }
 
+/* Load r10 with the host pointer corresponding to guest physical CONFIG_MBASE. */
 static bool emit_load_pmem_base(rv32_jit_writer_t *w)
 {
   /*
@@ -1594,6 +1837,7 @@ static bool emit_load_pmem_base(rv32_jit_writer_t *w)
   return emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE));
 }
 
+/* Load r9 with the source-chunk refcount table base for store guards. */
 static bool emit_load_source_refs_base(rv32_jit_writer_t *w)
 {
   /*
@@ -1605,6 +1849,7 @@ static bool emit_load_source_refs_base(rv32_jit_writer_t *w)
   return emit_movabs_r9(w, (uint64_t)(uintptr_t)jit_source_chunk_refs);
 }
 
+/* Lazily load r9 once when the first direct-store source guard needs it. */
 static bool jit_reg_ensure_source_refs_base(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs)
 {
@@ -1617,6 +1862,7 @@ static bool jit_reg_ensure_source_refs_base(rv32_jit_writer_t *w,
   return emit_load_source_refs_base(w);
 }
 
+/* Emit LEA that computes a PMEM offset in EDX from the guest address in EAX. */
 static bool emit_lea_edx_eax_imm(rv32_jit_writer_t *w, uint32_t value)
 {
   /*
@@ -1627,34 +1873,40 @@ static bool emit_lea_edx_eax_imm(rv32_jit_writer_t *w, uint32_t value)
   return emit_u8(w, 0x8d) && emit_u8(w, 0x90) && emit_u32(w, value);
 }
 
+/* Copy the PMEM offset from EDX to R8D for source-chunk calculations. */
 static bool emit_mov_r8d_edx(rv32_jit_writer_t *w)
 {
   return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xd0);
 }
 
+/* Compare the computed PMEM offset in EDX with an immediate bound. */
 static bool emit_cmp_edx_imm(rv32_jit_writer_t *w, uint32_t value)
 {
   return emit_u8(w, 0x81) && emit_u8(w, 0xfa) && emit_u32(w, value);
 }
 
+/* Mask R8D with an immediate, used to test offset within a source chunk. */
 static bool emit_and_r8d_imm(rv32_jit_writer_t *w, uint32_t value)
 {
   return emit_u8(w, 0x41) && emit_u8(w, 0x81) && emit_u8(w, 0xe0)
       && emit_u32(w, value);
 }
 
+/* Compare R8D with an immediate during store source-chunk checks. */
 static bool emit_cmp_r8d_imm(rv32_jit_writer_t *w, uint32_t value)
 {
   return emit_u8(w, 0x41) && emit_u8(w, 0x81) && emit_u8(w, 0xf8)
       && emit_u32(w, value);
 }
 
+/* Shift R8D right to convert a PMEM byte offset into a chunk index. */
 static bool emit_shr_r8d_imm(rv32_jit_writer_t *w, uint8_t value)
 {
   return emit_u8(w, 0x41) && emit_u8(w, 0xc1) && emit_u8(w, 0xe8)
       && emit_u8(w, value);
 }
 
+/* Compare `jit_source_chunk_refs[r8d]` with zero inside generated code. */
 static bool emit_cmp_source_chunk_ref_zero(rv32_jit_writer_t *w)
 {
   /* cmp word ptr [r9 + r8 * 2], 0 */
@@ -1662,6 +1914,14 @@ static bool emit_cmp_source_chunk_ref_zero(rv32_jit_writer_t *w)
       && emit_u8(w, 0x3c) && emit_u8(w, 0x41) && emit_u8(w, 0x00);
 }
 
+/*
+ * Emit the generated-code guard for an inline PMEM access.
+ *
+ * Input: EAX contains the guest virtual address. Output on the fast path: EDX
+ * contains the byte offset from CONFIG_MBASE. Slow-path branch placeholders are
+ * recorded in `patch` so the caller can patch them after emitting the helper
+ * path.
+ */
 static bool emit_direct_pmem_guard(rv32_jit_writer_t *w, uint32_t len,
     rv32_jit_pmem_guard_patch_t *patch)
 {
@@ -1690,6 +1950,7 @@ static bool emit_direct_pmem_guard(rv32_jit_writer_t *w, uint32_t len,
       && emit_jcc_rel32_placeholder(w, 0x87, &patch->range_slow_disp);
 }
 
+/* Patch every slow-path branch emitted by emit_direct_pmem_guard(). */
 static void patch_direct_pmem_guard(const rv32_jit_pmem_guard_patch_t *patch,
     const uint8_t *slow_path)
 {
@@ -1700,6 +1961,7 @@ static void patch_direct_pmem_guard(const rv32_jit_pmem_guard_patch_t *patch,
   patch_rel32(patch->range_slow_disp, slow_path);
 }
 
+/* Emit the inline PMEM load variant selected by the RV32 load funct3 field. */
 static bool emit_direct_pmem_load_eax(rv32_jit_writer_t *w, uint32_t funct3)
 {
   /*
@@ -1734,6 +1996,7 @@ static bool emit_direct_pmem_load_eax(rv32_jit_writer_t *w, uint32_t funct3)
   }
 }
 
+/* Emit an inline PMEM store from ECX using the selected byte width. */
 static bool emit_direct_pmem_store_from_ecx(rv32_jit_writer_t *w, uint32_t len)
 {
   /*
@@ -1760,6 +2023,13 @@ static bool emit_direct_pmem_store_from_ecx(rv32_jit_writer_t *w, uint32_t len)
   }
 }
 
+/*
+ * Emit guards that decide whether an inline PMEM store can continue in-block.
+ *
+ * A direct store is safe to continue only when it stays within one source chunk
+ * and that chunk has no compiled-code references. Otherwise the store must go
+ * through the helper so exact invalidation happens before the next fetch.
+ */
 static bool emit_store_source_chunk_guard(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t len, uint8_t **cross_chunk_disp,
     uint8_t **source_chunk_disp)
@@ -1783,6 +2053,7 @@ static bool emit_store_source_chunk_guard(rv32_jit_writer_t *w,
       && emit_jcc_rel32_placeholder(w, 0x85, source_chunk_disp);
 }
 
+/* Emit the common native-block prologue and load long-lived base registers. */
 static bool emit_prologue(rv32_jit_writer_t *w)
 {
   /*
@@ -1794,6 +2065,7 @@ static bool emit_prologue(rv32_jit_writer_t *w)
       && emit_load_pmem_base(w);
 }
 
+/* Emit the common native-block epilogue and return completed guest insn count. */
 static bool emit_epilogue_return_count(rv32_jit_writer_t *w, uint32_t count)
 {
   /* mov eax, count; pop saved cache registers; ret */
@@ -1802,6 +2074,14 @@ static bool emit_epilogue_return_count(rv32_jit_writer_t *w, uint32_t count)
       && emit_u8(w, 0xc3);
 }
 
+/*
+ * Translate one RV32 load instruction.
+ *
+ * The fast path performs direct Bare-mode PMEM loads inside the native block.
+ * The slow path flushes dirty registers, sets cpu.pc to the load instruction,
+ * calls the typed load helper, and reloads base registers that helper calls may
+ * have clobbered.
+ */
 static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     uint32_t instr, vaddr_t cur_pc)
 {
@@ -1854,6 +2134,13 @@ static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
   return jit_reg_write_eax(w, regs, rd);
 }
 
+/*
+ * Translate one RV32 store instruction.
+ *
+ * Plain PMEM data stores can continue in the native block. Stores that may hit
+ * MMIO, paging, or translated source bytes call the store helper and then leave
+ * the block, so the dispatcher observes any invalidation before the next block.
+ */
 static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     uint32_t instr, vaddr_t cur_pc, vaddr_t next_pc, uint32_t exit_count)
 {
@@ -1921,6 +2208,7 @@ static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
   return true;
 }
 
+/* Dispatch a decoded LOAD or STORE opcode to its specialised emitter. */
 static bool emit_load_store_instr(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t instr, vaddr_t cur_pc,
     uint32_t exit_count)
@@ -1940,12 +2228,14 @@ static bool emit_load_store_instr(rv32_jit_writer_t *w,
   return false;
 }
 
+/* Return true for RV32 instructions that terminate a straight-line block. */
 static bool jit_instr_is_control_flow(uint32_t instr)
 {
   const uint32_t opcode = instr & 0x7fu;
   return opcode == 0x63 || opcode == 0x6f || opcode == 0x67;
 }
 
+/* Translate one conditional branch, keeping fall-through in the same block. */
 static bool emit_branch_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     uint32_t instr, vaddr_t pc, uint32_t exit_count)
 {
@@ -1989,6 +2279,7 @@ static bool emit_branch_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
   return true;
 }
 
+/* Translate JAL and JALR control flow instructions that always end the block. */
 static bool emit_control_flow_instr(rv32_jit_writer_t *w,
     rv32_jit_reg_cache_t *regs, uint32_t instr, vaddr_t pc)
 {
@@ -2028,6 +2319,13 @@ static bool emit_control_flow_instr(rv32_jit_writer_t *w,
   return false;
 }
 
+/*
+ * Translate RV32 integer ALU instructions.
+ *
+ * This emitter handles LUI, AUIPC, OP-IMM, OP, and common RV32M operations. It
+ * first tries cache-friendly forms that update guest-register slots directly,
+ * then falls back to EAX/ECX temporary sequences for less convenient cases.
+ */
 static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     uint32_t instr, vaddr_t cur_pc)
 {
@@ -2465,12 +2763,14 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
   return false;
 }
 
+/* Public hook: report whether native RISC-V32 JIT execution can be attempted. */
 bool isa_jit_available(void)
 {
   return !jit_runtime_disabled() && RV32_JIT_ENABLED && !jit_disabled &&
       jit_code_init();
 }
 
+/* Public hook: discard all native blocks after broad CPU or address-space change. */
 void isa_jit_flush_all(void)
 {
   /*
@@ -2484,6 +2784,7 @@ void isa_jit_flush_all(void)
   }
 }
 
+/* Public hook: invalidate native blocks whose physical source bytes were written. */
 void isa_jit_invalidate_paddr(paddr_t addr, int len)
 {
   JIT_STAT_INC(invalidation_requests);
@@ -2523,9 +2824,10 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
 }
 
 /*
- * Convert the current instruction-fetch virtual address into the physical
- * address that backs the translated source bytes. Blocks are invalidated by
- * physical PMEM writes, so every cache entry records this physical range.
+ * Translate an instruction-fetch virtual PC to the physical source byte address.
+ *
+ * Blocks are invalidated by physical PMEM writes, so every cache entry records
+ * the physical bytes that backed its translated guest instructions.
  */
 static bool jit_translate_ifetch(vaddr_t pc, paddr_t *paddr)
 {
@@ -2549,6 +2851,7 @@ static bool jit_translate_ifetch(vaddr_t pc, paddr_t *paddr)
   return false;
 }
 
+/* Check whether a cache slot is still valid for the current PC, satp, and mapping. */
 static bool jit_block_matches(const rv32_jit_block_t *block, vaddr_t pc)
 {
   /*
@@ -2583,11 +2886,13 @@ static bool jit_block_matches(const rv32_jit_block_t *block, vaddr_t pc)
   return true;
 }
 
+/* Return the direct-mapped cache slot for the current PC and CPU satp tag. */
 static rv32_jit_block_t *jit_cache_slot(vaddr_t pc)
 {
   return &jit_cache[jit_hash(pc, cpu.csr.satp)];
 }
 
+/* Publish a negative cache entry for an instruction this JIT cannot translate. */
 static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, uint32_t source_len)
 {
   JIT_STAT_INC(blocks_unsupported);
@@ -2616,6 +2921,14 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, uint32_t source_len)
   };
 }
 
+/*
+ * Compile a native block starting at `pc`.
+ *
+ * The block is limited by the caller's execution budget, the maximum native
+ * block length, unsupported instructions, control flow, and physical source
+ * contiguity. It returns the published cache entry on success, or NULL when the
+ * interpreter should execute the current instruction.
+ */
 static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 {
   JIT_STAT_INC(compile_requests);
@@ -2771,6 +3084,14 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
   return block;
 }
 
+/*
+ * Public hook: execute cached or newly compiled native blocks.
+ *
+ * `remaining` is the CPU loop's instruction budget and `device_budget` is the
+ * maximum number of instructions before the next device update. The function
+ * writes the actual completed count to `*executed` and returns true only when at
+ * least one guest instruction ran in native code.
+ */
 bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed)
 {
   *executed = 0;
@@ -2854,6 +3175,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
 }
 
 #if RV32_JIT_STATS
+/* Compute a rounded fixed-point ratio with two decimal digits. */
 static uint64_t jit_ratio_x100(uint64_t numerator, uint64_t denominator)
 {
   if (denominator == 0)
@@ -2863,6 +3185,7 @@ static uint64_t jit_ratio_x100(uint64_t numerator, uint64_t denominator)
   return (numerator * 100u + denominator / 2u) / denominator;
 }
 
+/* Compute a rounded fixed-point percentage with two decimal digits. */
 static uint64_t jit_percent_x100(uint64_t numerator, uint64_t denominator)
 {
   if (denominator == 0)
@@ -2873,6 +3196,7 @@ static uint64_t jit_percent_x100(uint64_t numerator, uint64_t denominator)
 }
 #endif
 
+/* Public hook: print optional JIT statistics at the end of execution. */
 void isa_jit_dump_stats(void)
 {
   jit_init_runtime_options();
