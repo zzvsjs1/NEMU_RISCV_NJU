@@ -507,9 +507,11 @@ static INLINE void DMCDMA(void)
         PrepDPCM();
       else
       {
-        SIRQStat|=0x80;
         if(DMCFormat&0x80)
+        {
+          SIRQStat|=0x80;
           X6502_IRQBegin(FCEU_IQDPCM);
+        }
       }
     }
   }
@@ -541,9 +543,18 @@ void FCEU_SoundCPUHook(int cycles)
       /* Unbelievably ugly hack */
       if(FSettings.SndRate)
       {
-        soundtsoffs+=DMCacc;
+        /*
+         * DMCacc is normally negative here.  Clamp the timestamp rewind so
+         * a late DMC edge cannot move before the start of the current audio
+         * buffer; otherwise the PCM mixer may read or write at the wrong
+         * position and turn valid samples into harsh noise.
+         */
+        const uint32 rewind = (uint32)-DMCacc;
+        const uint32 available = soundtsoffs + timestamp;
+        const uint32 fudge = rewind < available ? rewind : available;
+        soundtsoffs-=fudge;
         DoPCM();
-        soundtsoffs-=DMCacc;
+        soundtsoffs+=fudge;
       }
       RawDALatch+=t;
       if(RawDALatch&0x80)

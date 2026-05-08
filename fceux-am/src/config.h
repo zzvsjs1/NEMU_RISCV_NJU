@@ -19,8 +19,8 @@
 // unchanged, but reduce emulator-side CPU/audio work on the slowest backend.
 #if defined(__ARCH_NATIVE) || defined(__PLATFORM_QEMU)
 # define PERF_CONFIG PERF_HIGH
-#elif defined(__PLATFORM_NEMU)
-# define PERF_CONFIG PERF_MIDDLE
+#elif defined(__PLATFORM_NEMU) || defined(__NAVY__)
+# define PERF_CONFIG PERF_HIGH
 #else
 # define PERF_CONFIG PERF_LOW
 #endif
@@ -38,5 +38,11 @@
 # define SOUND_CONFIG SOUND_NONE
 # define FUNC_IDX_MAX16
 #endif
+
+enum {
+  NES_BASE_WIDTH = 256,
+  NES_BASE_HEIGHT = 240,
+  NES_MAX_SCALE = 2,
+};
 
 #endif

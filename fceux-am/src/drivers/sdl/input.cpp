@@ -155,8 +155,8 @@ DTestButton (ButtConfig * bc)
 
 ButtConfig GamePadConfig[4][10] = {
 	/* Gamepad 1 */
-	{MK (J), MK (K), MK (U), MK (I),
-	MK (W), MK (S), MK (A), MK (D), MKZ (), MKZ ()},
+	{MK2 (J, X), MK2 (K, Z), MK2 (U, RSHIFT), MK2 (I, RETURN),
+	MK2 (W, UP), MK2 (S, DOWN), MK2 (A, LEFT), MK2 (D, RIGHT), MKZ (), MKZ ()},
 
 	/* Gamepad 2 */
 	GPZ (),

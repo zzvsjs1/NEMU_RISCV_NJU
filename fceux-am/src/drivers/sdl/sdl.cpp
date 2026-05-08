@@ -1,4 +1,6 @@
 #include <klib-macros.h>
+#include <stdio.h>
+#include <string.h>
 #include "main.h"
 #include "throttle.h"
 
@@ -188,18 +190,6 @@ FCEUD_Update(uint8 *XBuf,
 				}
 			}
 		} //else puts("Skipped");
-    // Fceux believes that audio buffer underflow only occurs with a network
-    // play, but NEMU runs too slow, which may also underflow the audio buffer.
-    // So we should add back the following code to handle such underflow.
-    // Note that we remove "&& FCEUDnetplay" in the condition.
-		else if(!NoWaiting && (uflow || tmpcan >= (Count * 9 / 5))) {
-			if(Count > tmpcan) Count=tmpcan;
-			while(tmpcan > 0) {
-				//	printf("Overwrite: %d\n", (Count <= tmpcan)?Count : tmpcan);
-				WriteSound(Buffer, (Count <= tmpcan)?Count : tmpcan);
-				tmpcan -= Count;
-			}
-		}
 	} else {
 		if(!NoWaiting && (!(eoptions&EO_NOTHROTTLE) || FCEUI_EmulationPaused())) {
       while (SpeedThrottle()) { FCEUD_UpdateInput(); }
@@ -221,13 +211,7 @@ FCEUD_Update(uint8 *XBuf,
  */
 EMUFILE_FILE* FCEUD_UTF8_fstream(const char *fn, const char *m)
 {
-#ifdef __NO_FILE_SYSTEM__
-  EMUFILE_FILE *p = (EMUFILE_FILE*)malloc(sizeof(EMUFILE_FILE));
-  p->open(fn, m);
-  return p;
-#else
   return new EMUFILE_FILE(fn, m);
-#endif
 }
 
 static void UpdateEMUCore()
@@ -261,10 +245,53 @@ int noGui = 1;
 
 int KillFCEUXonFrame = 0;
 
+static bool HasNesExtension(const char *path)
+{
+  size_t len = strlen(path);
+  return len >= 4 && strcmp(path + len - 4, ".nes") == 0;
+}
+
+static const char *DefaultRomName()
+{
+  return "ba";
+}
+
+static const char *NormaliseRomPath(const char *romname)
+{
+  static char fullpath[128];
+
+  if (romname == NULL || romname[0] == '\0') {
+    romname = DefaultRomName();
+    printf("No ROM specified. Default to %s\n", romname);
+  }
+
+#ifdef __NO_FILE_SYSTEM__
+  return romname;
+#else
+  const bool has_dir = strchr(romname, '/') != NULL;
+  const char *prefix =
+#ifdef __NAVY__
+    has_dir ? "" : "/share/games/nes/";
+#else
+    has_dir ? "" : "nes/rom/";
+#endif
+
+  // Users normally pass "ba" as mainargs.  The real host/Navy filename still
+  // has the .nes suffix, so add it only for simple ROM names.
+  if (has_dir || HasNesExtension(romname)) {
+    snprintf(fullpath, sizeof(fullpath), "%s%s", prefix, romname);
+  } else {
+    snprintf(fullpath, sizeof(fullpath), "%s%s.nes", prefix, romname);
+  }
+
+  return fullpath;
+#endif
+}
+
 /**
  * The main loop for the SDL.
  */
-#ifdef __NO_FILE_SYSTEM__
+#ifndef __NAVY__
 int main(const char *romname)
 #else
 int main(int argc, char *argv[])
@@ -272,22 +299,16 @@ int main(int argc, char *argv[])
 {
   ioe_init();
 
-#ifndef __NO_FILE_SYSTEM__
+#ifdef __NAVY__
   const char *romname;
   if (argc < 2) {
-    romname = "mario3.nes";
-    printf("No ROM specified. Deafult to %s\n", romname);
+    romname = NULL;
   } else {
     romname = argv[1];
   }
-
-  static char fullpath[128];
-  if (romname[0] != '/') {
-    sprintf(fullpath, "/share/games/nes/%s", romname);
-    romname = fullpath;
-  }
 #endif
 
+  romname = NormaliseRomPath(romname);
   printf("ROM is %s\n", romname);
 
 	int error;
@@ -393,4 +414,3 @@ bool FCEUD_PauseAfterPlayback() { return false; }
 void FCEUD_TurboOn	(void) { NoWaiting|= 1; }
 void FCEUD_TurboOff   (void) { NoWaiting&=~1; }
 void FCEUD_TurboToggle(void) { NoWaiting^= 1; }
-

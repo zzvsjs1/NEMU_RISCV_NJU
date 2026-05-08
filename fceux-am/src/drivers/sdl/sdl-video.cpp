@@ -35,10 +35,10 @@
 
 static int s_srendline;
 //static int s_erendline;
-static const int s_tlines = 240;
+static const int s_tlines = NES_BASE_HEIGHT;
 static int s_inited;
 
-#define NWIDTH	256
+#define NWIDTH	NES_BASE_WIDTH
 
 static int s_paletterefresh;
 
@@ -91,6 +91,10 @@ static struct {
   uint8 r, g, b, unused;
 } s_psdl[256];
 
+static uint32_t *screen_frame;
+static int screen_frame_w;
+static int screen_frame_h;
+
 /**
  * Sets the color for a particular index in the palette.
  */
@@ -129,14 +133,52 @@ BlitScreen(uint8 *XBuf)
   static uint32_t canvas_line[NWIDTH];
   int i;
 #ifdef HAS_GUI
-  int x = (io_read(AM_GPU_CONFIG).width - 256) / 2;
-  int y = (io_read(AM_GPU_CONFIG).height - 240) / 2;
+  AM_GPU_CONFIG_T gpu = io_read(AM_GPU_CONFIG);
+  int scale = gpu.width / NES_BASE_WIDTH;
+  int scale_y = gpu.height / NES_BASE_HEIGHT;
+  if (scale > scale_y) scale = scale_y;
+  if (scale > NES_MAX_SCALE) scale = NES_MAX_SCALE;
+  if (scale < 1) scale = 1;
+
+  int draw_w = NES_BASE_WIDTH * scale;
+  int draw_h = NES_BASE_HEIGHT * scale;
+  int frame_w = gpu.width;
+  int frame_h = draw_h;
+  int x = (gpu.width - draw_w) / 2;
+  int y = (gpu.height - draw_h) / 2;
+
+  if (screen_frame == NULL || screen_frame_w != frame_w || screen_frame_h != frame_h) {
+    screen_frame = (uint32_t *)FCEU_malloc(frame_w * frame_h * sizeof(uint32_t));
+    screen_frame_w = frame_w;
+    screen_frame_h = frame_h;
+  }
+
   for (i = 0; i < s_tlines; i ++, XBuf += NWIDTH) {
     Blit8ToHigh(XBuf, (uint8 *)canvas_line, NWIDTH, 1, NWIDTH * 4, 1, 1);
-    io_write(AM_GPU_FBDRAW, x, y, canvas_line, NWIDTH, 1, false);
-    y ++;
+    if (scale == 1) {
+      memcpy(screen_frame + i * frame_w + x, canvas_line, NWIDTH * sizeof(uint32_t));
+    } else {
+      /*
+       * NES pixels are low resolution by design.  Integer nearest-neighbour
+       * scaling keeps the image sharp.  Build a full-width NES image band,
+       * then publish it in one full-width draw; this lets NDL and nanos-lite
+       * take their fast contiguous framebuffer path instead of hundreds of
+       * row-sized syscalls per emulated frame.  The top and bottom borders stay
+       * untouched after the initial black restore, so each frame moves only the
+       * visible NES band instead of the whole 800x600 display.
+       */
+      uint32_t *dst0 = screen_frame + i * scale * frame_w + x;
+      for (int px = 0; px < NWIDTH; px ++) {
+        for (int sx = 0; sx < scale; sx ++) {
+          dst0[px * scale + sx] = canvas_line[px];
+        }
+      }
+      for (int sy = 1; sy < scale; sy ++) {
+        memcpy(dst0 + sy * frame_w, dst0, draw_w * sizeof(uint32_t));
+      }
+    }
   }
-  io_write(AM_GPU_FBDRAW, 0, 0, NULL, 0, 0, true);
+  io_write(AM_GPU_FBDRAW, 0, y, screen_frame, frame_w, frame_h, true);
 #else
   printf("\033[0;0H");
   for (i = 0; i < s_tlines; i += 4, XBuf += NWIDTH * 4) {

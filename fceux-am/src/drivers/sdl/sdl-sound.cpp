@@ -39,8 +39,8 @@ InitSound()
 #endif
 
 #if SOUND_CONFIG == SOUND_HQ
-  const int soundrate = 44100;
-  const int soundq = 1;
+  const int soundrate = 48000;
+  const int soundq = 2;
 #else
   const int soundrate = 11025;
   const int soundq = 0;

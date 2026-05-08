@@ -27,6 +27,7 @@ THE SOFTWARE.
 
 #include <stdarg.h>
 #include "types.h"
+#include <stdio.h>
 
 #ifndef SEEK_SET
 enum {SEEK_SET, SEEK_CUR, SEEK_END};

@@ -25,7 +25,7 @@
 
 static uint8 is26;
 static uint8 prg[2], chr[8], mirr;
-static uint8 IRQLatch, IRQa, IRQd;
+static uint8 IRQLatch, IRQa, IRQd, IRQMode;
 static int32 IRQCount, CycleCount;
 static uint8 *WRAM = NULL;
 static uint32 WRAMSIZE;
@@ -37,6 +37,7 @@ static SFORMAT StateRegs[] =
 	{ &mirr, 1, "MIRR" },
 	{ &IRQa, 1, "IRQA" },
 	{ &IRQd, 1, "IRQD" },
+	{ &IRQMode, 1, "IRQM" },
 	{ &IRQLatch, 1, "IRQL" },
 	{ &IRQCount, 4, "IRQC" },
 	{ &CycleCount, 4, "CYCC" },
@@ -111,6 +112,7 @@ static DECLFW(VRC6Write) {
 	case 0xF001:
 		IRQa = V & 2;
 		IRQd = V & 1;
+		IRQMode = V & 4;
 		if (V & 2)
 			IRQCount = IRQLatch;
 		CycleCount = 0;
@@ -132,13 +134,31 @@ static void VRC6Power(void) {
 
 static void VRC6IRQHook(int a) {
 	if (IRQa) {
-		CycleCount += a * 3;
-		while(CycleCount >= 341) {
-			CycleCount -= 341;
-			IRQCount++;
-			if (IRQCount == 0x100) {
-				IRQCount = IRQLatch;
-				X6502_IRQBegin(FCEU_IQEXT);
+		/*
+		 * VRC6 has two IRQ clocks.  The normal mode follows PPU dots
+		 * (3 dots for every CPU cycle, 341 dots per scanline), while
+		 * cycle mode counts CPU cycles directly.  Some mapper 24 games
+		 * rely on the mode bit when they schedule mid-frame IRQ work.
+		 */
+		if (IRQMode) {
+			CycleCount += a;
+			while (CycleCount > 0) {
+				CycleCount--;
+				IRQCount++;
+				if (IRQCount & 0x100) {
+					X6502_IRQBegin(FCEU_IQEXT);
+					IRQCount = IRQLatch;
+				}
+			}
+		} else {
+			CycleCount += a * 3;
+			while(CycleCount >= 341) {
+				CycleCount -= 341;
+				IRQCount++;
+				if (IRQCount == 0x100) {
+					IRQCount = IRQLatch;
+					X6502_IRQBegin(FCEU_IQEXT);
+				}
 			}
 		}
 	}

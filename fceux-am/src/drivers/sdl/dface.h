@@ -4,6 +4,7 @@ void DoDriverArgs(void);
 
 int InitSound();
 void WriteSound(int32 *Buffer, int Count);
+void WriteSoundStretched(int32 *Buffer, int Count, int OutCount);
 int KillSound(void);
 uint32 GetMaxSound(void);
 uint32 GetWriteSound(void);
@@ -28,4 +29,3 @@ void Giggles(int);
 void DoFun(void);
 
 int FCEUD_NetworkConnect(void);
-

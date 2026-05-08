@@ -61,12 +61,12 @@ FCEUFILE * FCEU_fopen(const char *path, const char *ipsfn, const char *mode, cha
 			if (!fp->is_open())
 			{
 				//fp is new'ed so it has to be deleted
-				free(fp);
+				delete fp;
 				return 0;
 			}
 
 			//open a plain old file
-			fceufp = (FCEUFILE *)malloc(sizeof(FCEUFILE));
+			fceufp = new FCEUFILE();
 			fceufp->archiveIndex = -1;
 			fceufp->archiveCount = -1;
 			fceufp->stream = fp;
@@ -81,8 +81,7 @@ FCEUFILE * FCEU_fopen(const char *path, const char *ipsfn, const char *mode, cha
 
 int FCEU_fclose(FCEUFILE *fp)
 {
-  fp->~FCEUFILE();
-  free(fp);
+  delete fp;
 	return 1;
 }
 

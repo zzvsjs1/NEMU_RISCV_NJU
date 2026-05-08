@@ -2,6 +2,7 @@
 #define __MAPINC_H__
 
 #include "../types.h"
+#include "../config.h"
 #include "../utils/memory.h"
 #include "../x6502.h"
 #include "../fceu.h"

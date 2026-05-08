@@ -33,8 +33,7 @@ struct FCEUFILE {
 	~FCEUFILE()
 	{
 		if(stream) {
-      stream->~EMUFILE_FILE();
-      free(stream);
+      delete stream;
     }
 	}
 
