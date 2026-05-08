@@ -1,6 +1,7 @@
 #include <isa-jit.h>
 #include <isa.h>
 #include <memory/host.h>
+#include <memory/paddr.h>
 #include <memory/vaddr.h>
 #include <utils.h>
 #include "local-include/reg.h"
@@ -70,16 +71,14 @@
 
 #define RV32_JIT_BLOCK_MAX_INSNS 32u
 /*
- * One native block may still be very short because stores, branches and
- * unsupported instructions end translation early. A bounded batch lets one
- * isa_jit_exec() call consume several cached blocks before returning to the
- * outer CPU loop. The limit is intentionally the same scale as the device
- * update interval, so timer/device work and interrupt checks are not delayed
- * by an unbounded translated-code run.
+ * Match the CPU device polling interval so one isa_jit_exec() call can consume
+ * many short cached blocks before returning.  The cap is still bounded and
+ * device_update() remains time-gated to TIMER_HZ, so this removes avoidable
+ * dispatcher churn without letting native code run without limits.
  */
-#define RV32_JIT_BATCH_MAX_INSNS 256u
-#define RV32_JIT_CACHE_SIZE 4096u
-#define RV32_JIT_CODE_SIZE (4u * 1024u * 1024u)
+#define RV32_JIT_BATCH_MAX_INSNS 65536u
+#define RV32_JIT_CACHE_SIZE 262144u
+#define RV32_JIT_CODE_SIZE (256u * 1024u * 1024u)
 #define RV32_JIT_CODE_ALIGN 16u
 /*
  * Store continuation needs to know whether a write can touch translated source
@@ -94,6 +93,15 @@
 #define RV32_JIT_PMEM_CHUNK_COUNT \
   (((size_t)CONFIG_MSIZE + (size_t)RV32_JIT_SOURCE_CHUNK_SIZE - 1u) / \
       (size_t)RV32_JIT_SOURCE_CHUNK_SIZE)
+#define RV32_JIT_SATP_MODE_MASK 0x80000000u
+#define RV32_JIT_SATP_PPN_MASK  0x003fffffu
+#define RV32_JIT_PTE_V 0x001u
+#define RV32_JIT_PTE_R 0x002u
+#define RV32_JIT_PTE_W 0x004u
+#define RV32_JIT_PTE_X 0x008u
+#define RV32_JIT_TLB_SIZE 128u
+#define RV32_JIT_PMEM_PAGE_COUNT \
+  (((size_t)CONFIG_MSIZE + (size_t)PAGE_SIZE - 1u) / (size_t)PAGE_SIZE)
 #ifdef CONFIG_RV32_JIT_STATS
 #define RV32_JIT_STATS 1
 #else
@@ -101,6 +109,31 @@
 #endif
 
 typedef uint32_t (*rv32_jit_entry_t)(void);
+
+typedef struct
+{
+  /* satp separates address spaces that reuse the same virtual page number. */
+  uint32_t satp;
+  /* Virtual page number, excluding the 12-bit page offset. */
+  uint32_t vpn;
+  /* Cached R/W/X permission bits from the Sv32 leaf PTE. */
+  uint32_t perm;
+  /* Physical base address of the translated 4 KiB page. */
+  paddr_t pg_paddr;
+  /* Level-0 page-table page used by the walk; stores here may stale the entry. */
+  paddr_t pt_page;
+  bool valid;
+  /*
+   * Keep each entry at 32 bytes so generated x86 can compute
+   * `&jit_tlb[index]` with one shift instead of an imul.
+   */
+  uint8_t pad[11];
+} rv32_jit_tlb_entry_t;
+
+typedef char rv32_jit_tlb_entry_size_must_be_32[
+    sizeof(rv32_jit_tlb_entry_t) == 32 ? 1 : -1];
+typedef char rv32_jit_pmem_mapping_must_be_page_aligned[
+    ((CONFIG_MBASE | CONFIG_MSIZE) & PAGE_MASK) == 0 ? 1 : -1];
 
 typedef struct
 {
@@ -135,6 +168,14 @@ typedef struct
 
 /* Direct-mapped block cache indexed by a hash of guest PC and satp. */
 static rv32_jit_block_t jit_cache[RV32_JIT_CACHE_SIZE];
+/* Small translated-PMEM cache used by JIT memory helpers in Sv32 mode. */
+static rv32_jit_tlb_entry_t jit_tlb[RV32_JIT_TLB_SIZE];
+/*
+ * Refcount PMEM pages that are currently used as page-table pages by cached JIT
+ * TLB entries.  Stores can then test one indexed counter instead of scanning all
+ * TLB entries, which matters because FCEUX performs huge numbers of stores.
+ */
+static uint16_t jit_tlb_pt_page_refs[RV32_JIT_PMEM_PAGE_COUNT];
 /*
  * Refcount per 128-byte PMEM source chunk. A non-zero value means at least one
  * native block was compiled from bytes in that chunk, so stores there may need
@@ -274,36 +315,188 @@ static int32_t imm_j(uint32_t instr)
   return sext(imm, 21);
 }
 
-/*
- * Prove that a guest virtual byte range is ordinary Bare-mode PMEM.
- *
- * Returns true only when the access cannot involve paging, MMIO, wrapping, or a
- * zero-length operation. On success, `*paddr` receives the physical start
- * address that can be passed to guest_to_host().
- */
-static bool jit_direct_pmem_range(vaddr_t addr, uint32_t len, paddr_t *paddr)
+static void jit_tlb_flush(void)
 {
+  memset(jit_tlb, 0, sizeof(jit_tlb));
+  memset(jit_tlb_pt_page_refs, 0, sizeof(jit_tlb_pt_page_refs));
+}
+
+static bool jit_pmem_page_index(paddr_t page, size_t *idx)
+{
+  const paddr_t base = (paddr_t)CONFIG_MBASE;
+  if (page < base || page >= base + (paddr_t)CONFIG_MSIZE)
+  {
+    return false;
+  }
+
+  *idx = (size_t)((page - base) >> PAGE_SHIFT);
+  return *idx < RV32_JIT_PMEM_PAGE_COUNT;
+}
+
+static void jit_tlb_ref_page(paddr_t page)
+{
+  size_t idx = 0;
+  if (jit_pmem_page_index(page, &idx) &&
+      jit_tlb_pt_page_refs[idx] != UINT16_MAX)
+  {
+    jit_tlb_pt_page_refs[idx]++;
+  }
+}
+
+static void jit_tlb_unref_page(paddr_t page)
+{
+  size_t idx = 0;
+  if (jit_pmem_page_index(page, &idx) && jit_tlb_pt_page_refs[idx] > 0)
+  {
+    jit_tlb_pt_page_refs[idx]--;
+  }
+}
+
+static bool jit_tlb_refs_page(paddr_t page)
+{
+  size_t idx = 0;
+  return jit_pmem_page_index(page, &idx) && jit_tlb_pt_page_refs[idx] != 0;
+}
+
+static bool jit_cross_page(vaddr_t addr, uint32_t len)
+{
+  const word_t off = (word_t)(addr & PAGE_MASK);
+  return off + (word_t)len > PAGE_SIZE;
+}
+
+static bool jit_pmem_range(paddr_t addr, uint32_t len)
+{
+  const paddr_t end = addr + (paddr_t)len - 1u;
+  return len > 0 && end >= addr && likely(in_pmem(addr) && in_pmem(end));
+}
+
+static uint32_t jit_required_perm(int type)
+{
+  switch (type)
+  {
+    case MEM_TYPE_IFETCH: return RV32_JIT_PTE_X;
+    case MEM_TYPE_READ: return RV32_JIT_PTE_R;
+    case MEM_TYPE_WRITE: return RV32_JIT_PTE_W;
+    default: return 0;
+  }
+}
+
+/*
+ * Translate a Sv32 virtual address to ordinary PMEM for JIT helper accesses.
+ *
+ * This deliberately mirrors the fast executor's small TLB, but it stays local to
+ * the JIT helper path so generated code does not need to inline page walks.  A
+ * false result is not an error; it only means the existing vaddr path must handle
+ * the edge case, such as MMIO, cross-page accesses, invalid PTEs, or superpages.
+ */
+static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *paddr)
+{
+  const uint32_t satp = cpu.csr.satp;
+  if ((satp & RV32_JIT_SATP_MODE_MASK) == 0)
+  {
+    const paddr_t direct = (paddr_t)addr;
+    if (!jit_pmem_range(direct, len))
+    {
+      return false;
+    }
+    *paddr = direct;
+    return true;
+  }
+
+  if (len == 0 || jit_cross_page(addr, len))
+  {
+    return false;
+  }
+
+  const uint32_t need_perm = jit_required_perm(type);
+  const uint32_t vpn = (uint32_t)(addr >> PAGE_SHIFT);
+  const uint32_t idx = vpn & (RV32_JIT_TLB_SIZE - 1u);
+  rv32_jit_tlb_entry_t *entry = &jit_tlb[idx];
+
+  if (likely(entry->valid && entry->satp == satp && entry->vpn == vpn &&
+      (entry->perm & need_perm) != 0))
+  {
+    const paddr_t translated = entry->pg_paddr | (paddr_t)(addr & PAGE_MASK);
+    if (!jit_pmem_range(translated, len))
+    {
+      return false;
+    }
+    *paddr = translated;
+    return true;
+  }
+
+  const paddr_t root = (paddr_t)((satp & RV32_JIT_SATP_PPN_MASK) << PAGE_SHIFT);
+  const word_t vpn1 = (word_t)((addr >> 22) & 0x3ffu);
+  const word_t vpn0 = (word_t)((addr >> 12) & 0x3ffu);
+  const paddr_t pte1_addr = root + (paddr_t)(vpn1 * 4u);
+  const uint32_t pte1 = (uint32_t)paddr_read(pte1_addr, 4);
+
+  if ((pte1 & RV32_JIT_PTE_V) == 0)
+  {
+    return false;
+  }
+
   /*
-   * Helpers may be called from generated code where the fast inline PMEM guard
-   * rejected the access. Re-check here rather than trusting the emitter: paging,
-   * wrap-around, and MMIO must all fall through to the normal memory path. This
-   * keeps the direct-PMEM optimisation a proof of the ordinary RAM case, not a
-   * second memory model with subtly different fault or device behaviour.
+   * Nanos-lite uses normal 4 KiB leaves for this workload.  Superpages are left
+   * to the full MMU path, which already owns those less common checks.
    */
-  if ((cpu.csr.satp & 0x80000000u) != 0 || len == 0)
+  const uint32_t pte1_rwx = pte1 & (RV32_JIT_PTE_R | RV32_JIT_PTE_W | RV32_JIT_PTE_X);
+  if (pte1_rwx != 0)
   {
     return false;
   }
 
-  const paddr_t start = (paddr_t)addr;
-  const paddr_t end = start + (paddr_t)len - 1u;
-  if (end < start || !in_pmem(start) || !in_pmem(end))
+  const paddr_t l0_pt = (paddr_t)((pte1 >> 10) << PAGE_SHIFT);
+  const paddr_t pte0_addr = l0_pt + (paddr_t)(vpn0 * 4u);
+  const uint32_t pte0 = (uint32_t)paddr_read(pte0_addr, 4);
+  if ((pte0 & RV32_JIT_PTE_V) == 0)
   {
     return false;
   }
 
-  *paddr = start;
+  const uint32_t perm = pte0 & (RV32_JIT_PTE_R | RV32_JIT_PTE_W | RV32_JIT_PTE_X);
+  if (perm == 0 || (perm & need_perm) == 0)
+  {
+    return false;
+  }
+
+  const paddr_t pg_paddr = (paddr_t)((pte0 >> 10) << PAGE_SHIFT);
+  if (!jit_pmem_range(pg_paddr | (paddr_t)(addr & PAGE_MASK), len))
+  {
+    return false;
+  }
+
+  if (entry->valid)
+  {
+    const paddr_t old_root =
+        (paddr_t)((entry->satp & RV32_JIT_SATP_PPN_MASK) << PAGE_SHIFT);
+    jit_tlb_unref_page(old_root);
+    jit_tlb_unref_page(entry->pt_page);
+  }
+
+  *entry = (rv32_jit_tlb_entry_t) {
+    .satp = satp,
+    .vpn = vpn,
+    .perm = perm,
+    .pg_paddr = pg_paddr,
+    .pt_page = l0_pt,
+    .valid = true,
+  };
+  jit_tlb_ref_page(root);
+  jit_tlb_ref_page(l0_pt);
+  *paddr = pg_paddr | (paddr_t)(addr & PAGE_MASK);
   return true;
+}
+
+static bool jit_store_may_touch_page_table(paddr_t paddr)
+{
+  if ((cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) == 0)
+  {
+    return false;
+  }
+
+  const paddr_t page = paddr & ~(paddr_t)PAGE_MASK;
+  return jit_tlb_refs_page(page);
 }
 
 /*
@@ -355,7 +548,7 @@ static uint32_t jit_load_raw(vaddr_t addr, uint32_t len)
    */
   paddr_t paddr = 0;
   uint32_t value = 0;
-  if (jit_direct_pmem_range(addr, len, &paddr))
+  if (jit_translate_pmem(addr, len, MEM_TYPE_READ, &paddr))
   {
     JIT_STAT_INC(helper_load_direct);
     value = (uint32_t)host_read(guest_to_host(paddr), (int)len);
@@ -399,34 +592,55 @@ static uint32_t jit_load_u16(vaddr_t addr)
   return jit_load_raw(addr, 2);
 }
 
+static bool jit_write_may_touch_source_chunk(paddr_t addr, int len);
+
 /*
  * Shared store helper for generated code.
  *
- * Direct PMEM stores still perform JIT invalidation, because they bypass
- * paddr_write(). Non-ordinary stores delegate to vaddr_write() so device and
- * virtual-memory side effects remain exactly the interpreter's behaviour.
+ * Returns non-zero only when the caller may continue executing the current
+ * native block.  That is safe for ordinary translated PMEM data stores whose
+ * physical page is not a page table and whose bytes are not compiled source.
+ * MMIO, page-table writes, and self-modifying-code cases still force an exit so
+ * the dispatcher observes the changed machine state before more translated code
+ * runs.
  */
-static void jit_store_raw(vaddr_t addr, uint32_t len, uint32_t data)
+static uint32_t jit_store_raw_continue(vaddr_t addr, uint32_t len, uint32_t data)
 {
   JIT_STAT_INC(helper_stores);
 
-  /*
-   * A direct helper store has to do the invalidation normally performed by
-   * paddr_write(). Generated code may keep running after ordinary data stores,
-   * so this is the point where self-modifying code is noticed before any later
-   * block lookup can reuse stale native code.
-   */
   paddr_t paddr = 0;
-  if (jit_direct_pmem_range(addr, len, &paddr))
+  if (jit_translate_pmem(addr, len, MEM_TYPE_WRITE, &paddr))
   {
     JIT_STAT_INC(helper_store_direct);
+    const bool flush_tlb = jit_store_may_touch_page_table(paddr);
+    const bool touch_source = jit_write_may_touch_source_chunk(paddr, (int)len);
     host_write(guest_to_host(paddr), (int)len, data);
-    isa_jit_invalidate_paddr(paddr, (int)len);
-    return;
+
+    if (touch_source)
+    {
+      isa_jit_invalidate_paddr(paddr, (int)len);
+    }
+    if (unlikely(flush_tlb))
+    {
+      jit_tlb_flush();
+    }
+
+    return !flush_tlb && !touch_source;
   }
 
   JIT_STAT_INC(helper_store_slow);
   vaddr_write(addr, (int)len, data);
+  return 0;
+}
+
+/*
+ * Exiting store helper used by conservative paths.  It shares the fast PMEM
+ * implementation above, but ignores the continuation flag because the emitted
+ * code has already decided to leave the native block after this helper call.
+ */
+static void jit_store_raw(vaddr_t addr, uint32_t len, uint32_t data)
+{
+  (void)jit_store_raw_continue(addr, len, data);
 }
 
 /* Store the low byte of `data` to a guest address. */
@@ -445,6 +659,21 @@ static void jit_store_u16(vaddr_t addr, uint32_t data)
 static void jit_store_u32(vaddr_t addr, uint32_t data)
 {
   jit_store_raw(addr, 4, data);
+}
+
+static uint32_t jit_store_u8_continue(vaddr_t addr, uint32_t data)
+{
+  return jit_store_raw_continue(addr, 1, data);
+}
+
+static uint32_t jit_store_u16_continue(vaddr_t addr, uint32_t data)
+{
+  return jit_store_raw_continue(addr, 2, data);
+}
+
+static uint32_t jit_store_u32_continue(vaddr_t addr, uint32_t data)
+{
+  return jit_store_raw_continue(addr, 4, data);
 }
 
 /*
@@ -862,6 +1091,85 @@ static bool emit_test_ecx_ecx(rv32_jit_writer_t *w)
   return emit_u8(w, 0x85) && emit_u8(w, 0xc9);
 }
 
+/* Test whether EAX is zero without modifying the helper return value. */
+static bool emit_test_eax_eax(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x85) && emit_u8(w, 0xc0);
+}
+
+/* Save a guest virtual address from EAX into ECX before inline guards clobber it. */
+static bool emit_mov_ecx_eax(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x89) && emit_u8(w, 0xc1);
+}
+
+/* Restore a saved guest virtual address from ECX into EAX for helper fallback. */
+static bool emit_mov_eax_ecx(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x89) && emit_u8(w, 0xc8);
+}
+
+/* Save a store guest virtual address from EAX into EDI for helper fallback. */
+static bool emit_mov_edi_eax(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x89) && emit_u8(w, 0xc7);
+}
+
+/* Copy EAX into EDX for address arithmetic. */
+static bool emit_mov_edx_eax(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x89) && emit_u8(w, 0xc2);
+}
+
+/* Shift EDX right by an immediate count. */
+static bool emit_shr_edx_imm(rv32_jit_writer_t *w, uint8_t value)
+{
+  return emit_u8(w, 0xc1) && emit_u8(w, 0xea) && emit_u8(w, value);
+}
+
+/* Mask EAX with an immediate, used to keep the 4 KiB page offset. */
+static bool emit_and_eax_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+  return emit_u8(w, 0x25) && emit_u32(w, value);
+}
+
+/* OR EAX into EDX, combining a translated page base with the page offset. */
+static bool emit_or_edx_eax(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x09) && emit_u8(w, 0xc2);
+}
+
+/* Subtract an immediate from EDX, normally CONFIG_MBASE from a physical address. */
+static bool emit_sub_edx_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+  return emit_u8(w, 0x81) && emit_u8(w, 0xea) && emit_u32(w, value);
+}
+
+/* Shift R8 left by an immediate count; R8 holds a JIT TLB entry offset. */
+static bool emit_shl_r8_imm(rv32_jit_writer_t *w, uint8_t value)
+{
+  return emit_u8(w, 0x49) && emit_u8(w, 0xc1) && emit_u8(w, 0xe0)
+      && emit_u8(w, value);
+}
+
+/* Emit `movabs rdx, imm64` for global table addresses. */
+static bool emit_movabs_rdx(rv32_jit_writer_t *w, uint64_t value)
+{
+  return emit_u8(w, 0x48) && emit_u8(w, 0xba) && emit_u64(w, value);
+}
+
+/* Emit `movabs rax, imm64` when a guard needs an untracked table base. */
+static bool emit_movabs_rax(rv32_jit_writer_t *w, uint64_t value)
+{
+  return emit_u8(w, 0x48) && emit_u8(w, 0xb8) && emit_u64(w, value);
+}
+
+/* Add RDX to R8, producing a pointer into the JIT TLB. */
+static bool emit_add_r8_rdx(rv32_jit_writer_t *w)
+{
+  return emit_u8(w, 0x49) && emit_u8(w, 0x01) && emit_u8(w, 0xd0);
+}
+
 /* Clear EDX before unsigned x86 DIV, which consumes EDX:EAX as the dividend. */
 static bool emit_xor_edx_edx(rv32_jit_writer_t *w)
 {
@@ -972,6 +1280,18 @@ typedef struct
   /* Displacement of the slow-path jump emitted when the PMEM range check fails. */
   uint8_t *range_slow_disp;
 } rv32_jit_pmem_guard_patch_t;
+
+typedef struct
+{
+  /*
+   * Paged-load guards have several independent reasons to give up: missing TLB
+   * entry, different address space, permission miss, cross-page access, or an
+   * unexpected PMEM range.  Keep the branch displacement list compact so the
+   * caller can patch every conservative fallback to the same helper path.
+   */
+  uint8_t *slow_disps[8];
+  uint32_t count;
+} rv32_jit_tlb_load_patch_t;
 
 typedef enum
 {
@@ -1906,12 +2226,68 @@ static bool emit_shr_r8d_imm(rv32_jit_writer_t *w, uint8_t value)
       && emit_u8(w, value);
 }
 
+/* Compare a byte field in the R8-pointed JIT TLB entry with an immediate. */
+static bool emit_cmp_r8b_field_imm8(rv32_jit_writer_t *w, uint32_t offset,
+    uint8_t value)
+{
+  Assert(offset <= INT8_MAX, "jit: TLB byte field offset is too large");
+  return emit_u8(w, 0x41) && emit_u8(w, 0x80) && emit_u8(w, 0x78)
+      && emit_u8(w, (uint8_t)offset) && emit_u8(w, value);
+}
+
+/* Compare a dword field in the R8-pointed JIT TLB entry with an immediate. */
+static bool emit_cmp_r8d_field_imm32(rv32_jit_writer_t *w, uint32_t offset,
+    uint32_t value)
+{
+  Assert(offset <= INT8_MAX, "jit: TLB dword field offset is too large");
+  return emit_u8(w, 0x41) && emit_u8(w, 0x81) && emit_u8(w, 0x78)
+      && emit_u8(w, (uint8_t)offset) && emit_u32(w, value);
+}
+
+/* Compare a dword field in the R8-pointed JIT TLB entry with EDX. */
+static bool emit_cmp_r8d_field_edx(rv32_jit_writer_t *w, uint32_t offset)
+{
+  Assert(offset <= INT8_MAX, "jit: TLB dword field offset is too large");
+  return emit_u8(w, 0x41) && emit_u8(w, 0x39) && emit_u8(w, 0x50)
+      && emit_u8(w, (uint8_t)offset);
+}
+
+/* Test permission bits in a dword field in the R8-pointed JIT TLB entry. */
+static bool emit_test_r8d_field_imm32(rv32_jit_writer_t *w, uint32_t offset,
+    uint32_t value)
+{
+  Assert(offset <= INT8_MAX, "jit: TLB dword field offset is too large");
+  return emit_u8(w, 0x41) && emit_u8(w, 0xf7) && emit_u8(w, 0x40)
+      && emit_u8(w, (uint8_t)offset) && emit_u32(w, value);
+}
+
+/* Load a dword field from the R8-pointed JIT TLB entry into EDX. */
+static bool emit_mov_edx_r8d_field(rv32_jit_writer_t *w, uint32_t offset)
+{
+  Assert(offset <= INT8_MAX, "jit: TLB dword field offset is too large");
+  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) && emit_u8(w, 0x50)
+      && emit_u8(w, (uint8_t)offset);
+}
+
 /* Compare `jit_source_chunk_refs[r8d]` with zero inside generated code. */
 static bool emit_cmp_source_chunk_ref_zero(rv32_jit_writer_t *w)
 {
   /* cmp word ptr [r9 + r8 * 2], 0 */
   return emit_u8(w, 0x66) && emit_u8(w, 0x43) && emit_u8(w, 0x83)
       && emit_u8(w, 0x3c) && emit_u8(w, 0x41) && emit_u8(w, 0x00);
+}
+
+/* Compare `jit_tlb_pt_page_refs[r8d]` with zero inside generated code. */
+static bool emit_cmp_pt_page_ref_zero(rv32_jit_writer_t *w)
+{
+  /*
+   * Use RAX as an untracked table base so this guard does not disturb the lazy
+   * R9 source-ref base used by store source-chunk checks elsewhere in the block.
+   */
+  return emit_movabs_rax(w, (uint64_t)(uintptr_t)jit_tlb_pt_page_refs)
+      /* cmp word ptr [rax + r8 * 2], 0 */
+      && emit_u8(w, 0x66) && emit_u8(w, 0x42) && emit_u8(w, 0x83)
+      && emit_u8(w, 0x3c) && emit_u8(w, 0x40) && emit_u8(w, 0x00);
 }
 
 /*
@@ -1996,6 +2372,142 @@ static bool emit_direct_pmem_load_eax(rv32_jit_writer_t *w, uint32_t funct3)
   }
 }
 
+/* Emit one conservative fallback branch for the inline Sv32 load guard. */
+static bool emit_tlb_load_slow_jcc(rv32_jit_writer_t *w,
+    rv32_jit_tlb_load_patch_t *patch, uint8_t jcc_opcode)
+{
+  Assert(patch->count < sizeof(patch->slow_disps) / sizeof(patch->slow_disps[0]),
+      "jit: too many paged-load slow-path branches");
+  return emit_jcc_rel32_placeholder(w, jcc_opcode,
+      &patch->slow_disps[patch->count++]);
+}
+
+/* Patch every fallback branch emitted by emit_paged_tlb_load_eax(). */
+static void patch_tlb_load_guard(const rv32_jit_tlb_load_patch_t *patch,
+    const uint8_t *slow_path)
+{
+  for (uint32_t i = 0; i < patch->count; i++)
+  {
+    patch_rel32(patch->slow_disps[i], slow_path);
+  }
+}
+
+/*
+ * Emit an inline Sv32 TLB-hit load.
+ *
+ * Input: EAX contains the guest virtual address.  On success, EAX contains the
+ * loaded RV32 value.  ECX preserves the original guest address for every slow
+ * branch, so the helper fallback can receive the exact same argument it did
+ * before this fast path existed.
+ */
+static bool emit_paged_tlb_load_eax(rv32_jit_writer_t *w, uint32_t funct3,
+    uint32_t len, rv32_jit_tlb_load_patch_t *patch)
+{
+  Assert(len >= 1 && len <= 4, "jit: unsupported paged load width %u", len);
+
+  const uint32_t satp = cpu.csr.satp;
+  const uint32_t valid_off = (uint32_t)offsetof(rv32_jit_tlb_entry_t, valid);
+  const uint32_t satp_off = (uint32_t)offsetof(rv32_jit_tlb_entry_t, satp);
+  const uint32_t vpn_off = (uint32_t)offsetof(rv32_jit_tlb_entry_t, vpn);
+  const uint32_t perm_off = (uint32_t)offsetof(rv32_jit_tlb_entry_t, perm);
+  const uint32_t pg_paddr_off =
+      (uint32_t)offsetof(rv32_jit_tlb_entry_t, pg_paddr);
+
+  /*
+   * The index calculation is:
+   *   vpn = vaddr >> 12
+   *   entry = &jit_tlb[vpn & (RV32_JIT_TLB_SIZE - 1)]
+   * The 32-byte entry size lets the generated code use a shift rather than a
+   * host multiply.  If the C struct layout changes, the typedef assertion near
+   * rv32_jit_tlb_entry_t fails at build time.
+   */
+  if (!emit_mov_ecx_eax(w) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_shr_edx_imm(w, PAGE_SHIFT) ||
+      !emit_mov_r8d_edx(w) ||
+      !emit_and_r8d_imm(w, RV32_JIT_TLB_SIZE - 1u) ||
+      !emit_shl_r8_imm(w, 5) ||
+      !emit_movabs_rdx(w, (uint64_t)(uintptr_t)jit_tlb) ||
+      !emit_add_r8_rdx(w))
+  {
+    return false;
+  }
+
+  /*
+   * Recompute VPN after loading the table base into RDX.  The generated block is
+   * already tagged by satp, but checking the entry's satp as well protects the
+   * direct-mapped JIT TLB from stale entries after address-space reuse.
+   */
+  return emit_mov_edx_eax(w) &&
+      emit_shr_edx_imm(w, PAGE_SHIFT) &&
+      emit_cmp_r8b_field_imm8(w, valid_off, 0) &&
+      emit_tlb_load_slow_jcc(w, patch, 0x84) &&
+      emit_cmp_r8d_field_imm32(w, satp_off, satp) &&
+      emit_tlb_load_slow_jcc(w, patch, 0x85) &&
+      emit_cmp_r8d_field_edx(w, vpn_off) &&
+      emit_tlb_load_slow_jcc(w, patch, 0x85) &&
+      emit_test_r8d_field_imm32(w, perm_off, RV32_JIT_PTE_R) &&
+      emit_tlb_load_slow_jcc(w, patch, 0x84) &&
+      emit_and_eax_imm(w, PAGE_MASK) &&
+      emit_cmp_eax_imm(w, PAGE_SIZE - len) &&
+      emit_tlb_load_slow_jcc(w, patch, 0x87) &&
+      emit_mov_edx_r8d_field(w, pg_paddr_off) &&
+      emit_or_edx_eax(w) &&
+      emit_sub_edx_imm(w, (uint32_t)CONFIG_MBASE) &&
+      emit_direct_pmem_load_eax(w, funct3);
+}
+
+/*
+ * Emit an inline Sv32 TLB-hit store address translation.
+ *
+ * Input: EAX contains the guest virtual address and ECX contains the store
+ * value.  On success, EDX contains the PMEM byte offset for `[r10 + rdx]`, and
+ * ECX is still the store value.  EDI keeps the original guest address for the
+ * helper fallback, because EAX is free for guard table bases after translation.
+ */
+static bool emit_paged_tlb_store_offset_edx(rv32_jit_writer_t *w, uint32_t len,
+    rv32_jit_tlb_load_patch_t *patch)
+{
+  Assert(len >= 1 && len <= 4, "jit: unsupported paged store width %u", len);
+
+  const uint32_t satp = cpu.csr.satp;
+  const uint32_t valid_off = (uint32_t)offsetof(rv32_jit_tlb_entry_t, valid);
+  const uint32_t satp_off = (uint32_t)offsetof(rv32_jit_tlb_entry_t, satp);
+  const uint32_t vpn_off = (uint32_t)offsetof(rv32_jit_tlb_entry_t, vpn);
+  const uint32_t perm_off = (uint32_t)offsetof(rv32_jit_tlb_entry_t, perm);
+  const uint32_t pg_paddr_off =
+      (uint32_t)offsetof(rv32_jit_tlb_entry_t, pg_paddr);
+
+  if (!emit_mov_edi_eax(w) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_shr_edx_imm(w, PAGE_SHIFT) ||
+      !emit_mov_r8d_edx(w) ||
+      !emit_and_r8d_imm(w, RV32_JIT_TLB_SIZE - 1u) ||
+      !emit_shl_r8_imm(w, 5) ||
+      !emit_movabs_rdx(w, (uint64_t)(uintptr_t)jit_tlb) ||
+      !emit_add_r8_rdx(w))
+  {
+    return false;
+  }
+
+  return emit_mov_edx_eax(w) &&
+      emit_shr_edx_imm(w, PAGE_SHIFT) &&
+      emit_cmp_r8b_field_imm8(w, valid_off, 0) &&
+      emit_tlb_load_slow_jcc(w, patch, 0x84) &&
+      emit_cmp_r8d_field_imm32(w, satp_off, satp) &&
+      emit_tlb_load_slow_jcc(w, patch, 0x85) &&
+      emit_cmp_r8d_field_edx(w, vpn_off) &&
+      emit_tlb_load_slow_jcc(w, patch, 0x85) &&
+      emit_test_r8d_field_imm32(w, perm_off, RV32_JIT_PTE_W) &&
+      emit_tlb_load_slow_jcc(w, patch, 0x84) &&
+      emit_and_eax_imm(w, PAGE_MASK) &&
+      emit_cmp_eax_imm(w, PAGE_SIZE - len) &&
+      emit_tlb_load_slow_jcc(w, patch, 0x87) &&
+      emit_mov_edx_r8d_field(w, pg_paddr_off) &&
+      emit_or_edx_eax(w) &&
+      emit_sub_edx_imm(w, (uint32_t)CONFIG_MBASE);
+}
+
 /* Emit an inline PMEM store from ECX using the selected byte width. */
 static bool emit_direct_pmem_store_from_ecx(rv32_jit_writer_t *w, uint32_t len)
 {
@@ -2053,6 +2565,22 @@ static bool emit_store_source_chunk_guard(rv32_jit_writer_t *w,
       && emit_jcc_rel32_placeholder(w, 0x85, source_chunk_disp);
 }
 
+/* Emit a guard that keeps inline stores away from cached page-table pages. */
+static bool emit_store_page_table_guard(rv32_jit_writer_t *w,
+    uint8_t **page_table_disp)
+{
+  /*
+   * EDX is a byte offset from CONFIG_MBASE.  Dividing by 4096 gives the PMEM
+   * page index used by jit_tlb_pt_page_refs[].  A non-zero refcount means a
+   * store could stale a JIT TLB entry, so the helper must perform the write,
+   * flush the JIT TLB, and leave the native block.
+   */
+  return emit_mov_r8d_edx(w)
+      && emit_shr_r8d_imm(w, PAGE_SHIFT)
+      && emit_cmp_pt_page_ref_zero(w)
+      && emit_jcc_rel32_placeholder(w, 0x85, page_table_disp);
+}
+
 /* Emit the common native-block prologue and load long-lived base registers. */
 static bool emit_prologue(rv32_jit_writer_t *w)
 {
@@ -2099,6 +2627,42 @@ static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     case 0x4: helper = (uintptr_t)jit_load_u8; len = 1; break;
     case 0x5: helper = (uintptr_t)jit_load_u16; len = 2; break;
     default: return false;
+  }
+
+  if ((cpu.csr.satp & 0x80000000u) != 0)
+  {
+    rv32_jit_tlb_load_patch_t tlb_guard = {0};
+    uint8_t *done_disp = NULL;
+
+    if (!jit_reg_read_eax(w, regs, rs1) ||
+        !emit_add_eax_imm(w, (uint32_t)imm_i(instr)) ||
+        !emit_paged_tlb_load_eax(w, funct3, len, &tlb_guard) ||
+        !emit_jmp_rel32_placeholder(w, &done_disp))
+    {
+      return false;
+    }
+
+    const uint8_t *slow_path = w->cur;
+    patch_tlb_load_guard(&tlb_guard, slow_path);
+    /*
+     * The inline guard saves the full guest virtual address in ECX before it
+     * masks EAX down to a page offset. Restore EAX so the old helper path keeps
+     * the same argument and fault/MMIO behaviour as before.
+     */
+    if (!emit_mov_eax_ecx(w) ||
+        !jit_reg_emit_flush_all_dirty(w, regs) ||
+        !emit_set_pc_imm(w, cur_pc) ||
+        !emit_u8(w, 0x89) || !emit_u8(w, 0xc7) ||
+        !emit_call_abs(w, helper) ||
+        !emit_load_cpu_base(w) ||
+        !emit_load_pmem_base(w) ||
+        (regs->source_refs_loaded && !emit_load_source_refs_base(w)))
+    {
+      return false;
+    }
+
+    patch_rel32(done_disp, w->cur);
+    return jit_reg_write_eax(w, regs, rd);
   }
 
   rv32_jit_pmem_guard_patch_t guard = {0};
@@ -2149,13 +2713,86 @@ static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
   const uint32_t rs2 = bits(instr, 24, 20);
 
   uintptr_t helper = 0;
+  uintptr_t continue_helper = 0;
   uint32_t len = 0;
   switch (funct3)
   {
-    case 0x0: helper = (uintptr_t)jit_store_u8; len = 1; break;
-    case 0x1: helper = (uintptr_t)jit_store_u16; len = 2; break;
-    case 0x2: helper = (uintptr_t)jit_store_u32; len = 4; break;
+    case 0x0:
+      helper = (uintptr_t)jit_store_u8;
+      continue_helper = (uintptr_t)jit_store_u8_continue;
+      len = 1;
+      break;
+    case 0x1:
+      helper = (uintptr_t)jit_store_u16;
+      continue_helper = (uintptr_t)jit_store_u16_continue;
+      len = 2;
+      break;
+    case 0x2:
+      helper = (uintptr_t)jit_store_u32;
+      continue_helper = (uintptr_t)jit_store_u32_continue;
+      len = 4;
+      break;
     default: return false;
+  }
+
+  if ((cpu.csr.satp & 0x80000000u) != 0)
+  {
+    rv32_jit_tlb_load_patch_t tlb_guard = {0};
+    uint8_t *cross_chunk_disp = NULL;
+    uint8_t *source_chunk_disp = NULL;
+    uint8_t *page_table_disp = NULL;
+    uint8_t *exit_disp = NULL;
+    uint8_t *fast_done_disp = NULL;
+    uint8_t *helper_done_disp = NULL;
+    /*
+     * Paged-mode stores first try the same translated-PMEM TLB hit that the C
+     * helper would use.  Inline continuation is allowed only for ordinary data
+     * pages: source-code writes and page-table writes still go through the
+     * helper and then exit so invalidation is observed before the next fetch.
+     */
+    if (!jit_reg_read_eax(w, regs, rs1) ||
+        !emit_add_eax_imm(w, (uint32_t)imm_s(instr)) ||
+        !jit_reg_read_ecx(w, regs, rs2) ||
+        !emit_paged_tlb_store_offset_edx(w, len, &tlb_guard) ||
+        !emit_store_source_chunk_guard(w, regs, len, &cross_chunk_disp,
+            &source_chunk_disp) ||
+        !emit_store_page_table_guard(w, &page_table_disp) ||
+        !emit_direct_pmem_store_from_ecx(w, len) ||
+        !emit_jmp_rel32_placeholder(w, &fast_done_disp))
+    {
+      return false;
+    }
+
+    const uint8_t *slow_path = w->cur;
+    patch_tlb_load_guard(&tlb_guard, slow_path);
+    patch_rel32(cross_chunk_disp, slow_path);
+    patch_rel32(source_chunk_disp, slow_path);
+    patch_rel32(page_table_disp, slow_path);
+
+    if (!jit_reg_emit_flush_all_dirty(w, regs) ||
+        !emit_set_pc_imm(w, cur_pc) ||
+        !emit_u8(w, 0x89) || !emit_u8(w, 0xce) ||
+        !emit_call_abs(w, continue_helper) ||
+        !emit_load_cpu_base(w) ||
+        !emit_test_eax_eax(w) ||
+        !emit_jcc_rel32_placeholder(w, 0x84, &exit_disp) ||
+        !emit_load_pmem_base(w) ||
+        (regs->source_refs_loaded && !emit_load_source_refs_base(w)) ||
+        !emit_jmp_rel32_placeholder(w, &helper_done_disp))
+    {
+      return false;
+    }
+
+    patch_rel32(exit_disp, w->cur);
+    if (!emit_set_pc_imm(w, next_pc) ||
+        !emit_epilogue_return_count(w, exit_count))
+    {
+      return false;
+    }
+
+    patch_rel32(fast_done_disp, w->cur);
+    patch_rel32(helper_done_disp, w->cur);
+    return true;
   }
 
   rv32_jit_pmem_guard_patch_t guard = {0};

@@ -14,7 +14,13 @@
  * You can modify this value as you want.
  */
 #define MAX_INSTR_TO_PRINT 10
-#define DEVICE_UPDATE_CHECK_INTERVAL 256u
+/*
+ * device_update() itself is wall-clock gated to TIMER_HZ, so checking it after
+ * every tiny translated batch mostly pays repeated get_time() and dispatch
+ * overhead.  Keep this value a power of two: should_update_device_after() uses a
+ * cheap mask to carry the leftover guest-instruction count after each check.
+ */
+#define DEVICE_UPDATE_CHECK_INTERVAL 65536u
 
 CPU_state cpu = {0};
 uint64_t g_nr_guest_instr = 0;

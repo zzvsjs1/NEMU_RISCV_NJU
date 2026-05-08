@@ -187,7 +187,7 @@ $(CLEAN_ALL):
 .PHONY: clean-all $(CLEAN_ALL)
 
 ### Build fsimg and ramdisk for Nanos-lite
-APPS = pal bird onscripter
+APPS = pal fceux onscripter
 TESTS = hello
 
 ONS_GAME_SRC = $(NAVY_HOME)/apps/onscripter/game

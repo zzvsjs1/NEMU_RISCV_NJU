@@ -220,7 +220,12 @@ void NDL_OpenAudio(int freq, int channels, int samples)
 {
   if (sbctlFd < 0) 
   {
-    sbctlFd = open("/dev/sbctl", O_WRONLY | O_CLOEXEC);
+    /*
+     * The same descriptor is also used by NDL_QueryAudio().  Open it read/write
+     * here so audio clients can configure the stream and then poll writable
+     * capacity without reopening the control device.
+     */
+    sbctlFd = open("/dev/sbctl", O_RDWR | O_CLOEXEC);
     assert(sbctlFd >= 0);
   }
 
