@@ -93,7 +93,10 @@ static void x24c0x_write(uint8 data) {
 			} else {
 				if(!x24c02)				// X24C01 mode
 					x24c0x_word = x24c0x_addr;
-				if(sda) {				// READ COMMAND
+				if ((x24c0x_addr & 0x78) != 0x50) {	// Wrong device address
+					x24c0x_out = 1;
+					x24c0x_state = X24C0X_STANDBY;
+				} else if(sda) {				// READ COMMAND
 					x24c0x_state = X24C0X_READ;
 				} else {				// WRITE COMMAND
 					if(x24c02)			// X24C02 mode

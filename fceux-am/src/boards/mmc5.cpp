@@ -421,7 +421,7 @@ static void MMC5PRG(void) {
 	switch (mmc5psize & 3) {
 	case 0:
 		MMC5ROMWrProtect[0] = MMC5ROMWrProtect[1] = MMC5ROMWrProtect[2] = MMC5ROMWrProtect[3] = 1;
-		setprg32(0x8000, ((PRGBanks[1] & 0x7F) >> 2));
+		setprg32(0x8000, ((PRGBanks[3] & 0x7F) >> 2));
 		for (x = 0; x < 4; x++)
 			MMC5MemIn[1 + x] = 1;
 		break;
@@ -907,14 +907,14 @@ static void GenMMC5Reset(void) {
 	int x;
 
 	for (x = 0; x < 4; x++) PRGBanks[x] = ~0;
-	for (x = 0; x < 8; x++) CHRBanksA[x] = ~0;
-	for (x = 0; x < 4; x++) CHRBanksB[x] = ~0;
+	for (x = 0; x < 8; x++) CHRBanksA[x] = 0;
+	for (x = 0; x < 4; x++) CHRBanksB[x] = 0;
 	WRAMMaskEnable[0] = WRAMMaskEnable[1] = ~0;
 
 	mmc5psize = mmc5vsize = 3;
 	CHRMode = 0;
 
-	NTAMirroring = NTFill = ATFill = 0xFF;
+	NTAMirroring = NTFill = ATFill = 0;
 
 	MMC5Synco();
 

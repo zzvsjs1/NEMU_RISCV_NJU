@@ -52,6 +52,7 @@
 
 #define PPU_status  (PPU[2])
 
+#define READPALNOGS(ofs)    (PALRAM[(ofs)])
 #define READPAL(ofs)    (PALRAM[(ofs)] & (GRAYSCALE ? 0x30 : 0xFF))
 #define READUPAL(ofs)   (UPALRAM[(ofs)] & (GRAYSCALE ? 0x30 : 0xFF))
 
@@ -1579,7 +1580,12 @@ static void CopySprites(uint8 *target) {
 	if (!rendersprites) return;	//User asked to not display sprites.
 
 	if(!SpriteON) return;
-	for(int i=0;i<256;i++)
+
+	int start=0;
+	if(PPU[1] & 0x04)
+		start = 8;
+
+	for(int i=start;i<256;i++)
 	{
 		uint8 t = sprlinebuf[i];
 		if(!(t&0x80))
@@ -1627,10 +1633,17 @@ void FCEUPPU_Reset(void) {
 void FCEUPPU_Power(void) {
 	int x;
 
-	memset(NTARAM, 0x00, 0x800);
-	memset(PALRAM, 0x00, 0x20);
-	memset(UPALRAM, 0x00, 0x03);
-	memset(SPRAM, 0x00, 0x100);
+	FCEU_MemoryRand(NTARAM, 0x800, true);
+	FCEU_MemoryRand(PALRAM, 0x20, true);
+	FCEU_MemoryRand(SPRAM, 0x100, true);
+	// Palette entries are six-bit values.  The mirrored universal background
+	// entries need a stable copy for $2007 readback before rendering aliases them.
+	for (x = 0; x < 0x20; x++) PALRAM[x] &= 0x3F;
+	UPALRAM[0] = PALRAM[0x04];
+	UPALRAM[1] = PALRAM[0x08];
+	UPALRAM[2] = PALRAM[0x0C];
+	PALRAM[0x0C] = PALRAM[0x08] = PALRAM[0x04] = PALRAM[0x00];
+	PALRAM[0x1C] = PALRAM[0x18] = PALRAM[0x14] = PALRAM[0x10];
 	FCEUPPU_Reset();
 
 	for (x = 0x2000; x < 0x4000; x += 8) {
@@ -1895,6 +1908,7 @@ void runppu(int x) {
 struct BGData {
 	struct Record {
 		uint8 nt, pecnt, at, pt[2], qtnt;
+		uint8 ppu1[8];
 
 		INLINE void Read() {
 			NTRefreshAddr = RefreshAddr = ppur.get_ntread();
@@ -1906,7 +1920,10 @@ struct BGData {
 			}
 			pecnt = (RefreshAddr & 1) << 3;
 			nt = CALL_PPUREAD(RefreshAddr);
-			runppu(kFetchTime);
+			ppu1[0] = PPU[1];
+			runppu(1);
+			ppu1[1] = PPU[1];
+			runppu(1);
 
 			RefreshAddr = ppur.get_atread();
 			at = CALL_PPUREAD(RefreshAddr);
@@ -1918,37 +1935,57 @@ struct BGData {
 			at <<= 2;
 			//horizontal scroll clocked at cycle 3 and then
 			//vertical scroll at 251
+			ppu1[2] = PPU[1];
 			runppu(1);
 			if (PPUON) {
 				ppur.increment_hsc();
 				if (ppur.status.cycle == 251)
 					ppur.increment_vs();
 			}
+			ppu1[3] = PPU[1];
 			runppu(1);
 
 			ppur.par = nt;
 			RefreshAddr = ppur.get_ptread();
 			if (PEC586Hack) {
 				pt[0] = CALL_PPUREAD(RefreshAddr | pecnt);
-				runppu(kFetchTime);
+				ppu1[4] = PPU[1];
+				runppu(1);
+				ppu1[5] = PPU[1];
+				runppu(1);
 				pt[1] = CALL_PPUREAD(RefreshAddr | pecnt);
-				runppu(kFetchTime);
+				ppu1[6] = PPU[1];
+				runppu(1);
+				ppu1[7] = PPU[1];
+				runppu(1);
 			} else if (QTAIHack && (qtnt & 0x40)) {
 				pt[0] = *(CHRptr[0] + RefreshAddr);
-				runppu(kFetchTime);
+				ppu1[4] = PPU[1];
+				runppu(1);
+				ppu1[5] = PPU[1];
+				runppu(1);
 				RefreshAddr |= 8;
 				pt[1] = *(CHRptr[0] + RefreshAddr);
-				runppu(kFetchTime);
+				ppu1[6] = PPU[1];
+				runppu(1);
+				ppu1[7] = PPU[1];
+				runppu(1);
 			} else {
 				if (ScreenON)
 					RENDER_LOG(RefreshAddr);
 				pt[0] = CALL_PPUREAD(RefreshAddr);
-				runppu(kFetchTime);
+				ppu1[4] = PPU[1];
+				runppu(1);
+				ppu1[5] = PPU[1];
+				runppu(1);
 				RefreshAddr |= 8;
 				if (ScreenON)
 					RENDER_LOG(RefreshAddr);
 				pt[1] = CALL_PPUREAD(RefreshAddr);
-				runppu(kFetchTime);
+				ppu1[6] = PPU[1];
+				runppu(1);
+				ppu1[7] = PPU[1];
+				runppu(1);
 			}
 		}
 	};
@@ -1956,10 +1993,10 @@ struct BGData {
 	Record main[34];	//one at the end is junk, it can never be rendered
 } bgdata;
 
-static inline int PaletteAdjustPixel(int pixel) {
-	if ((PPU[1] >> 5) == 0x7)
+static inline int PaletteAdjustPixel(int pixel, uint8 ppu1) {
+	if ((ppu1 >> 5) == 0x7)
 		return (pixel & 0x3f) | 0xc0;
-	else if (PPU[1] & 0xE0)
+	else if (ppu1 & 0xE0)
 		return pixel | 0x40;
 	else
 		return (pixel & 0x3F) | 0x80;
@@ -2122,7 +2159,7 @@ int FCEUX_PPU_Loop(int skip) {
 							pixel = ((pt[0] >> (7 - bgpx)) & 1) | (((pt[1] >> (7 - bgpx)) & 1) << 1) | bgdata.main[bgtile].at;
 						}
 						if (renderbg)
-							pixelcolor = READPAL(pixel);
+							pixelcolor = READPALNOGS(pixel);
 
 						//look for a sprite to be drawn
 						bool havepixel = false;
@@ -2167,11 +2204,16 @@ int FCEUX_PPU_Loop(int skip) {
 								spixel |= (oam[2] & 3) << 2;
 
 								if (rendersprites)
-									pixelcolor = READPAL(0x10 + spixel);
+									pixelcolor = READPALNOGS(0x10 + spixel);
 							}
 						}
 
-						*ptr++ = PaletteAdjustPixel(pixelcolor);
+						// Some games change grayscale or de-emphasis mid-line.
+						// Use the sampled PPU mask value for this pixel instead of
+						// the final register value after the whole tile fetch.
+						if(bgdata.main[xt+2].ppu1[xp]&1)
+							pixelcolor &= 0x30;
+						*ptr++ = PaletteAdjustPixel(pixelcolor, bgdata.main[xt+2].ppu1[xp]);
 						//*dptr++= PPU[1]>>5; //grab deemph
 					}
 				}

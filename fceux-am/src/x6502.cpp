@@ -52,6 +52,9 @@ static INLINE uint8 RdMem(unsigned int A)
 static INLINE void WrMem(unsigned int A, uint8 V)
 {
 	writeb(A, V);
+	// CPU writes drive the data bus too; later open-bus reads must see the
+	// last value written, not only the last value read.
+	_DB = V;
 }
 
 static INLINE uint8 RdRAM(unsigned int A)
@@ -64,6 +67,7 @@ static INLINE uint8 RdRAM(unsigned int A)
 static INLINE void WrRAM(unsigned int A, uint8 V)
 {
 	RAM[A]=V;
+	_DB = V;
 }
 
 uint8 X6502_DMR(uint32 A)
@@ -76,6 +80,7 @@ void X6502_DMW(uint32 A, uint8 V)
 {
  ADDCYC(1);
  writeb(A, V);
+ _DB = V;
 }
 
 #define PUSH(V) \

@@ -156,7 +156,7 @@ static void FixCache(int a, int V) {
 	case 0x02: FreqCache[w] &= ~0x0000FF00; FreqCache[w] |= V << 8; break;
 	case 0x04:
 		FreqCache[w] &= ~0x00030000; FreqCache[w] |= (V & 3) << 16;
-		LengthCache[w] = (8 - ((V >> 2) & 7)) << 2;
+		LengthCache[w] = 256 - (V & 0xFC);
 		break;
 	case 0x07: EnvCache[w] = (V & 0xF) * 576716; break;
 	}
@@ -309,9 +309,9 @@ static void DoNamcoSoundHQ(void) {
 
 static void Mapper19_StateRestore(int version) {
 	SyncPRG();
+	SyncMirror();
 	FixNTAR();
 	FixCRR();
-	SyncMirror();
 	int x;
 	for (x = 0x40; x < 0x80; x++)
 		FixCache(x, IRAM[x]);

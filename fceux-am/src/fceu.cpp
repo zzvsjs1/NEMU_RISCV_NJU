@@ -559,6 +559,17 @@ u64 xoroshiro128plus_next() {
 }
 
 void FCEU_MemoryRand(uint8 *ptr, uint32 size, bool default_zero) {
+	uint32 x = 0;
+
+	while (size) {
+		// Keep AM startup deterministic.  Upstream can choose random or fixed RAM
+		// patterns, but this port only needs the historical FCEUX pattern and the
+		// explicit zero-fill path used by allocator and PPU power-on code.
+		uint8 v = default_zero ? 0x00 : ((x & 4) ? 0xFF : 0x00);
+		*ptr++ = v;
+		x++;
+		size--;
+	}
 }
 
 void PowerNES(void) {

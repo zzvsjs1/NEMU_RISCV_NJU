@@ -245,11 +245,13 @@ int noGui = 1;
 
 int KillFCEUXonFrame = 0;
 
+#ifndef __NO_FILE_SYSTEM__
 static bool HasNesExtension(const char *path)
 {
   size_t len = strlen(path);
   return len >= 4 && strcmp(path + len - 4, ".nes") == 0;
 }
+#endif
 
 static const char *DefaultRomName()
 {
@@ -258,8 +260,6 @@ static const char *DefaultRomName()
 
 static const char *NormaliseRomPath(const char *romname)
 {
-  static char fullpath[128];
-
   if (romname == NULL || romname[0] == '\0') {
     romname = DefaultRomName();
     printf("No ROM specified. Default to %s\n", romname);
@@ -268,6 +268,7 @@ static const char *NormaliseRomPath(const char *romname)
 #ifdef __NO_FILE_SYSTEM__
   return romname;
 #else
+  static char fullpath[128];
   const bool has_dir = strchr(romname, '/') != NULL;
   const char *prefix =
 #ifdef __NAVY__

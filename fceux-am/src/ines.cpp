@@ -739,15 +739,34 @@ int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode) {
 	} else
 		Mirroring = (head.ROM_type & 1);
 
-	int not_round_size = head.ROM_size;
-	if(iNES2) not_round_size |= ((head.Upper_ROM_VROM_size & 0x0F) << 8);
+	int not_round_size = 0;
+	int rom_size_bytes = 0;
+	int vrom_size_bytes = 0;
+
+	if (!iNES2) {
+		not_round_size = head.ROM_size << 14;
+	}
+	else {
+		if ((head.Upper_ROM_VROM_size & 0x0F) != 0x0F)
+			not_round_size = (head.ROM_size | ((head.Upper_ROM_VROM_size & 0x0F) << 8)) << 14;
+		else
+			not_round_size = (1 << (head.ROM_size >> 2)) * ((head.ROM_size & 0x03) * 2 + 1);
+	}
 
 	if (!head.ROM_size && !iNES2)
-		ROM_size = 256;
+		rom_size_bytes = 256 << 14;
 	else
-		ROM_size = uppow2(not_round_size);
+		rom_size_bytes = uppow2(not_round_size);
 
-	VROM_size = uppow2(head.VROM_size | (iNES2?((head.Upper_ROM_VROM_size & 0xF0)<<4):0));
+	if (!iNES2) {
+		vrom_size_bytes = uppow2(head.VROM_size << 13);
+	}
+	else {
+		if ((head.Upper_ROM_VROM_size & 0xF0) != 0xF0)
+			vrom_size_bytes = uppow2((head.VROM_size | ((head.Upper_ROM_VROM_size & 0xF0) << 4)) << 13);
+		else
+			vrom_size_bytes = (1 << (head.VROM_size >> 2)) * ((head.VROM_size & 0x03) * 2 + 1);
+	}
 
 	int round = true;
 	for (int i = 0; i != sizeof(not_power2) / sizeof(not_power2[0]); ++i) {
@@ -762,17 +781,20 @@ int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode) {
 		}
 	}
 
-	if ((ROM = (uint8*)FCEU_malloc(ROM_size << 14)) == NULL)
-		return 0;
-	memset(ROM, 0xFF, ROM_size << 14);
+	ROM_size = rom_size_bytes >> 14;
+	VROM_size = vrom_size_bytes >> 13;
 
-	if (VROM_size) {
-		if ((VROM = (uint8*)FCEU_malloc(VROM_size << 13)) == NULL) {
+	if ((ROM = (uint8*)FCEU_malloc(rom_size_bytes)) == NULL)
+		return 0;
+	memset(ROM, 0xFF, rom_size_bytes);
+
+	if (vrom_size_bytes) {
+		if ((VROM = (uint8*)FCEU_malloc(vrom_size_bytes)) == NULL) {
 			free(ROM);
 			ROM = NULL;
 			return 0;
 		}
-		memset(VROM, 0xFF, VROM_size << 13);
+		memset(VROM, 0xFF, vrom_size_bytes);
 	}
 
 	if (head.ROM_type & 4) {	/* Trainer */
@@ -788,29 +810,29 @@ int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode) {
 	ResetCartMapping();
 	//ResetExState(0, 0);
 
-	SetupCartPRGMapping(0, ROM, ROM_size << 14, 0);
+	SetupCartPRGMapping(0, ROM, rom_size_bytes, 0);
 
-	FCEU_fread(ROM, 0x4000, (round) ? ROM_size : not_round_size, fp);
+	FCEU_fread(ROM, 1, (round) ? rom_size_bytes : not_round_size, fp);
 
-	if (VROM_size)
-		FCEU_fread(VROM, 0x2000, VROM_size, fp);
+	if (vrom_size_bytes)
+		FCEU_fread(VROM, 1, vrom_size_bytes, fp);
 
 	md5_starts(&md5);
-	md5_update(&md5, ROM, ROM_size << 14);
+	md5_update(&md5, ROM, rom_size_bytes);
 
 	//iNESGameCRC32 = CalcCRC32(0, ROM, ROM_size << 14);
 
-	if (VROM_size) {
+	if (vrom_size_bytes) {
 		//iNESGameCRC32 = CalcCRC32(iNESGameCRC32, VROM, VROM_size << 13);
-		md5_update(&md5, VROM, VROM_size << 13);
+		md5_update(&md5, VROM, vrom_size_bytes);
 	}
 	md5_finish(&md5, iNESCart.MD5);
 	memcpy(&GameInfo->MD5, &iNESCart.MD5, sizeof(iNESCart.MD5));
 
 	//iNESCart.CRC32 = iNESGameCRC32;
 
-	FCEU_printf(" PRG ROM:  %3d x 16KiB\n", (round) ? ROM_size: not_round_size);
-	FCEU_printf(" CHR ROM:  %3d x  8KiB\n", head.VROM_size);
+	FCEU_printf(" PRG ROM:  %3d x 16KiB\n", ((round) ? rom_size_bytes : not_round_size) >> 14);
+	FCEU_printf(" CHR ROM:  %3d x  8KiB\n", vrom_size_bytes >> 13);
 	//FCEU_printf(" ROM CRC32:  0x%08lx\n", iNESGameCRC32);
 	{
 		int x;
@@ -860,8 +882,8 @@ int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode) {
 	/* Must remain here because above functions might change value of
 	VROM_size and free(VROM).
 	*/
-	if (VROM_size)
-		SetupCartCHRMapping(0, VROM, VROM_size * 0x2000, 0);
+	if (vrom_size_bytes)
+		SetupCartCHRMapping(0, VROM, vrom_size_bytes, 0);
 
 	if (Mirroring == 2) {
 		ExtraNTARAM = (uint8*)FCEU_gmalloc(2048);
@@ -940,21 +962,20 @@ static int iNES_Init(int num) {
 				{
 					CHRRAMSize = iNESCart.battery_vram_size + iNESCart.vram_size;
 				}
-				if ((VROM = (uint8*)FCEU_dmalloc(CHRRAMSize)) == NULL) return 0;
-				FCEU_MemoryRand(VROM, CHRRAMSize);
-
-				UNIFchrrama = VROM;
-				if(CHRRAMSize == 0)
+				if(CHRRAMSize > 0)
 				{
-					//probably a mistake.
-					//but (for chrram): "Use of $00 with no CHR ROM implies that the game is wired to map nametable memory in CHR space. The value $00 MUST NOT be used if a mapper isn't defined to allow this. "
-					//well, i'm not going to do that now. we'll save it for when it's needed
-					//"it's only mapper 218 and no other mappers"
+					// VPage maps CHR in 1 KiB chunks.  A smaller allocation can be
+					// addressed past its end by mapper code even when the ROM only
+					// declares a tiny CHR-RAM size.
+					int mCHRRAMSize = (CHRRAMSize < 1024) ? 1024 : CHRRAMSize;
+					if ((UNIFchrrama = VROM = (uint8*)FCEU_dmalloc(mCHRRAMSize)) == NULL) return 0;
+					FCEU_MemoryRand(VROM, CHRRAMSize);
+					SetupCartCHRMapping(0, VROM, CHRRAMSize, 1);
+					AddExState(VROM, CHRRAMSize, 0, "CHRR");
 				}
 				else
 				{
-					SetupCartCHRMapping(0, VROM, CHRRAMSize, 1);
-					AddExState(VROM, CHRRAMSize, 0, "CHRR");
+					VROM = NULL;
 				}
 			}
 			if (head.ROM_type & 8)
