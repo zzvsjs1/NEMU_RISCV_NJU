@@ -176,37 +176,49 @@ void SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, uint32_t color)
     assert(dst);
     assert(dst->pixels);
 
-    // 2) figure out the rectangle to fill (or whole surface)
-    SDL_Rect fill = dstrect
-      ? *dstrect
-      : (SDL_Rect){ .x = 0, .y = 0, .w = (uint16_t)dst->w, .h = (uint16_t)dst->h };
+    // 2) Work with signed dimensions while clipping.
+    int fill_x = dstrect ? dstrect->x : 0;
+    int fill_y = dstrect ? dstrect->y : 0;
+    int fill_w = dstrect ? dstrect->w : dst->w;
+    int fill_h = dstrect ? dstrect->h : dst->h;
 
     // 3) clip to [0..w) × [0..h)
-    if (fill.x < 0) 
+    if (fill_x < 0) 
     {
-        fill.w += fill.x;
-        fill.x = 0;
+        fill_w += fill_x;
+        fill_x = 0;
     }
 
-    if (fill.y < 0) 
+    if (fill_y < 0) 
     {
-        fill.h += fill.y;
-        fill.y = 0;
+        fill_h += fill_y;
+        fill_y = 0;
+    }
+
+    /*
+     * A rectangle can start below or to the right of the surface.  SDL_Rect keeps
+     * w/h as uint16_t in this miniSDL ABI, so clipping directly into the struct
+     * can turn a negative size into a huge positive value.  Keep the signed
+     * intermediate values until the empty-rectangle check has finished.
+     */
+    if (fill_x >= dst->w || fill_y >= dst->h)
+    {
+        return;
     }
 
     // Clip again.
-    if (fill.x + fill.w > dst->w) 
+    if (fill_x + fill_w > dst->w) 
     {
-        fill.w = dst->w - fill.x;
+        fill_w = dst->w - fill_x;
     }
 
-    if (fill.y + fill.h > dst->h) 
+    if (fill_y + fill_h > dst->h) 
     {
-        fill.h = dst->h - fill.y;
+        fill_h = dst->h - fill_y;
     }
 
     // nothing to do?
-    if (fill.w <= 0 || fill.h <= 0) 
+    if (fill_w <= 0 || fill_h <= 0) 
     {
         return;
     }
@@ -219,14 +231,14 @@ void SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, uint32_t color)
     uint8_t *pixels = dst->pixels;
 
     // 5) fill each row
-    for (int row = 0; row < fill.h; row++) 
+    for (int row = 0; row < fill_h; row++) 
     {
         // pointer to the first byte of this scanline
         uint8_t *rowp = pixels
-                      + (fill.y + row) * pitch
-                      +  fill.x * bpp;
+                      + (fill_y + row) * pitch
+                      +  fill_x * bpp;
 
-        for (int col = 0; col < fill.w; col++) 
+        for (int col = 0; col < fill_w; col++) 
         {
             uint8_t *pixelp = rowp + col * bpp;
 
