@@ -245,7 +245,8 @@ static inline bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t 
     return true;
   }
 
-  const paddr_t root = (paddr_t)((satp & RV32_FAST_SATP_PPN_MASK) << PAGE_SHIFT);
+  const paddr_t root =
+      ((paddr_t)(satp & RV32_FAST_SATP_PPN_MASK)) << PAGE_SHIFT;
   const word_t vpn1 = (word_t)((addr >> 22) & 0x3ffu);
   const word_t vpn0 = (word_t)((addr >> 12) & 0x3ffu);
   const paddr_t pte1_addr = root + (paddr_t)(vpn1 * 4u);
@@ -267,7 +268,7 @@ static inline bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t 
     return false;
   }
 
-  const paddr_t l0_pt = (paddr_t)((pte1 >> 10) << PAGE_SHIFT);
+  const paddr_t l0_pt = ((paddr_t)(pte1 >> 10)) << PAGE_SHIFT;
   const paddr_t pte0_addr = l0_pt + (paddr_t)(vpn0 * 4u);
   const uint32_t pte0 = (uint32_t)paddr_read(pte0_addr, 4);
 
@@ -288,7 +289,7 @@ static inline bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t 
    * accesses to the same 4 KiB virtual page then only need to restore the page
    * offset with bitwise OR.
    */
-  const paddr_t pg_paddr = (paddr_t)((pte0 >> 10) << PAGE_SHIFT);
+  const paddr_t pg_paddr = ((paddr_t)(pte0 >> 10)) << PAGE_SHIFT;
   *entry = (rv32_fast_tlb_entry_t) {
     .satp = satp,
     .vpn = vpn,
@@ -310,30 +311,25 @@ static inline bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t 
  */
 static inline bool rv32_fast_store_may_touch_page_table(paddr_t paddr)
 {
-  if (rv32_fast_direct_mode())
-  {
-    return false;
-  }
-
-  const uint32_t satp = cpu.csr.satp;
   const paddr_t page = paddr & ~(paddr_t)PAGE_MASK;
-  const paddr_t root = (paddr_t)((satp & RV32_FAST_SATP_PPN_MASK) << PAGE_SHIFT);
-
-  /* Any store to the current root page-table page may alter a first-level PTE. */
-  if (page == root)
-  {
-    return true;
-  }
 
   /*
-   * Entries remember the level-0 page-table page used during the walk. If a
-   * store lands in one of those pages, the corresponding leaf PTE may have been
-   * changed, so the whole small TLB is flushed.
+   * The fast TLB can hold entries for satp values that are not active right now.
+   * A guest may edit an old page table while Bare mode or another address space
+   * is active, then switch back later.  Scan all valid entries and compare the
+   * physical page against both walk levels that can affect those entries.
    */
   for (size_t i = 0; i < RV32_FAST_TLB_SIZE; i++)
   {
     const rv32_fast_tlb_entry_t *entry = &rv32_fast_tlb[i];
-    if (entry->valid && entry->satp == satp && entry->pt_page == page)
+    if (!entry->valid)
+    {
+      continue;
+    }
+
+    const paddr_t root =
+        ((paddr_t)(entry->satp & RV32_FAST_SATP_PPN_MASK)) << PAGE_SHIFT;
+    if (page == root || page == entry->pt_page)
     {
       return true;
     }
@@ -473,7 +469,13 @@ static inline bool rv32_fast_write_pmem_u8(paddr_t paddr, word_t data)
     return false;
   }
 
+  const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
   *(uint8_t *)guest_to_host(paddr) = data;
+  isa_jit_invalidate_paddr(paddr, 1);
+  if (unlikely(flush_tlb))
+  {
+    rv32_fast_tlb_flush();
+  }
   return true;
 }
 
@@ -485,7 +487,13 @@ static inline bool rv32_fast_write_pmem_u16(paddr_t paddr, word_t data)
     return false;
   }
 
+  const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
   *(uint16_t *)guest_to_host(paddr) = data;
+  isa_jit_invalidate_paddr(paddr, 2);
+  if (unlikely(flush_tlb))
+  {
+    rv32_fast_tlb_flush();
+  }
   return true;
 }
 
@@ -497,33 +505,26 @@ static inline bool rv32_fast_write_pmem_u32(paddr_t paddr, word_t data)
     return false;
   }
 
+  const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
   *(uint32_t *)guest_to_host(paddr) = data;
-  return true;
-}
-
-/*
- * Page-table stores are rare but dangerous for cached translations. The caller
- * computes the conservative flush flag before writing, then this helper applies
- * the flush after the new PTE value is visible in PMEM.
- */
-static inline void rv32_fast_flush_after_page_table_store(bool flush_tlb)
-{
+  isa_jit_invalidate_paddr(paddr, 4);
   if (unlikely(flush_tlb))
   {
     rv32_fast_tlb_flush();
   }
+  return true;
 }
 
 /*
- * Width-specific virtual writers keep the direct-mode path branch-light. In
- * translated mode they also preserve the page-table write invalidation used by
- * the generic fast store.
+ * Width-specific virtual writers keep the direct-mode path branch-light.  The
+ * final PMEM writer owns JIT source invalidation and fast-TLB page-table checks,
+ * so Bare and translated callers share the same post-write safety rules.
  */
 static inline bool rv32_fast_write_u8(vaddr_t addr, word_t data)
 {
   /*
-   * In Bare mode this is just SB to PMEM. In translated mode the extra flush
-   * check protects cached TLB entries if the store updates a page table.
+   * In Bare mode this is just SB to PMEM plus the same JIT/fast-TLB write
+   * notification used after translated PMEM stores.
    */
   if (rv32_fast_direct_mode())
   {
@@ -536,10 +537,7 @@ static inline bool rv32_fast_write_u8(vaddr_t addr, word_t data)
     return false;
   }
 
-  const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
-  const bool ok = rv32_fast_write_pmem_u8(paddr, data);
-  rv32_fast_flush_after_page_table_store(flush_tlb);
-  return ok;
+  return rv32_fast_write_pmem_u8(paddr, data);
 }
 
 static inline bool rv32_fast_write_u16(vaddr_t addr, word_t data)
@@ -556,10 +554,7 @@ static inline bool rv32_fast_write_u16(vaddr_t addr, word_t data)
     return false;
   }
 
-  const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
-  const bool ok = rv32_fast_write_pmem_u16(paddr, data);
-  rv32_fast_flush_after_page_table_store(flush_tlb);
-  return ok;
+  return rv32_fast_write_pmem_u16(paddr, data);
 }
 
 static inline bool rv32_fast_write_u32(vaddr_t addr, word_t data)
@@ -580,10 +575,7 @@ static inline bool rv32_fast_write_u32(vaddr_t addr, word_t data)
     return false;
   }
 
-  const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
-  const bool ok = rv32_fast_write_pmem_u32(paddr, data);
-  rv32_fast_flush_after_page_table_store(flush_tlb);
-  return ok;
+  return rv32_fast_write_pmem_u32(paddr, data);
 }
 
 /*
@@ -643,6 +635,13 @@ static inline void rv32_fast_write_or_fallback(vaddr_t addr, int len, word_t dat
   if (!ok)
   {
     vaddr_write(addr, len, data);
+    /*
+     * The rejected fast path may still have written ordinary PMEM through the
+     * normal memory layer.  paddr_write() notifies the JIT source/TLB hooks when
+     * it sees the final physical address; the fast executor has its own small TLB,
+     * so it also drops local translations before the next fast memory access.
+     */
+    rv32_fast_tlb_flush();
   }
 }
 

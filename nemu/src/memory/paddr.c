@@ -129,8 +129,8 @@ void paddr_write(paddr_t addr, int len, word_t data) {
     /*
      * PMEM writes are the common meeting point for interpreter stores and any
      * device path that writes through paddr_write(). Tell the JIT about the
-     * physical byte range after the new value is visible, so a later fetch or
-     * block lookup cannot use native code translated from overwritten bytes.
+     * physical byte range after the new value is visible, so a later fetch,
+     * block lookup, or JIT-local Sv32 translation cannot use stale PMEM state.
      *
      * Do not move this above pmem_write(): a translated block that is discarded
      * because of self-modifying code must see the replacement instruction bytes

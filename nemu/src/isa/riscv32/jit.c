@@ -47,15 +47,25 @@
  *    full CPU state.
  *
  * 5. Memory safety and invalidation:
- *    Direct PMEM load/store code is emitted only for Bare-mode ordinary RAM.
- *    MMIO, paging, traps, and unusual ranges go through the normal helpers. Each
- *    compiled block records the physical PMEM bytes that supplied its source
- *    instructions. Writes from the interpreter, JIT helpers, disk DMA, or full
- *    flushes invalidate overlapping native blocks before stale code can run.
+ *    Direct PMEM access is used only when the JIT can prove that the guest
+ *    access maps to ordinary RAM and does not require MMIO or complex exception
+ *    behaviour. Bare mode can be checked directly; simple Sv32 leaf translations
+ *    may use the local JIT TLB. Each compiled block records the physical PMEM
+ *    bytes that supplied its source instructions. Writes from the interpreter,
+ *    JIT helpers, disk DMA, or full flushes invalidate overlapping native blocks
+ *    before stale code can run.
  *
  * The comments below are deliberately explicit about small arithmetic steps.
  * For example, sign extension and relative-branch patching are written out
  * because off-by-one or wrong-origin mistakes in a JIT are difficult to debug.
+ *
+ * ISA/EEI policy note:
+ * This JIT mirrors the current interpreter rather than adding stricter RISC-V
+ * behaviour on its own.  The interpreter fetches fixed 32-bit instructions,
+ * allows the host memory helpers to perform unaligned PMEM loads/stores on this
+ * platform, and does not currently raise instruction-address-misaligned traps
+ * for branch/JAL/JALR targets.  If those policies are tightened later, the JIT
+ * should change at the same boundary so JIT-on and JIT-off execution still match.
  */
 
 #if defined(__x86_64__) && defined(CONFIG_RV32_JIT) && \
@@ -231,13 +241,13 @@ typedef struct
 
   /* Helper load calls made from native code. */
   uint64_t helper_loads;
-  /* Helper loads that could still use direct Bare-mode PMEM access. */
+  /* Helper loads that could still use proven ordinary PMEM access. */
   uint64_t helper_load_direct;
   /* Helper loads that delegated to the full virtual-memory/device path. */
   uint64_t helper_load_slow;
   /* Helper store calls made from native code. */
   uint64_t helper_stores;
-  /* Helper stores that wrote ordinary Bare-mode PMEM directly. */
+  /* Helper stores that wrote proven ordinary PMEM directly. */
   uint64_t helper_store_direct;
   /* Helper stores that delegated to the full virtual-memory/device path. */
   uint64_t helper_store_slow;
@@ -358,6 +368,44 @@ static bool jit_tlb_refs_page(paddr_t page)
   return jit_pmem_page_index(page, &idx) && jit_tlb_pt_page_refs[idx] != 0;
 }
 
+static bool jit_write_may_touch_page_table(paddr_t addr, int len)
+{
+  /*
+   * The JIT TLB is tagged by satp, but entries can outlive the current satp
+   * value.  For example, the guest may switch to Bare mode, edit the old page
+   * table, and later switch back to the same satp.  Therefore this check is
+   * purely physical: any write to a PMEM page referenced by a cached walk drops
+   * all local JIT translations.
+   */
+  if (len <= 0)
+  {
+    return false;
+  }
+
+  const paddr_t end = addr + (paddr_t)len - 1u;
+  if (end < addr)
+  {
+    return true;
+  }
+
+  for (paddr_t page = addr & ~(paddr_t)PAGE_MASK;
+       page <= (end & ~(paddr_t)PAGE_MASK);
+       page += PAGE_SIZE)
+  {
+    if (jit_tlb_refs_page(page))
+    {
+      return true;
+    }
+
+    if (page > (paddr_t)-1 - PAGE_SIZE)
+    {
+      break;
+    }
+  }
+
+  return false;
+}
+
 static bool jit_cross_page(vaddr_t addr, uint32_t len)
 {
   const word_t off = (word_t)(addr & PAGE_MASK);
@@ -388,6 +436,10 @@ static uint32_t jit_required_perm(int type)
  * the JIT helper path so generated code does not need to inline page walks.  A
  * false result is not an error; it only means the existing vaddr path must handle
  * the edge case, such as MMIO, cross-page accesses, invalid PTEs, or superpages.
+ * Permission checks intentionally match the simplified interpreter MMU in
+ * system/mmu.c: valid 4 KiB leaves with the required R/W/X bit can use the fast
+ * path; privilege-sensitive rules such as U/SUM/MXR and accessed/dirty-bit
+ * management are not implemented by this teaching MMU yet.
  */
 static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *paddr)
 {
@@ -425,7 +477,8 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
     return true;
   }
 
-  const paddr_t root = (paddr_t)((satp & RV32_JIT_SATP_PPN_MASK) << PAGE_SHIFT);
+  const paddr_t root =
+      ((paddr_t)(satp & RV32_JIT_SATP_PPN_MASK)) << PAGE_SHIFT;
   const word_t vpn1 = (word_t)((addr >> 22) & 0x3ffu);
   const word_t vpn0 = (word_t)((addr >> 12) & 0x3ffu);
   const paddr_t pte1_addr = root + (paddr_t)(vpn1 * 4u);
@@ -446,7 +499,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
     return false;
   }
 
-  const paddr_t l0_pt = (paddr_t)((pte1 >> 10) << PAGE_SHIFT);
+  const paddr_t l0_pt = ((paddr_t)(pte1 >> 10)) << PAGE_SHIFT;
   const paddr_t pte0_addr = l0_pt + (paddr_t)(vpn0 * 4u);
   const uint32_t pte0 = (uint32_t)paddr_read(pte0_addr, 4);
   if ((pte0 & RV32_JIT_PTE_V) == 0)
@@ -460,7 +513,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
     return false;
   }
 
-  const paddr_t pg_paddr = (paddr_t)((pte0 >> 10) << PAGE_SHIFT);
+  const paddr_t pg_paddr = ((paddr_t)(pte0 >> 10)) << PAGE_SHIFT;
   if (!jit_pmem_range(pg_paddr | (paddr_t)(addr & PAGE_MASK), len))
   {
     return false;
@@ -469,7 +522,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
   if (entry->valid)
   {
     const paddr_t old_root =
-        (paddr_t)((entry->satp & RV32_JIT_SATP_PPN_MASK) << PAGE_SHIFT);
+        ((paddr_t)(entry->satp & RV32_JIT_SATP_PPN_MASK)) << PAGE_SHIFT;
     jit_tlb_unref_page(old_root);
     jit_tlb_unref_page(entry->pt_page);
   }
@@ -486,17 +539,6 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
   jit_tlb_ref_page(l0_pt);
   *paddr = pg_paddr | (paddr_t)(addr & PAGE_MASK);
   return true;
-}
-
-static bool jit_store_may_touch_page_table(paddr_t paddr)
-{
-  if ((cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) == 0)
-  {
-    return false;
-  }
-
-  const paddr_t page = paddr & ~(paddr_t)PAGE_MASK;
-  return jit_tlb_refs_page(page);
 }
 
 /*
@@ -543,8 +585,9 @@ static uint32_t jit_load_raw(vaddr_t addr, uint32_t len)
 
   /*
    * The direct helper path is still semantically a memory access by the guest:
-   * it is allowed only for Bare-mode PMEM. Anything that might involve Sv32,
-   * devices, or exception reporting delegates to vaddr_read().
+   * it is allowed only after Bare or simple Sv32 translation proves the final
+   * physical byte range is ordinary PMEM. Devices, cross-page accesses, and
+   * exception-sensitive cases delegate to vaddr_read().
    */
   paddr_t paddr = 0;
   uint32_t value = 0;
@@ -612,17 +655,13 @@ static uint32_t jit_store_raw_continue(vaddr_t addr, uint32_t len, uint32_t data
   if (jit_translate_pmem(addr, len, MEM_TYPE_WRITE, &paddr))
   {
     JIT_STAT_INC(helper_store_direct);
-    const bool flush_tlb = jit_store_may_touch_page_table(paddr);
+    const bool flush_tlb = jit_write_may_touch_page_table(paddr, (int)len);
     const bool touch_source = jit_write_may_touch_source_chunk(paddr, (int)len);
     host_write(guest_to_host(paddr), (int)len, data);
 
-    if (touch_source)
+    if (touch_source || flush_tlb)
     {
       isa_jit_invalidate_paddr(paddr, (int)len);
-    }
-    if (unlikely(flush_tlb))
-    {
-      jit_tlb_flush();
     }
 
     return !flush_tlb && !touch_source;
@@ -630,6 +669,14 @@ static uint32_t jit_store_raw_continue(vaddr_t addr, uint32_t len, uint32_t data
 
   JIT_STAT_INC(helper_store_slow);
   vaddr_write(addr, (int)len, data);
+  /*
+   * A failed local translation can still write PMEM through the normal memory
+   * subsystem, for example on a cross-page or otherwise unsupported Sv32 case.
+   * paddr_write() performs exact source invalidation and page-table detection
+   * when it sees the final physical address.  Flush the small local JIT TLB as a
+   * second conservative barrier before this native block exits.
+   */
+  jit_tlb_flush();
   return 0;
 }
 
@@ -2513,8 +2560,10 @@ static bool emit_direct_pmem_store_from_ecx(rv32_jit_writer_t *w, uint32_t len)
 {
   /*
    * Stores use the low part of ECX so SB/SH truncate in the same way host_write()
-   * does. The caller has already proved Bare-mode PMEM and checked source-chunk
-   * refs before taking this continuation path.
+   * does. The caller has already proved the final address is an in-PMEM byte
+   * offset and checked source-code/page-table refs before taking this
+   * continuation path.  That proof can come from Bare mode or from an Sv32 JIT
+   * TLB hit.
    */
   switch (len)
   {
@@ -2605,10 +2654,10 @@ static bool emit_epilogue_return_count(rv32_jit_writer_t *w, uint32_t count)
 /*
  * Translate one RV32 load instruction.
  *
- * The fast path performs direct Bare-mode PMEM loads inside the native block.
- * The slow path flushes dirty registers, sets cpu.pc to the load instruction,
- * calls the typed load helper, and reloads base registers that helper calls may
- * have clobbered.
+ * The fast path performs direct PMEM loads inside the native block when Bare
+ * mode or a simple Sv32 JIT TLB hit proves the final physical range.  The slow
+ * path flushes dirty registers, sets cpu.pc to the load instruction, calls the
+ * typed load helper, and reloads base registers that helper calls may clobber.
  */
 static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     uint32_t instr, vaddr_t cur_pc)
@@ -2702,7 +2751,7 @@ static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
  * Translate one RV32 store instruction.
  *
  * Plain PMEM data stores can continue in the native block. Stores that may hit
- * MMIO, paging, or translated source bytes call the store helper and then leave
+ * MMIO, source bytes, or page-table pages call the store helper and then leave
  * the block, so the dispatcher observes any invalidation before the next block.
  */
 static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
@@ -2798,6 +2847,7 @@ static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
   rv32_jit_pmem_guard_patch_t guard = {0};
   uint8_t *cross_chunk_disp = NULL;
   uint8_t *source_chunk_disp = NULL;
+  uint8_t *page_table_disp = NULL;
   uint8_t *done_disp = NULL;
   /*
    * Stores have two native continuations. Plain PMEM data stores commit inline
@@ -2811,6 +2861,7 @@ static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
       !emit_direct_pmem_guard(w, len, &guard) ||
       !emit_store_source_chunk_guard(w, regs, len, &cross_chunk_disp,
           &source_chunk_disp) ||
+      !emit_store_page_table_guard(w, &page_table_disp) ||
       !emit_direct_pmem_store_from_ecx(w, len) ||
       !emit_jmp_rel32_placeholder(w, &done_disp))
   {
@@ -2821,6 +2872,7 @@ static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
   patch_direct_pmem_guard(&guard, slow_path);
   patch_rel32(cross_chunk_disp, slow_path);
   patch_rel32(source_chunk_disp, slow_path);
+  patch_rel32(page_table_disp, slow_path);
 
   /*
    * The helper path handles MMIO, paging, cross-chunk direct stores, and source
@@ -3411,29 +3463,40 @@ bool isa_jit_available(void)
 void isa_jit_flush_all(void)
 {
   /*
-   * A full flush drops native code and source refs together. This is used when
-   * an address-space change makes virtual PCs difficult to relate to the old
-   * physical source ranges cheaply.
+   * A full flush drops every piece of JIT-owned state: native code, source refs,
+   * and local Sv32 translations.  Snapshot restore is the clearest example: PMEM
+   * and CSRs may both change while old (pc, satp) tags still look plausible.
    */
   if (jit_code != NULL)
   {
     jit_arena_reset();
   }
+  jit_tlb_flush();
 }
 
-/* Public hook: invalidate native blocks whose physical source bytes were written. */
+/* Public hook: react to PMEM writes that can stale native code or JIT translations. */
 void isa_jit_invalidate_paddr(paddr_t addr, int len)
 {
   JIT_STAT_INC(invalidation_requests);
 
   /*
-   * Invalidations are keyed by physical bytes because writes can arrive through
-   * the interpreter, JIT helper stores, or devices. The half-open write interval
-   * below is compared with each compiled block's physical source interval.
+   * Physical writes are the common point shared by interpreter stores, JIT helper
+   * stores, fast-exec stores, and devices.  Two independent JIT caches can become
+   * stale here:
+   *
+   *   1. native blocks translated from overwritten instruction bytes;
+   *   2. local Sv32 translations whose root or level-0 PTE page was modified.
+   *
+   * The source-code check below uses the half-open interval [addr, addr + len).
    */
   if (len <= 0)
   {
     return;
+  }
+
+  if (jit_write_may_touch_page_table(addr, len))
+  {
+    jit_tlb_flush();
   }
 
   if (!jit_write_may_touch_source_chunk(addr, len))
@@ -3607,6 +3670,20 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
   while (count < max_insns && count < RV32_JIT_BLOCK_MAX_INSNS)
   {
+    /*
+     * In paged mode a cache hit revalidates the first instruction mapping before
+     * entering native code.  Keeping one native block within one virtual page
+     * makes that one mapping check sufficient: the rest of the block cannot move
+     * to a different physical page unless the first mapping also changes.  Bare
+     * mode has no virtual remapping, so it can still use the physical-contiguity
+     * check below to span normal PMEM bytes.
+     */
+    if (count != 0 && (cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) != 0 &&
+        ((cur_pc ^ pc) & ~(vaddr_t)PAGE_MASK) != 0)
+    {
+      break;
+    }
+
     /*
      * Re-translate every guest instruction, even inside one block. This keeps
      * the block metadata honest across page boundaries and avoids assuming that

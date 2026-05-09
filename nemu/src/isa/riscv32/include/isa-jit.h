@@ -7,7 +7,8 @@
 /*
  * RISC-V32 JIT public hooks. The CPU loop owns scheduling, while memory and
  * devices report physical writes here so native blocks compiled from stale
- * source bytes can be discarded before they are executed again.
+ * source bytes can be discarded and JIT-local address translations can be
+ * dropped before stale state is observed again.
  *
  * Keep this interface physical-address based. Virtual addresses may be remapped
  * under the same satp value, but overwritten PMEM bytes are the common fact seen
@@ -22,7 +23,7 @@ bool isa_jit_available(void);
 bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed);
 /* Drop every cached native block, used after broad address-space/state changes. */
 void isa_jit_flush_all(void);
-/* Invalidate cached blocks whose translated physical source bytes were written. */
+/* Notify the JIT that a physical PMEM byte range was written. */
 void isa_jit_invalidate_paddr(paddr_t addr, int len);
 /* Print optional runtime statistics when the binary and env flag enable them. */
 void isa_jit_dump_stats(void);
