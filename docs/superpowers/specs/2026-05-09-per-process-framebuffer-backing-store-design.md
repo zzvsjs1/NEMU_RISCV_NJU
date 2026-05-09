@@ -2,7 +2,7 @@
 
 ## Context
 
-Bad Apple in FCEUX reaches about 59-60 FPS when run as a bare-metal AM program on `riscv32-nemu`, but the same ROM reaches about 40 FPS when FCEUX runs as a Navy app under Nanos-lite.
+Castlevania 3 in FCEUX reaches about 59-60 FPS when run as a bare-metal AM program on `riscv32-nemu`, but the same ROM reaches about 40 FPS when FCEUX runs as a Navy app under Nanos-lite.
 
 The measured difference is not caused by ROM selection. Under Nanos-lite, `proc.c` launches:
 
@@ -39,7 +39,7 @@ FCEUX
 
 `fb_shadow` was added for foreground app switching, not for native SDL window resizing. The purpose is to preserve each foreground app's last visible screen when switching with F1/F2/F3. This avoids stale pixels when apps have different canvas sizes or when an event-driven app does not repaint immediately after becoming foreground.
 
-The cost is high for Bad Apple. Each frame writes an 800 x 480 x 32-bit band:
+The cost is high for Castlevania 3. Each frame writes an 800 x 480 x 32-bit band:
 
 ```text
 800 * 480 * 4 = 1,536,000 bytes
@@ -113,7 +113,7 @@ old foreground write = NEMU blit from user buffer + copy user buffer into shadow
 new foreground write = copy user buffer into backing + NEMU blit from backing
 ```
 
-That still has one guest-side copy. It is not as fast as bare-metal AM, because the app is still going through syscalls, VME, and Nanos device code. However, it removes the extra copy that made Bad Apple fall from 60 FPS to 40 FPS.
+That still has one guest-side copy. It is not as fast as bare-metal AM, because the app is still going through syscalls, VME, and Nanos device code. However, it removes the extra copy that made Castlevania 3 fall from 60 FPS to 40 FPS.
 
 If the first implementation copies into backing and then flushes from backing, it should be correct but may not be the absolute fastest possible path. A later optimisation can make full-width foreground writes flush directly from the user buffer and update backing with a faster or deferred policy, but only if it preserves switch restore correctness.
 
@@ -130,9 +130,9 @@ If the first implementation copies into backing and then flushes from backing, i
 
 Performance tests:
 
-- Run bare-metal Bad Apple:
+- Run bare-metal Castlevania 3:
   `make -C fceux-am ARCH=riscv32-nemu mainargs=c run -j12`
-- Run Nanos-lite Bad Apple:
+- Run Nanos-lite Castlevania 3:
   `NAVY_HOME=$PWD/navy-apps make -C nanos-lite ARCH=riscv32-nemu run -j12`
 - Compare game FPS printed by FCEUX, not only `NEMU_VGA_FPS`.
 - Enable `NEMU_AUDIO_STATS=1` and verify underruns are gone or greatly reduced.
