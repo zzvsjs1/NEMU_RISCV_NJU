@@ -17,6 +17,8 @@ Monitor、寄存器和内存查看、表达式求值、监视点、快照、Diff
 - `nanos-lite`：用于在 NEMU 上运行 Navy 应用的小型 OS。
 - `navy-apps`：用户程序、运行库、文件系统镜像生成，以及 PAL 游戏集成。
 - `am-kernels`：CPU 测试和 benchmark，包括 MicroBench 和 JITBench。
+- `fceux-am`：FCEUX NES 模拟器的 AM 移植，可用于 native 和 RISC-V32 NEMU
+  运行。
 
 当前 `master` 分支是 JIT 性能改进版本。旧分支会保留下来作为对比点，方便
 比较原始 baseline、磁盘/ONScripter 改动、非 JIT 性能改动和 JIT 版本之间的
@@ -261,14 +263,22 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_JIT_STATS=1 \
 
 ## 性能测量
 
-下面是当前 JIT 分支的本地参考数据，测于 2026-05-08，并使用 dummy SDL
+下面是当前 JIT 分支的本地参考数据，测于 2026-05-09，并使用 dummy SDL
 video/audio driver。它们适合看趋势，但你应该在自己的 CPU 上重新测量，因为
 host 频率调节、系统负载、温度限制，以及大小核调度都会影响结果。
 
 | 分支 / 模式 | Benchmark | 结果 |
 |-------------|-----------|------|
-| `master`，JIT 开启 | MicroBench | `15464 Marks`, `1,529,149,397 instr/s` |
-| `master`，JIT 开启 | JITBench | `ALU 17.025 ms`, `Memory 7.738 ms`, `2,746,182,612 instr/s` |
+| `master`，JIT 开启 | MicroBench | `26820 Marks`, `2,687,376,608 instr/s` |
+| `master`，JIT 开启 | JITBench | `ALU 10.715 ms`, `Memory 4.128 ms`, `3,722,716,802 instr/s` |
+| `master`，`NEMU_DISABLE_JIT=1` | MicroBench | `3497 Marks`, `286,984,091 instr/s` |
+| `master`，`NEMU_DISABLE_JIT=1` | JITBench | `ALU 174.062 ms`, `Memory 70.970 ms`, `289,684,365 instr/s` |
+| `performance_improve` | MicroBench | `3141 Marks`, `271,000,633 instr/s` |
+| `legacy/baseline-master` | MicroBench | `694 Marks`, `58,319,798 instr/s` |
+
+按 Marks 计算，当前 JIT MicroBench 分数约为同分支关闭 JIT 的 `7.67x`、非 JIT
+性能分支的 `8.54x`、原始 baseline 的 `38.65x`。按 guest instruction
+throughput 计算，当前 JIT 约为原始 baseline 的 `46.08x`。
 
 ### 当前 JIT 性能改进
 
@@ -338,7 +348,7 @@ speed-up = 更快版本 instr/s / 更慢版本 instr/s
 例如：
 
 ```text
-1,529,149,397 / 200,000,000 = 7.65x
+2,687,376,608 / 58,319,798 = 46.08x
 ```
 
 ## Nanos-lite GUI 流程

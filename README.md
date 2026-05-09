@@ -19,6 +19,8 @@ layout while adding practical work needed by this local RISC-V32 project:
 - `navy-apps`: user programs, libraries, file-system image generation, and PAL
   game integration.
 - `am-kernels`: CPU tests and benchmarks, including MicroBench and JITBench.
+- `fceux-am`: an AM port of the FCEUX NES emulator for native and RISC-V32 NEMU
+  runs.
 
 The current `master` branch is the JIT performance-improved version. Older
 branches are kept as comparison points, so behaviour and speed can be compared
@@ -280,15 +282,24 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_JIT_STATS=1 \
 ## Performance Measurements
 
 These are local reference numbers from the current JIT branch, measured in this
-checkout on 2026-05-08 with dummy SDL video/audio drivers. They are useful for
+checkout on 2026-05-09 with dummy SDL video/audio drivers. They are useful for
 checking trend direction, but you should re-measure on your own CPU because host
 frequency scaling, scheduler load, thermal limits, and laptop performance-core /
 efficiency-core placement can change the result.
 
 | Branch / mode | Benchmark | Result |
 |---------------|-----------|--------|
-| `master`, JIT enabled | MicroBench | `15464 Marks`, `1,529,149,397 instr/s` |
-| `master`, JIT enabled | JITBench | `ALU 17.025 ms`, `Memory 7.738 ms`, `2,746,182,612 instr/s` |
+| `master`, JIT enabled | MicroBench | `26820 Marks`, `2,687,376,608 instr/s` |
+| `master`, JIT enabled | JITBench | `ALU 10.715 ms`, `Memory 4.128 ms`, `3,722,716,802 instr/s` |
+| `master`, `NEMU_DISABLE_JIT=1` | MicroBench | `3497 Marks`, `286,984,091 instr/s` |
+| `master`, `NEMU_DISABLE_JIT=1` | JITBench | `ALU 174.062 ms`, `Memory 70.970 ms`, `289,684,365 instr/s` |
+| `performance_improve` | MicroBench | `3141 Marks`, `271,000,633 instr/s` |
+| `legacy/baseline-master` | MicroBench | `694 Marks`, `58,319,798 instr/s` |
+
+The current JIT MicroBench score is about `7.67x` the same branch with JIT
+disabled, `8.54x` the non-JIT performance branch, and `38.65x` the original
+baseline by Marks. By guest instruction throughput, the current JIT is about
+`46.08x` the original baseline.
 
 ### Current JIT Performance Improvements
 
@@ -366,7 +377,7 @@ speed-up = faster instr/s / slower instr/s
 Example:
 
 ```text
-1,529,149,397 / 200,000,000 = 7.65x
+2,687,376,608 / 58,319,798 = 46.08x
 ```
 
 ## Nanos-lite GUI Flow
