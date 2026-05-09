@@ -1,6 +1,7 @@
 #ifndef NEMU_H__
 #define NEMU_H__
 
+#ifndef NEMU_PLATFORM_CONSTANTS_ONLY
 #include <klib-macros.h>
 
 #include ISA_H // the macro `ISA_H` is defined in CFLAGS
@@ -14,6 +15,7 @@
 # define nemu_trap(code) asm volatile("mv a0, %0; .word 0x0000006b" : :"r"(code))
 #else
 # error unsupported ISA __ISA__
+#endif
 #endif
 
 #if defined(__ARCH_X86_NEMU)
@@ -34,6 +36,31 @@
 #define MOUSE_ADDR      (DEVICE_BASE + 0x0000070)
 #define RTC_ADDR        (DEVICE_BASE + 0x0000048)
 #define VGACTL_ADDR     (DEVICE_BASE + 0x0000100)
+
+/*
+ * The registers below are NEMU-private extensions in the VGA control page.
+ * They are shared between the NEMU platform implementation in AM and the NEMU
+ * device model so both sides agree on the same compact register layout.
+ *
+ * These values are not public AM GPU events. Portable AM code should continue
+ * to use the normal AM_GPU_* interfaces; only platform-specific NEMU glue may
+ * issue these commands to batch framebuffer copies or request a hidden
+ * framebuffer capture.
+ */
+enum {
+  NEMU_VGACTL_INFO = 0u,
+  NEMU_VGACTL_SYNC = 1u,
+  NEMU_VGACTL_BLIT_SRC = 2u,
+  NEMU_VGACTL_BLIT_POS = 3u,
+  NEMU_VGACTL_BLIT_SIZE = 4u,
+  NEMU_VGACTL_BLIT_CMD = 5u,
+  NEMU_VGACTL_CAPTURE_DST = 6u,
+  NEMU_VGACTL_CAPTURE_CMD = 7u,
+};
+
+#define NEMU_VGACTL_BLIT_CMD_COPY 1u
+#define NEMU_VGACTL_CAPTURE_CMD_COPY 1u
+
 #define AUDIO_ADDR      (DEVICE_BASE + 0x0000200)
 #define DISK_ADDR       (DEVICE_BASE + 0x0000300)
 #define FB_ADDR         (MMIO_BASE   + 0x1000000)

@@ -2,19 +2,16 @@
 #include <nemu.h>
 #include <stdio.h>
 
-#define SYNC_ADDR (VGACTL_ADDR + 4)
-#define BLIT_SRC_ADDR (VGACTL_ADDR + 8)
-#define BLIT_POS_ADDR (VGACTL_ADDR + 12)
-#define BLIT_SIZE_ADDR (VGACTL_ADDR + 16)
-#define BLIT_CMD_ADDR (VGACTL_ADDR + 20)
-#define BLIT_CMD_COPY 1u
+static inline uintptr_t vgactl_reg_addr(uint32_t reg) {
+	return VGACTL_ADDR + (uintptr_t)reg * sizeof(uint32_t);
+}
 
 static int W;
 static int H;
 
 void __am_gpu_init() 
 {
-	const uint32_t vgainfo = inl(VGACTL_ADDR);
+	const uint32_t vgainfo = inl(vgactl_reg_addr(NEMU_VGACTL_INFO));
 	/* VGACTL packs width in the high half-word and height in the low half-word.
 	 * Cache both values because the guest-visible display mode is fixed after
 	 * NEMU starts, and later config reads should not pay another MMIO access.
@@ -49,18 +46,20 @@ void __am_gpu_fbdraw(AM_GPU_FBDRAW_T *ctl)
 		 * view: the source pointer and rectangle are fully published before the
 		 * copy command is written.
 		 */
-		outl(BLIT_SRC_ADDR, (uintptr_t)pixel);
+		outl(vgactl_reg_addr(NEMU_VGACTL_BLIT_SRC), (uintptr_t)pixel);
 		/* Position and size are packed as y:x and h:w.  Width/x are masked to
 		 * 16 bits to match the device register layout used by NEMU.
 		 */
-		outl(BLIT_POS_ADDR, ((uint32_t)ctl->y << 16) | (uint32_t)(uint16_t)ctl->x);
-		outl(BLIT_SIZE_ADDR, ((uint32_t)ctl->h << 16) | (uint32_t)(uint16_t)ctl->w);
-		outl(BLIT_CMD_ADDR, BLIT_CMD_COPY);
+		outl(vgactl_reg_addr(NEMU_VGACTL_BLIT_POS),
+				((uint32_t)ctl->y << 16) | (uint32_t)(uint16_t)ctl->x);
+		outl(vgactl_reg_addr(NEMU_VGACTL_BLIT_SIZE),
+				((uint32_t)ctl->h << 16) | (uint32_t)(uint16_t)ctl->w);
+		outl(vgactl_reg_addr(NEMU_VGACTL_BLIT_CMD), NEMU_VGACTL_BLIT_CMD_COPY);
 	}
 
 	if (ctl->sync) 
 	{	
-		outl(SYNC_ADDR, 1);
+		outl(vgactl_reg_addr(NEMU_VGACTL_SYNC), 1);
 	}
 }
 

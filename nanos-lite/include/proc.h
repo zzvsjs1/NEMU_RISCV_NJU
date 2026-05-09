@@ -29,7 +29,7 @@ typedef union {
 
 extern PCB *current;
 
-void switch_fg_pcb(int index);
+bool switch_fg_pcb(int index);
 
 /*
  * Device code sometimes needs to attribute a shared device operation to the

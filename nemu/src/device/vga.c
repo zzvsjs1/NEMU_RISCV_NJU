@@ -1,19 +1,19 @@
 #include <common.h>
 #include <device/map.h>
 #include <isa.h>
+#ifdef CONFIG_ISA_riscv32
+#include <isa-jit.h>
+#endif
 #include <memory/paddr.h>
 #include <utils.h>
 
+#define NEMU_PLATFORM_CONSTANTS_ONLY
+#include "../../../abstract-machine/am/src/platform/nemu/include/nemu.h"
+#undef NEMU_PLATFORM_CONSTANTS_ONLY
+
 #define SCREEN_W (MUXDEF(CONFIG_VGA_SIZE_800x600, 800, 400))
 #define SCREEN_H (MUXDEF(CONFIG_VGA_SIZE_800x600, 600, 300))
-#define VGACTL_NR_REGS 6u
-#define VGACTL_REG_INFO 0u
-#define VGACTL_REG_SYNC 1u
-#define VGACTL_REG_BLIT_SRC 2u
-#define VGACTL_REG_BLIT_POS 3u
-#define VGACTL_REG_BLIT_SIZE 4u
-#define VGACTL_REG_BLIT_CMD 5u
-#define VGACTL_BLIT_CMD_COPY 1u
+#define VGACTL_NR_REGS 8u
 #define VGA_PAGE_SIZE 4096u
 #define VGA_PAGE_MASK (VGA_PAGE_SIZE - 1u)
 
@@ -217,6 +217,41 @@ static bool vga_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
 	return chunk > 0;
 }
 
+static bool vga_guest_write_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
+		size_t *len, paddr_t *paddr_out) {
+	if (wanted == 0) return false;
+
+	paddr_t paddr = 0;
+	const int mmu = isa_mmu_check(addr, 1, MEM_TYPE_WRITE);
+	if (mmu == MMU_DIRECT) {
+		paddr = (paddr_t)addr;
+	} else if (mmu == MMU_TRANSLATE) {
+		const paddr_t ret = isa_mmu_translate(addr, 1, MEM_TYPE_WRITE);
+		if ((ret & (paddr_t)VGA_PAGE_MASK) != MEM_RET_OK) {
+			return false;
+		}
+		paddr = (ret & ~(paddr_t)VGA_PAGE_MASK) | (paddr_t)(addr & VGA_PAGE_MASK);
+	} else {
+		return false;
+	}
+
+	if (!in_pmem(paddr)) return false;
+
+	size_t chunk = VGA_PAGE_SIZE - (size_t)(addr & VGA_PAGE_MASK);
+	const paddr_t pmem_end = (paddr_t)CONFIG_MBASE + (paddr_t)CONFIG_MSIZE;
+	if ((paddr_t)(paddr + chunk) > pmem_end) {
+		chunk = (size_t)(pmem_end - paddr);
+	}
+	if (chunk > wanted) {
+		chunk = wanted;
+	}
+
+	*host = guest_to_host(paddr);
+	*len = chunk;
+	*paddr_out = paddr;
+	return chunk > 0;
+}
+
 static void vga_blit_from_guest(vaddr_t src, int x, int y, int w, int h) {
 	if (src == 0 || w <= 0 || h <= 0) return;
 
@@ -256,24 +291,66 @@ static void vga_blit_from_guest(vaddr_t src, int x, int y, int w, int h) {
 	vga_fps_count_blit((uint64_t)row_bytes * (uint64_t)h);
 }
 
+static void vga_capture_to_guest(vaddr_t dst) {
+	Assert(dst != 0, "vga: null capture destination");
+
+	/*
+	 * Capture is deliberately host-side: NEMU already owns the authoritative
+	 * hidden framebuffer, so copying it here avoids a guest loop that would spend
+	 * one instruction stream on a full-screen memcpy whenever nanos-lite switches
+	 * away from a stale foreground app.
+	 */
+	size_t done = 0;
+	const size_t bytes = screen_size();
+	while (done < bytes) {
+		uint8_t *host = NULL;
+		size_t chunk = 0;
+		paddr_t paddr = 0;
+		const vaddr_t cur = dst + (vaddr_t)done;
+		const size_t remain = bytes - done;
+		Assert(vga_guest_write_chunk(cur, remain, &host, &chunk, &paddr),
+				"vga: cannot translate capture destination vaddr=0x%08x", cur);
+		memcpy(host, (const uint8_t *)vmem + done, chunk);
+#ifdef CONFIG_ISA_riscv32
+		/*
+		 * The device writes guest PMEM directly, bypassing paddr_write().  If the
+		 * destination overlaps translated code bytes, cached JIT blocks must be
+		 * invalidated for the exact physical chunk that changed before execution
+		 * can safely continue.
+		 */
+		Assert(chunk <= INT32_MAX, "vga: capture chunk is too large for JIT invalidation");
+		isa_jit_invalidate_paddr(paddr, (int)chunk);
+#endif
+		done += chunk;
+	}
+}
+
 static void vgactl_io_handler(uint32_t offset, int len, bool is_write) {
 	if (!is_write || len != sizeof(uint32_t)) return;
 
 	const uint32_t reg = offset / sizeof(uint32_t);
-	if (reg != VGACTL_REG_BLIT_CMD ||
-			vgactl_port_base[VGACTL_REG_BLIT_CMD] != VGACTL_BLIT_CMD_COPY) {
-		return;
-	}
+	if (reg == NEMU_VGACTL_BLIT_CMD) {
+		if (vgactl_port_base[NEMU_VGACTL_BLIT_CMD] != NEMU_VGACTL_BLIT_CMD_COPY) {
+			return;
+		}
 
-	const uint32_t pos = vgactl_port_base[VGACTL_REG_BLIT_POS];
-	const uint32_t size = vgactl_port_base[VGACTL_REG_BLIT_SIZE];
-	const int x = (int)(pos & 0xffffu);
-	const int y = (int)(pos >> 16);
-	const int w = (int)(size & 0xffffu);
-	const int h = (int)(size >> 16);
-	vga_blit_from_guest((vaddr_t)vgactl_port_base[VGACTL_REG_BLIT_SRC],
-			x, y, w, h);
-	vgactl_port_base[VGACTL_REG_BLIT_CMD] = 0;
+		const uint32_t pos = vgactl_port_base[NEMU_VGACTL_BLIT_POS];
+		const uint32_t size = vgactl_port_base[NEMU_VGACTL_BLIT_SIZE];
+		const int x = (int)(pos & 0xffffu);
+		const int y = (int)(pos >> 16);
+		const int w = (int)(size & 0xffffu);
+		const int h = (int)(size >> 16);
+		vga_blit_from_guest((vaddr_t)vgactl_port_base[NEMU_VGACTL_BLIT_SRC],
+				x, y, w, h);
+		vgactl_port_base[NEMU_VGACTL_BLIT_CMD] = 0;
+	} else if (reg == NEMU_VGACTL_CAPTURE_CMD) {
+		if (vgactl_port_base[NEMU_VGACTL_CAPTURE_CMD] != NEMU_VGACTL_CAPTURE_CMD_COPY) {
+			return;
+		}
+
+		vga_capture_to_guest((vaddr_t)vgactl_port_base[NEMU_VGACTL_CAPTURE_DST]);
+		vgactl_port_base[NEMU_VGACTL_CAPTURE_CMD] = 0;
+	}
 }
 
 static void mark_vmem_dirty_rect(int x0, int y0, int x1, int y1) {
@@ -475,7 +552,7 @@ static inline void update_screen() {}
 
 void vga_update_screen() 
 {
-	if (vgactl_port_base[VGACTL_REG_SYNC] != 0)
+	if (vgactl_port_base[NEMU_VGACTL_SYNC] != 0)
 	{
 		const bool had_dirty = vmem_dirty;
 		const uint64_t dirty_area = had_dirty
@@ -483,13 +560,13 @@ void vga_update_screen()
 			: 0;
 		update_screen();
 		vga_fps_count_frame(had_dirty, dirty_area);
-		vgactl_port_base[VGACTL_REG_SYNC] = 0;
+		vgactl_port_base[NEMU_VGACTL_SYNC] = 0;
 	}
 }
 
 void init_vga() {
 	vgactl_port_base = (uint32_t *)new_space(VGACTL_NR_REGS * sizeof(uint32_t));
-	vgactl_port_base[VGACTL_REG_INFO] = (screen_width() << 16) | screen_height();
+	vgactl_port_base[NEMU_VGACTL_INFO] = (screen_width() << 16) | screen_height();
 #ifdef CONFIG_HAS_PORT_IO
 	add_pio_map ("vgactl", CONFIG_VGA_CTL_PORT, vgactl_port_base,
 			VGACTL_NR_REGS * sizeof(uint32_t), vgactl_io_handler);

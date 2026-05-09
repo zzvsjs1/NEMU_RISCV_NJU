@@ -5,6 +5,21 @@
 #include <proc.h>
 #include <stdint.h>
 
+#if defined(__ARCH_MIPS32_NEMU) || defined(__ARCH_RISCV32_NEMU) \
+    || defined(__ARCH_RISCV64_NEMU)
+#define NEMU_PLATFORM_CONSTANTS_ONLY
+#include <nemu.h>
+#undef NEMU_PLATFORM_CONSTANTS_ONLY
+# define NEMU_LAZY_FB_CAPTURE 1
+# define VGACTL_REG_ADDR(reg) (VGACTL_ADDR + (reg) * sizeof(uint32_t))
+static inline void fb_mmio_outl(uintptr_t addr, uint32_t data)
+{
+  *(volatile uint32_t *)addr = data;
+}
+#else
+# define NEMU_LAZY_FB_CAPTURE 0
+#endif
+
 #if defined(MULTIPROGRAM) && !defined(TIME_SHARING)
 # define MULTIPROGRAM_YIELD() yield()
 #else
@@ -21,20 +36,25 @@ static const char *keyname[256] __attribute__((used)) = {
 
 /*
  * All foreground apps share one physical /dev/fb. If a smaller app such as
- * Bird is centered on the screen, then a wider app such as NSlider can paint
+ * Bird is centred on the screen, then a wider app such as NSlider can paint
  * outside Bird's canvas. When we later switch back to Bird, Bird may repaint
  * only its own canvas, leaving stale pixels around it.
  *
- * Treat the framebuffer like foreground-owned device state: keep one full
- * screen shadow for each switchable foreground PCB, update the running app's
- * shadow on every /dev/fb write, and blit the selected app's shadow during
- * F1/F2/F3 switching. This preserves each app's last visible screen without
- * requiring event-driven apps to repaint just because they became foreground.
+ * Keep one full-screen backing store for each switchable foreground PCB, but
+ * do not eagerly mirror the visible app's frames on NEMU. A foreground frame
+ * already reaches the physical display through AM_GPU_FBDRAW; copying the same
+ * pixels into a Nanos buffer costs another large guest-side memcpy under
+ * emulation, which is too expensive for frame-heavy programs. The physical
+ * display is therefore treated as the hot backing while an app is foreground.
+ * When that app is switched away, NEMU snapshots the physical display into its
+ * private backing store once. Background writers still update only their own
+ * private backing store because they must not disturb the visible app.
  */
 static int fb_screen_w = 0;
 static int fb_screen_h = 0;
-static uint32_t *fb_shadow[NR_FOREGROUND_PROC] = {};
-static bool fb_shadow_ready = false;
+static uint32_t *fb_backing[NR_FOREGROUND_PROC] = {};
+static bool fb_backing_stale[NR_FOREGROUND_PROC] = {};
+static bool fb_backing_ready = false;
 
 /*
  * Audio is also a foreground-owned physical device. PAL and Bird keep their
@@ -60,7 +80,12 @@ static size_t round_up_to_page(size_t size)
   return (size + PGSIZE - 1) & ~(size_t)(PGSIZE - 1);
 }
 
-static void init_fb_shadow(void)
+static size_t fb_backing_size(void)
+{
+  return (size_t)fb_screen_w * (size_t)fb_screen_h * sizeof(uint32_t);
+}
+
+static void init_fb_backing(void)
 {
   const AM_GPU_CONFIG_T cfg = io_read(AM_GPU_CONFIG);
   assert(cfg.present);
@@ -68,64 +93,105 @@ static void init_fb_shadow(void)
   fb_screen_w = cfg.width;
   fb_screen_h = cfg.height;
 
-  const size_t fb_size = (size_t)fb_screen_w * (size_t)fb_screen_h * sizeof(uint32_t);
+  const size_t fb_size = fb_backing_size();
   const size_t alloc_size = round_up_to_page(fb_size);
   const size_t nr_page = alloc_size / PGSIZE;
 
   for (int i = 0; i < NR_FOREGROUND_PROC; i++)
   {
-    fb_shadow[i] = new_page(nr_page);
-    memset(fb_shadow[i], 0, alloc_size);
+    fb_backing[i] = new_page(nr_page);
+    memset(fb_backing[i], 0, alloc_size);
+    fb_backing_stale[i] = false;
   }
 
-  fb_shadow_ready = true;
+  fb_backing_ready = true;
 }
 
-// Mirror the current foreground app's linear /dev/fb write into its shadow.
-static void update_current_fb_shadow(const void *buf, size_t offset, size_t len)
+static bool valid_foreground_index(int owner)
+{
+  return owner >= 0 && owner < NR_FOREGROUND_PROC;
+}
+
+static void update_fb_backing(int owner, const void *buf, size_t offset, size_t len)
 {
   /*
-   * Mirror the exact byte range that userspace wrote, rather than reconstructing
-   * rows from width/height.  Later performance work batches full-width images as
-   * multi-row writes, and this byte-range mirror keeps the foreground restore
-   * path independent of how the write was grouped.
+   * Copy the exact byte range that userspace wrote, rather than reconstructing
+   * rows from width/height. Multi-row writes and one-row writes then share the
+   * same private-backing semantics, independent of how the app grouped pixels.
    */
-  if (!fb_shadow_ready || buf == NULL || len == 0)
+  if (!fb_backing_ready || !valid_foreground_index(owner) || buf == NULL || len == 0)
   {
     return;
   }
 
-  const int owner = current_pcb_index();
-  if (owner < 0 || owner >= NR_FOREGROUND_PROC)
-  {
-    return;
-  }
-
-  const size_t fb_size = (size_t)fb_screen_w * (size_t)fb_screen_h * sizeof(uint32_t);
+  const size_t fb_size = fb_backing_size();
   if (offset >= fb_size)
   {
     return;
   }
 
   const size_t copy_len = len < fb_size - offset ? len : fb_size - offset;
-  memcpy((uint8_t *)fb_shadow[owner] + offset, buf, copy_len);
+  memcpy((uint8_t *)fb_backing[owner] + offset, buf, copy_len);
+  fb_backing_stale[owner] = false;
 }
 
-// Restore the selected foreground app's full-screen shadow to the real display.
+static void fb_capture_slot_if_stale(int owner)
+{
+  if (!fb_backing_ready)
+  {
+    return;
+  }
+
+  if (!valid_foreground_index(owner) || !fb_backing_stale[owner])
+  {
+    return;
+  }
+
+#if NEMU_LAZY_FB_CAPTURE
+  /*
+   * The visible NEMU framebuffer is the authoritative copy for the foreground
+   * app while it is running. Capturing here materialises that hot physical
+   * state into the app's private backing store exactly once per switch-away,
+   * instead of paying for a full guest memcpy on every foreground frame.
+   *
+   * These registers are intentionally platform-private: they are used only by
+   * the kernel/device layer to preserve foreground ownership semantics, not as
+   * a public Navy or application ABI.
+   */
+  fb_mmio_outl(VGACTL_REG_ADDR(NEMU_VGACTL_CAPTURE_DST), (uintptr_t)fb_backing[owner]);
+  fb_mmio_outl(VGACTL_REG_ADDR(NEMU_VGACTL_CAPTURE_CMD), NEMU_VGACTL_CAPTURE_CMD_COPY);
+  fb_backing_stale[owner] = false;
+#else
+  /*
+   * Non-NEMU platforms do not have the hidden capture command. They keep eager
+   * backing semantics on foreground writes, so a stale backing should not be
+   * created there; clearing it here prevents an impossible capture from leaving
+   * the process permanently unrestorable if a future platform path marks it.
+   */
+  fb_backing_stale[owner] = false;
+#endif
+}
+
+void device_capture_foreground_before_switch(void)
+{
+  fb_capture_slot_if_stale(foreground_pcb_index());
+}
+
+// Restore the selected foreground app's private backing store to the display.
 static void fb_restore_foreground(void)
 {
-  if (!fb_shadow_ready)
+  if (!fb_backing_ready)
   {
     return;
   }
 
   const int owner = foreground_pcb_index();
-  if (owner < 0 || owner >= NR_FOREGROUND_PROC)
+  if (!valid_foreground_index(owner))
   {
     return;
   }
 
-  io_write(AM_GPU_FBDRAW, 0, 0, fb_shadow[owner], fb_screen_w, fb_screen_h, true);
+  io_write(AM_GPU_FBDRAW, 0, 0, fb_backing[owner], fb_screen_w, fb_screen_h, true);
 }
 
 static void audio_program(uint32_t freq, uint32_t channels, uint32_t samples)
@@ -204,22 +270,28 @@ static bool handle_foreground_hotkey(AM_INPUT_KEYBRD_T *keyboard)
     case AM_KEY_F1:
       if (keyboard->keydown)
       {
-        switch_fg_pcb(0);
-        fb_restore_foreground();
+        if (switch_fg_pcb(0))
+        {
+          fb_restore_foreground();
+        }
       }
       return true;
     case AM_KEY_F2:
       if (keyboard->keydown)
       {
-        switch_fg_pcb(1);
-        fb_restore_foreground();
+        if (switch_fg_pcb(1))
+        {
+          fb_restore_foreground();
+        }
       }
       return true;
     case AM_KEY_F3:
       if (keyboard->keydown)
       {
-        switch_fg_pcb(2);
-        fb_restore_foreground();
+        if (switch_fg_pcb(2))
+        {
+          fb_restore_foreground();
+        }
       }
       return true;
     default:
@@ -397,8 +469,16 @@ size_t dispinfo_read(void *buf, size_t offset, size_t len)
 
 size_t fb_write(const void *buf, size_t offset, size_t len) 
 {
-  assert(fb_shadow_ready);
+  assert(fb_backing_ready);
   assert(len % sizeof(uint32_t) == 0);
+
+  const int owner = current_pcb_index();
+  const int foreground_owner = foreground_pcb_index();
+  if (owner != foreground_owner)
+  {
+    update_fb_backing(owner, buf, offset, len);
+    return len;
+  }
 
   const int screenW = fb_screen_w;
 
@@ -439,7 +519,23 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
     io_write(AM_GPU_FBDRAW, col, row, (void *)buf, (int)pixelCount, 1, true);
   }
 
-  update_current_fb_shadow(buf, offset, len);
+#if NEMU_LAZY_FB_CAPTURE
+  /*
+   * Do not copy foreground frames into the private backing store on NEMU. The
+   * AM_GPU_FBDRAW path has already presented the frame to the physical display,
+   * which remains the hot backing until this app is switched away and captured.
+   */
+  if (valid_foreground_index(owner))
+  {
+    fb_backing_stale[owner] = true;
+  }
+#else
+  /*
+   * Conservative fallback: without the NEMU capture register, keep the old
+   * eager backing behaviour so a later restore still has current pixels.
+   */
+  update_fb_backing(owner, buf, offset, len);
+#endif
 
   return len;
 }
@@ -535,5 +631,5 @@ void init_device()
 {
   Log("Initializing devices...");
   ioe_init();
-  init_fb_shadow();
+  init_fb_backing();
 }

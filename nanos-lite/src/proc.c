@@ -5,6 +5,7 @@ enum {
 };
 
 void context_uload(PCB *pcb, const char *filename, char *const argv[], char *const envp[]);
+void device_capture_foreground_before_switch(void);
 void device_note_foreground_switch(void);
 void device_restore_foreground_on_schedule(void);
 
@@ -49,7 +50,7 @@ int foreground_pcb_index(void)
   return pcb_index_of(fg_pcb);
 }
 
-void switch_fg_pcb(int index)
+bool switch_fg_pcb(int index)
 {
   /*
    * Foreground switching is a policy decision, not a new address-space
@@ -63,15 +64,25 @@ void switch_fg_pcb(int index)
 
   if (fg_pcb != next)
   {
-    /* Reset the budget and defer audio restoration until the selected process
+    /*
+     * Snapshot the old foreground display before changing fg_pcb.  The device
+     * layer identifies the old owner through foreground_pcb_index(), so this
+     * ordering is what lets lazy framebuffer backing preserve the outgoing
+     * app's last physical frame.
+     *
+     * Reset the budget and defer audio restoration until the selected process
      * is actually scheduled.  The old foreground process may still be inside a
      * syscall while handling the hotkey.
      */
+    device_capture_foreground_before_switch();
     fg_pcb = next;
     foreground_budget = FOREGROUND_QUANTA;
     device_note_foreground_switch();
     Log("Switch foreground to pcb[%d]", index);
+    return true;
   }
+
+  return false;
 }
 
 void context_kload(PCB* pcb, void (*entry)(void *), void* arg)
