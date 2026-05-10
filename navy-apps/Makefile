@@ -232,11 +232,24 @@ fsimg: $(addprefix apps/, $(APPS)) $(addprefix tests/, $(TESTS))
 
 RAMDISK = build/ramdisk.img
 RAMDISK_H = build/ramdisk.h
+FS_MODE ?= flat
+SUPPORTED_FS_MODES = flat fat32
+FS_MODE_CHECK_GOALS = fsimg $(RAMDISK) ramdisk
+
+ifneq ($(filter $(FS_MODE_CHECK_GOALS),$(MAKECMDGOALS)),)
+ifneq ($(words $(FS_MODE)),1)
+$(error unsupported FS_MODE=$(FS_MODE), expected exactly one of: $(SUPPORTED_FS_MODES))
+endif
+ifeq ($(filter $(SUPPORTED_FS_MODES),$(FS_MODE)),)
+$(error unsupported FS_MODE=$(FS_MODE), expected exactly one of: $(SUPPORTED_FS_MODES))
+endif
+endif
 
 # Build the image from a streamed file list so paths containing spaces or
 # parentheses are passed to the shell as quoted values.  Some ONS assets use
 # names such as "9-2(3).png", which break if the whole file list is expanded
 # directly into one `cat ...` command.
+ifeq ($(FS_MODE),flat)
 $(RAMDISK): fsimg
 	@mkdir -p $(@D)
 	@echo "// file path, file size, offset in disk" > $(RAMDISK_H)
@@ -251,6 +264,11 @@ $(RAMDISK): fsimg
 		offset=$$((offset + size)); \
 	done
 	@truncate -s \%512 $@
+else ifeq ($(FS_MODE),fat32)
+$(RAMDISK): fsimg
+	@mkdir -p $(@D)
+	@python3 scripts/mkfat32.py fsimg $@
+endif
 
 ramdisk: $(RAMDISK)
 

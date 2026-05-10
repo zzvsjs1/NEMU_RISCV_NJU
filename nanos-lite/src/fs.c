@@ -1,11 +1,8 @@
 #include <fs.h>
+#include "fs/backend.h"
 
 typedef size_t (*ReadFn) (void *buf, size_t offset, size_t len);
 typedef size_t (*WriteFn) (const void *buf, size_t offset, size_t len);
-
-// disk.c
-size_t disk_read(void *buf, size_t offset, size_t len);
-size_t disk_write(const void *buf, size_t offset, size_t len);
 
 // device.c
 size_t serial_write(const void *buf, size_t offset, size_t len);
@@ -18,15 +15,17 @@ size_t sbctl_read(void *buf, size_t offset, size_t len);
 
 
 typedef struct {
-  char *name;
+  const char *name;
   size_t size;
-  size_t disk_offset;
-  /* Non-null callbacks mark synthetic device/proc files.  Regular files leave
-   * both callbacks null and are served from disk.c using disk_offset + offset.
-   */
   ReadFn read;
   WriteFn write;
-} Finfo;
+} SpecialFile;
+
+typedef struct {
+  int used;
+  size_t offset;
+  FsFile file;
+} OpenFile;
 
 enum {
   FD_STDIN, 
@@ -39,7 +38,11 @@ enum {
   FD_SBCTL
 };
 
-#define FIRST_REGULAR_FILE (FD_SBCTL + 1)
+enum {
+  FIRST_REGULAR_FD = FD_SBCTL + 1,
+  MAX_OPEN_FILES = 128,
+  MAX_REGULAR_OPEN_FILES = MAX_OPEN_FILES - FIRST_REGULAR_FD,
+};
 
 size_t invalid_read(void *buf, size_t offset, size_t len) {
   panic("should not reach here");
@@ -51,32 +54,26 @@ size_t invalid_write(const void *buf, size_t offset, size_t len) {
   return 0;
 }
 
-/* This is the information about all files in disk. */
-static Finfo FILE_TABLE[] __attribute__((used)) = {
-  [FD_STDIN]  = {"stdin", 0, 0, invalid_read, invalid_write},
-  [FD_STDOUT] = {"stdout", 0, 0, invalid_read, serial_write},
-  [FD_STDERR] = {"stderr", 0, 0, invalid_read, serial_write},
-  [FD_FB] = {"/dev/fb", 0, 0, invalid_read, fb_write},
-  [FD_EVENTS] = {"/dev/events", 0, 0, events_read, invalid_write},
-  [FD_DISPINFO] = {"/proc/dispinfo", 0, 0, dispinfo_read, invalid_write},
-  [FD_SB] = {"/dev/sb", 0, 0, invalid_read, sb_write},
-  [FD_SBCTL] = {"/dev/sbctl", 0, 0, sbctl_read, sbctl_write},
-
-#include "files.h"
+static SpecialFile special_files[] = {
+  [FD_STDIN]  = {"stdin", 0, invalid_read, invalid_write},
+  [FD_STDOUT] = {"stdout", 0, invalid_read, serial_write},
+  [FD_STDERR] = {"stderr", 0, invalid_read, serial_write},
+  [FD_FB] = {"/dev/fb", 0, invalid_read, fb_write},
+  [FD_EVENTS] = {"/dev/events", 0, events_read, invalid_write},
+  [FD_DISPINFO] = {"/proc/dispinfo", 0, dispinfo_read, invalid_write},
+  [FD_SB] = {"/dev/sb", 0, invalid_read, sb_write},
+  [FD_SBCTL] = {"/dev/sbctl", 0, sbctl_read, sbctl_write},
 };
 
-// Number of entries in file_table
-enum { NR_FILES = sizeof(FILE_TABLE) / sizeof(FILE_TABLE[0]) };
+enum { NR_SPECIAL_FILES = sizeof(special_files) / sizeof(special_files[0]) };
 
-// Array to track the current offset for each open file
-static size_t openOffset[NR_FILES] = {0};  // Initialized to 0 automatically
+static size_t special_offsets[NR_SPECIAL_FILES];
+static OpenFile open_files[MAX_REGULAR_OPEN_FILES];
 
 static int find_special_file(const char *pathname)
 {
-  for (int i = 0; i < FIRST_REGULAR_FILE; i++)
-  {
-    if (strcmp(pathname, FILE_TABLE[i].name) == 0)
-    {
+  for (int i = 0; i < NR_SPECIAL_FILES; i++) {
+    if (strcmp(pathname, special_files[i].name) == 0) {
       return i;
     }
   }
@@ -84,39 +81,13 @@ static int find_special_file(const char *pathname)
   return -1;
 }
 
-static int find_regular_file(const char *pathname)
+static OpenFile *regular_file(int fd)
 {
-  /*
-   * navy-apps/Makefile writes files.h from `find ... | sort`, so every normal
-   * ramdisk pathname after the device entries is lexicographically ordered.
-   * ONScripter opens many PNG/archive paths while changing scenes; binary
-   * search cuts that path lookup from about 1,600 string comparisons to about
-   * 11 in the current large game image.
-   */
-  int left = FIRST_REGULAR_FILE;
-  int right = NR_FILES;
+  assert(fd >= FIRST_REGULAR_FD && fd < MAX_OPEN_FILES);
 
-  while (left < right)
-  {
-    const int mid = left + (right - left) / 2;
-    const int cmp = strcmp(pathname, FILE_TABLE[mid].name);
-
-    if (cmp == 0)
-    {
-      return mid;
-    }
-
-    if (cmp < 0)
-    {
-      right = mid;
-    }
-    else
-    {
-      left = mid + 1;
-    }
-  }
-
-  return -1;
+  OpenFile *open = &open_files[fd - FIRST_REGULAR_FD];
+  assert(open->used);
+  return open;
 }
 
 void init_fs() 
@@ -129,27 +100,33 @@ void init_fs()
 
   // Set file size.
   const int vmemsz = gpuConfig.vmemsz;
-  FILE_TABLE[FD_FB].size = (size_t)vmemsz;
+  special_files[FD_FB].size = (size_t)vmemsz;
+
+  assert(regular_fs_backend.init() == 0);
 }
 
-// Open a file by pathname, return file descriptor (index in file_table)
+// Open a file by pathname, returning a stable special fd or a reusable regular fd.
 int fs_open(const char *pathname, int flags, int mode) 
 {
   int fd = find_special_file(pathname);
-  if (fd < 0)
-  {
-    /*
-     * Keep device files out of the binary search.  They are hand-written before
-     * files.h and are not part of the sorted generated regular-file range.
-     */
-    fd = find_regular_file(pathname);
+  if (fd >= 0) {
+    special_offsets[fd] = 0;
+    return fd;
   }
 
-  if (fd >= 0)
-  {
-    // Reset offset and return descriptor.
-    openOffset[fd] = 0;
-    return fd;
+  FsFile file;
+  if (regular_fs_backend.open(pathname, &file) == 0) {
+    for (int i = 0; i < MAX_REGULAR_OPEN_FILES; i++) {
+      if (!open_files[i].used) {
+        open_files[i].used = 1;
+        open_files[i].offset = 0;
+        open_files[i].file = file;
+        return FIRST_REGULAR_FD + i;
+      }
+    }
+
+    regular_fs_backend.close(&file);
+    return -1;
   }
 
   /*
@@ -167,75 +144,58 @@ int fs_open(const char *pathname, int flags, int mode)
 // Read up to len bytes from file descriptor into buf
 size_t fs_read(int fd, void *buf, size_t len) 
 {
-  assert(fd >= 0 && fd < NR_FILES);
+  assert(fd >= 0 && fd < MAX_OPEN_FILES);
 
-  Finfo *f = &FILE_TABLE[fd];
-
-  // Calculate available bytes
-  const size_t offset = openOffset[fd];
-
-  // If read is not supported, return 0 (e.g., stdin not implemented)
-  if (f->read != NULL) 
-  {
+  if (fd < FIRST_REGULAR_FD) {
+    SpecialFile *f = &special_files[fd];
     /* Device files own their offset semantics.  For example /dev/events is
-     * poll-like and /proc/dispinfo is synthetic, so openOffset is intentionally
-     * not advanced on this path.
+     * poll-like and /proc/dispinfo is synthetic, so the special descriptor
+     * offset is intentionally not advanced on this path.
      */
-    return f->read(buf, offset, len);
+    return f->read(buf, special_offsets[fd], len);
   }
 
-  // if we've already reached or passed the end, bail out
-  if (offset >= f->size) 
-  {
-    return 0;
-  }
-
-  // compute how many bytes we can actually read
-  const size_t avail = f->size - offset;
-  const size_t rlen  = (len < avail ? len : avail);
-
-  // Perform the read from the configured disk backend.
-  size_t ret = disk_read(buf, f->disk_offset + offset, rlen);
-  openOffset[fd] += ret;
+  OpenFile *open = regular_file(fd);
+  const size_t ret = regular_fs_backend.read(&open->file, open->offset, buf, len);
+  open->offset += ret;
   return ret;
 }
 
 // Write up to len bytes from buf to file descriptor
 size_t fs_write(int fd, const void *buf, size_t len) 
 {
-  assert(fd >= 0 && fd < NR_FILES);
-  Finfo *f = &FILE_TABLE[fd];
+  assert(fd >= 0 && fd < MAX_OPEN_FILES);
 
-  // If handle existed.
-  if (f->write != NULL) 
-  {
+  if (fd < FIRST_REGULAR_FD) {
+    SpecialFile *f = &special_files[fd];
     /* Device writers receive the current open offset so stream-like devices can
      * ignore it while memory-mapped-style devices such as /dev/fb can translate
      * it into a screen position.  The offset is not advanced here because some
      * devices, especially /dev/sb, define their own stream semantics.
      */
-    return f->write(buf, openOffset[fd], len);
+    return f->write(buf, special_offsets[fd], len);
   }
 
-  // Calculate available space
-  size_t offset = openOffset[fd];
-  assert(offset <= f->size);
-
-  const size_t avail = f->size - offset;
-  const size_t wlen = len < avail ? len : avail;
-
-  // Perform write and advance offset.
-  size_t ret = disk_write(buf, f->disk_offset + offset, wlen);
-  openOffset[fd] += ret;
+  OpenFile *open = regular_file(fd);
+  const size_t ret = regular_fs_backend.write(&open->file, open->offset, buf, len);
+  open->offset += ret;
   return ret;
 }
 
 // Adjust the file offset based on whence (SEEK_SET, SEEK_CUR, SEEK_END)
 size_t fs_lseek(int fd, size_t offset, int whence) 
 {
-  assert(fd >= 0 && fd < NR_FILES);
+  assert(fd >= 0 && fd < MAX_OPEN_FILES);
 
-  Finfo *f = &FILE_TABLE[fd];
+  if (fd >= FIRST_REGULAR_FD) {
+    OpenFile *open = regular_file(fd);
+    const size_t newOffset = regular_fs_backend.lseek(&open->file, open->offset, offset, whence);
+    open->offset = newOffset;
+    return newOffset;
+  }
+
+  const size_t old_offset = special_offsets[fd];
+  const size_t file_size = special_files[fd].size;
   size_t newOffset = -1;
 
   switch (whence) {
@@ -244,11 +204,11 @@ size_t fs_lseek(int fd, size_t offset, int whence)
       break;
     }
     case SEEK_CUR: {
-      newOffset = openOffset[fd] + offset;
+      newOffset = old_offset + offset;
       break;
     }
     case SEEK_END: {
-      newOffset = f->size + offset;
+      newOffset = file_size + offset;
       break;
     }
     default: {
@@ -258,14 +218,32 @@ size_t fs_lseek(int fd, size_t offset, int whence)
   }
 
   // Ensure the new offset is within bounds
-  assert(newOffset <= f->size);
+  assert(newOffset <= file_size);
 
-  openOffset[fd] = newOffset;
+  if (fd < FIRST_REGULAR_FD) {
+    special_offsets[fd] = newOffset;
+  } else {
+    regular_file(fd)->offset = newOffset;
+  }
   return newOffset;
 }
 
-// Close a file descriptor (no-op for this simple FS)
+// Close a regular file descriptor and make the slot reusable.
 int fs_close(int fd) 
 {
-  return 0;
+  assert(fd >= 0 && fd < MAX_OPEN_FILES);
+
+  if (fd < FIRST_REGULAR_FD) {
+    return 0;
+  }
+
+  OpenFile *open = &open_files[fd - FIRST_REGULAR_FD];
+  if (!open->used) {
+    return 0;
+  }
+
+  const int ret = regular_fs_backend.close(&open->file);
+  open->used = 0;
+  open->offset = 0;
+  return ret;
 }

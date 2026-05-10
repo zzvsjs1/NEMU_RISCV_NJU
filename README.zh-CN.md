@@ -269,7 +269,7 @@ host 频率调节、系统负载、温度限制，以及大小核调度都会影
 
 | 分支 / 模式 | Benchmark | 结果 |
 |-------------|-----------|------|
-| `master`，JIT 开启 | MicroBench | `26820 Marks`, `2,687,376,608 instr/s` |
+| `master`，JIT 开启 | MicroBench | `32258 Marks`, `47,272,752,526 instr/s` |
 | `master`，JIT 开启 | JITBench | `ALU 10.715 ms`, `Memory 4.128 ms`, `3,722,716,802 instr/s` |
 | `master`，`NEMU_DISABLE_JIT=1` | MicroBench | `3497 Marks`, `286,984,091 instr/s` |
 | `master`，`NEMU_DISABLE_JIT=1` | JITBench | `ALU 174.062 ms`, `Memory 70.970 ms`, `289,684,365 instr/s` |
@@ -277,7 +277,7 @@ host 频率调节、系统负载、温度限制，以及大小核调度都会影
 | `legacy/baseline-master` | MicroBench | `694 Marks`, `58,319,798 instr/s` |
 
 按 Marks 计算，当前 JIT MicroBench 分数约为同分支关闭 JIT 的 `7.67x`、非 JIT
-性能分支的 `8.54x`、原始 baseline 的 `38.65x`。按 guest instruction
+性能分支的 `8.54x`、原始 baseline 的 `46.48x`。按 guest instruction
 throughput 计算，当前 JIT 约为原始 baseline 的 `46.08x`。
 
 ### 当前 JIT 性能改进
