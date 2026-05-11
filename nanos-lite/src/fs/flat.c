@@ -44,16 +44,25 @@ enum
     NR_FLAT_ENTRIES = sizeof(flat_entries) / sizeof(flat_entries[0])
 };
 
+/*
+ * Return the smaller byte count for clipped reads and writes.
+ */
 static size_t min_size(size_t a, size_t b)
 {
     return a < b ? a : b;
 }
 
+/*
+ * Initialise the generated flat file table backend.
+ */
 static int flat_init(void)
 {
     return 0;
 }
 
+/*
+ * Resolve an existing flat-image file through the generated sorted file table.
+ */
 static int flat_open(const char *path, FsFile *out)
 {
     /*
@@ -91,6 +100,58 @@ static int flat_open(const char *path, FsFile *out)
     return -1;
 }
 
+/*
+ * The flat backend cannot create files because the generated image has fixed
+ * extents and no allocation table.
+ */
+static int flat_create(const char *path, FsFile *out)
+{
+    (void)path;
+    (void)out;
+    return -1;
+}
+
+/*
+ * Resolve metadata for an existing flat regular file.
+ */
+static int flat_lookup(const char *path, FsMetadata *out)
+{
+    FsFile file;
+
+    if (flat_open(path, &file) != 0)
+    {
+        return -1;
+    }
+
+    out->is_dir = 0;
+    out->size = file.size;
+    out->inode = file.u.flat.disk_offset;
+    return 0;
+}
+
+/*
+ * The flat backend has no directories to iterate.
+ */
+static int flat_opendir(const char *path, FsDir *out)
+{
+    (void)path;
+    (void)out;
+    return -1;
+}
+
+/*
+ * The flat backend has no directory iterator state.
+ */
+static int flat_readdir(FsDir *dir, FsDirent *out)
+{
+    (void)dir;
+    (void)out;
+    return -1;
+}
+
+/*
+ * Read a byte range from one fixed flat-file extent.
+ */
 static size_t flat_read(FsFile *file, size_t offset, void *buf, size_t len)
 {
     if (offset >= file->size)
@@ -102,6 +163,9 @@ static size_t flat_read(FsFile *file, size_t offset, void *buf, size_t len)
     return disk_read(buf, file->u.flat.disk_offset + offset, rlen);
 }
 
+/*
+ * Write inside one fixed flat-file extent, clipping at the original size.
+ */
 static size_t flat_write(FsFile *file, size_t offset, const void *buf, size_t len)
 {
     assert(offset <= file->size);
@@ -110,6 +174,9 @@ static size_t flat_write(FsFile *file, size_t offset, const void *buf, size_t le
     return disk_write(buf, file->u.flat.disk_offset + offset, wlen);
 }
 
+/*
+ * Convert POSIX seek arguments into an offset inside the fixed file extent.
+ */
 static size_t flat_lseek(FsFile *file, size_t current_offset, size_t offset, int whence)
 {
     size_t new_offset = -1;
@@ -142,12 +209,9 @@ static size_t flat_lseek(FsFile *file, size_t current_offset, size_t offset, int
     return new_offset;
 }
 
-static int flat_close(FsFile *file)
-{
-    (void)file;
-    return 0;
-}
-
+/*
+ * Reject truncation because flat-file extents cannot be resized.
+ */
 static int flat_truncate(FsFile *file, size_t size)
 {
     (void)file;
@@ -156,12 +220,66 @@ static int flat_truncate(FsFile *file, size_t size)
     return -1;
 }
 
+/*
+ * Reject unlink because the flat backend has no free-space tracking.
+ */
+static int flat_unlink(const char *path)
+{
+    (void)path;
+    return -1;
+}
+
+/*
+ * Reject mkdir because the flat backend does not model directories.
+ */
+static int flat_mkdir(const char *path)
+{
+    (void)path;
+    return -1;
+}
+
+/*
+ * Reject rmdir because the flat backend does not model directories.
+ */
+static int flat_rmdir(const char *path)
+{
+    (void)path;
+    return -1;
+}
+
+/*
+ * Reject rename because flat image entries are generated at build time.
+ */
+static int flat_rename(const char *old_path, const char *new_path)
+{
+    (void)old_path;
+    (void)new_path;
+    return -1;
+}
+
+/*
+ * Close a flat-file descriptor snapshot.
+ */
+static int flat_close(FsFile *file)
+{
+    (void)file;
+    return 0;
+}
+
 const FsBackend regular_fs_backend = {
     .init = flat_init,
     .open = flat_open,
+    .create = flat_create,
+    .lookup = flat_lookup,
+    .opendir = flat_opendir,
+    .readdir = flat_readdir,
     .read = flat_read,
     .write = flat_write,
     .lseek = flat_lseek,
     .truncate = flat_truncate,
+    .unlink = flat_unlink,
+    .mkdir = flat_mkdir,
+    .rmdir = flat_rmdir,
+    .rename = flat_rename,
     .close = flat_close,
 };

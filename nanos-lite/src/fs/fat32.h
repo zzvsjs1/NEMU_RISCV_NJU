@@ -11,6 +11,7 @@
 #define FAT32_ATTR_DIRECTORY 0x10u
 #define FAT32_ATTR_ARCHIVE 0x20u
 #define FAT32_ATTR_LONG_NAME (FAT32_ATTR_READ_ONLY | FAT32_ATTR_HIDDEN | FAT32_ATTR_SYSTEM | FAT32_ATTR_VOLUME_ID)
+#define FAT32_MAX_NAME 260u
 
 /*
  * One 32-byte FAT long-file-name slot, stored immediately before the matching
@@ -181,6 +182,28 @@ typedef struct
     uint32_t contiguous_cluster_count;
 } Fat32File;
 
+/*
+ * Stateful directory iterator used by POSIX-like getdents/readdir support.
+ * next_entry_index is a raw 32-byte directory slot index, not a visible-entry
+ * count, because deleted entries and LFN slots still occupy on-disk slots.
+ */
+typedef struct
+{
+    uint32_t first_cluster;
+    uint32_t next_entry_index;
+} Fat32Dir;
+
+/*
+ * One visible directory entry returned by Fat32Dir.  name contains either a
+ * validated long filename or the short 8.3 alias rendered in the same
+ * lower-case ASCII form accepted by fat32_lookup_path().
+ */
+typedef struct
+{
+    char name[FAT32_MAX_NAME + 1u];
+    Fat32DirEntry entry;
+} Fat32Dirent;
+
 uint8_t fat32_lfn_checksum(const uint8_t short_name[11]);
 int fat32_lfn_entry_to_ascii(const Fat32LfnEntry *entry, char *out, size_t out_size);
 int fat32_parse_bpb(const uint8_t sector[512], uint32_t disk_block_size, Fat32Volume *out);
@@ -195,8 +218,22 @@ int fat32_flush_fsinfo(const Fat32Volume *vol);
 int fat32_alloc_cluster(Fat32Volume *vol, uint32_t preferred_after, uint32_t *out_cluster);
 int fat32_free_chain(Fat32Volume *vol, uint32_t first_cluster);
 int fat32_lookup_path(const Fat32Volume *vol, const char *path, Fat32DirEntry *out);
+int fat32_opendir_path(const Fat32Volume *vol, const char *path, Fat32Dir *out);
+int fat32_readdir(Fat32Volume *vol, Fat32Dir *dir, Fat32Dirent *out);
+int fat32_create_path(Fat32Volume *vol, const char *path, uint8_t attr, Fat32DirEntry *out);
+int fat32_unlink_path(Fat32Volume *vol, const char *path);
+int fat32_rmdir_path(Fat32Volume *vol, const char *path);
+int fat32_rename_path(Fat32Volume *vol, const char *old_path, const char *new_path);
 int fat32_backend_init(void);
+int fat32_backend_lookup(const char *path, Fat32DirEntry *out);
 int fat32_backend_open(const char *path, Fat32File *out);
+int fat32_backend_create(const char *path, Fat32File *out);
+int fat32_backend_opendir(const char *path, Fat32Dir *out);
+int fat32_backend_readdir(Fat32Dir *dir, Fat32Dirent *out);
+int fat32_backend_mkdir(const char *path);
+int fat32_backend_unlink(const char *path);
+int fat32_backend_rmdir(const char *path);
+int fat32_backend_rename(const char *old_path, const char *new_path);
 size_t fat32_backend_read(Fat32File *file, size_t offset, void *buf, size_t len);
 size_t fat32_backend_write(Fat32File *file, size_t offset, const void *buf, size_t len);
 size_t fat32_backend_size(const Fat32File *file);
@@ -206,6 +243,7 @@ int fat32_backend_close(Fat32File *file);
 #ifdef FAT32_HOST_TEST
 void fat32_test_fill_lfn_entry(Fat32LfnEntry *entry, const uint16_t chars[13]);
 void fat32_test_reset_backend(void);
+const Fat32Volume *fat32_backend_volume(void);
 #endif
 
 #endif

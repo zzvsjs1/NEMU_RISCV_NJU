@@ -57,6 +57,22 @@ intptr_t _syscall_(intptr_t type, intptr_t a0, intptr_t a1, intptr_t a2)
     return ret;
 }
 
+/*
+ * Convert the kernel's small negative-error convention into libc's -1/errno
+ * convention.  Nanos-lite usually returns plain -1, so fallback_errno supplies
+ * the best local errno for that call.
+ */
+static int syscall_ret_errno(int ret, int fallback_errno)
+{
+    if (ret < 0)
+    {
+        errno = fallback_errno;
+        return -1;
+    }
+
+    return ret;
+}
+
 void _exit(int status)
 {
     _syscall_(SYS_exit, status, 0, 0);
@@ -133,18 +149,28 @@ int _execve(const char *fname, char *const argv[], char *const envp[])
     return 0; // execve success should not return
 }
 
-// Syscalls below are not used in Nanos-lite.
-// But to pass linking, they are defined as dummy functions.
-
+/*
+ * Fill POSIX metadata for an open descriptor.
+ */
 int _fstat(int fd, struct stat *buf)
 {
-    return -1;
+    return syscall_ret_errno(_syscall_(SYS_fstat, (intptr_t)fd, (intptr_t)buf, 0), EBADF);
 }
 
+/*
+ * Fill POSIX metadata for a pathname.
+ */
 int _stat(const char *fname, struct stat *buf)
 {
-    assert(0);
-    return -1;
+    return syscall_ret_errno(_syscall_(SYS_stat, (intptr_t)fname, (intptr_t)buf, 0), ENOENT);
+}
+
+/*
+ * Create a directory through the appended POSIX filesystem syscall.
+ */
+int _mkdir(const char *path, mode_t mode)
+{
+    return syscall_ret_errno(_syscall_(SYS_mkdir, (intptr_t)path, (intptr_t)mode, 0), EIO);
 }
 
 int _kill(int pid, int sig)
@@ -177,10 +203,52 @@ int _link(const char *d, const char *n)
     return -1;
 }
 
+/*
+ * Remove a regular filesystem entry.
+ */
 int _unlink(const char *n)
 {
-    assert(0);
-    return -1;
+    return syscall_ret_errno(_syscall_(SYS_unlink, (intptr_t)n, 0, 0), ENOENT);
+}
+
+/*
+ * Rename a filesystem entry.
+ */
+int _rename(const char *old_path, const char *new_path)
+{
+    return syscall_ret_errno(_syscall_(SYS_rename, (intptr_t)old_path, (intptr_t)new_path, 0), EIO);
+}
+
+/*
+ * Remove an empty directory.
+ */
+int rmdir(const char *path)
+{
+    return syscall_ret_errno(_syscall_(SYS_rmdir, (intptr_t)path, 0, 0), ENOTEMPTY);
+}
+
+/*
+ * Resize a regular file by pathname.
+ */
+int truncate(const char *path, off_t length)
+{
+    return syscall_ret_errno(_syscall_(SYS_truncate, (intptr_t)path, (intptr_t)length, 0), EIO);
+}
+
+/*
+ * Resize an open regular file.
+ */
+int ftruncate(int fd, off_t length)
+{
+    return syscall_ret_errno(_syscall_(SYS_ftruncate, (intptr_t)fd, (intptr_t)length, 0), EBADF);
+}
+
+/*
+ * Provide the BSD/newlib getdents hook used by readdir().
+ */
+int getdents(int fd, void *buf, int count)
+{
+    return syscall_ret_errno(_syscall_(SYS_getdents, (intptr_t)fd, (intptr_t)buf, (intptr_t)count), EBADF);
 }
 
 pid_t _wait(int *status)

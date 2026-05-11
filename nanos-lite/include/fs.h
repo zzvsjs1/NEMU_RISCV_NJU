@@ -3,6 +3,8 @@
 
 #include <common.h>
 
+struct stat;
+
 #ifndef SEEK_SET
 enum
 {
@@ -34,5 +36,32 @@ size_t fs_lseek(int fd, size_t offset, int whence);
 
 /* Release a regular descriptor slot.  Special descriptors are stable and no-op. */
 int fs_close(int fd);
+
+/* Fill POSIX metadata for a pathname. */
+int fs_stat(const char *pathname, struct stat *buf);
+
+/* Fill POSIX metadata for an open descriptor. */
+int fs_fstat(int fd, struct stat *buf);
+
+/* Return packed BSD/newlib dirent records for an open directory descriptor. */
+int fs_getdents(int fd, void *buf, int len);
+
+/* Resize an open regular file. */
+int fs_ftruncate(int fd, size_t size);
+
+/* Resize a regular file by pathname. */
+int fs_truncate(const char *pathname, size_t size);
+
+/* Remove a regular file. */
+int fs_unlink(const char *pathname);
+
+/* Create a directory. */
+int fs_mkdir(const char *pathname, int mode);
+
+/* Remove an empty directory. */
+int fs_rmdir(const char *pathname);
+
+/* Rename a file or supported directory entry. */
+int fs_rename(const char *old_path, const char *new_path);
 
 #endif

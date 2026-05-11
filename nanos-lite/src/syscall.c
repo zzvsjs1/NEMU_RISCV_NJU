@@ -63,10 +63,28 @@ static const char *syscall_name(uintptr_t num)
         return "lseek";
     case SYS_brk:
         return "brk";
+    case SYS_fstat:
+        return "fstat";
     case SYS_execve:
         return "execve";
+    case SYS_unlink:
+        return "unlink";
     case SYS_gettimeofday:
         return "gettimeofday";
+    case SYS_stat:
+        return "stat";
+    case SYS_getdents:
+        return "getdents";
+    case SYS_mkdir:
+        return "mkdir";
+    case SYS_rmdir:
+        return "rmdir";
+    case SYS_rename:
+        return "rename";
+    case SYS_truncate:
+        return "truncate";
+    case SYS_ftruncate:
+        return "ftruncate";
     default:
         return "unknown";
     }
@@ -92,6 +110,9 @@ static void strace_log(uintptr_t num, uintptr_t arg1, uintptr_t arg2, uintptr_t 
     case SYS_lseek:
         Log("strace: lseek(%d, %zu, %d) = %d", (int)arg1, (size_t)arg2, (int)arg3, (int)ret);
         break;
+    case SYS_fstat:
+        Log("strace: fstat(%d, 0x%08" PRIxPTR ") = %d", (int)arg1, arg2, (int)ret);
+        break;
     case SYS_brk:
         Log("strace: brk(0x%08" PRIxPTR ") = %d", arg1, (int)ret);
         break;
@@ -101,6 +122,30 @@ static void strace_log(uintptr_t num, uintptr_t arg1, uintptr_t arg2, uintptr_t 
         break;
     case SYS_gettimeofday:
         Log("strace: gettimeofday(0x%08" PRIxPTR ", 0x%08" PRIxPTR ") = %d", arg1, arg2, (int)ret);
+        break;
+    case SYS_unlink:
+        Log("strace: unlink(\"%s\") = %d", (char *)arg1, (int)ret);
+        break;
+    case SYS_stat:
+        Log("strace: stat(\"%s\", 0x%08" PRIxPTR ") = %d", (char *)arg1, arg2, (int)ret);
+        break;
+    case SYS_getdents:
+        Log("strace: getdents(%d, 0x%08" PRIxPTR ", %zu) = %d", (int)arg1, arg2, (size_t)arg3, (int)ret);
+        break;
+    case SYS_mkdir:
+        Log("strace: mkdir(\"%s\", %d) = %d", (char *)arg1, (int)arg2, (int)ret);
+        break;
+    case SYS_rmdir:
+        Log("strace: rmdir(\"%s\") = %d", (char *)arg1, (int)ret);
+        break;
+    case SYS_rename:
+        Log("strace: rename(\"%s\", \"%s\") = %d", (char *)arg1, (char *)arg2, (int)ret);
+        break;
+    case SYS_truncate:
+        Log("strace: truncate(\"%s\", %zu) = %d", (char *)arg1, (size_t)arg2, (int)ret);
+        break;
+    case SYS_ftruncate:
+        Log("strace: ftruncate(%d, %zu) = %d", (int)arg1, (size_t)arg2, (int)ret);
         break;
     case SYS_yield:
         Log("strace: yield() = %d", (int)ret);
@@ -199,6 +244,60 @@ void do_syscall(Context *c)
     case SYS_lseek:
     {
         c->GPRx = fs_lseek((int)arg1, (size_t)arg2, (int)arg3);
+        break;
+    }
+
+    case SYS_fstat:
+    {
+        c->GPRx = fs_fstat((int)arg1, (struct stat *)arg2);
+        break;
+    }
+
+    case SYS_unlink:
+    {
+        c->GPRx = fs_unlink((const char *)arg1);
+        break;
+    }
+
+    case SYS_stat:
+    {
+        c->GPRx = fs_stat((const char *)arg1, (struct stat *)arg2);
+        break;
+    }
+
+    case SYS_getdents:
+    {
+        c->GPRx = fs_getdents((int)arg1, (void *)arg2, (int)arg3);
+        break;
+    }
+
+    case SYS_mkdir:
+    {
+        c->GPRx = fs_mkdir((const char *)arg1, (int)arg2);
+        break;
+    }
+
+    case SYS_rmdir:
+    {
+        c->GPRx = fs_rmdir((const char *)arg1);
+        break;
+    }
+
+    case SYS_rename:
+    {
+        c->GPRx = fs_rename((const char *)arg1, (const char *)arg2);
+        break;
+    }
+
+    case SYS_truncate:
+    {
+        c->GPRx = fs_truncate((const char *)arg1, (size_t)arg2);
+        break;
+    }
+
+    case SYS_ftruncate:
+    {
+        c->GPRx = fs_ftruncate((int)arg1, (size_t)arg2);
         break;
     }
 
