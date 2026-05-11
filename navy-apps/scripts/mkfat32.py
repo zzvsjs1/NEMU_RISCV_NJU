@@ -24,13 +24,27 @@ EOC = 0x0FFFFFFF
 
 @dataclass
 class Node:
+    # Source path in fsimg.  Symlinked directories keep this link-side path so
+    # the on-disk FAT name matches Navy's expected pathname.
     path: Path
+    # Single path component stored in the parent directory entry.
     name: str
+    # True for directories, false for regular files.  FAT32 has no symlink
+    # entry type here because scan_tree() resolves build-time symlinks.
     is_dir: bool
+    # Regular-file length in bytes.  Directory entries store zero here because
+    # the FAT specification requires DIR_FileSize to be zero for directories.
     size: int = 0
+    # Child nodes sorted by encoded byte name, giving deterministic directory
+    # entry order independent of the host locale.
     children: list["Node"] = field(default_factory=list)
+    # Allocated FAT32 cluster numbers.  Directories receive enough clusters to
+    # hold their directory entries; files receive ceil(size / CLUSTER_SIZE).
     clusters: list[int] = field(default_factory=list)
+    # Generated 11-byte short 8.3 alias stored in DIR_Name.
     short_name: bytes = b""
+    # True when the real name cannot be represented exactly by short_name and
+    # therefore needs one or more preceding long-file-name entries.
     needs_lfn: bool = False
 
 
@@ -49,27 +63,45 @@ def validate_name(name: str) -> None:
     if any(ord(ch) < 0x20 or ch in '/\\:*?"<>|' for ch in name):
         die(f"unsupported FAT name {name!r}")
     try:
-        name.encode("ascii")
+        name.encode("utf-16le")
     except UnicodeEncodeError:
-        die(f"non-ASCII name {name!r} is not supported")
+        die(f"name {name!r} cannot be encoded as a FAT long filename")
+
+
+def utf16_units(text: str) -> list[int]:
+    data = text.encode("utf-16le")
+    return [struct.unpack_from("<H", data, offset)[0] for offset in range(0, len(data), 2)]
 
 
 def scan_tree(root: Path) -> Node:
     if not root.is_dir():
         die(f"{root} is not a directory")
 
-    def scan(path: Path) -> Node:
+    def resolve_existing(path: Path) -> Path:
+        try:
+            return path.resolve(strict=True)
+        except FileNotFoundError:
+            die(f"broken symbolic link: {path}")
+        except RuntimeError:
+            die(f"symbolic link loop: {path}")
+
+    def scan(path: Path, ancestors: set[Path]) -> Node:
         validate_name(path.name)
-        if path.is_symlink():
-            die(f"symbolic links are not supported: {path}")
-        if path.is_dir():
-            children = [scan(child) for child in sorted(path.iterdir(), key=path_sort_key)]
+        real_path = resolve_existing(path)
+        if real_path.is_dir():
+            if real_path in ancestors:
+                die(f"directory symlink loop: {path}")
+            # Build-time symlinks are metadata used to avoid copying large game
+            # trees into fsimg.  FAT32 has no symlink entry type, so follow the
+            # target while keeping the link name as the on-disk directory name.
+            children = [scan(child, ancestors | {real_path}) for child in sorted(path.iterdir(), key=path_sort_key)]
             return Node(path=path, name=path.name, is_dir=True, children=children)
-        if path.is_file():
-            return Node(path=path, name=path.name, is_dir=False, size=path.stat().st_size)
+        if real_path.is_file():
+            return Node(path=path, name=path.name, is_dir=False, size=real_path.stat().st_size)
         die(f"unsupported file type: {path}")
 
-    children = [scan(child) for child in sorted(root.iterdir(), key=path_sort_key)]
+    root_real_path = resolve_existing(root)
+    children = [scan(child, {root_real_path}) for child in sorted(root.iterdir(), key=path_sort_key)]
     return Node(path=root, name="", is_dir=True, children=children)
 
 
@@ -127,7 +159,7 @@ def assign_short_names(directory: Node) -> None:
 
 
 def lfn_entry_count(name: str) -> int:
-    return (len(name) + 12) // 13
+    return (len(utf16_units(name)) + 12) // 13
 
 
 def directory_entry_count(node: Node, is_root: bool) -> int:
@@ -177,7 +209,7 @@ def lfn_checksum(short_name: bytes) -> int:
 
 def make_lfn_entries(name: str, short_name: bytes) -> bytes:
     checksum = lfn_checksum(short_name)
-    chars = [ord(ch) for ch in name]
+    chars = utf16_units(name)
     chunks = [chars[i : i + 13] for i in range(0, len(chars), 13)]
     out = bytearray()
 

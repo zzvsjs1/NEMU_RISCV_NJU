@@ -14,8 +14,23 @@ size_t get_ramdisk_size(void);
  */
 #define DISK_BLOCK_BUF_SIZE (128 * 1024)
 
+/*
+ * AM disk geometry reported by NEMU.  The filesystem layer above this file uses
+ * byte offsets, but the AM device transfers whole blocks, so every read/write
+ * is translated through disk_cfg.blksz and disk_cfg.blkcnt.
+ */
 static AM_DISK_CONFIG_T disk_cfg;
+/*
+ * True only when NEMU exposes a usable disk.  If false, the same disk_read()
+ * and disk_write() API falls back to the embedded ramdisk symbols, keeping old
+ * images and host tests compatible with the disk-backed filesystem path.
+ */
 static bool disk_present = false;
+/*
+ * Kernel-owned physical bounce buffer used for all AM disk transfers.  It is
+ * aligned for the device contract and deliberately static so user virtual
+ * buffers never have to be translated by the simple NEMU disk controller.
+ */
 static uint8_t disk_block_buf[DISK_BLOCK_BUF_SIZE] __attribute__((aligned(4)));
 
 static size_t disk_size(void)

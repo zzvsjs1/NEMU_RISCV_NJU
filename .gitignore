@@ -4,3 +4,4 @@
 *.json/nanos-lite
 scripts/codex-*.sh
 /docs/
+/fceux

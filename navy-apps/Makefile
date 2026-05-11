@@ -232,7 +232,7 @@ fsimg: $(addprefix apps/, $(APPS)) $(addprefix tests/, $(TESTS))
 
 RAMDISK = build/ramdisk.img
 RAMDISK_H = build/ramdisk.h
-FS_MODE ?= flat
+FS_MODE ?= fat32
 SUPPORTED_FS_MODES = flat fat32
 FS_MODE_CHECK_GOALS = fsimg $(RAMDISK) ramdisk
 

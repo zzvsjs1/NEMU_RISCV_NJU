@@ -1,7 +1,17 @@
 #include <fs.h>
 #include "fs/backend.h"
 
+/*
+ * Device-file read callback.  The offset is the descriptor's current special
+ * file offset, not a backend regular-file offset.  Poll-like devices can ignore
+ * it, while synthetic files such as /proc/dispinfo may use it if they later
+ * grow seek-style behaviour.
+ */
 typedef size_t (*ReadFn) (void *buf, size_t offset, size_t len);
+/*
+ * Device-file write callback.  Stream devices may ignore offset; /dev/fb uses
+ * it as a byte position inside the linear framebuffer.
+ */
 typedef size_t (*WriteFn) (const void *buf, size_t offset, size_t len);
 
 // device.c
@@ -15,15 +25,37 @@ size_t sbctl_read(void *buf, size_t offset, size_t len);
 
 
 typedef struct {
+  /*
+   * Kernel-visible pathname.  Special files bypass the regular backend, so
+   * these names are matched before any FAT32 or flat-image lookup.
+   */
   const char *name;
+  /*
+   * Logical size for seek-bounded special files.  Stream-like devices keep this
+   * as zero because their callbacks define the valid operation range.
+   */
   size_t size;
+  /* Callback used by fs_read() for this special descriptor. */
   ReadFn read;
+  /* Callback used by fs_write() for this special descriptor. */
   WriteFn write;
 } SpecialFile;
 
 typedef struct {
+  /*
+   * Slot ownership flag.  Regular descriptors are allocated from open_files[];
+   * special descriptors are stable enum values and do not use this table.
+   */
   int used;
+  /*
+   * Current logical file offset for read/write/lseek.  fs.c advances this after
+   * successful backend reads or writes, mirroring POSIX descriptor semantics.
+   */
   size_t offset;
+  /*
+   * Backend-specific regular-file state.  For FAT32 this includes directory
+   * metadata and cluster caches; for flat mode it is just size and disk offset.
+   */
   FsFile file;
 } OpenFile;
 
@@ -42,6 +74,10 @@ enum {
   FIRST_REGULAR_FD = FD_SBCTL + 1,
   MAX_OPEN_FILES = 128,
   MAX_REGULAR_OPEN_FILES = MAX_OPEN_FILES - FIRST_REGULAR_FD,
+};
+
+enum {
+  FS_O_TRUNC = 0x0400,
 };
 
 size_t invalid_read(void *buf, size_t offset, size_t len) {
@@ -116,6 +152,11 @@ int fs_open(const char *pathname, int flags, int mode)
 
   FsFile file;
   if (regular_fs_backend.open(pathname, &file) == 0) {
+    if ((flags & FS_O_TRUNC) != 0 && regular_fs_backend.truncate(&file, 0) != 0) {
+      regular_fs_backend.close(&file);
+      return -1;
+    }
+
     for (int i = 0; i < MAX_REGULAR_OPEN_FILES; i++) {
       if (!open_files[i].used) {
         open_files[i].used = 1;

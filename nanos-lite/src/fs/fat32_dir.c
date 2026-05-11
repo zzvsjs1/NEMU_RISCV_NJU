@@ -14,12 +14,43 @@ size_t disk_read(void *buf, size_t offset, size_t len);
 #define FAT32_MAX_LFN_PIECES (FAT32_MAX_LFN_CHARS / 13u)
 
 typedef struct {
+  /*
+   * True after seeing the LFN slot with LAST_LONG_ENTRY set.  FAT stores that
+   * final logical name piece first on disk, so a valid LFN chain must start
+   * from this marker before lower sequence numbers are accepted.
+   */
   bool saw_last;
+  /*
+   * Set when the current LFN run violates the FAT ordering/checksum rules.
+   * The following short entry then falls back to its 8.3 alias instead of using
+   * possibly stale long-name text.
+   */
   bool malformed;
+  /*
+   * LDIR_Chksum value that every LFN slot must share.  It must also match the
+   * checksum recomputed from the following short DIR_Name field.
+   */
   uint8_t checksum;
+  /*
+   * Number of 13-character LFN pieces advertised by the LAST_LONG_ENTRY slot.
+   * Sequence numbers are one-based, so valid pieces occupy pieces[1..count].
+   */
   unsigned count;
+  /*
+   * Next sequence number expected while scanning forwards on disk.  For a
+   * three-piece name, the on-disk order is 3|LAST, 2, 1, short entry.
+   */
   unsigned expected_sequence;
+  /*
+   * Per-sequence presence bits.  They prevent duplicate or missing pieces from
+   * being silently joined into a wrong pathname.
+   */
   bool present[FAT32_MAX_LFN_PIECES + 1u];
+  /*
+   * ASCII form of each decoded 13-code-unit LFN piece.  This driver accepts
+   * only characters that fat32_lfn_entry_to_ascii() can represent, matching the
+   * rest of the small Navy pathname layer.
+   */
   char pieces[FAT32_MAX_LFN_PIECES + 1u][14];
 } Fat32LfnState;
 
@@ -172,11 +203,12 @@ static uint32_t entry_first_cluster(const Fat32Volume *vol, const uint8_t raw_en
 }
 
 static void fill_dir_entry(const Fat32Volume *vol, const uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE],
-                           Fat32DirEntry *out)
+                           uint64_t dir_entry_offset, Fat32DirEntry *out)
 {
   out->attr = raw_entry[11];
   out->first_cluster = entry_first_cluster(vol, raw_entry);
   out->size = get_le32(&raw_entry[28]);
+  out->dir_entry_offset = dir_entry_offset;
 }
 
 static int entry_name_matches(const Fat32LfnState *lfn, const uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE],
@@ -249,7 +281,9 @@ static int find_in_directory(const Fat32Volume *vol, uint32_t dir_cluster,
         }
 
         if (entry_name_matches(&lfn, raw_entry, component)) {
-          fill_dir_entry(vol, raw_entry, out);
+          const uint64_t entry_offset = sector_number * FAT32_SECTOR_SIZE
+              + i * FAT32_DIR_ENTRY_SIZE;
+          fill_dir_entry(vol, raw_entry, entry_offset, out);
           return 0;
         }
 
@@ -320,7 +354,11 @@ int fat32_mount_from_disk(uint32_t disk_block_size, Fat32Volume *out)
     return -1;
   }
 
-  return fat32_parse_bpb(sector, disk_block_size, out);
+  if (fat32_parse_bpb(sector, disk_block_size, out) != 0) {
+    return -1;
+  }
+
+  return fat32_load_fsinfo(out);
 }
 
 int fat32_lookup_path(const Fat32Volume *vol, const char *path, Fat32DirEntry *out)
@@ -338,6 +376,7 @@ int fat32_lookup_path(const Fat32Volume *vol, const char *path, Fat32DirEntry *o
   current.attr = FAT32_ATTR_DIRECTORY;
   current.first_cluster = current_cluster;
   current.size = 0;
+  current.dir_entry_offset = 0;
 
   while (1) {
     int has_more;
@@ -363,6 +402,7 @@ int fat32_lookup_path(const Fat32Volume *vol, const char *path, Fat32DirEntry *o
       current.attr = FAT32_ATTR_DIRECTORY;
       current.first_cluster = vol->root_cluster;
       current.size = 0;
+      current.dir_entry_offset = 0;
       continue;
     }
 

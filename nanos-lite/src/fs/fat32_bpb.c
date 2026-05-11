@@ -19,6 +19,15 @@ static bool is_power_of_two_u8(uint8_t value)
   return value != 0 && (value & (uint8_t)(value - 1)) == 0;
 }
 
+/*
+ * Translate a FAT32 data cluster number into the sector number of its first
+ * sector.  The FAT specification formula is:
+ *
+ *   FirstSectorOfCluster = ((N - 2) * BPB_SecPerClus) + FirstDataSector
+ *
+ * Cluster 2 is the first data cluster by definition; cluster 0 and 1 are
+ * reserved and must never be passed to the data-area calculation.
+ */
 int fat32_first_sector_of_cluster(const Fat32Volume *vol, uint32_t cluster, uint32_t *out_sector)
 {
   if (vol == 0 || out_sector == 0) {
@@ -49,18 +58,27 @@ int fat32_parse_bpb(const uint8_t sector[512], uint32_t disk_block_size, Fat32Vo
     return -1;
   }
 
-  const uint16_t bytes_per_sector = get_le16(&sector[11]);
-  const uint8_t sectors_per_cluster = sector[13];
-  const uint16_t reserved_sector_count = get_le16(&sector[14]);
-  const uint8_t fat_count = sector[16];
-  const uint16_t root_entry_count = get_le16(&sector[17]);
-  const uint16_t total_sectors_16 = get_le16(&sector[19]);
-  const uint16_t fat_size_16 = get_le16(&sector[22]);
-  const uint32_t total_sectors_32 = get_le32(&sector[32]);
-  const uint32_t fat_size_32 = get_le32(&sector[36]);
-  const uint32_t root_cluster = get_le32(&sector[44]);
-  const uint16_t fsinfo_sector = get_le16(&sector[48]);
-  const uint16_t backup_boot_sector = get_le16(&sector[50]);
+  /*
+   * These offsets are the FAT32 BPB layout from the spec.  Keep the field names
+   * in comments close to the reads so it is clear why FAT12/FAT16-only fields
+   * such as BPB_RootEntCnt and BPB_FATSz16 must be zero on a FAT32 image.
+   */
+  const uint16_t bytes_per_sector = get_le16(&sector[11]);       /* BPB_BytsPerSec */
+  const uint8_t sectors_per_cluster = sector[13];                /* BPB_SecPerClus */
+  const uint16_t reserved_sector_count = get_le16(&sector[14]);  /* BPB_RsvdSecCnt */
+  const uint8_t fat_count = sector[16];                          /* BPB_NumFATs */
+  const uint16_t root_entry_count = get_le16(&sector[17]);       /* BPB_RootEntCnt */
+  const uint16_t total_sectors_16 = get_le16(&sector[19]);       /* BPB_TotSec16 */
+  const uint16_t fat_size_16 = get_le16(&sector[22]);            /* BPB_FATSz16 */
+  const uint32_t total_sectors_32 = get_le32(&sector[32]);       /* BPB_TotSec32 */
+  const uint32_t fat_size_32 = get_le32(&sector[36]);            /* BPB_FATSz32 */
+  const uint16_t ext_flags = get_le16(&sector[40]);              /* BPB_ExtFlags */
+  const uint16_t fs_version = get_le16(&sector[42]);             /* BPB_FSVer */
+  const uint32_t root_cluster = get_le32(&sector[44]);           /* BPB_RootClus */
+  const uint16_t fsinfo_sector = get_le16(&sector[48]);          /* BPB_FSInfo */
+  const uint16_t backup_boot_sector = get_le16(&sector[50]);     /* BPB_BkBootSec */
+  const bool mirror_fats = (ext_flags & 0x0080u) == 0;
+  const uint8_t active_fat = mirror_fats ? 0 : (uint8_t)(ext_flags & 0x000fu);
 
   if (bytes_per_sector != 512 || disk_block_size != 512) {
     return -1;
@@ -79,6 +97,10 @@ int fat32_parse_bpb(const uint8_t sector[512], uint32_t disk_block_size, Fat32Vo
   }
 
   if (total_sectors_32 == 0 || root_cluster < 2) {
+    return -1;
+  }
+
+  if (fs_version != 0 || (!mirror_fats && active_fat >= fat_count)) {
     return -1;
   }
 
@@ -114,6 +136,9 @@ int fat32_parse_bpb(const uint8_t sector[512], uint32_t disk_block_size, Fat32Vo
   out->fat_count = fat_count;
   out->total_sectors = total_sectors_32;
   out->fat_size_sectors = fat_size_32;
+  out->ext_flags = ext_flags;
+  out->mirror_fats = mirror_fats ? 1 : 0;
+  out->active_fat = active_fat;
   out->root_cluster = root_cluster;
   out->fsinfo_sector = fsinfo_sector;
   out->backup_boot_sector = backup_boot_sector;

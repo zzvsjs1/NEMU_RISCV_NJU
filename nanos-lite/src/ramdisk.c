@@ -2,6 +2,11 @@
 
 extern uint8_t ramdisk_start;
 extern uint8_t ramdisk_end;
+/*
+ * Size of the linked-in fallback ramdisk image.  resources.S provides the two
+ * symbols, and pointer subtraction gives the byte length exposed to disk.c when
+ * the external NEMU disk device is absent.
+ */
 #define RAMDISK_SIZE ((&ramdisk_end) - (&ramdisk_start))
 
 /* The kernel is monolithic, therefore we do not need to

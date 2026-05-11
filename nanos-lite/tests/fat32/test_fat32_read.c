@@ -8,6 +8,9 @@
 
 void fat32_test_disk_open(const char *path);
 void fat32_test_disk_close(void);
+void fat32_test_disk_reset_stats(void);
+size_t fat32_test_disk_read_calls(void);
+size_t fat32_test_disk_read_bytes(void);
 void fat32_test_reset_backend(void);
 size_t disk_read(void *buf, size_t offset, size_t len);
 
@@ -42,6 +45,20 @@ static void write_big_file(void)
    */
   for (int i = 0; i < 900; i++) {
     assert(fputc((uint8_t)(i & 0xff), file) != EOF);
+  }
+
+  assert(fclose(file) == 0);
+
+  file = fopen("fat32-read-work/fsimg/large.bin", "wb");
+  assert(file != 0);
+
+  /*
+   * This file is large enough to expose per-cluster overhead.  The local
+   * mkfat32 builder allocates clusters sequentially, while the reader still has
+   * to validate the FAT chain before batching those on-disk sectors.
+   */
+  for (size_t i = 0; i < 128u * 1024u; i++) {
+    assert(fputc((uint8_t)(i & 0xffu), file) != EOF);
   }
 
   assert(fclose(file) == 0);
@@ -267,6 +284,65 @@ static void test_backend_reads_partial_range_and_eof(void)
   fat32_test_disk_close();
 }
 
+static void test_backend_batches_contiguous_large_reads(void)
+{
+  Fat32File file;
+  uint8_t buf[128u * 1024u];
+
+  build_test_image();
+  fat32_test_disk_open("fat32-read-work/ramdisk.img");
+  fat32_test_reset_backend();
+  assert(fat32_backend_init() == 0);
+  assert(fat32_backend_open("/large.bin", &file) == 0);
+  assert(fat32_backend_size(&file) == sizeof(buf));
+
+  memset(buf, 0xa5, sizeof(buf));
+  fat32_test_disk_reset_stats();
+  assert(fat32_backend_read(&file, 0, buf, sizeof(buf)) == sizeof(buf));
+  expect_pattern(buf, 0, sizeof(buf));
+
+  /*
+   * A 128 KiB read spans 256 one-sector clusters.  The performance contract is
+   * that the FAT reader verifies the chain in FAT-sector-sized groups and hands
+   * contiguous data runs to disk_read(), instead of issuing one disk_read() per
+   * 512-byte data sector.
+   */
+  assert(fat32_test_disk_read_calls() <= 4);
+  assert(fat32_test_disk_read_bytes() < sizeof(buf) + 4u * 512u);
+
+  assert(fat32_backend_close(&file) == 0);
+  fat32_test_disk_close();
+}
+
+static void test_backend_uses_contiguous_cache_for_random_large_reads(void)
+{
+  Fat32File file;
+  uint8_t buf[4096];
+  const size_t offset = 96u * 1024u;
+
+  build_test_image();
+  fat32_test_disk_open("fat32-read-work/ramdisk.img");
+  fat32_test_reset_backend();
+  assert(fat32_backend_init() == 0);
+  assert(fat32_backend_open("/large.bin", &file) == 0);
+
+  memset(buf, 0xa5, sizeof(buf));
+  fat32_test_disk_reset_stats();
+  assert(fat32_backend_read(&file, offset, buf, sizeof(buf)) == sizeof(buf));
+  expect_pattern(buf, offset, sizeof(buf));
+
+  /*
+   * ONScripter repeatedly seeks inside large archive files and reads one member.
+   * For the local FAT32 image, the opened file's verified contiguous chain
+   * should make that lookup direct rather than scanning from the first cluster.
+   */
+  assert(fat32_test_disk_read_calls() == 1);
+  assert(fat32_test_disk_read_bytes() == sizeof(buf));
+
+  assert(fat32_backend_close(&file) == 0);
+  fat32_test_disk_close();
+}
+
 static void test_backend_handles_empty_files_and_rejects_directories(void)
 {
   Fat32File file;
@@ -375,6 +451,8 @@ int main(void)
   test_rejects_fat_byte_offset_overflow_on_32_bit_hosts();
   test_backend_reads_whole_file_across_clusters();
   test_backend_reads_partial_range_and_eof();
+  test_backend_batches_contiguous_large_reads();
+  test_backend_uses_contiguous_cache_for_random_large_reads();
   test_backend_handles_empty_files_and_rejects_directories();
   test_backend_returns_partial_read_when_chain_ends_early();
   test_backend_rejects_non_empty_files_with_invalid_first_cluster();

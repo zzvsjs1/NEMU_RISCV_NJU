@@ -61,6 +61,52 @@ static void test_valid_fat32_bpb_mounts(void)
   assert(vol.first_data_sector == 4128);
 }
 
+static void test_parses_fat32_write_metadata(void)
+{
+  uint8_t sector[512];
+  Fat32Volume vol;
+
+  build_valid_bpb(sector);
+  put16(&sector[40], 0x0000);
+  put16(&sector[42], 0x0000);
+  put16(&sector[48], 1);
+  put16(&sector[50], 6);
+
+  assert(fat32_parse_bpb(sector, 512, &vol) == 0);
+  assert(vol.ext_flags == 0x0000);
+  assert(vol.mirror_fats == 1);
+  assert(vol.active_fat == 0);
+  assert(vol.fsinfo_sector == 1);
+  assert(vol.backup_boot_sector == 6);
+}
+
+static void test_parses_active_fat_when_mirroring_disabled(void)
+{
+  uint8_t sector[512];
+  Fat32Volume vol;
+
+  build_valid_bpb(sector);
+  put16(&sector[40], 0x0081);
+
+  assert(fat32_parse_bpb(sector, 512, &vol) == 0);
+  assert(vol.mirror_fats == 0);
+  assert(vol.active_fat == 1);
+}
+
+static void test_rejects_invalid_fat32_version_and_active_fat(void)
+{
+  uint8_t sector[512];
+  Fat32Volume vol;
+
+  build_valid_bpb(sector);
+  put16(&sector[42], 1);
+  assert(fat32_parse_bpb(sector, 512, &vol) == -1);
+
+  build_valid_bpb(sector);
+  put16(&sector[40], 0x0082);
+  assert(fat32_parse_bpb(sector, 512, &vol) == -1);
+}
+
 static void test_rejects_non_fat32_cluster_count(void)
 {
   uint8_t sector[512];
@@ -134,6 +180,9 @@ static void test_checked_first_sector_of_cluster(void)
 int main(void)
 {
   test_valid_fat32_bpb_mounts();
+  test_parses_fat32_write_metadata();
+  test_parses_active_fat_when_mirroring_disabled();
+  test_rejects_invalid_fat32_version_and_active_fat();
   test_rejects_non_fat32_cluster_count();
   test_rejects_non_512_byte_sector();
   test_rejects_fat_too_small_for_cluster_count();

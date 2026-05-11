@@ -281,6 +281,7 @@ static void test_lookup_paths(void)
 {
   Fat32Volume vol;
   Fat32DirEntry entry;
+  uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE];
 
   build_lookup_image();
   fat32_test_disk_open(LOOKUP_IMAGE);
@@ -298,6 +299,12 @@ static void test_lookup_paths(void)
   memset(&entry, 0, sizeof(entry));
   assert(fat32_lookup_path(&vol, "/share", &entry) == 0);
   assert((entry.attr & FAT32_ATTR_DIRECTORY) != 0);
+
+  memset(&entry, 0, sizeof(entry));
+  assert(fat32_lookup_path(&vol, "/share/SIMPLE.TXT", &entry) == 0);
+  assert(entry.dir_entry_offset != 0);
+  image_read(entry.dir_entry_offset, raw_entry, sizeof(raw_entry));
+  assert(memcmp(raw_entry, "SIMPLE  TXT", 11) == 0);
 
   assert(fat32_lookup_path(&vol, "/share/long-name.txt/nope", &entry) == -1);
   assert(fat32_lookup_path(&vol, "/share/missing.txt", &entry) == -1);

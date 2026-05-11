@@ -9,8 +9,22 @@ size_t disk_read(void *buf, size_t offset, size_t len);
 size_t disk_write(const void *buf, size_t offset, size_t len);
 
 typedef struct {
+  /*
+   * Absolute Navy pathname generated from the fsimg tree, for example
+   * /share/games/ons/arc.nsa.  The generator sorts entries, allowing flat_open()
+   * to use binary search instead of a linear scan.
+   */
   const char *name;
+  /*
+   * Exact byte length of the packed file.  The flat backend is read-mostly and
+   * has no allocation table, so writes are clipped to this fixed size.
+   */
   size_t size;
+  /*
+   * Absolute byte offset inside ramdisk.img where the file's first byte starts.
+   * Files are packed one after another, so the whole file is one contiguous
+   * disk extent.
+   */
   size_t disk_offset;
 } FlatEntry;
 
@@ -114,11 +128,20 @@ static int flat_close(FsFile *file)
   return 0;
 }
 
+static int flat_truncate(FsFile *file, size_t size)
+{
+  (void)file;
+  (void)size;
+
+  return -1;
+}
+
 const FsBackend regular_fs_backend = {
   .init = flat_init,
   .open = flat_open,
   .read = flat_read,
   .write = flat_write,
   .lseek = flat_lseek,
+  .truncate = flat_truncate,
   .close = flat_close,
 };

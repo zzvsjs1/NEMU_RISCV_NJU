@@ -10,6 +10,16 @@ SCRIPT = ROOT / "scripts" / "mkfat32.py"
 EOC_MIN = 0x0FFFFFF8
 
 
+def test_default_makefiles_select_fat32() -> None:
+    navy_makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    nanos_makefile = (ROOT.parent / "nanos-lite" / "Makefile").read_text(encoding="utf-8")
+
+    assert "FS_MODE ?= fat32" in navy_makefile
+    assert "FS_MODE ?= flat" not in navy_makefile
+    assert "FS_MODE ?= fat32" in nanos_makefile
+    assert "FS_MODE ?= flat" not in nanos_makefile
+
+
 def read_sector(path: Path, sector: int) -> bytes:
     with path.open("rb") as f:
         f.seek(sector * 512)
@@ -286,3 +296,48 @@ def test_colliding_long_names_get_distinct_short_aliases(tmp_path: Path) -> None
     aliases = {short_name(entry) for entry in short_entries}
     assert len(aliases) == 2
     assert aliases == {b"LONGFI~1TXT", b"LONGFI~2TXT"}
+
+
+def test_symlinked_directory_is_followed_with_link_name(tmp_path: Path) -> None:
+    target = tmp_path / "roms"
+    target.mkdir()
+    (target / "GAME.NES").write_bytes(b"nes-data")
+    fsroot = tmp_path / "fsimg"
+    fsroot.mkdir()
+    (fsroot / "nes").symlink_to(target, target_is_directory=True)
+    image = tmp_path / "ramdisk.img"
+
+    build_image(fsroot, image)
+
+    layout = parse_layout(image)
+    root_entries = directory_entries(read_cluster(image, layout, 2))
+    nes = find_short_entry(root_entries, b"NES        ")
+    nes_entries = directory_entries(read_cluster(image, layout, first_cluster(nes)))
+    game = find_short_entry(nes_entries, b"GAME    NES")
+    game_cluster = first_cluster(game)
+    assert file_size(game) == len(b"nes-data")
+    assert read_cluster(image, layout, game_cluster)[: len(b"nes-data")] == b"nes-data"
+
+
+def test_non_ascii_long_name_is_stored_as_utf16_lfn(tmp_path: Path) -> None:
+    fsroot = tmp_path / "fsimg"
+    fsroot.mkdir()
+    filename = "コメント枠.png"
+    (fsroot / filename).write_bytes(b"png-data")
+    image = tmp_path / "ramdisk.img"
+
+    build_image(fsroot, image)
+
+    layout = parse_layout(image)
+    entries = directory_entries(read_cluster(image, layout, 2))
+    lfn_entries = [entry for entry in entries if entry[11] == 0x0F]
+    short = entries[len(lfn_entries)]
+    checksum = lfn_checksum(short_name(short))
+
+    assert lfn_entries
+    assert all(entry[13] == checksum for entry in lfn_entries)
+    assert short_name(short).endswith(b"PNG")
+    reconstructed = "".join(
+        decode_lfn_payload(entry) for entry in sorted(lfn_entries, key=lambda entry: entry[0] & 0x1F)
+    )
+    assert reconstructed == filename
