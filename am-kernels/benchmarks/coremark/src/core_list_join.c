@@ -63,7 +63,8 @@ ee_s16 calc_func(ee_s16 *pdata, core_results *res)
     ee_s16 data = *pdata;
     ee_s16 retval;
     ee_u8 optype = (data >> 7) & 1; /* bit 7 indicates if the function result has been cached */
-    if (optype)                     /* if cached, use cache */
+
+    if (optype) /* if cached, use cache */
         return (data & 0x007f);
     else
     {                                       /* otherwise calculate and cache the result */
@@ -76,11 +77,13 @@ ee_s16 calc_func(ee_s16 *pdata, core_results *res)
             if (dtype < 0x22) /* set min period for bit corruption */
                 dtype = 0x22;
             retval = core_bench_state(res->size, res->memblock[3], res->seed1, res->seed2, dtype, res->crc);
+
             if (res->crcstate == 0)
                 res->crcstate = retval;
             break;
         case 1:
             retval = core_bench_matrix(&(res->mat), dtype, res->crc);
+
             if (res->crcmatrix == 0)
                 res->crcmatrix = retval;
             break;
@@ -152,6 +155,7 @@ ee_u16 core_bench_list(core_results *res, ee_s16 finder_idx)
         info.data16 = (i & 0xff);
         this_find = core_list_find(list, &info);
         list = core_list_reverse(list);
+
         if (this_find == NULL)
         {
             missed++;
@@ -160,9 +164,11 @@ ee_u16 core_bench_list(core_results *res, ee_s16 finder_idx)
         else
         {
             found++;
+
             if (this_find->info->data16 & 0x1) /* use found value */
                 retval += (this_find->info->data16 >> 9) & 1;
             /* and cache next item at the head of the list (if any) */
+
             if (this_find->next != NULL)
             {
                 finder = this_find->next;
@@ -171,6 +177,7 @@ ee_u16 core_bench_list(core_results *res, ee_s16 finder_idx)
                 list->next = finder;
             }
         }
+
         if (info.idx >= 0)
             info.idx++;
 #if CORE_DEBUG
@@ -179,11 +186,13 @@ ee_u16 core_bench_list(core_results *res, ee_s16 finder_idx)
     }
     retval += found * 4 - missed;
     /* sort the list by data content and remove one item*/
+
     if (finder_idx > 0)
         list = core_list_mergesort(list, cmp_complex, res);
     remover = core_list_remove(list->next);
     /* CRC data content of list from location of index N forward, and then undo remove */
     finder = core_list_find(list, &info);
+
     if (!finder)
         finder = list->next;
     while (finder)
@@ -302,6 +311,7 @@ list_head *core_list_insert_new(list_head *insert_point, list_data *info, list_h
 
     if ((*memblock + 1) >= memblock_end)
         return NULL;
+
     if ((*datablock + 1) >= datablock_end)
         return NULL;
 
@@ -473,6 +483,7 @@ list_head *core_list_mergesort(list_head *list, list_cmp cmp, core_results *res)
             {
                 psize++;
                 q = q->next;
+
                 if (!q)
                     break;
             }
@@ -485,6 +496,7 @@ list_head *core_list_mergesort(list_head *list, list_cmp cmp, core_results *res)
             {
 
                 /* decide whether next element of merge comes from p or q */
+
                 if (psize == 0)
                 {
                     /* p is empty; e must come from q. */
@@ -515,6 +527,7 @@ list_head *core_list_mergesort(list_head *list, list_cmp cmp, core_results *res)
                 }
 
                 /* add the next element to the merged list */
+
                 if (tail)
                 {
                     tail->next = e;
@@ -533,6 +546,7 @@ list_head *core_list_mergesort(list_head *list, list_cmp cmp, core_results *res)
         tail->next = NULL;
 
         /* If we have done only one merge, we're finished. */
+
         if (nmerges <= 1) /* allow for nmerges==0, the empty list case */
             return list;
 

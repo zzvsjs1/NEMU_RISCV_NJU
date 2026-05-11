@@ -61,6 +61,7 @@ static void Sync(void)
     }
     setprg8(0xA000, prgreg[1] | big_bank);
     setprg8(0xE000, ((~0) & 0x1F) | big_bank);
+
     if (UNIFchrrama)
         setchr8(0);
     else
@@ -96,6 +97,7 @@ static void Sync(void)
 static DECLFW(VRC24Write)
 {
     A = (A & 0xF000) | !!(A & reg2mask) << 1 | !!(A & reg1mask);
+
     if ((A >= 0xB000) && (A <= 0xE003))
     {
         if (UNIFchrrama)
@@ -105,6 +107,7 @@ static DECLFW(VRC24Write)
             uint16 i = ((A >> 1) & 1) | ((A - 0xB000) >> 11);
             uint16 nibble = ((A & 1) << 2);
             chrreg[i] = (chrreg[i] & (0xF0 >> nibble)) | ((V & 0xF) << nibble);
+
             if (nibble)
                 chrhi[i] = (V & 0x10) << 4; // another one many in one feature from pirate carts
         }
@@ -176,6 +179,7 @@ static void VRC24Power(void)
 {
     big_bank = 0x20;
     Sync();
+
     if (WRAM)
     {
         setprg8r(0x10, 0x6000, 0);
@@ -199,6 +203,7 @@ void VRC24IRQHook(int a)
             {
                 acount--;
                 IRQCount++;
+
                 if (IRQCount & 0x100)
                 {
                     X6502_IRQBegin(FCEU_IQEXT);
@@ -209,12 +214,14 @@ void VRC24IRQHook(int a)
         else
         {
             acount += a * 3;
+
             if (acount >= LCYCS)
             {
                 while (acount >= LCYCS)
                 {
                     acount -= LCYCS;
                     IRQCount++;
+
                     if (IRQCount & 0x100)
                     {
                         X6502_IRQBegin(FCEU_IQEXT);

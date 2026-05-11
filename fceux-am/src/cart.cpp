@@ -133,10 +133,13 @@ void SetupCartCHRMapping(int chip, uint8 *p, uint32 size, int ram)
 
     if (CHRmask1[chip] >= (unsigned int)(-1))
         CHRmask1[chip] = 0;
+
     if (CHRmask2[chip] >= (unsigned int)(-1))
         CHRmask2[chip] = 0;
+
     if (CHRmask4[chip] >= (unsigned int)(-1))
         CHRmask4[chip] = 0;
+
     if (CHRmask8[chip] >= (unsigned int)(-1))
         CHRmask8[chip] = 0;
 
@@ -151,6 +154,7 @@ DECLFR(CartBR)
 DECLFW(CartBW)
 {
     //printf("Ok: %04x:%02x, %d\n",A,V,PRGIsRAM[A>>11]);
+
     if (PRGIsRAM[A >> 11] && Page[A >> 11])
         Page[A >> 11][A] = V;
 }
@@ -256,6 +260,7 @@ void setchr1r(int r, uint32 A, uint32 V)
         return;
     FCEUPPU_LineUpdate();
     V &= CHRmask1[r];
+
     if (CHRram[r])
         PPUCHRRAM |= (1 << (A >> 10));
     else
@@ -270,6 +275,7 @@ void setchr2r(int r, uint32 A, uint32 V)
     FCEUPPU_LineUpdate();
     V &= CHRmask2[r];
     VPageR[(A) >> 10] = VPageR[((A) >> 10) + 1] = &CHRptr[r][(V) << 11] - (A);
+
     if (CHRram[r])
         PPUCHRRAM |= (3 << (A >> 10));
     else
@@ -284,6 +290,7 @@ void setchr4r(int r, uint32 A, uint32 V)
     V &= CHRmask4[r];
     VPageR[(A) >> 10] = VPageR[((A) >> 10) + 1] =
         VPageR[((A) >> 10) + 2] = VPageR[((A) >> 10) + 3] = &CHRptr[r][(V) << 12] - (A);
+
     if (CHRram[r])
         PPUCHRRAM |= (15 << (A >> 10));
     else
@@ -300,6 +307,7 @@ void setchr8r(int r, uint32 V)
     V &= CHRmask8[r];
     for (x = 7; x >= 0; x--)
         VPageR[x] = &CHRptr[r][V << 13];
+
     if (CHRram[r])
         PPUCHRRAM |= (255);
     else
@@ -333,6 +341,7 @@ void setntamem(uint8 *p, int ram, uint32 b)
     FCEUPPU_LineUpdate();
     vnapage[b] = p;
     PPUNTARAM &= ~(1 << b);
+
     if (ram)
         PPUNTARAM |= 1 << b;
 }
@@ -350,6 +359,7 @@ void setmirrorw(int a, int b, int c, int d)
 void setmirror(int t)
 {
     FCEUPPU_LineUpdate();
+
     if (!mirrorhard)
     {
         switch (t)

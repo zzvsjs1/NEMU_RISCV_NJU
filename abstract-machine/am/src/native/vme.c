@@ -63,10 +63,12 @@ void __am_switch(Context *c)
 
     VMHead *head = c->vm_head;
     VMHead *now_head = thiscpu->vm_head;
+
     if (head == now_head)
         goto end;
 
     PageMap *pp;
+
     if (now_head != NULL)
     {
         // munmap all mappings
@@ -109,6 +111,7 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
     ENTRY item = {.key = buf};
     ENTRY *item_find;
     hsearch_r(item, FIND, &item_find, &vm_head->hash);
+
     if (item_find == NULL)
     {
         pp = pgalloc(__am_pgsize); // this will waste memory, any better idea?

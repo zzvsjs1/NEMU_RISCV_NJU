@@ -73,13 +73,16 @@ fixedpt fixedpt_sqrt(fixedpt A)
 
     if (A < 0)
         return (-1);
+
     if (A == 0 || A == FIXEDPT_ONE)
         return (A);
+
     if (A < FIXEDPT_ONE && A > 6)
     {
         invert = 1;
         A = fixedpt_div(FIXEDPT_ONE, A);
     }
+
     if (A > FIXEDPT_ONE)
     {
         int s = A;
@@ -96,6 +99,7 @@ fixedpt fixedpt_sqrt(fixedpt A)
     l = (A >> 1) + 1;
     for (i = 0; i < iter; i++)
         l = (l + fixedpt_div(A, l)) >> 1;
+
     if (invert)
         return (fixedpt_div(FIXEDPT_ONE, l));
     return (l);
@@ -112,8 +116,10 @@ fixedpt fixedpt_sin(fixedpt fp)
         fixedpt_rconst(1.6605e-01)};
 
     fp %= 2 * FIXEDPT_PI;
+
     if (fp < 0)
         fp = FIXEDPT_PI * 2 + fp;
+
     if ((fp > FIXEDPT_HALF_PI) && (fp <= FIXEDPT_PI))
         fp = FIXEDPT_PI - fp;
     else if ((fp > FIXEDPT_PI) && (fp <= (FIXEDPT_PI + FIXEDPT_HALF_PI)))
@@ -156,6 +162,7 @@ fixedpt fixedpt_exp(fixedpt fp)
     k = fixedpt_mul(xabs, LN2_INV);
     k += FIXEDPT_ONE_HALF;
     k &= ~FIXEDPT_FMASK;
+
     if (fp < 0)
         k = -k;
     fp -= fixedpt_mul(k, LN2);
@@ -166,6 +173,7 @@ fixedpt fixedpt_exp(fixedpt fp)
                                                      fixedpt_mul(z, EXP_P[2] + fixedpt_mul(z, EXP_P[3] +
                                                                                                   fixedpt_mul(z, EXP_P[4])))));
     xp = FIXEDPT_ONE + fixedpt_div(fixedpt_mul(fp, FIXEDPT_TWO), R - fp);
+
     if (k < 0)
         k = FIXEDPT_ONE >> (-k >> FIXEDPT_FBITS);
     else
@@ -190,6 +198,7 @@ fixedpt fixedpt_ln(fixedpt x)
 
     if (x < 0)
         return (0);
+
     if (x == 0)
         return 0xffffffff;
 

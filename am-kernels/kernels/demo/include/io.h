@@ -24,10 +24,12 @@ static inline void print_char(char c, int y, int x)
 {
     static char last_c = 0xff;
     static uint32_t buf[TILE_W * TILE_W];
+
     if (last_c != c)
     {
         last_c = c;
         uint32_t color = 0x0;
+
         if (c != ' ')
         { // convert different character to different color
             uint8_t r = c / 25;

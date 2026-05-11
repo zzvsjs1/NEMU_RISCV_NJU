@@ -13,6 +13,7 @@ int main()
     {
         char buf[64];
         size_t n = NDL_PollEvent(buf, sizeof(buf));
+
         if (n)
         {
             printf("receive event: %.*s\n", (int)n, (char *)buf);

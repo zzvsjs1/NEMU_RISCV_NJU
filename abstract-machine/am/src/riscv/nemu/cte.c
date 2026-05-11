@@ -27,6 +27,7 @@ Context *__am_irq_handle(Context *c)
     __am_get_cur_as(c);
 
     // printf("\n\nc->mcause= 0x%x\n\n", c->mcause);
+
     if (user_handler)
     {
         Event ev = {0};
@@ -57,6 +58,7 @@ Context *__am_irq_handle(Context *c)
         }
 
         // Is system call?
+
         if (c->mcause >= 0 && c->mcause <= 19)
         {
             // In this teaching target, all synchronous exception codes in this range

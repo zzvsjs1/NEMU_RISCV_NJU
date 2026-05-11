@@ -24,6 +24,7 @@ void memory_writeb(word address, byte data)
 {
     // DMA transfer
     int i;
+
     if (address == 0x4014)
     {
         for (i = 0; i < 256; i++)

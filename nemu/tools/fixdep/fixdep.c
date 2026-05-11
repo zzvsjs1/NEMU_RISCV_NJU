@@ -117,6 +117,7 @@ static void xprintf(const char *format, ...)
 
     va_start(ap, format);
     ret = vprintf(format, ap);
+
     if (ret < 0)
     {
         perror("fixdep");
@@ -130,6 +131,7 @@ static void xputchar(int c)
     int ret;
 
     ret = putchar(c);
+
     if (ret == EOF)
     {
         perror("fixdep");
@@ -148,10 +150,12 @@ static void print_dep(const char *m, int slen, const char *dir)
     for (i = 0; i < slen; i++)
     {
         c = m[i];
+
         if (c == '_')
             c = '/';
         else
             c = tolower(c);
+
         if (c != '/' || prev_c != '/')
             xputchar(c);
         prev_c = c;
@@ -256,10 +260,12 @@ static void parse_config_file(const char *p)
         q = p;
         while (isalnum(*q) || *q == '_')
             q++;
+
         if (str_ends_with(p, q - p, "_MODULE"))
             r = q - 7;
         else
             r = q;
+
         if (r > p)
             use_config(p, r - p);
         p = q;
@@ -273,12 +279,14 @@ static void *read_file(const char *filename)
     char *buf;
 
     fd = open(filename, O_RDONLY);
+
     if (fd < 0)
     {
         fprintf(stderr, "fixdep: error opening file: ");
         perror(filename);
         exit(2);
     }
+
     if (fstat(fd, &st) < 0)
     {
         fprintf(stderr, "fixdep: error fstat'ing file: ");
@@ -286,11 +294,13 @@ static void *read_file(const char *filename)
         exit(2);
     }
     buf = malloc(st.st_size + 1);
+
     if (!buf)
     {
         perror("fixdep: malloc");
         exit(2);
     }
+
     if (read(fd, buf, st.st_size) != st.st_size)
     {
         perror("fixdep: read");
@@ -339,6 +349,7 @@ static void parse_dep_file(char *m, const char *target)
         /* Is the token we found a target name? */
         is_target = (*(p - 1) == ':');
         /* Don't write any target names into the dependency file */
+
         if (is_target)
         {
             /* The /next/ file is the first dependency */
@@ -354,6 +365,7 @@ static void parse_dep_file(char *m, const char *target)
              * into .S or vice versa. Storing it in source_* is
              * needed for modpost to compute srcversions.
              */
+
             if (is_first_dep)
             {
                 /*
@@ -364,6 +376,7 @@ static void parse_dep_file(char *m, const char *target)
                  * names, which will be intermediate temporary
                  * files.
                  */
+
                 if (!saw_any_target)
                 {
                     saw_any_target = 1;

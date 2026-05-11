@@ -73,6 +73,7 @@ static DECLFW(M73Write)
         IRQm = V & 4;
         IRQx = V & 1;
         IRQa = V & 2;
+
         if (IRQa)
         {
             if (IRQm)
@@ -99,6 +100,7 @@ static DECLFW(M73Write)
 static void M73IRQHook(int a)
 {
     int32 i;
+
     if (!IRQa)
         return;
     for (i = 0; i < a; i++)
@@ -108,6 +110,7 @@ static void M73IRQHook(int a)
             uint16 temp = IRQCount;
             temp &= 0xFF;
             IRQCount &= 0xFF00;
+
             if (temp == 0xFF)
             {
                 IRQCount = IRQReload;
@@ -123,6 +126,7 @@ static void M73IRQHook(int a)
         else
         {
             //16 bit mode
+
             if (IRQCount == 0xFFFF)
             {
                 IRQCount = IRQReload;

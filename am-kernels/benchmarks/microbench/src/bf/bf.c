@@ -69,6 +69,7 @@ static int compile_bf()
     for (; *code; code++)
     {
         int c = *code;
+
         if (pc >= PROGRAM_SIZE)
             break;
         switch (c)
@@ -93,6 +94,7 @@ static int compile_bf()
             break;
         case '[':
             PROGRAM[pc].operator= OP_JMP_FWD;
+
             if (STACK_FULL())
             {
                 return FAILURE;
@@ -115,6 +117,7 @@ static int compile_bf()
         }
         pc++;
     }
+
     if (!STACK_EMPTY() || pc == PROGRAM_SIZE)
     {
         return FAILURE;

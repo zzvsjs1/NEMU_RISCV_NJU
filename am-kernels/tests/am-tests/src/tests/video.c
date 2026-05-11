@@ -73,6 +73,7 @@ void update()
         for (int t = 0; t < 4; t++)
         {
             int x1 = x + dx[d], y1 = y + dy[d];
+
             if (x1 >= 0 && x1 < N && y1 >= 0 && y1 < N && !used[x1][y1])
             {
                 x = x1;
@@ -97,6 +98,7 @@ void video_test()
         // AM_TIMER_UPTIME is in microseconds; convert to milliseconds so the frame
         // pacing arithmetic stays small and easy to inspect in printf output.
         unsigned long upt = io_read(AM_TIMER_UPTIME).us / 1000;
+
         if (upt - last > 1000 / FPS)
         {
             update();
@@ -104,6 +106,7 @@ void video_test()
             last = upt;
             fps++;
         }
+
         if (upt - fps_last > 1000)
         {
             // display fps every 1s

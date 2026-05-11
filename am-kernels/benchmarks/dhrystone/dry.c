@@ -496,6 +496,7 @@ void Proc_1(Ptr_Val_Par)
     Proc_3(&Next_Record->Ptr_Comp);
     /* Ptr_Val_Par->Ptr_Comp->Ptr_Comp
                         == Ptr_Glob->Ptr_Comp */
+
     if (Next_Record->Discr == Ident_1)
     /* then, executed */
     {
@@ -598,6 +599,7 @@ void Proc_6(Enum_Val_Par, Enum_Ref_Par)
 Enumeration *Enum_Ref_Par;
 {
     *Enum_Ref_Par = Enum_Val_Par;
+
     if (!Func_3(Enum_Val_Par))
         /* then, not executed */
         *Enum_Ref_Par = Ident_4;
@@ -671,6 +673,7 @@ Capital_Letter Ch_2_Par_Val;
 
     Ch_1_Loc = Ch_1_Par_Val;
     Ch_2_Loc = Ch_1_Loc;
+
     if (Ch_2_Loc != Ch_2_Par_Val)
         /* then, executed */
         return (Ident_1);
@@ -702,9 +705,11 @@ Str_30 Str_2_Par_Ref;
             Ch_Loc = 'A';
             Int_Loc += 1;
         } /* if, while */
+
     if (Ch_Loc >= 'W' && Ch_Loc < 'Z')
         /* then, not executed */
         Int_Loc = 7;
+
     if (Ch_Loc == 'R')
     {
         /* then, not executed */
@@ -732,6 +737,7 @@ Enumeration Enum_Par_Val;
     Enumeration Enum_Loc;
 
     Enum_Loc = Enum_Par_Val;
+
     if (Enum_Loc == Ident_3)
         /* then, executed */
         return (true);
@@ -861,26 +867,31 @@ int main()
         printf("Int_Glob:            %d\n", Int_Glob);
         printf("        should be:   %d\n", 5);
     }
+
     if (!check(Bool_Glob == 1))
     {
         printf("Bool_Glob:           %d\n", Bool_Glob);
         printf("        should be:   %d\n", 1);
     }
+
     if (!check(Ch_1_Glob == 'A'))
     {
         printf("Ch_1_Glob:           %c\n", Ch_1_Glob);
         printf("        should be:   %c\n", 'A');
     }
+
     if (!check(Ch_2_Glob == 'B'))
     {
         printf("Ch_2_Glob:           %c\n", Ch_2_Glob);
         printf("        should be:   %c\n", 'B');
     }
+
     if (!check(Arr_1_Glob[8] == 7))
     {
         printf("Arr_1_Glob[8]:       %d\n", Arr_1_Glob[8]);
         printf("        should be:   %d\n", 7);
     }
+
     if (!check(Arr_2_Glob[8][7] == Number_Of_Runs + 10))
     {
         printf("Arr_2_Glob[8][7]:    %d\n", Arr_2_Glob[8][7]);
@@ -892,16 +903,19 @@ int main()
         printf("Ptr_Glob->Discr:             %d\n", Ptr_Glob->Discr);
         printf("        should be:   %d\n", 0);
     }
+
     if (!check(Ptr_Glob->variant.var_1.Enum_Comp == 2))
     {
         printf("Ptr_Glob->Enum_Comp:         %d\n", Ptr_Glob->variant.var_1.Enum_Comp);
         printf("        should be:   %d\n", 2);
     }
+
     if (!check(Ptr_Glob->variant.var_1.Int_Comp == 17))
     {
         printf("Ptr_Glob->Int_Comp:          %d\n", Ptr_Glob->variant.var_1.Int_Comp);
         printf("        should be:   %d\n", 17);
     }
+
     if (!check(strcmp(Ptr_Glob->variant.var_1.Str_Comp, "DHRYSTONE PROGRAM, SOME STRING") == 0))
     {
         printf("Ptr_Glob->Str_Comp:          %s\n", Ptr_Glob->variant.var_1.Str_Comp);
@@ -913,16 +927,19 @@ int main()
         printf("Next_Ptr_Glob->Discr:             %d\n", Next_Ptr_Glob->Discr);
         printf("        should be:   %d\n", 0);
     }
+
     if (!check(Next_Ptr_Glob->variant.var_1.Enum_Comp == 1))
     {
         printf("Next_Ptr_Glob->Enum_Comp:         %d\n", Next_Ptr_Glob->variant.var_1.Enum_Comp);
         printf("        should be:   %d\n", 1);
     }
+
     if (!check(Next_Ptr_Glob->variant.var_1.Int_Comp == 18))
     {
         printf("Next_Ptr_Glob->Int_Comp:          %d\n", Next_Ptr_Glob->variant.var_1.Int_Comp);
         printf("        should be:   %d\n", 18);
     }
+
     if (!check(strcmp(Next_Ptr_Glob->variant.var_1.Str_Comp, "DHRYSTONE PROGRAM, SOME STRING") == 0))
     {
         printf("Next_Ptr_Glob->Str_Comp:          %s\n", Next_Ptr_Glob->variant.var_1.Str_Comp);
@@ -934,16 +951,19 @@ int main()
         printf("Int_1_Loc:           %d\n", Int_1_Loc);
         printf("        should be:   %d\n", 5);
     }
+
     if (!check(Int_2_Loc == 13))
     {
         printf("Int_2_Loc:           %d\n", Int_2_Loc);
         printf("        should be:   %d\n", 13);
     }
+
     if (!check(Int_3_Loc == 7))
     {
         printf("Int_3_Loc:           %d\n", Int_3_Loc);
         printf("        should be:   %d\n", 7);
     }
+
     if (!check(Enum_Loc == 1))
     {
         printf("Enum_Loc:            %d\n", Enum_Loc);
@@ -955,6 +975,7 @@ int main()
         printf("Str_1_Loc:           %s\n", Str_1_Loc);
         printf("        should be:   DHRYSTONE PROGRAM, 1'ST STRING\n");
     }
+
     if (!check(strcmp(Str_2_Loc, "DHRYSTONE PROGRAM, 2'ND STRING") == 0))
     {
         printf("Str_2_Loc:           %s\n", Str_2_Loc);

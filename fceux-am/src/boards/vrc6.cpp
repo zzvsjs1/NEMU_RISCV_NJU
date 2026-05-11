@@ -59,6 +59,7 @@ static SFORMAT SStateRegs[] =
 static void Sync(void)
 {
     uint8 i;
+
     if (is26)
         setprg8r(0x10, 0x6000, 0);
     setprg16(0x8000, prg[0]);
@@ -86,21 +87,25 @@ static void Sync(void)
 static DECLFW(VRC6SW)
 {
     A &= 0xF003;
+
     if (A >= 0x9000 && A <= 0x9002)
     {
         vpsg1[A & 3] = V;
+
         if (sfun[0])
             sfun[0]();
     }
     else if (A >= 0xA000 && A <= 0xA002)
     {
         vpsg1[4 | (A & 3)] = V;
+
         if (sfun[1])
             sfun[1]();
     }
     else if (A >= 0xB000 && A <= 0xB002)
     {
         vpsg2[A & 3] = V;
+
         if (sfun[2])
             sfun[2]();
     }
@@ -110,6 +115,7 @@ static DECLFW(VRC6Write)
 {
     if (is26)
         A = (A & 0xFFFC) | ((A >> 1) & 1) | ((A << 1) & 2);
+
     if (A >= 0x9000 && A <= 0xB002)
     {
         VRC6SW(A, V);
@@ -169,6 +175,7 @@ static DECLFW(VRC6Write)
         IRQa = V & 2;
         IRQd = V & 1;
         IRQMode = V & 4;
+
         if (V & 2)
             IRQCount = IRQLatch;
         CycleCount = 0;
@@ -199,6 +206,7 @@ static void VRC6IRQHook(int a)
          * cycle mode counts CPU cycles directly.  Some mapper 24 games
          * rely on the mode bit when they schedule mid-frame IRQ work.
          */
+
         if (IRQMode)
         {
             CycleCount += a;
@@ -206,6 +214,7 @@ static void VRC6IRQHook(int a)
             {
                 CycleCount--;
                 IRQCount++;
+
                 if (IRQCount & 0x100)
                 {
                     X6502_IRQBegin(FCEU_IQEXT);
@@ -220,6 +229,7 @@ static void VRC6IRQHook(int a)
             {
                 CycleCount -= 341;
                 IRQCount++;
+
                 if (IRQCount == 0x100)
                 {
                     IRQCount = IRQLatch;
@@ -257,6 +267,7 @@ static INLINE void DoSQV(int x)
 
     start = cvbc[x];
     end = (SOUNDTS << 16) / soundtsinc;
+
     if (end <= start)
         return;
     cvbc[x] = end;
@@ -306,6 +317,7 @@ static void DoSawV(void)
 
     start = cvbc[2];
     end = (SOUNDTS << 16) / soundtsinc;
+
     if (end <= start)
         return;
     cvbc[2] = end;
@@ -323,6 +335,7 @@ static void DoSawV(void)
         for (V = start; V < end; V++)
         {
             saw1phaseacc -= nesincsize;
+
             if (saw1phaseacc <= 0)
             {
                 int32 t;
@@ -332,11 +345,13 @@ static void DoSawV(void)
                 saw1phaseacc += t;
                 phaseacc += vpsg2[0] & 0x3f;
                 b3++;
+
                 if (b3 == 7)
                 {
                     b3 = 0;
                     phaseacc = 0;
                 }
+
                 if (saw1phaseacc <= 0)
                     goto rea;
                 duff = (((phaseacc >> 3) & 0x1f) << 4) * 6 / 8;
@@ -368,6 +383,7 @@ static INLINE void DoSQVHQ(int x)
                 if (dcount[x] > thresh)
                     WaveHi[V] += amp;
                 vcount[x]--;
+
                 if (vcount[x] <= 0)
                 {
                     vcount[x] = (vpsg1[(x << 2) | 0x1] | ((vpsg1[(x << 2) | 0x2] & 15) << 8)) + 1;
@@ -403,11 +419,13 @@ static void DoSawVHQ(void)
         {
             WaveHi[V] += (((phaseacc >> 3) & 0x1f) << 8) * 6 / 8;
             vcount[2]--;
+
             if (vcount[2] <= 0)
             {
                 vcount[2] = (vpsg2[1] + ((vpsg2[2] & 15) << 8) + 1) << 1;
                 phaseacc += vpsg2[0] & 0x3f;
                 b3++;
+
                 if (b3 == 7)
                 {
                     b3 = 0;
@@ -455,6 +473,7 @@ static void VRC6_ESI(void)
     memset(cvbc, 0, sizeof(cvbc));
     memset(vcount, 0, sizeof(vcount));
     memset(dcount, 0, sizeof(dcount));
+
     if (FSettings.SndRate)
     {
         if (FSettings.soundq >= 1)
@@ -500,6 +519,7 @@ void Mapper26_Init(CartInfo *info)
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
     AddExState(WRAM, WRAMSIZE, 0, "WRAM");
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

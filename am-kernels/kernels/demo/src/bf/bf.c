@@ -26,6 +26,7 @@ struct mem
 static inline void putch2(char c)
 {
     static int x = 0, y = 0;
+
     if (c == '\n')
     {
         y++;
@@ -73,12 +74,14 @@ void bf()
                 halt(1);
             }
             memset(n, 0, sizeof(*n));
+
             if (p)
                 p->next = n;
             else
                 pgm = n;
             n->cmd = ch;
             p = n;
+
             if (n->cmd == '[')
             {
                 n->jmp = j;

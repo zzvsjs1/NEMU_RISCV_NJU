@@ -36,6 +36,7 @@ static void Sync(void)
     if (regs[1] & 0x08)
     {
         bank &= 0xFE;
+
         if (is167)
         {
             setprg16(0x8000, base + bank + 1);
@@ -57,6 +58,7 @@ static void Sync(void)
         else
         {
             setprg16(0x8000, base + bank);
+
             if (is167)
                 setprg16(0xC000, 0x20);
             else

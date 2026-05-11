@@ -38,6 +38,7 @@ static void Sync(void)
     setprg8r(0x10, 0x6000, 0);
     setchr4(0x0000, lastnt);
     setchr4(0x1000, 1);
+
     if (mode & 4)
         setprg32(0x8000, prg & 7);
     else
@@ -57,6 +58,7 @@ static DECLFW(UNLD2000Write)
         break;
     case 0x5200:
         mode = V;
+
         if (mode & 4)
             Sync();
         break;
@@ -89,6 +91,7 @@ static void UNL2000Hook(uint32 A)
         if ((A & 0x3000) == 0x2000)
         {
             uint32 curnt = A & 0x800;
+
             if (curnt != lastnt)
             {
                 setchr4(0x0000, curnt >> 11);

@@ -37,6 +37,7 @@ static int math_abs(lua_State *L)
     if (lua_isinteger(L, 1))
     {
         lua_Integer n = lua_tointeger(L, 1);
+
         if (n < 0)
             n = (lua_Integer)(0u - (lua_Unsigned)n);
         lua_pushinteger(L, n);
@@ -88,6 +89,7 @@ static int math_toint(lua_State *L)
 {
     int valid;
     lua_Integer n = lua_tointegerx(L, 1, &valid);
+
     if (valid)
         lua_pushinteger(L, n);
     else
@@ -101,6 +103,7 @@ static int math_toint(lua_State *L)
 static void pushnumint(lua_State *L, lua_Number d)
 {
     lua_Integer n;
+
     if (lua_numbertointeger(d, &n)) /* does 'd' fit in an integer? */
         lua_pushinteger(L, n);      /* result is integer */
     else
@@ -136,6 +139,7 @@ static int math_fmod(lua_State *L)
     if (lua_isinteger(L, 1) && lua_isinteger(L, 2))
     {
         lua_Integer d = lua_tointeger(L, 2);
+
         if ((lua_Unsigned)d + 1u <= 1u)
         { /* special cases: -1 or 0 */
             luaL_argcheck(L, d != 0, 2, "zero");
@@ -192,6 +196,7 @@ static int math_log(lua_State *L)
 {
     lua_Number x = luaL_checknumber(L, 1);
     lua_Number res;
+
     if (lua_isnoneornil(L, 2))
         res = l_mathop(log)(x);
     else

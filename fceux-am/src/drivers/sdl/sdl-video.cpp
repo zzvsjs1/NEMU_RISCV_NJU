@@ -45,6 +45,7 @@ static int s_paletterefresh;
 int KillVideo()
 {
     // return failure if the video system was not initialized
+
     if (s_inited == 0)
         return -1;
 
@@ -114,6 +115,7 @@ void FCEUD_SetPalette(uint8 index,
 void BlitScreen(uint8 *XBuf)
 {
     // refresh the palette if required
+
     if (s_paletterefresh)
     {
         SetPaletteBlitToHigh((uint8 *)s_psdl);
@@ -133,10 +135,13 @@ void BlitScreen(uint8 *XBuf)
     AM_GPU_CONFIG_T gpu = io_read(AM_GPU_CONFIG);
     int scale = gpu.width / NES_BASE_WIDTH;
     int scale_y = gpu.height / NES_BASE_HEIGHT;
+
     if (scale > scale_y)
         scale = scale_y;
+
     if (scale > NES_MAX_SCALE)
         scale = NES_MAX_SCALE;
+
     if (scale < 1)
         scale = 1;
 
@@ -157,6 +162,7 @@ void BlitScreen(uint8 *XBuf)
     for (i = 0; i < s_tlines; i++, XBuf += NWIDTH)
     {
         Blit8ToHigh(XBuf, (uint8 *)canvas_line, NWIDTH, 1, NWIDTH * 4, 1, 1);
+
         if (scale == 1)
         {
             memcpy(screen_frame + i * frame_w + x, canvas_line, NWIDTH * sizeof(uint32_t));

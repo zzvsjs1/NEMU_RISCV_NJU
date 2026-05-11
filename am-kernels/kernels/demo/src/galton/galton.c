@@ -61,6 +61,7 @@ static void move(int idx)
 
     if (yy < 0)
         return;
+
     if (yy == h - 1)
     {
         y[idx] = -1;
@@ -78,9 +79,11 @@ static void move(int idx)
         if (xx < W - 1 && C(yy, xx + 1) && C(yy + 1, xx + 1))
             if (!rnd(sl++))
                 o = 1;
+
         if (xx && C(yy, xx - 1) && C(yy + 1, xx - 1))
             if (!rnd(sl++))
                 o = -1;
+
         if (!o)
             kill = 1;
         xx += o;
@@ -90,6 +93,7 @@ static void move(int idx)
     V(idx) = ' ';
     idx[y] = yy, idx[x] = xx;
     B(yy, xx) = c;
+
     if (kill)
         idx[y] = -1;
 }
@@ -100,11 +104,13 @@ static int run(void)
     int i;
     for (i = 0; i < cnt; i++)
         move(i);
+
     if (2 == ++step && cnt < BALLS)
     {
         step = 0;
         x[cnt] = W / 2;
         y[cnt] = 0;
+
         if (V(cnt) != ' ')
             return 0;
         V(cnt) = rnd(80) + 43;
@@ -116,8 +122,10 @@ static int run(void)
 void galton()
 {
     h = screen_tile_height() - 2;
+
     if (h > H_MAX)
         h = H_MAX;
+
     if (h < H_MIN)
         h = H_MIN;
     init();

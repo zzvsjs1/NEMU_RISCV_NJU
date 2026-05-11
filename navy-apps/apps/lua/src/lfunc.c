@@ -63,6 +63,7 @@ UpVal *luaF_findupval(lua_State *L, StkId level)
     while (*pp != NULL && (p = *pp)->v >= level)
     {
         lua_assert(upisopen(p));
+
         if (p->v == level) /* found a corresponding upvalue? */
             return p;      /* return it */
         pp = &p->u.open.next;
@@ -74,6 +75,7 @@ UpVal *luaF_findupval(lua_State *L, StkId level)
     uv->u.open.touched = 1;
     *pp = uv;
     uv->v = level; /* current value lives in the stack */
+
     if (!isintwups(L))
     {                           /* thread not in list of threads with upvalues? */
         L->twups = G(L)->twups; /* link it to the list */
@@ -89,8 +91,9 @@ void luaF_close(lua_State *L, StkId level)
     {
         lua_assert(upisopen(uv));
         L->openupval = uv->u.open.next; /* remove from 'open' list */
-        if (uv->refcount == 0)          /* no references? */
-            luaM_free(L, uv);           /* free upvalue */
+
+        if (uv->refcount == 0) /* no references? */
+            luaM_free(L, uv);  /* free upvalue */
         else
         {
             setobj(L, &uv->u.value, uv->v); /* move value to upvalue slot */
@@ -149,6 +152,7 @@ const char *luaF_getlocalname(const Proto *f, int local_number, int pc)
         if (pc < f->locvars[i].endpc)
         { /* is variable active? */
             local_number--;
+
             if (local_number == 0)
                 return getstr(f->locvars[i].varname);
         }

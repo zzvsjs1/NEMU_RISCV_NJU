@@ -22,6 +22,7 @@ def_EHelper(jal)
      * control transfer.  Limiting call records to x1/x5 keeps ordinary computed
      * jumps from corrupting the visual call stack.
      */
+
     if (s->isa.instr.j.rd == 1 || s->isa.instr.j.rd == 5)
     {
         ftrace_call(s->pc, *s0);
@@ -59,6 +60,7 @@ def_EHelper(jalr)
      * The tests below must use the original instruction fields because the RTL
      * operands only hold values after register reads and immediate decoding.
      */
+
     if (s->isa.instr.i.rd == 0 &&
         (s->isa.instr.i.rs1 == 1 || s->isa.instr.i.rs1 == 5) &&
         s->isa.instr.i.simm11_0 == 0)
@@ -130,6 +132,7 @@ def_EHelper(mret)
     mstatus |= ((word_t)1u << 7);
 
     /* MPRV <- 0 when returning to a mode below M-mode. */
+
     if (mpp != 0x3u)
     {
         mstatus &= ~((word_t)1u << 17);

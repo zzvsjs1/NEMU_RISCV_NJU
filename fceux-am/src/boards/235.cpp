@@ -32,6 +32,7 @@ static void Sync(void)
         setmirror(MI_0);
     else
         setmirror(((cmdreg >> 13) & 1) ^ 1);
+
     if (cmdreg & 0x800)
     {
         setprg16(0x8000, ((cmdreg & 0x300) >> 3) | ((cmdreg & 0x1F) << 1) | ((cmdreg >> 12) & 1));

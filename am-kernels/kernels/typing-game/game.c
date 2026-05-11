@@ -43,6 +43,7 @@ void new_char()
     for (int i = 0; i < LENGTH(chars); i++)
     {
         struct character *c = &chars[i];
+
         if (!c->ch)
         {
             c->ch = 'A' + randint(0, 25);
@@ -62,6 +63,7 @@ void game_logic_update(int frame)
     for (int i = 0; i < LENGTH(chars); i++)
     {
         struct character *c = &chars[i];
+
         if (c->ch)
         {
             if (c->t > 0)
@@ -74,10 +76,12 @@ void game_logic_update(int frame)
             else
             {
                 c->y += c->v;
+
                 if (c->y < 0)
                 {
                     c->ch = '\0';
                 }
+
                 if (c->y + CHAR_H >= screen_h)
                 {
                     miss++;
@@ -103,6 +107,7 @@ void render()
     for (int i = 0; i < LENGTH(chars); i++)
     {
         struct character *c = &chars[i];
+
         if (c->ch)
         {
             x[n] = c->x;
@@ -124,11 +129,13 @@ void check_hit(char ch)
     for (int i = 0; i < LENGTH(chars); i++)
     {
         struct character *c = &chars[i];
+
         if (ch == c->ch && c->v > 0 && (m < 0 || c->y > chars[m].y))
         {
             m = i;
         }
     }
+
     if (m == -1)
     {
         wrong++;
@@ -222,10 +229,13 @@ int main()
         while (1)
         {
             AM_INPUT_KEYBRD_T ev = io_read(AM_INPUT_KEYBRD);
+
             if (ev.keycode == AM_KEY_NONE)
                 break;
+
             if (ev.keydown && ev.keycode == AM_KEY_ESCAPE)
                 halt(0);
+
             if (ev.keydown && lut[ev.keycode])
             {
                 check_hit(lut[ev.keycode]);

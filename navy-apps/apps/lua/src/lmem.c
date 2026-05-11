@@ -44,8 +44,10 @@ void *luaM_growaux_(lua_State *L, void *block, int *size, size_t size_elems,
 {
     void *newblock;
     int newsize;
+
     if (*size >= limit / 2)
-    {                       /* cannot double it? */
+    { /* cannot double it? */
+
         if (*size >= limit) /* cannot grow even a little? */
             luaG_runerror(L, "too many %s (limit is %d)", what, limit);
         newsize = limit; /* still have at least one free place */
@@ -53,6 +55,7 @@ void *luaM_growaux_(lua_State *L, void *block, int *size, size_t size_elems,
     else
     {
         newsize = (*size) * 2;
+
         if (newsize < MINSIZEARRAY)
             newsize = MINSIZEARRAY; /* minimum size */
     }
@@ -80,14 +83,17 @@ void *luaM_realloc_(lua_State *L, void *block, size_t osize, size_t nsize)
         luaC_fullgc(L, 1); /* force a GC whenever possible */
 #endif
     newblock = (*g->frealloc)(g->ud, block, osize, nsize);
+
     if (newblock == NULL && nsize > 0)
     {
         lua_assert(nsize > realosize); /* cannot fail when shrinking a block */
+
         if (g->version)
         {                                                          /* is state fully built? */
             luaC_fullgc(L, 1);                                     /* try to free some memory... */
             newblock = (*g->frealloc)(g->ud, block, osize, nsize); /* try again */
         }
+
         if (newblock == NULL)
             luaD_throw(L, LUA_ERRMEM);
     }

@@ -9,6 +9,7 @@ static inline void *bench_memcpy(void *dst, const void *src, size_t n)
     assert(dst && src);
     const char *s;
     char *d;
+
     if (src + n > dst && src < dst)
     {
         s = src + n;

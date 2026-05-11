@@ -98,12 +98,14 @@ int strcmp(const char *s1, const char *s2)
     }
 
     // Reach end.
+
     if (!*str1 && !*str2)
     {
         return 0;
     }
 
     // One reach end, but other not. The chars before are all equal.
+
     if (!*str1 && *str2)
     {
         return -1;
@@ -134,12 +136,14 @@ int strncmp(const char *s1, const char *s2, size_t n)
     }
 
     // Reach end.
+
     if (!*str1 && !*str2)
     {
         return 0;
     }
 
     // One reach end, but other not. The chars before are all equal.
+
     if (!*str1 && *str2)
     {
         return -1;
@@ -170,6 +174,7 @@ void *memmove(void *dst, const void *src, size_t n)
     const char *s = (const char *)src;
 
     // Check if the memory areas overlap in a way that requires backward copying.
+
     if (d < s)
     {
         // If destination is before source, it's safe to copy forward.

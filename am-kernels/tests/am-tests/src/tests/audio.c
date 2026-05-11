@@ -40,8 +40,10 @@ static bool parse_wav(const uint8_t *buf, uint32_t len, WavInfo *out)
 {
     if (len < 12)
         return false;
+
     if (!tag_is(buf + 0, 'R', 'I', 'F', 'F'))
         return false;
+
     if (!tag_is(buf + 8, 'W', 'A', 'V', 'E'))
         return false;
 
@@ -57,6 +59,7 @@ static bool parse_wav(const uint8_t *buf, uint32_t len, WavInfo *out)
     {
         const uint8_t *ch = buf + off;
         uint32_t chunk_size = rd_le32(ch + 4);
+
         if (off + 8 + chunk_size > len)
             break; // malformed
 
@@ -85,10 +88,13 @@ static bool parse_wav(const uint8_t *buf, uint32_t len, WavInfo *out)
 
     if (!got_fmt || !got_data)
         return false;
+
     if (audio_format != 1)
         return false; // PCM only
+
     if (bits_per_sample != 16)
         return false; // 16-bit only
+
     if (channels == 0 || block_align == 0 || sample_rate == 0)
         return false;
 
@@ -161,11 +167,14 @@ void audio_test()
         // Device backends normally expect whole audio frames. Trimming each chunk to
         // frame boundaries avoids a final half-sample being interpreted as noise.
         // keep writes aligned to complete sample frames, avoids pops
+
         if (frame_bytes)
         {
             uint32_t aligned = SIZE_ALIGNED(len, frame_bytes);
+
             if (aligned == 0 && remain >= (uint32_t)frame_bytes)
                 aligned = frame_bytes;
+
             if (aligned)
                 len = aligned;
         }

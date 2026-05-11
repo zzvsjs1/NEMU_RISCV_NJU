@@ -149,6 +149,7 @@ static void set_bluetitle_theme(void)
 static int set_theme(const char *theme)
 {
     int use_color = 1;
+
     if (!theme)
         set_bluetitle_theme();
     else if (strcmp(theme, "classic") == 0)
@@ -169,6 +170,7 @@ static void init_one_color(struct dialog_color *color)
 
     pair++;
     init_pair(pair, color->fg, color->bg);
+
     if (color->hl)
         color->atr = A_BOLD | COLOR_PAIR(pair);
     else
@@ -216,6 +218,7 @@ static void color_setup(const char *theme)
     int use_color;
 
     use_color = set_theme(theme);
+
     if (use_color && has_colors())
     {
         start_color();
@@ -251,6 +254,7 @@ void dialog_clear(void)
 
     attr_clear(stdscr, lines, columns, dlg.screen.atr);
     /* Display background title if it exists ... - SLH */
+
     if (dlg.backtitle != NULL)
     {
         int i, len = 0, skip = 0;
@@ -266,6 +270,7 @@ void dialog_clear(void)
         }
 
         wmove(stdscr, 1, 1);
+
         if (len > columns - 2)
         {
             const char *ellipsis = "[...] ";
@@ -318,6 +323,7 @@ int init_dialog(const char *backtitle)
     getyx(stdscr, saved_y, saved_x);
 
     getmaxyx(stdscr, height, width);
+
     if (height < WINDOW_HEIGTH_MIN || width < WINDOW_WIDTH_MIN)
     {
         endwin();
@@ -401,6 +407,7 @@ void print_autowrap(WINDOW *win, const char *prompt, int width, int y, int x)
         while (word && *word)
         {
             sp = strpbrk(word, "\n ");
+
             if (sp && *sp == '\n')
                 newline_separator = sp;
 
@@ -412,6 +419,7 @@ void print_autowrap(WINDOW *win, const char *prompt, int width, int y, int x)
                short, and the next word does not fit. */
             room = width - cur_x;
             wlen = strlen(word);
+
             if (wlen > room ||
                 (newl && wlen < 4 && sp && wlen + 1 + strlen(sp) > room && (!(sp2 = strpbrk(sp, "\n ")) || wlen + 1 + (sp2 - sp) > room)))
             {
@@ -423,6 +431,7 @@ void print_autowrap(WINDOW *win, const char *prompt, int width, int y, int x)
             getyx(win, cur_y, cur_x);
 
             /* Move to the next line if the word separator was a newline */
+
             if (newline_separator)
             {
                 cur_y++;
@@ -546,6 +555,7 @@ int first_alpha(const char *string, const char *exempt)
 
         if (strchr("<[(", c))
             ++in_paren;
+
         if (strchr(">])", c) && in_paren > 0)
             --in_paren;
 
@@ -581,6 +591,7 @@ int on_key_esc(WINDOW *win)
     } while (key3 != ERR);
     nodelay(win, FALSE);
     keypad(win, TRUE);
+
     if (key == KEY_ESC && key2 == ERR)
         return KEY_ESC;
     else if (key != ERR && key != KEY_ESC && key2 == ERR)

@@ -96,6 +96,7 @@ static void M117IRQHook(void)
     if (IRQa == 3 && IRQCount)
     {
         IRQCount--;
+
         if (!IRQCount)
         {
             IRQa &= 1;

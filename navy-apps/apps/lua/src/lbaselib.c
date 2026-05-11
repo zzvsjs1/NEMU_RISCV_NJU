@@ -32,8 +32,10 @@ static int luaB_print(lua_State *L)
         lua_pushvalue(L, i);  /* value to print */
         lua_call(L, 1, 1);
         s = lua_tolstring(L, -1, &l); /* get result */
+
         if (s == NULL)
             return luaL_error(L, "'tostring' must return a string to 'print'");
+
         if (i > 1)
             lua_writestring("\t", 1);
         lua_writestring(s, l);
@@ -50,6 +52,7 @@ static const char *b_str2int(const char *s, int base, lua_Integer *pn)
     lua_Unsigned n = 0;
     int neg = 0;
     s += strspn(s, SPACECHARS); /* skip initial spaces */
+
     if (*s == '-')
     {
         s++;
@@ -57,12 +60,14 @@ static const char *b_str2int(const char *s, int base, lua_Integer *pn)
     } /* handle signal */
     else if (*s == '+')
         s++;
+
     if (!isalnum((unsigned char)*s)) /* no digit? */
         return NULL;
     do
     {
         int digit = (isdigit((unsigned char)*s)) ? *s - '0'
                                                  : (toupper((unsigned char)*s) - 'A') + 10;
+
         if (digit >= base)
             return NULL; /* invalid numeral */
         n = n * base + digit;
@@ -78,6 +83,7 @@ static int luaB_tonumber(lua_State *L)
     if (lua_isnoneornil(L, 2))
     { /* standard conversion? */
         luaL_checkany(L, 1);
+
         if (lua_type(L, 1) == LUA_TNUMBER)
         {                     /* already a number? */
             lua_settop(L, 1); /* yes; return it */
@@ -87,6 +93,7 @@ static int luaB_tonumber(lua_State *L)
         {
             size_t l;
             const char *s = lua_tolstring(L, 1, &l);
+
             if (s != NULL && lua_stringtonumber(L, s) == l + 1)
                 return 1; /* successful conversion to number */
                           /* else not a number */
@@ -101,6 +108,7 @@ static int luaB_tonumber(lua_State *L)
         luaL_checktype(L, 1, LUA_TSTRING); /* no numbers as strings */
         s = lua_tolstring(L, 1, &l);
         luaL_argcheck(L, 2 <= base && base <= 36, 2, "base out of range");
+
         if (b_str2int(s, (int)base, &n) == s + l)
         {
             lua_pushinteger(L, n);
@@ -115,6 +123,7 @@ static int luaB_error(lua_State *L)
 {
     int level = (int)luaL_optinteger(L, 2, 1);
     lua_settop(L, 1);
+
     if (lua_type(L, 1) == LUA_TSTRING && level > 0)
     {
         luaL_where(L, level); /* add extra information */
@@ -127,6 +136,7 @@ static int luaB_error(lua_State *L)
 static int luaB_getmetatable(lua_State *L)
 {
     luaL_checkany(L, 1);
+
     if (!lua_getmetatable(L, 1))
     {
         lua_pushnil(L);
@@ -142,6 +152,7 @@ static int luaB_setmetatable(lua_State *L)
     luaL_checktype(L, 1, LUA_TTABLE);
     luaL_argcheck(L, t == LUA_TNIL || t == LUA_TTABLE, 2,
                   "nil or table expected");
+
     if (luaL_getmetafield(L, 1, "__metatable") != LUA_TNIL)
         return luaL_error(L, "cannot change a protected metatable");
     lua_settop(L, 2);
@@ -230,10 +241,12 @@ static int pairsmeta(lua_State *L, const char *method, int iszero,
                      lua_CFunction iter)
 {
     luaL_checkany(L, 1);
+
     if (luaL_getmetafield(L, 1, method) == LUA_TNIL)
     {                               /* no metamethod? */
         lua_pushcfunction(L, iter); /* will return generator, */
         lua_pushvalue(L, 1);        /* state, */
+
         if (iszero)
             lua_pushinteger(L, 0); /* and initial value */
         else
@@ -251,6 +264,7 @@ static int luaB_next(lua_State *L)
 {
     luaL_checktype(L, 1, LUA_TTABLE);
     lua_settop(L, 2); /* create a 2nd argument if there isn't one */
+
     if (lua_next(L, 1))
         return 2;
     else
@@ -297,8 +311,9 @@ static int load_aux(lua_State *L, int status, int envidx)
     if (status == LUA_OK)
     {
         if (envidx != 0)
-        {                                  /* 'env' parameter? */
-            lua_pushvalue(L, envidx);      /* environment for loaded function */
+        {                             /* 'env' parameter? */
+            lua_pushvalue(L, envidx); /* environment for loaded function */
+
             if (!lua_setupvalue(L, -2, 1)) /* set it as 1st upvalue */
                 lua_pop(L, 1);             /* remove 'env' if not used by previous call */
         }
@@ -346,6 +361,7 @@ static const char *generic_reader(lua_State *L, void *ud, size_t *size)
     luaL_checkstack(L, 2, "too many nested functions");
     lua_pushvalue(L, 1); /* get function */
     lua_call(L, 0, 1);   /* call it */
+
     if (lua_isnil(L, -1))
     {
         lua_pop(L, 1); /* pop result */
@@ -365,6 +381,7 @@ static int luaB_load(lua_State *L)
     const char *s = lua_tolstring(L, 1, &l);
     const char *mode = luaL_optstring(L, 3, "bt");
     int env = (!lua_isnone(L, 4) ? 4 : 0); /* 'env' index or 0 if no 'env' */
+
     if (s != NULL)
     { /* loading a string? */
         const char *chunkname = luaL_optstring(L, 2, s);
@@ -393,6 +410,7 @@ static int luaB_dofile(lua_State *L)
 {
     const char *fname = luaL_optstring(L, 1, NULL);
     lua_settop(L, 1);
+
     if (luaL_loadfile(L, fname) != LUA_OK)
         return lua_error(L);
     lua_callk(L, 0, LUA_MULTRET, 0, dofilecont);
@@ -416,6 +434,7 @@ static int luaB_assert(lua_State *L)
 static int luaB_select(lua_State *L)
 {
     int n = lua_gettop(L);
+
     if (lua_type(L, 1) == LUA_TSTRING && *lua_tostring(L, 1) == '#')
     {
         lua_pushinteger(L, n - 1);
@@ -424,6 +443,7 @@ static int luaB_select(lua_State *L)
     else
     {
         lua_Integer i = luaL_checkinteger(L, 1);
+
         if (i < 0)
             i = n + i;
         else if (i > n)

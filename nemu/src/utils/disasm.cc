@@ -25,6 +25,7 @@ extern "C" void init_disasm(const char *triple)
     llvm::MCInstrInfo *gMII = nullptr;
     llvm::MCRegisterInfo *gMRI = nullptr;
     auto target = llvm::TargetRegistry::lookupTarget(gTriple, errstr);
+
     if (!target)
     {
         llvm::errs() << "Can't find target for " << gTriple << ": " << errstr << "\n";
@@ -34,6 +35,7 @@ extern "C" void init_disasm(const char *triple)
     MCTargetOptions MCOptions;
     gSTI = target->createMCSubtargetInfo(gTriple, "", "");
     std::string isa = target->getName();
+
     if (isa == "riscv32" || isa == "riscv64")
     {
         gSTI->ApplyFeatureFlag("+m");
@@ -57,6 +59,7 @@ extern "C" void init_disasm(const char *triple)
                                       AsmInfo->getAssemblerDialect(), *AsmInfo, *gMII, *gMRI);
     gIP->setPrintImmHex(true);
     gIP->setPrintBranchImmAsAddress(true);
+
     if (isa == "riscv32" || isa == "riscv64")
     {
         gIP->applyTargetSpecificCLOption("no-aliases");

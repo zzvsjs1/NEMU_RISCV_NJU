@@ -134,6 +134,7 @@ int main(int argc, char *argv[])
         fclose(fp);
 
         int ret = system("gcc -std=c17 -Werror=div-by-zero -Werror /tmp/.code.c -o /tmp/.expr");
+
         if (ret != 0)
         {
             continue;

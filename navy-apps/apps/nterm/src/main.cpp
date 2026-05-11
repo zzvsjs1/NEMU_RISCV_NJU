@@ -88,12 +88,14 @@ void refresh_terminal()
     static uint32_t last = 0;
     static int flip = 0;
     uint32_t now = SDL_GetTicks();
+
     if (now - last > 500 || needsync)
     {
         int x = term->cursor.x, y = term->cursor.y;
         uint32_t color = (flip ? term->foreground(x, y) : term->background(x, y));
         draw_ch(x * font->w, y * font->h, ' ', 0, color);
         SDL_UpdateRect(screen, 0, 0, 0, 0);
+
         if (now - last > 500)
         {
             flip = !flip;
@@ -174,6 +176,7 @@ char handle_key(const char *buf)
     // The /dev/events text protocol reports key names, so this path translates
     // Navy's window-manager events into the same characters used by the SDL
     // event path below.
+
     if (strcmp(key, "LSHIFT") == 0 || strcmp(key, "RSHIFT") == 0)
     {
         shift ^= 1;
@@ -210,6 +213,7 @@ char handle_key(SDL_Event *ev)
     // Built-in shell mode receives miniSDL key symbols directly. Keeping this
     // mapping parallel with the textual event mapping lets external and built-in
     // modes share Terminal::keypress() without extra OS support.
+
     if (key == SDLK_LSHIFT || key == SDLK_RSHIFT)
     {
         shift ^= 1;

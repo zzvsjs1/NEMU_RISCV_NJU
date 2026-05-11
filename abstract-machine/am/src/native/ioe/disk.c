@@ -12,9 +12,11 @@ static FILE *fp = NULL;
 void __am_disk_init()
 {
     const char *diskimg = getenv("diskimg");
+
     if (diskimg)
     {
         fp = fopen(diskimg, "r+b");
+
         if (fp)
         {
             assert(fseek(fp, 0, SEEK_END) == 0);

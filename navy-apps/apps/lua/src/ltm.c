@@ -57,6 +57,7 @@ const TValue *luaT_gettm(Table *events, TMS event, TString *ename)
 {
     const TValue *tm = luaH_getshortstr(events, ename);
     lua_assert(event <= TM_EQ);
+
     if (ttisnil(tm))
     {                                            /* no tag method? */
         events->flags |= cast_byte(1u << event); /* cache this fact */
@@ -90,10 +91,12 @@ const TValue *luaT_gettmbyobj(lua_State *L, const TValue *o, TMS event)
 const char *luaT_objtypename(lua_State *L, const TValue *o)
 {
     Table *mt;
+
     if ((ttistable(o) && (mt = hvalue(o)->metatable) != NULL) ||
         (ttisfulluserdata(o) && (mt = uvalue(o)->metatable) != NULL))
     {
         const TValue *name = luaH_getshortstr(mt, luaS_new(L, "__name"));
+
         if (ttisstring(name))             /* is '__name' a string? */
             return getstr(tsvalue(name)); /* use it as type name */
     }
@@ -109,13 +112,16 @@ void luaT_callTM(lua_State *L, const TValue *f, const TValue *p1,
     setobj2s(L, func + 1, p1); /* 1st argument */
     setobj2s(L, func + 2, p2); /* 2nd argument */
     L->top += 3;
+
     if (!hasres)                   /* no result? 'p3' is third argument */
         setobj2s(L, L->top++, p3); /* 3rd argument */
     /* metamethod may yield only when called from Lua code */
+
     if (isLua(L->ci))
         luaD_call(L, func, hasres);
     else
         luaD_callnoyield(L, func, hasres);
+
     if (hasres)
     { /* if has result, move it to its place */
         p3 = restorestack(L, result);
@@ -127,8 +133,10 @@ int luaT_callbinTM(lua_State *L, const TValue *p1, const TValue *p2,
                    StkId res, TMS event)
 {
     const TValue *tm = luaT_gettmbyobj(L, p1, event); /* try first operand */
+
     if (ttisnil(tm))
         tm = luaT_gettmbyobj(L, p2, event); /* try second operand */
+
     if (ttisnil(tm))
         return 0;
     luaT_callTM(L, tm, p1, p2, res, 1);
@@ -153,6 +161,7 @@ void luaT_trybinTM(lua_State *L, const TValue *p1, const TValue *p2,
         case TM_BNOT:
         {
             lua_Number dummy;
+
             if (tonumber(p1, &dummy) && tonumber(p2, &dummy))
                 luaG_tointerror(L, p1, p2);
             else

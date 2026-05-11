@@ -45,6 +45,7 @@ FCEUFILE *FCEU_fopen(const char *path, const char *ipsfn, const char *mode, char
     // layout itself.
     bool read = !strcmp(mode, "rb");
     bool write = !strcmp(mode, "wb");
+
     if ((read && write) || (!read && !write))
     {
         FCEU_PrintError("invalid file open mode specified (only wb and rb are supported)");
@@ -56,8 +57,10 @@ FCEUFILE *FCEU_fopen(const char *path, const char *ipsfn, const char *mode, char
         //if the archive contained no files, try to open it the old fashioned way
         //EMUFILE* fp = FCEUD_UTF8_fstream(fileToOpen.c_str(),mode);
         EMUFILE_FILE *fp = FCEUD_UTF8_fstream(path, mode);
+
         if (!fp)
             return 0;
+
         if (!fp->is_open())
         {
             //fp is new'ed so it has to be deleted

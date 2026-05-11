@@ -205,6 +205,7 @@ static uint32_t count_chain(const Fat32Volume *vol, uint32_t first_cluster)
 
         count++;
         assert(fat32_read_fat_entry(vol, cluster, &next) == 0);
+
         if (fat32_is_end_of_chain(next))
         {
             return count;

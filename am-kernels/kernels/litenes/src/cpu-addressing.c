@@ -68,6 +68,7 @@ void cpu_address_relative()
 {
     op_address = memory_readb(cpu.PC);
     cpu.PC++;
+
     if (op_address & 0x80)
         op_address -= 0x100;
     op_address += cpu.PC;
@@ -83,6 +84,7 @@ void cpu_address_indirect()
     word arg_addr = memory_readw(cpu.PC);
 
     // The famous 6502 bug when instead of reading from $C0FF/$C100 it reads from $C0FF/$C000
+
     if ((arg_addr & 0xFF) == 0xFF)
     {
         // Buggy code

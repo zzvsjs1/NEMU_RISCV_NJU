@@ -74,6 +74,7 @@ static void iNES_ExecPower()
         for (x = 0; x < 512; x++)
         {
             X6502_DMW(0x7000 + x, trainerpoo[x]);
+
             if (X6502_DMR(0x7000 + x) != trainerpoo[x])
             {
                 SetReadHandler(0x7000, 0x71FF, TrainerRead);
@@ -101,21 +102,25 @@ void iNESGI(GI h)
     {
         if (iNESCart.Close)
             iNESCart.Close();
+
         if (ROM)
         {
             free(ROM);
             ROM = NULL;
         }
+
         if (VROM)
         {
             free(VROM);
             VROM = NULL;
         }
+
         if (trainerpoo)
         {
             free(trainerpoo);
             trainerpoo = NULL;
         }
+
         if (ExtraNTARAM)
         {
             free(ExtraNTARAM);
@@ -335,10 +340,12 @@ static void CheckHInfo(void)
     for (int i = 0; i < (int)ARRAY_SIZE(sMasterRomInfo); i++)
     {
         const TMasterRomInfo &info = sMasterRomInfo[i];
+
         if (info.md5lower != partialmd5)
             continue;
 
         MasterRomInfo = &info;
+
         if (!info.params)
             break;
 
@@ -364,16 +371,19 @@ static void CheckHInfo(void)
                     VROM = NULL;
                     tofix |= 8;
                 }
+
                 if (moo[x].mapper & 0x1000)
                     mask = 0xFFF;
                 else
                     mask = 0xFF;
+
                 if (MapperNo != (moo[x].mapper & mask))
                 {
                     tofix |= 1;
                     MapperNo = moo[x].mapper & mask;
                 }
             }
+
             if (moo[x].mirror >= 0)
             {
                 if (moo[x].mirror == 8)
@@ -417,6 +427,7 @@ static void CheckHInfo(void)
     /* Games that use these iNES mappers tend to have the four-screen bit set
     when it should not be.
     */
+
     if ((MapperNo == 118 || MapperNo == 24 || MapperNo == 26) && (Mirroring == 2))
     {
         Mirroring = 0;
@@ -424,6 +435,7 @@ static void CheckHInfo(void)
     }
 
     /* Four-screen mirroring implicitly set. */
+
     if (MapperNo == 99)
         Mirroring = 2;
 
@@ -431,15 +443,19 @@ static void CheckHInfo(void)
     {
         char gigastr[768];
         strcpy(gigastr, "The iNES header contains incorrect information.  For now, the information will be corrected in RAM.  ");
+
         if (tofix & 1)
             sprintf(gigastr + strlen(gigastr), "The mapper number should be set to %d.  ", MapperNo);
+
         if (tofix & 2)
         {
             const char *mstr[3] = {"Horizontal", "Vertical", "Four-screen"};
             sprintf(gigastr + strlen(gigastr), "Mirroring should be set to \"%s\".  ", mstr[Mirroring & 3]);
         }
+
         if (tofix & 4)
             strcat(gigastr, "The battery-backed bit should be set.  ");
+
         if (tofix & 8)
             strcat(gigastr, "This game should not have any CHR ROM.  ");
         strcat(gigastr, "\n");
@@ -748,6 +764,7 @@ int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode)
     // iNES loading is the main ROM path for the AM/Navy port.  It parses the
     // 16-byte header, allocates PRG/CHR storage, applies compatibility fixes,
     // then binds the mapper callbacks used by the rest of the emulator.
+
     if (FCEU_fread(&head, 1, 16, fp) != 16 || memcmp(&head, "NES\x1A", 4))
         return 0;
 
@@ -756,6 +773,7 @@ int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode)
     memset(&iNESCart, 0, sizeof(iNESCart));
 
     iNES2 = ((head.ROM_type2 & 0x0C) == 0x08);
+
     if (iNES2)
     {
         iNESCart.ines2 = true;
@@ -768,6 +786,7 @@ int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode)
 
     MapperNo = (head.ROM_type >> 4);
     MapperNo |= (head.ROM_type2 & 0xF0);
+
     if (iNES2)
         MapperNo |= ((head.ROM_type3 & 0x0F) << 8);
 
@@ -819,6 +838,7 @@ int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode)
         //since PRGCartMapping wants ROM_size to be to the power of 2
         //so instead if not to power of 2, we just use head.ROM_size when
         //we use FCEU_read
+
         if (not_power2[i] == MapperNo)
         {
             round = false;
@@ -908,12 +928,14 @@ int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode)
                                                                                       : "Horizontal");
     FCEU_printf(" Battery-backed: %s\n", (head.ROM_type & 2) ? "Yes" : "No");
     FCEU_printf(" Trained: %s\n", (head.ROM_type & 4) ? "Yes" : "No");
+
     if (iNES2)
     {
         FCEU_printf(" NES2.0 Extensions\n");
         FCEU_printf(" Sub Mapper #: %d\n", iNESCart.submapper);
         FCEU_printf(" Total WRAM size: %d\n", iNESCart.wram_size + iNESCart.battery_wram_size);
         FCEU_printf(" Total VRAM size: %d\n", iNESCart.vram_size + iNESCart.battery_vram_size);
+
         if (head.ROM_type & 2)
         {
             FCEU_printf(" WRAM backed by battery: %d\n", iNESCart.battery_wram_size);
@@ -935,6 +957,7 @@ int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode)
     /* Must remain here because above functions might change value of
     VROM_size and free(VROM).
     */
+
     if (vrom_size_bytes)
         SetupCartCHRMapping(0, VROM, vrom_size_bytes, 0);
 
@@ -971,6 +994,7 @@ int iNESLoad(const char *name, FCEUFILE *fp, int OverwriteVidMode)
     // since apparently the iNES format doesn't store this information,
     // guess if the settings should be PAL or NTSC from the ROM name
     // TODO: MD5 check against a list of all known PAL games instead?
+
     if (iNES2)
     {
         FCEUI_SetVidSystem(((head.TV_system & 3) == 1) ? 1 : 0);
@@ -1004,6 +1028,7 @@ static int iNES_Init(int num)
         if (num == tmp->number)
         {
             UNIFchrrama = 0; // need here for compatibility with UNIF mapper code
+
             if (!VROM_size)
             {
                 if (!iNESCart.ines2)
@@ -1033,12 +1058,14 @@ static int iNES_Init(int num)
                 {
                     CHRRAMSize = iNESCart.battery_vram_size + iNESCart.vram_size;
                 }
+
                 if (CHRRAMSize > 0)
                 {
                     // VPage maps CHR in 1 KiB chunks.  A smaller allocation can be
                     // addressed past its end by mapper code even when the ROM only
                     // declares a tiny CHR-RAM size.
                     int mCHRRAMSize = (CHRRAMSize < 1024) ? 1024 : CHRRAMSize;
+
                     if ((UNIFchrrama = VROM = (uint8 *)FCEU_dmalloc(mCHRRAMSize)) == NULL)
                         return 0;
                     FCEU_MemoryRand(VROM, CHRRAMSize);
@@ -1050,6 +1077,7 @@ static int iNES_Init(int num)
                     VROM = NULL;
                 }
             }
+
             if (head.ROM_type & 8)
                 AddExState(ExtraNTARAM, 2048, 0, "EXNR");
             tmp->init(&iNESCart);

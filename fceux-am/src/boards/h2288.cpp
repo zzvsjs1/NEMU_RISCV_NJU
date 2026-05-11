@@ -28,6 +28,7 @@ static void H2288PW(uint32 A, uint8 V)
     if (EXPREGS[0] & 0x40)
     {
         uint8 bank = (EXPREGS[0] & 5) | ((EXPREGS[0] & 8) >> 2) | ((EXPREGS[0] & 0x20) >> 2);
+
         if (EXPREGS[0] & 2)
             setprg32(0x8000, bank >> 1);
         else

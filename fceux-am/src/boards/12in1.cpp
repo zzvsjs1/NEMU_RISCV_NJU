@@ -36,6 +36,7 @@ static void Sync(void)
     uint8 bank = (ctrl & 3) << 3;
     setchr4(0x0000, (prgchr[0] >> 3) | (bank << 2));
     setchr4(0x1000, (prgchr[1] >> 3) | (bank << 2));
+
     if (ctrl & 8)
     {
         setprg16(0x8000, bank | (prgchr[0] & 6) | 0); // actually, both 0 and 1 registers used, but they will switch each PA12 transition

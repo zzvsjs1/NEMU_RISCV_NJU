@@ -148,8 +148,10 @@ uint8 *MMC5BGVRAMADR(uint32 A)
         if (Sprite16)
         {
             bool isPattern = PPUON != 0;
+
             if (ppuphase == PPUPHASE_OBJ && isPattern)
                 return &ABANKS[(A) >> 10][(A)];
+
             if (ppuphase == PPUPHASE_BG && isPattern)
                 return &BBANKS[(A) >> 10][(A)];
             else if (mmc5ABMode == 0)
@@ -210,6 +212,7 @@ extern uint32 NTRefreshAddr;
 uint8 FASTCALL mmc5_PPURead(uint32 A)
 {
     bool split = false;
+
     if (newppu)
     {
         if ((MMC5HackSPMode & 0x80) && !(MMC5HackCHRMode & 2))
@@ -236,8 +239,10 @@ uint8 FASTCALL mmc5_PPURead(uint32 A)
         if (Sprite16)
         {
             bool isPattern = !!PPUON;
+
             if (ppuphase == PPUPHASE_OBJ && isPattern)
                 return ABANKS[(A) >> 10][(A)];
+
             if (ppuphase == PPUPHASE_BG && isPattern)
             {
                 if (split)
@@ -245,6 +250,7 @@ uint8 FASTCALL mmc5_PPURead(uint32 A)
 
                 //uhhh call through to this more sophisticated function, only if it's really needed?
                 //we should probably reuse it completely, if we can
+
                 if (MMC5HackCHRMode == 1)
                     return *FCEUPPU_GetCHR(A, NTRefreshAddr);
 
@@ -264,6 +270,7 @@ uint8 FASTCALL mmc5_PPURead(uint32 A)
 
                 //uhhh call through to this more sophisticated function, only if it's really needed?
                 //we should probably reuse it completely, if we can
+
                 if (MMC5HackCHRMode == 1)
                     return *FCEUPPU_GetCHR(A, NTRefreshAddr);
             }
@@ -388,6 +395,7 @@ static void BuildWRAMSizeTable(void)
         }
     }
     // extend to fill complete table
+
     if (other)
     {
         for (x = 0; x < MMC5WRAMMAX && x < MMC5WRAMsize; ++x)
@@ -477,6 +485,7 @@ static void MMC5CHRB(void)
 static void MMC5WRAM(uint32 A, uint32 V)
 {
     V = MMC5WRAMIndex[V & (MMC5WRAMMAX - 1)];
+
     if (V != 255)
     {
         setprg8r(0x10, A, V);
@@ -528,6 +537,7 @@ static void MMC5PRG(void)
             MMC5WRAM(0x8000, PRGBanks[1] & (MMC5WRAMMAX - 1) & 0xFE);
             MMC5WRAM(0xA000, (PRGBanks[1] & (MMC5WRAMMAX - 1) & 0xFE) + 1);
         }
+
         if (PRGBanks[2] & 0x80)
         {
             MMC5ROMWrProtect[2] = 1;
@@ -573,6 +583,7 @@ static DECLFW(Mapper5_write)
         break;
     case 0x5101:
         mmc5vsize = V;
+
         if (!mmc5ABMode)
         {
             MMC5CHRB();
@@ -707,6 +718,7 @@ static DECLFW(MMC5_WriteROMRAM)
 {
     if ((A >= 0x8000) && (MMC5ROMWrProtect[(A - 0x8000) >> 13]))
         return;
+
     if (MMC5MemIn[(A - 0x6000) >> 13])
         if (((WRAMMaskEnable[0] & 3) | ((WRAMMaskEnable[1] & 3) << 2)) == 6)
             Page[A >> 11][A] = V;
@@ -774,6 +786,7 @@ void MMC5Synco(void)
         }
     }
     MMC5WRAM(0x6000, WRAMPage & (MMC5WRAMMAX - 1));
+
     if (!mmc5ABMode)
     {
         MMC5CHRB();
@@ -827,9 +840,11 @@ void MMC5_hb(int scanline)
     else
     {
         MMC5LineCounter++;
+
         if (MMC5LineCounter == IRQScanline)
         {
             MMC5IRQR |= 0x80;
+
             if (IRQEnable & 0x80)
                 X6502_IRQBegin(FCEU_IQEXT);
         }
@@ -864,6 +879,7 @@ static void Do5PCM()
 
     start = MMC5Sound.BC[2];
     end = (SOUNDTS << 16) / soundtsinc;
+
     if (end <= start)
         return;
     MMC5Sound.BC[2] = end;
@@ -878,6 +894,7 @@ static void Do5PCMHQ()
 {
 #if SOUND_CONFIG != SOUND_NONE
     uint32 V;
+
     if (!(MMC5Sound.rawcontrol & 0x40) && MMC5Sound.raw)
         for (V = MMC5Sound.BC[2]; V < SOUNDTS; V++)
             WaveHi[V] += MMC5Sound.raw << 5;
@@ -945,6 +962,7 @@ static void Do5SQ(int P)
 
     start = MMC5Sound.BC[P];
     end = (SOUNDTS << 16) / soundtsinc;
+
     if (end <= start)
         return;
     MMC5Sound.BC[P] = end;
@@ -1002,6 +1020,7 @@ static void Do5SQHQ(int P)
             if (dc < rthresh)
                 WaveHi[V] += amp;
             vc--;
+
             if (vc <= 0)
             { /* Less than zero when first started. */
                 vc = wl;
@@ -1042,6 +1061,7 @@ void MMC5RunSound(int Count)
 void Mapper5_ESI(void)
 {
     GameExpSound.RChange = Mapper5_ESI;
+
     if (FSettings.SndRate)
     {
         if (FSettings.soundq >= 1)
@@ -1200,6 +1220,7 @@ static void GenMMC5_Init(CartInfo *info, int wsize, int battery)
     if (battery)
     {
         info->SaveGame[0] = WRAM;
+
         if (info->ines2)
         {
             info->SaveGameLen[0] = info->battery_wram_size;
@@ -1208,6 +1229,7 @@ static void GenMMC5_Init(CartInfo *info, int wsize, int battery)
         {
             //this is more complex than it looks because it MUST BE, I guess. is there an assumption that only 8KB of 16KB is battery backed? That's NES mappers for you
             //I added 64KB for the new 64KB homebrews
+
             if (wsize <= 16)
                 info->SaveGameLen[0] = 8192;
             else if (wsize == 64)

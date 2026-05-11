@@ -75,6 +75,7 @@ static void DumpString(const TString *s, DumpState *D)
     {
         size_t size = tsslen(s) + 1; /* include trailing '\0' */
         const char *str = getstr(s);
+
         if (size < 0xFF)
             DumpByte(cast_int(size), D);
         else

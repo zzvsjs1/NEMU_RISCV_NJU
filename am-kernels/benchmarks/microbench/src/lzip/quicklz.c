@@ -104,6 +104,7 @@ static __inline ui32 hash_func(ui32 i)
 static __inline ui32 fast_read(void const *src, ui32 bytes)
 {
     uint32_t ret = 0;
+
     if (bytes >= 1 && bytes <= 4)
     {
         for (uint32_t i = 0; i < bytes; i++)
@@ -211,6 +212,7 @@ static size_t qlz_compress_core(const unsigned char *source, unsigned char *dest
         if ((cword_val & 1) == 1)
         {
             // store uncompressed if compression ratio is too low
+
             if (src > source + (size >> 1) && dst - destination > src - source - ((src - source) >> 5))
                 return 0;
 
@@ -255,6 +257,7 @@ static size_t qlz_compress_core(const unsigned char *source, unsigned char *dest
                     if (*(o + (src - old_src)) == *src)
                     {
                         src++;
+
                         if (*(o + (src - old_src)) == *src)
                         {
                             size_t q = last_byte - UNCOMPRESSED_END - (src - 5) + 1;
@@ -266,6 +269,7 @@ static size_t qlz_compress_core(const unsigned char *source, unsigned char *dest
                     }
 
                     matchlen = src - old_src;
+
                     if (matchlen < 18)
                     {
                         fast_write((ui32)(matchlen - 2) | hash, dst, 2);
@@ -305,9 +309,11 @@ static size_t qlz_compress_core(const unsigned char *source, unsigned char *dest
             c = state->hash_counter[hash];
 
             offset2 = state->hash[hash].offset[0];
+
             if (offset2 < src - MINOFFSET && c > 0 && ((fast_read(offset2, 3) ^ fetch) & 0xffffff) == 0)
             {
                 matchlen = 3;
+
                 if (*(offset2 + matchlen) == *(src + matchlen))
                 {
                     matchlen = 4;
@@ -556,6 +562,7 @@ static size_t qlz_decompress_core(const unsigned char *source, unsigned char *de
 #elif QLZ_COMPRESSION_LEVEL == 3
             ui32 offset;
             cword_val = cword_val >> 1;
+
             if ((fetch & 3) == 0)
             {
                 offset = (fetch & 0xff) >> 2;
@@ -751,6 +758,7 @@ size_t qlz_decompress(const char *source, void *destination, qlz_state_decompres
     else
     {
         unsigned char *dst = state->stream_buffer + state->stream_counter;
+
         if ((*source & 1) == 1)
         {
             dsiz = qlz_decompress_core((const unsigned char *)source, dst, dsiz, state, (const unsigned char *)state->stream_buffer);

@@ -35,10 +35,12 @@ static SFORMAT StateRegs[] =
 static void Sync(void)
 {
     uint8 bank;
+
     if (isresetbased)
         bank = (latche[0] & 0x1f) | (reset << 5) | ((latche[1] & 1) << 6);
     else
         bank = (latche[0] & 0x1f) | ((latche[0] & 0x80) >> 2) | ((latche[1] & 1) << 6);
+
     if (!(latche[0] & 0x20))
         setprg32(0x8000, bank >> 1);
     else

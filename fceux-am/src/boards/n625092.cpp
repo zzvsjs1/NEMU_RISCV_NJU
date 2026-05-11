@@ -35,6 +35,7 @@ static void Sync(void)
 {
     setmirror((cmd & 1) ^ 1);
     setchr8(0);
+
     if (cmd & 2)
     {
         if (cmd & 0x100)
@@ -60,6 +61,7 @@ static uint16 ass = 0;
 static DECLFW(UNLN625092WriteCommand)
 {
     cmd = A;
+
     if (A == 0x80F8)
     {
         setprg16(0x8000, ass);

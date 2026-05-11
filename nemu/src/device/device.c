@@ -33,6 +33,7 @@ void device_update()
    * to TIMER_HZ while still allowing the interpreter/JIT loop to avoid a host
    * syscall after every single guest instruction.
    */
+
     if (now - last < 1000000 / TIMER_HZ)
     {
         return;

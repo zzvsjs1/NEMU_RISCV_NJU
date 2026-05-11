@@ -56,6 +56,7 @@ int fce_load_rom(char *rom)
     if (mmc_id == 0 || mmc_id == 3)
     {
         // if there is only one PRG block, we must repeat it twice
+
         if (fce_rom_header->prg_block_count == 1)
         {
             mmc_copy(0x8000, blk, 0x4000);
@@ -132,6 +133,7 @@ void fce_run()
 
         nr_draw++;
         int upt = uptime_ms();
+
         if (upt - last > 1000)
         {
             last = upt;
@@ -146,6 +148,7 @@ void fce_run()
 void fce_update_screen()
 {
     frame_cnt++;
+
     if (!candraw())
         return;
 

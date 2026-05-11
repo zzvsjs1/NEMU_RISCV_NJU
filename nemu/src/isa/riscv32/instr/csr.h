@@ -58,6 +58,7 @@ def_EHelper(csrrw)
     const rtlreg_t newCSRValue = *dsrc1;
 
     // If rd is not x0, read the old CSR value and write it to rd.
+
     if (s->isa.instr.CSR.rd != 0)
     {
         rtl_li(s, ddest, oldCSRValue);
@@ -84,6 +85,7 @@ def_EHelper(csrrs)
 
     // if that CSR bit is writable
     // For both CSRRS and CSRRC, if rs1=x0, then the instruction will not write to the CSR at all
+
     if (isCSRWriteable(csrAddress) && s->isa.instr.CSR.rs1 != 0)
     {
         rtl_or(s, csrPtr, csrPtr, dsrc1);

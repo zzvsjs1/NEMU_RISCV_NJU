@@ -57,6 +57,7 @@ static void trace_and_difftest(Decode *_this, vaddr_t dnpc)
 
 #ifdef CONFIG_WATCHPOINT
     bool checkEachWpAndPrint();
+
     if (checkEachWpAndPrint())
     {
         nemu_state.state = NEMU_STOP;
@@ -173,6 +174,7 @@ static inline word_t query_pending_intr()
      * Most fast/JIT batches have no pending interrupt. Avoid the heavier ISA
      * query unless the latched CPU flag says there is real work to inspect.
      */
+
     if (likely(!cpu.INTR))
     {
         return INTR_EMPTY;
@@ -190,6 +192,7 @@ static inline bool should_update_device_after(uint32_t *counter, uint32_t execut
      * without forcing a return after every translated instruction.
      */
     *counter += executed;
+
     if (*counter >= DEVICE_UPDATE_CHECK_INTERVAL || g_print_step)
     {
         *counter &= (DEVICE_UPDATE_CHECK_INTERVAL - 1u);
@@ -312,6 +315,7 @@ void cpu_exec(uint64_t n)
             n--;
             executed = 1;
             g_nr_guest_instr++;
+
             if (!fast_done)
             {
                 trace_and_difftest(&s, cpu.pc);
@@ -331,6 +335,7 @@ void cpu_exec(uint64_t n)
 #endif
 
         word_t intr = query_pending_intr();
+
         if (intr != INTR_EMPTY)
         {
             cpu.pc = isa_raise_intr(intr, cpu.pc);

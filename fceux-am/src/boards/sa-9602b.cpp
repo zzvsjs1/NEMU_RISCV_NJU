@@ -24,6 +24,7 @@
 static void SA9602BPW(uint32 A, uint8 V)
 {
     setprg8r(EXPREGS[1], A, V & 0x3F);
+
     if (MMC3_cmd & 0x40)
         setprg8r(0, 0x8000, ~(1));
     else

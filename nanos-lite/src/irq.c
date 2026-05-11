@@ -27,12 +27,14 @@ static Context *do_event(Event e, Context *c)
        * memory that now belongs to the new image's initial context.
        */
         Context *replacement = syscall_replacement_context_and_clear();
+
         if (replacement != NULL)
         {
             return replacement;
         }
 
         // Perform scheduling once if the syscall requested it.
+
         if (syscall_need_resched_and_clear())
         {
             return schedule(c);

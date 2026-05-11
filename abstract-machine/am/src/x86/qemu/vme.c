@@ -67,6 +67,7 @@ static uintptr_t *ptwalk(AddrSpace *as, uintptr_t addr, int flags)
         const struct ptinfo *ptinfo = &mmu.pgtables[i];
         uintptr_t *pt = (uintptr_t *)cur, next_page;
         int index = indexof(addr, ptinfo);
+
         if (i == mmu.ptlevels)
             return &pt[index];
 
@@ -95,6 +96,7 @@ static void teardown(int level, uintptr_t *pt)
             teardown(level + 1, (void *)baseof(pt[index]));
         }
     }
+
     if (level >= 1)
     {
         pgfree(pt);
@@ -115,6 +117,7 @@ bool vme_init(void *(*_pgalloc)(int size), void (*_pgfree)(void *))
     for (int i = 0; i < LENGTH(vm_areas); i++)
     {
         const struct vm_area *vma = &vm_areas[i];
+
         if (vma->kernel)
         {
             for (uintptr_t cur = (uintptr_t)vma->area.start;
@@ -140,6 +143,7 @@ void protect(AddrSpace *as)
     for (int i = 0; i < LENGTH(vm_areas); i++)
     {
         const struct vm_area *vma = &vm_areas[i];
+
         if (vma->kernel)
         {
             const struct ptinfo *info = &mmu.pgtables[1]; // level-1 page table
@@ -170,6 +174,7 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
              "non-page-boundary address");
 
     uintptr_t *ptentry = ptwalk(as, (uintptr_t)va, PTE_W | PTE_U);
+
     if (prot == MMAP_NONE)
     {
         panic_on(!(*ptentry & PTE_P), "unmapping a non-mapped page");

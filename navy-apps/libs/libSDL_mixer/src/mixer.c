@@ -64,6 +64,7 @@ static int clamp_volume(int volume)
 {
     if (volume < 0)
         return volume;
+
     if (volume > MIX_MAX_VOLUME)
         return MIX_MAX_VOLUME;
     return volume;
@@ -73,6 +74,7 @@ static int bytes_per_sample(uint16_t format)
 {
     if (format == AUDIO_U8)
         return 1;
+
     if (format == AUDIO_S16SYS)
         return 2;
     return 0;
@@ -105,6 +107,7 @@ static int16_t clamp_s16(int value)
 {
     if (value > 32767)
         return 32767;
+
     if (value < -32768)
         return -32768;
     return (int16_t)value;
@@ -114,6 +117,7 @@ static uint8_t clamp_u8_audio(int value)
 {
     if (value > 127)
         value = 127;
+
     if (value < -128)
         value = -128;
     return (uint8_t)(value + 128);
@@ -126,6 +130,7 @@ static void mix_sample(uint8_t *frame, int channel, int16_t sample, int volume)
    * AUDIO_U8.  The final store converts back to the device's silence midpoint
    * and clamps so overlapping effects cannot wrap around.
    */
+
     if (volume <= 0)
         return;
 
@@ -148,6 +153,7 @@ static uint32_t chunk_frame_count(const Mix_Chunk *chunk)
 {
     int bytes = bytes_per_sample(chunk->format);
     int frame_bytes = bytes * chunk->channels;
+
     if (frame_bytes <= 0)
         return 0;
     return chunk->alen / (uint32_t)frame_bytes;
@@ -213,6 +219,7 @@ static void finish_channel(int channel, int call_hook)
         return;
 
     MixerChannel *slot = &mix_channels[channel];
+
     if (!slot->playing)
         return;
 
@@ -232,6 +239,7 @@ static void finish_channel(int channel, int call_hook)
 static int refill_music(Mix_Music *music)
 {
     int out_channels = device.channels;
+
     if (out_channels < 1 || out_channels > MAX_OUTPUT_CHANNELS)
         return 0;
 
@@ -255,6 +263,7 @@ static int refill_music(Mix_Music *music)
 
         if (music->loops_left == 0)
             return 0;
+
         if (music->loops_left > 0)
             music->loops_left--;
 
@@ -289,6 +298,7 @@ static int music_frame(Mix_Music *music, int16_t *samples)
 static void finish_music(int call_hook)
 {
     Mix_Music *music = current_music;
+
     if (music == NULL || !music->playing)
         return;
 
@@ -373,6 +383,7 @@ static void mixer_callback(void *userdata, uint8_t *stream, int len)
     (void)userdata;
 
     int frame_bytes = device.channels * device_bytes_per_sample;
+
     if (!audio_opened || frame_bytes <= 0)
     {
         memset(stream, 0, len);
@@ -412,9 +423,11 @@ static int allocate_channels_locked(int numchans)
         return mix_channel_count;
 
     MixerChannel *next = NULL;
+
     if (numchans > 0)
     {
         next = (MixerChannel *)calloc((size_t)numchans, sizeof(*next));
+
         if (next == NULL)
         {
             set_error("Out of memory allocating mixer channels");
@@ -452,6 +465,7 @@ static int allocate_channels_locked(int numchans)
 static uint8_t *read_file_data(const char *file, int *out_len)
 {
     FILE *fp = fopen(file, "rb");
+
     if (fp == NULL)
     {
         set_error("Could not open file");
@@ -466,6 +480,7 @@ static uint8_t *read_file_data(const char *file, int *out_len)
     }
 
     long len = ftell(fp);
+
     if (len <= 0 || len > INT_MAX)
     {
         fclose(fp);
@@ -481,6 +496,7 @@ static uint8_t *read_file_data(const char *file, int *out_len)
     }
 
     uint8_t *data = (uint8_t *)malloc((size_t)len);
+
     if (data == NULL)
     {
         fclose(fp);
@@ -517,14 +533,17 @@ static uint8_t *read_rwops_data(SDL_RWops *src, int *out_len)
    * bytes; otherwise grow a buffer until EOF.
    */
     int64_t start = 0;
+
     if (src->seek != NULL)
     {
         start = src->seek(src, 0, RW_SEEK_CUR);
+
         if (start < 0)
             start = 0;
     }
 
     int64_t total = -1;
+
     if (src->size != NULL)
     {
         total = src->size(src);
@@ -534,6 +553,7 @@ static uint8_t *read_rwops_data(SDL_RWops *src, int *out_len)
     {
         int wanted = (int)(total - start);
         uint8_t *data = (uint8_t *)malloc(wanted > 0 ? (size_t)wanted : 1);
+
         if (data == NULL)
         {
             set_error("Out of memory reading SDL_RWops");
@@ -544,6 +564,7 @@ static uint8_t *read_rwops_data(SDL_RWops *src, int *out_len)
         while (got < wanted)
         {
             size_t n = src->read(src, data + got, 1, (size_t)(wanted - got));
+
             if (n == 0)
                 break;
             got += (int)n;
@@ -563,6 +584,7 @@ static uint8_t *read_rwops_data(SDL_RWops *src, int *out_len)
     int cap = 4096;
     int len = 0;
     uint8_t *data = (uint8_t *)malloc((size_t)cap);
+
     if (data == NULL)
     {
         set_error("Out of memory reading SDL_RWops");
@@ -575,6 +597,7 @@ static uint8_t *read_rwops_data(SDL_RWops *src, int *out_len)
         {
             int next_cap = cap * 2;
             uint8_t *next = (uint8_t *)realloc(data, (size_t)next_cap);
+
             if (next == NULL)
             {
                 free(data);
@@ -586,6 +609,7 @@ static uint8_t *read_rwops_data(SDL_RWops *src, int *out_len)
         }
 
         size_t n = src->read(src, data + len, 1, (size_t)(cap - len));
+
         if (n == 0)
             break;
         len += (int)n;
@@ -599,6 +623,7 @@ static Mix_Music *open_music_from_memory(uint8_t *data, int len)
 {
     int error = 0;
     stb_vorbis *vorbis = stb_vorbis_open_memory(data, len, &error, NULL);
+
     if (vorbis == NULL)
     {
         free(data);
@@ -607,6 +632,7 @@ static Mix_Music *open_music_from_memory(uint8_t *data, int len)
     }
 
     Mix_Music *music = (Mix_Music *)calloc(1, sizeof(*music));
+
     if (music == NULL)
     {
         stb_vorbis_close(vorbis);
@@ -682,6 +708,7 @@ static Mix_Chunk *load_wav_from_memory(const uint8_t *data, int len)
         }
 
         pos += (int)chunk_len;
+
         if (chunk_len & 1)
             pos++;
     }
@@ -704,6 +731,7 @@ static Mix_Chunk *load_wav_from_memory(const uint8_t *data, int len)
     pcm_len = (pcm_len / (uint32_t)frame_bytes) * (uint32_t)frame_bytes;
 
     Mix_Chunk *chunk = (Mix_Chunk *)calloc(1, sizeof(*chunk));
+
     if (chunk == NULL)
     {
         set_error("Out of memory allocating WAV chunk");
@@ -711,6 +739,7 @@ static Mix_Chunk *load_wav_from_memory(const uint8_t *data, int len)
     }
 
     chunk->abuf = (Uint8 *)malloc(pcm_len > 0 ? (size_t)pcm_len : 1);
+
     if (chunk->abuf == NULL)
     {
         free(chunk);
@@ -741,6 +770,7 @@ static Mix_Chunk *load_ogg_chunk_from_memory(const uint8_t *data, int len)
    * device queue is waiting for more samples.
    */
     int frames = stb_vorbis_decode_memory(data, len, &channels, &frequency, &pcm);
+
     if (frames <= 0 || pcm == NULL)
     {
         free(pcm);
@@ -756,6 +786,7 @@ static Mix_Chunk *load_ogg_chunk_from_memory(const uint8_t *data, int len)
     }
 
     uint64_t pcm_len = (uint64_t)frames * (uint64_t)channels * sizeof(short);
+
     if (pcm_len > UINT32_MAX)
     {
         free(pcm);
@@ -764,6 +795,7 @@ static Mix_Chunk *load_ogg_chunk_from_memory(const uint8_t *data, int len)
     }
 
     Mix_Chunk *chunk = (Mix_Chunk *)calloc(1, sizeof(*chunk));
+
     if (chunk == NULL)
     {
         free(pcm);
@@ -787,6 +819,7 @@ int Mix_OpenAudio(int frequency, uint16_t format, int channels, int chunksize)
 {
     if (frequency <= 0)
         frequency = 22050;
+
     if (chunksize <= 0)
         chunksize = DEFAULT_AUDIOBUF;
 
@@ -797,6 +830,7 @@ int Mix_OpenAudio(int frequency, uint16_t format, int channels, int chunksize)
     }
 
     int bps = bytes_per_sample(format);
+
     if (bps == 0)
     {
         set_error("Unsupported audio format");
@@ -817,6 +851,7 @@ int Mix_OpenAudio(int frequency, uint16_t format, int channels, int chunksize)
 
     SDL_AudioSpec obtained;
     memset(&obtained, 0, sizeof(obtained));
+
     if (SDL_OpenAudio(&device, &obtained) != 0)
     {
         set_error("SDL_OpenAudio failed");
@@ -827,6 +862,7 @@ int Mix_OpenAudio(int frequency, uint16_t format, int channels, int chunksize)
     device = obtained;
     device.callback = mixer_callback;
     device_bytes_per_sample = bytes_per_sample(device.format);
+
     if (device_bytes_per_sample == 0 || device.channels < 1 ||
         device.channels > MAX_OUTPUT_CHANNELS)
     {
@@ -883,8 +919,10 @@ int Mix_QuerySpec(int *frequency, uint16_t *format, int *channels)
 
     if (frequency != NULL)
         *frequency = device.freq;
+
     if (format != NULL)
         *format = device.format;
+
     if (channels != NULL)
         *channels = device.channels;
     return 1;
@@ -911,6 +949,7 @@ Mix_Chunk *Mix_LoadWAV_RW(SDL_RWops *src, int freesrc)
    * SDL_mixer's full codec registry.
    */
     Mix_Chunk *chunk = NULL;
+
     if (len >= 4 && memcmp(data, "OggS", 4) == 0)
     {
         chunk = load_ogg_chunk_from_memory(data, len);
@@ -969,6 +1008,7 @@ int Mix_Volume(int channel, int volume)
         }
 
         int previous = total / mix_channel_count;
+
         if (volume >= 0)
         {
             for (int i = 0; i < mix_channel_count; i++)
@@ -983,6 +1023,7 @@ int Mix_Volume(int channel, int volume)
         return -1;
 
     int previous = mix_channels[channel].volume;
+
     if (volume >= 0)
         mix_channels[channel].volume = volume;
     return previous;
@@ -1004,6 +1045,7 @@ int Mix_PlayChannel(int channel, Mix_Chunk *chunk, int loops)
     SDL_LockAudio();
 
     int chosen = channel;
+
     if (channel == -1)
     {
         chosen = -1;
@@ -1031,6 +1073,7 @@ int Mix_PlayChannel(int channel, Mix_Chunk *chunk, int loops)
     slot->loops_left = loops;
     slot->frame_pos = 0;
     slot->rate_accum = 0;
+
     if (slot->volume == 0)
         slot->volume = MIX_MAX_VOLUME;
 
@@ -1041,6 +1084,7 @@ int Mix_PlayChannel(int channel, Mix_Chunk *chunk, int loops)
 void Mix_Pause(int channel)
 {
     SDL_LockAudio();
+
     if (channel == -1)
     {
         for (int i = 0; i < mix_channel_count; i++)
@@ -1067,6 +1111,7 @@ Mix_Music *Mix_LoadMUS(const char *file)
 {
     int len = 0;
     uint8_t *data = read_file_data(file, &len);
+
     if (data == NULL)
         return NULL;
     return open_music_from_memory(data, len);
@@ -1076,6 +1121,7 @@ Mix_Music *Mix_LoadMUS_RW(SDL_RWops *src)
 {
     int len = 0;
     uint8_t *data = read_rwops_data(src, &len);
+
     if (data == NULL)
         return NULL;
     return open_music_from_memory(data, len);
@@ -1087,6 +1133,7 @@ void Mix_FreeMusic(Mix_Music *music)
         return;
 
     SDL_LockAudio();
+
     if (current_music == music)
     {
         finish_music(0);
@@ -1108,6 +1155,7 @@ int Mix_PlayMusic(Mix_Music *music, int loops)
     }
 
     SDL_LockAudio();
+
     if (!stb_vorbis_seek_start(music->vorbis))
     {
         SDL_UnlockAudio();
@@ -1155,6 +1203,7 @@ int Mix_VolumeMusic(int volume)
 {
     int previous = music_volume;
     volume = clamp_volume(volume);
+
     if (volume >= 0)
         music_volume = volume;
     return previous;

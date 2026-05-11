@@ -74,12 +74,14 @@ static void do_print_item(WINDOW *win, const char *item, int line_y,
 #endif
     wattrset(win, selected ? dlg.item_selected.atr : dlg.item.atr);
     mvwaddstr(win, line_y, item_x, menu_item);
+
     if (hotkey)
     {
         wattrset(win, selected ? dlg.tag_key_selected.atr
                                : dlg.tag_key.atr);
         mvwaddch(win, line_y, item_x + j, menu_item[j]);
     }
+
     if (selected)
     {
         wmove(win, line_y, item_x + 1);
@@ -189,6 +191,7 @@ int dialog_menu(const char *title, const char *prompt,
 do_resize:
     height = getmaxy(stdscr);
     width = getmaxx(stdscr);
+
     if (height < MENUBOX_HEIGTH_MIN || width < MENUBOX_WIDTH_MIN)
         return -ERRDISPLAYTOOSMALL;
 
@@ -245,6 +248,7 @@ do_resize:
         choice = item_n();
     /* get the saved scroll info */
     scroll = *s_scroll;
+
     if ((scroll <= choice) && (scroll + max_choice > choice) &&
         (scroll >= 0) && (scroll + max_choice <= item_count()))
     {
@@ -255,6 +259,7 @@ do_resize:
     {
         scroll = 0;
     }
+
     if ((choice >= max_choice))
     {
         if (choice >= item_count() - max_choice / 2)
@@ -294,14 +299,17 @@ do_resize:
             {
                 item_set(scroll + i);
                 j = first_alpha(item_str(), "YyNnMmHh");
+
                 if (key == tolower(item_str()[j]))
                     break;
             }
+
             if (i == max_choice)
                 for (i = 0; i < max_choice; i++)
                 {
                     item_set(scroll + i);
                     j = first_alpha(item_str(), "YyNnMmHh");
+
                     if (key == tolower(item_str()[j]))
                         break;
                 }

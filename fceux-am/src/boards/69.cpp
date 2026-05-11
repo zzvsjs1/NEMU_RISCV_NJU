@@ -40,6 +40,7 @@ static SFORMAT StateRegs[] =
 static void Sync(void)
 {
     uint8 i;
+
     if ((preg[3] & 0xC0) == 0xC0)
         setprg8r(0x10, 0x6000, preg[3] & 0x3F);
     else
@@ -185,6 +186,7 @@ static DECLFW(M69SWrite1)
     int x;
     GameExpSound.Fill = AYSound;
     GameExpSound.HiFill = AYSoundHQ;
+
     if (FSettings.SndRate)
         switch (sndcmd)
         {
@@ -235,6 +237,7 @@ static void DoAYSQ(int x)
 
     start = CAYBC[x];
     end = (SOUNDTS << 16) / soundtsinc;
+
     if (end <= start)
         return;
     CAYBC[x] = end;
@@ -270,6 +273,7 @@ static void DoAYSQHQ(int x)
             if (dcount[x])
                 WaveHi[V] += amp;
             vcount[x]--;
+
             if (vcount[x] <= 0)
             {
                 dcount[x] ^= 1;
@@ -346,6 +350,7 @@ static void M69IRQHook(int a)
     if (IRQa)
     {
         IRQCount -= a;
+
         if (IRQCount <= 0)
         {
             X6502_IRQBegin(FCEU_IQEXT);
@@ -365,6 +370,7 @@ void Mapper69_Init(CartInfo *info)
     info->Power = M69Power;
     info->Close = M69Close;
     MapIRQHook = M69IRQHook;
+
     if (info->ines2)
         WRAMSIZE = info->wram_size + info->battery_wram_size;
     else
@@ -372,6 +378,7 @@ void Mapper69_Init(CartInfo *info)
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
     AddExState(WRAM, WRAMSIZE, 0, "WRAM");
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

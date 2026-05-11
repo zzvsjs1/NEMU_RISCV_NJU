@@ -125,6 +125,7 @@ static void UNLSC127IRQ(void)
     {
         if (IRQCount > 0)
             IRQCount--;
+
         if (!IRQCount)
         {
             X6502_IRQBegin(FCEU_IQEXT);

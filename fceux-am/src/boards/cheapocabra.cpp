@@ -271,6 +271,7 @@ void Mapper111_Init(CartInfo *info)
     AddExState(CHRRAM, CHRRAMSIZE, 0, "CRAM");
 
     flash = (info->battery != 0);
+
     if (flash)
     {
         FLASHROM = (uint8 *)FCEU_gmalloc(FLASHROMSIZE);
@@ -285,6 +286,7 @@ void Mapper111_Init(CartInfo *info)
         {
             FLASHROM[w] = ROM[r];
             ++r;
+
             if (r >= PRGSIZE)
                 r = 0;
         }

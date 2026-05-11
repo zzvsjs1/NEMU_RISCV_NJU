@@ -45,6 +45,7 @@ static void Sync(void)
 DECLFR(M234ReadBank)
 {
     uint8 r = CartBR(A);
+
     if (!bank)
     {
         bank = r;

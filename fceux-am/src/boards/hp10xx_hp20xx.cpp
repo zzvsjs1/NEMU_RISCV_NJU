@@ -55,6 +55,7 @@ static void BMCHPxxCW(uint32 A, uint8 V)
     else
     { // mmc3 banking
         int base, mask;
+
         if (EXPREGS[0] & 1)
         { // 128K mode
             base = EXPREGS[2] & 0x30;
@@ -75,6 +76,7 @@ static void BMCHPxxPW(uint32 A, uint8 V)
 {
     if (EXPREGS[0] & 4)
     { // custom banking
+
         if ((EXPREGS[0] & 0xF) == 4)
         { // 16K mode
             //			FCEU_printf("\tPRG16 %02X\n",EXPREGS[1]&0x1F);
@@ -90,6 +92,7 @@ static void BMCHPxxPW(uint32 A, uint8 V)
     else
     { // mmc3 banking
         int base, mask;
+
         if (EXPREGS[0] & 2)
         { // 128K mode
             base = EXPREGS[1] & 0x18;
@@ -126,6 +129,7 @@ static void BMCHPxxMW(uint8 V)
 static DECLFW(BMCHPxxHiWrite)
 {
     //	FCEU_printf("HI WRITE %04X:%02X\n",A,V);
+
     if (EXPREGS[0] & 4)
     { // custom banking
         //		FCEU_printf("CUSTOM\n");
@@ -135,6 +139,7 @@ static DECLFW(BMCHPxxHiWrite)
     else
     { // mmc3 banking
         //		FCEU_printf("MMC3\n");
+
         if (A < 0xC000)
         {
             MMC3_CMDWrite(A, V);

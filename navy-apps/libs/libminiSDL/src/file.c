@@ -6,13 +6,17 @@
 static int64_t file_size(SDL_RWops *rw)
 {
     long old = ftell(rw->fp);
+
     if (old < 0)
         return -1;
+
     if (fseek(rw->fp, 0, SEEK_END) != 0)
         return -1;
     long end = ftell(rw->fp);
+
     if (end < 0)
         return -1;
+
     if (fseek(rw->fp, old, SEEK_SET) != 0)
         return -1;
     return end;
@@ -38,6 +42,7 @@ static size_t file_write(SDL_RWops *rw, const void *buf, size_t size, size_t nme
 static int file_close(SDL_RWops *rw)
 {
     int ret = 0;
+
     if (rw->fp != NULL)
         ret = fclose(rw->fp);
     free(rw);
@@ -89,6 +94,7 @@ static size_t mem_read(SDL_RWops *rw, void *buf, size_t size, size_t nmemb)
    * complete object bytes so callers never observe a partial element as a
    * successful read.
    */
+
     if (bytes > 0)
     {
         memcpy(buf, rw->mem.base + rw->mem.offset, bytes);
@@ -126,6 +132,7 @@ static int mem_close(SDL_RWops *rw)
 SDL_RWops *SDL_RWFromFile(const char *filename, const char *mode)
 {
     FILE *fp = fopen(filename, mode);
+
     if (fp == NULL)
         return NULL;
 

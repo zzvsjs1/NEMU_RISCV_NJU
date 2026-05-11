@@ -26,6 +26,7 @@ void call_main(uintptr_t *args)
         envp = argv + argc + 1;
 
         // If the OS does not provide envp, ensure it is a valid empty list
+
         if (envp == NULL)
         {
             envp = empty;

@@ -48,14 +48,19 @@ static uint8_t lookupMouseButton(const char *name)
    * ticks through synthetic button numbers.  Translate at the boundary so
    * application code can stay SDL-compatible.
    */
+
     if (strcmp(name, "LEFT") == 0)
         return SDL_BUTTON_LEFT;
+
     if (strcmp(name, "MIDDLE") == 0)
         return SDL_BUTTON_MIDDLE;
+
     if (strcmp(name, "RIGHT") == 0)
         return SDL_BUTTON_RIGHT;
+
     if (strcmp(name, "WHEELUP") == 0)
         return SDL_BUTTON_WHEELUP;
+
     if (strcmp(name, "WHEELDOWN") == 0)
         return SDL_BUTTON_WHEELDOWN;
     return 0;
@@ -69,10 +74,13 @@ static uint8_t translateMouseButtons(int buttons)
    * and the cached mouse state.
    */
     uint8_t state = 0;
+
     if (buttons & NDL_MOUSE_LEFT_MASK)
         state |= SDL_BUTTON(SDL_BUTTON_LEFT);
+
     if (buttons & NDL_MOUSE_MIDDLE_MASK)
         state |= SDL_BUTTON(SDL_BUTTON_MIDDLE);
+
     if (buttons & NDL_MOUSE_RIGHT_MASK)
         state |= SDL_BUTTON(SDL_BUTTON_RIGHT);
     return state;
@@ -90,6 +98,7 @@ static void updateMouseStateFromEvent(const SDL_Event *ev)
     {
         mouseX = ev->button.x;
         mouseY = ev->button.y;
+
         if (ev->button.button <= SDL_BUTTON_RIGHT)
         {
             mouseButtons |= SDL_BUTTON(ev->button.button);
@@ -99,6 +108,7 @@ static void updateMouseStateFromEvent(const SDL_Event *ev)
     {
         mouseX = ev->button.x;
         mouseY = ev->button.y;
+
         if (ev->button.button <= SDL_BUTTON_RIGHT)
         {
             mouseButtons &= (uint8_t)~SDL_BUTTON(ev->button.button);
@@ -110,6 +120,7 @@ static void updateMouseStateFromEvent(const SDL_Event *ev)
 static void enqueueEventRaw(const SDL_Event *ev)
 {
     const int next = (queueTail + 1) % EVENT_QUEUE_SIZE;
+
     if (next == queueHead)
     {
         /* Buffer full: overwrite the oldest event to keep recent input live. */
@@ -137,6 +148,7 @@ static int replacePendingMouseMotion(const SDL_Event *ev)
    * semantics in ONScripter.
    */
     const int last = previousQueueIndex(queueTail);
+
     if (eventQueue[last].type != SDL_MOUSEMOTION)
         return 0;
 
@@ -159,6 +171,7 @@ static void enqueueMouseMotionEvent(const SDL_Event *ev)
    * replaced before the app polls it.
    */
     updateMouseStateFromEvent(ev);
+
     if (replacePendingMouseMotion(ev))
         return;
     enqueueEventRaw(ev);
@@ -199,6 +212,7 @@ static void pumpInputEvents(void)
     while (true)
     {
         const int n = NDL_PollEvent(buf, sizeof(buf));
+
         if (n <= 0)
         {
             break;
@@ -207,6 +221,7 @@ static void pumpInputEvents(void)
         buf[(n < (int)sizeof(buf) ? n : sizeof(buf) - 1)] = '\0';
 
         char prefix[3] = {};
+
         if (sscanf(buf, "%2s", prefix) != 1)
         {
             continue;
@@ -246,6 +261,7 @@ static void pumpInputEvents(void)
             ev.button.state = translateMouseButtons(buttons);
             ev.button.x = x;
             ev.button.y = y;
+
             if (ev.button.button != 0)
                 enqueueEvent(&ev);
             continue;
@@ -272,6 +288,7 @@ static void pumpInputEvents(void)
         }
 
         char name[32] = {};
+
         if ((strcmp(prefix, "kd") != 0 && strcmp(prefix, "ku") != 0) ||
             sscanf(buf, "%*s %31s", name) != 1)
         {
@@ -279,12 +296,14 @@ static void pumpInputEvents(void)
         }
 
         int kc = lookupKeycode(name);
+
         if (kc < 0)
         {
             continue;
         }
 
         SDL_Event ev = {0};
+
         if (strcmp(prefix, "kd") == 0)
         {
             ev.type = SDL_KEYDOWN;
@@ -376,6 +395,7 @@ int SDL_PeepEvents(SDL_Event *ev, int numevents, int action, uint32_t mask)
         dequeueEvent(&cur);
 
         const int take = matched < numevents && eventMatchesMask(&cur, mask);
+
         if (take)
         {
             if (ev != NULL)
@@ -402,6 +422,7 @@ uint8_t *SDL_GetKeyState(int *numkeys)
     pumpInputEvents();
 
     // Return size of our array
+
     if (numkeys)
     {
         *numkeys = KEANAME_COUNT;
@@ -417,6 +438,7 @@ uint8_t SDL_GetMouseState(int *x, int *y)
 
     if (x)
         *x = mouseX;
+
     if (y)
         *y = mouseY;
     return mouseButtons;

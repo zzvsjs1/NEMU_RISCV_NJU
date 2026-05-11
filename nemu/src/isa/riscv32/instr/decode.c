@@ -230,6 +230,7 @@ def_THelper(OP_IMM)
     case 0x5:
         if (rv32_funct7(s) == 0x00)
             return EXEC_ID_srli;
+
         if (rv32_funct7(s) == 0x20)
             return EXEC_ID_srai;
         return EXEC_ID_inv;
@@ -316,6 +317,7 @@ def_THelper(SYSTEM)
      * mret.  CSR instructions share the same opcode but are selected by funct3,
      * so the exact-match cases must be handled before the CSR table below.
      */
+
     if (rv32_funct3(s) == 0x0)
     {
         switch (get_instr(s))

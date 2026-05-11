@@ -76,6 +76,7 @@ struct Dinic
             for (int i = head[x]; i != -1; i = nxt[i])
             {
                 Edge &e = edges[i];
+
                 if (!vis[e.to] && e.cap > e.flow)
                 {
                     vis[e.to] = 1;
@@ -95,12 +96,14 @@ struct Dinic
         for (int i = cur[x]; i != -1; i = nxt[i])
         {
             Edge &e = edges[i];
+
             if (d[x] + 1 == d[e.to] && (f = DFS(e.to, min(a, e.cap - e.flow))) > 0)
             {
                 e.flow += f;
                 edges[i ^ 1].flow -= f;
                 flow += f;
                 a -= f;
+
                 if (a == 0)
                     break;
             }

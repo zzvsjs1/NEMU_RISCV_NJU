@@ -40,6 +40,7 @@ void prev(int rep)
     if (rep == 0)
         rep = 1;
     cur -= rep;
+
     if (cur < 0)
         cur = 0;
     render();
@@ -50,6 +51,7 @@ void next(int rep)
     if (rep == 0)
         rep = 1;
     cur += rep;
+
     if (cur >= N)
         cur = N - 1;
     render();
@@ -120,6 +122,7 @@ int main()
                 break;
             case SDLK_G:
                 g++;
+
                 if (g > 1)
                 {
                     prev(100000);

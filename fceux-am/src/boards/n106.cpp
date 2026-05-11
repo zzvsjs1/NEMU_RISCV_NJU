@@ -95,6 +95,7 @@ static void NamcoIRQHook(int a)
     if (IRQa)
     {
         IRQCount += a;
+
         if (IRQCount >= 0x7FFF)
         {
             X6502_IRQBegin(FCEU_IQEXT);
@@ -129,6 +130,7 @@ static DECLFR(Namco_Read5800)
 static void DoNTARAMROM(int w, uint8 V)
 {
     NTAPage[w] = V;
+
     if (V >= 0xE0)
         setntamem(NTARAM + ((V & 1) << 10), 1, w);
     else
@@ -148,6 +150,7 @@ static void FixNTAR(void)
 static void DoCHRRAMROM(int x, uint8 V)
 {
     CHR[x] = V;
+
     if (!is210 && !((gorfus >> ((x >> 2) + 6)) & 1) && (V >= 0xE0))
     {
         //		printf("BLAHAHA: %d, %02x\n",x,V);
@@ -200,6 +203,7 @@ static void FixCache(int a, int V)
 static DECLFW(Mapper19_write)
 {
     A &= 0xF800;
+
     if (A >= 0x8000 && A <= 0xb800)
         DoCHRRAMROM((A - 0x8000) >> 11, V);
     else
@@ -218,6 +222,7 @@ static DECLFW(Mapper19_write)
                 FixCache(dopol, V);
             }
             IRAM[dopol & 0x7f] = V;
+
             if (dopol & 0x80)
                 dopol = (dopol & 0x80) | ((dopol + 1) & 0x7f);
             break;
@@ -237,6 +242,7 @@ static DECLFW(Mapper19_write)
             break;
         case 0xE000:
             PRG[0] = V & 0x3F;
+
             if (is210)
             {
                 gorko = V >> 6;
@@ -269,6 +275,7 @@ static void NamcoSoundHack(void)
 {
 #if SOUND_CONFIG != SOUND_NONE
     int32 z, a;
+
     if (FSettings.soundq >= 1)
     {
         DoNamcoSoundHQ();
@@ -276,6 +283,7 @@ static void NamcoSoundHack(void)
     }
     z = ((SOUNDTS << 16) / soundtsinc) >> 4;
     a = z - dwave;
+
     if (a)
         DoNamcoSound(&Wave[dwave], a);
     dwave += a;
@@ -288,6 +296,7 @@ static void NamcoSound(int Count)
     int32 z, a;
     z = ((SOUNDTS << 16) / soundtsinc) >> 4;
     a = z - dwave;
+
     if (a)
         DoNamcoSound(&Wave[dwave], a);
     dwave = 0;
@@ -318,6 +327,7 @@ static INLINE uint32 FetchDuff(uint32 P, uint32 envelope)
 {
     uint32 duff;
     duff = IRAM[((IRAM[0x46 + (P << 3)] + (PlayIndex[P] >> TOINDEX)) & 0xFF) >> 1];
+
     if ((IRAM[0x46 + (P << 3)] + (PlayIndex[P] >> TOINDEX)) & 1)
         duff >>= 4;
     duff &= 0xF;
@@ -348,6 +358,7 @@ static void DoNamcoSoundHQ(void)
             for (V = CVBC << 1; V < (int)SOUNDTS << 1; V++)
             {
                 WaveHi[V >> 1] += duff2;
+
                 if (!vco)
                 {
                     PlayIndex[P] += freq;
@@ -406,6 +417,7 @@ static void N106_Power(void)
     SetReadHandler(0x8000, 0xFFFF, CartBR);
     SetWriteHandler(0x8000, 0xffff, Mapper19_write);
     SetWriteHandler(0x4020, 0x5fff, Mapper19_write);
+
     if (!is210)
     {
         SetWriteHandler(0xc000, 0xdfff, Mapper19C0D8_write);

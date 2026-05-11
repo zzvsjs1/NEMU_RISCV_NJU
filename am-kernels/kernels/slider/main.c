@@ -24,6 +24,7 @@ int main()
     while (1)
     {
         current = io_read(AM_TIMER_UPTIME).us / 1000;
+
         if (current - last > 5000)
         {
             // change image every 5s

@@ -24,6 +24,7 @@
 static DECLFW(UNLKOF97CMDWrite)
 {
     V = (V & 0xD8) | ((V & 0x20) >> 4) | ((V & 4) << 3) | ((V & 2) >> 1) | ((V & 1) << 2); //76143502
+
     if (A == 0x9000)
         A = 0x8001;
     MMC3_CMDWrite(A, V);
@@ -32,6 +33,7 @@ static DECLFW(UNLKOF97CMDWrite)
 static DECLFW(UNLKOF97IRQWrite)
 {
     V = (V & 0xD8) | ((V & 0x20) >> 4) | ((V & 4) << 3) | ((V & 2) >> 1) | ((V & 1) << 2);
+
     if (A == 0xD000)
         A = 0xC001;
     else if (A == 0xF000)

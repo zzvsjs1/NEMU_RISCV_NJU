@@ -130,6 +130,7 @@ static void exprTest()
      * watchpoints.
      */
     FILE *f = fopen(expr_test_file, "r");
+
     if (!f)
     {
         perror("File open failed");
@@ -156,6 +157,7 @@ static void exprTest()
 
         bool success = false;
         const word_t res = expr(otherBuffer, &success);
+
         if (!success)
         {
             printf(ANSI_FMT("Calculate failed for " FMT_DECIMAL_WORD " %s\n", ANSI_FG_RED), a, otherBuffer);
@@ -227,6 +229,7 @@ void init_monitor(int argc, char *argv[])
                                                   MUXDEF(CONFIG_ISA_riscv64, "riscv64", "bad")))) "-pc-linux-gnu"));
 
     // Chceck expression before printing welcome message.
+
     if (expr_test_file)
     {
         exprTest();

@@ -31,6 +31,7 @@ static void UNL158BPW(uint32 A, uint8 V)
     if (EXPREGS[0] & 0x80)
     {
         uint32 bank = EXPREGS[0] & 7;
+
         if (EXPREGS[0] & 0x20)
         { // 32Kb mode
             setprg32(0x8000, bank >> 1);

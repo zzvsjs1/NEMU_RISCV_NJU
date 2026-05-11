@@ -34,6 +34,7 @@ static DECLFR(UNLRT01Read)
     //		{ 0x8E80, 0x8EFF },
     //		{ 0xFE80, 0xFEFF },
     //	};
+
     if (((A >= 0xCE80) && (A < 0xCF00)) ||
         ((A >= 0xFE80) && (A < 0xFF00)))
     {

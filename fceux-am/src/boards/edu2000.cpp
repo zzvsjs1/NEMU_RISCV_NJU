@@ -74,6 +74,7 @@ void UNLEDU2000_Init(CartInfo *info)
     GameStateRestore = UNLEDU2000Restore;
     WRAM = (uint8 *)FCEU_gmalloc(32768);
     SetupCartPRGMapping(0x10, WRAM, 32768, 1);
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

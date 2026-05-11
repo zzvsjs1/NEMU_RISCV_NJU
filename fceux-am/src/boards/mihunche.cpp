@@ -30,6 +30,7 @@ static SFORMAT StateRegs[] =
 static void Sync(void)
 {
     setprg32(0x8000, 0);
+
     if (CHRsize[0] == 8192)
     {
         setchr4(0x0000, latche & 1);

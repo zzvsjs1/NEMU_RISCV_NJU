@@ -31,6 +31,7 @@ static SFORMAT StateRegs[] =
 static void Sync(void)
 {
     setchr8(reg);
+
     if (!delay)
     {
         setprg16(0x8000, reg);

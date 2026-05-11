@@ -54,6 +54,7 @@ static void Sync(void)
         break;
     }
     setmirror(mirroring);
+
     if (!is_large_banks)
         setchr8(chr_bank);
 }
@@ -79,6 +80,7 @@ static DECLFW(BMC70in1Write)
     else
     {
         mirroring = ((A & 0x20) >> 5) ^ 1;
+
         if (is_large_banks)
             large_bank = (A & 3) << 3;
         else

@@ -238,6 +238,7 @@ static void makeDB2LinTable(void)
     {
         assert(0);
         // DB2LIN_TABLE[i] = (int16)((double)((1 << DB2LIN_AMP_BITS) - 1) * pow(10, -(double)i * DB_STEP / 20));
+
         if (i >= DB_MUTE)
             DB2LIN_TABLE[i] = 0;
         DB2LIN_TABLE[i + DB_MUTE + DB_MUTE] = (int16)(-DB2LIN_TABLE[i]);
@@ -328,6 +329,7 @@ static void makeTllTable(void)
                     else
                     {
                         tmp = (int32)(kltable[fnum] - dB2(3.000) * (7 - block));
+
                         if (tmp <= 0)
                             tllTable[fnum][block][TL][KL] = TL2EG(TL);
                         else
@@ -344,6 +346,7 @@ static void makeDphaseARTable(void) {
         for (Rks = 0; Rks < 16; Rks++) {
             RM = AR + (Rks >> 2);
             RL = Rks & 3;
+
             if (RM > 15)
                 RM = 15;
             switch (AR) {
@@ -370,6 +373,7 @@ static void makeDphaseDRTable(void) {
         for (Rks = 0; Rks < 16; Rks++) {
             RM = DR + (Rks >> 2);
             RL = Rks & 3;
+
             if (RM > 15)
                 RM = 15;
             switch (DR) {
@@ -484,6 +488,7 @@ INLINE static void keyOn(OPLL *opll, int32 i)
 {
     if (!opll->slot_on_flag[i * 2])
         slotOn(MOD(opll, i));
+
     if (!opll->slot_on_flag[i * 2 + 1])
         slotOn(CAR(opll, i));
     opll->key_status[i] = 1;
@@ -501,6 +506,7 @@ INLINE static void keyOff(OPLL *opll, int32 i)
 INLINE static void setSustine(OPLL *opll, int32 c, int32 sustine)
 {
     CAR(opll, c)->sustine = sustine;
+
     if (MOD(opll, c)->type)
         MOD(opll, c)->sustine = sustine;
 }
@@ -607,6 +613,7 @@ OPLL *OPLL_new(uint32 clk, uint32 rate)
     maketables(clk, rate);
 
     opll = (OPLL *)malloc(sizeof(OPLL));
+
     if (opll == NULL)
         return NULL;
     memset(opll, 0, sizeof(OPLL));
@@ -758,6 +765,7 @@ static void calc_envelope(OPLL_SLOT *slot, int32 lfo)
     case ATTACK:
         egout = AR_ADJUST_TABLE[HIGHBITS(slot->eg_phase, EG_DP_BITS - EG_BITS)];
         slot->eg_phase += slot->eg_dphase;
+
         if ((EG_DP_WIDTH & slot->eg_phase) || (slot->patch.AR == 15))
         {
             egout = 0;
@@ -770,6 +778,7 @@ static void calc_envelope(OPLL_SLOT *slot, int32 lfo)
     case DECAY:
         egout = HIGHBITS(slot->eg_phase, EG_DP_BITS - EG_BITS);
         slot->eg_phase += slot->eg_dphase;
+
         if (slot->eg_phase >= SL[slot->patch.SL])
         {
             if (slot->patch.EG)
@@ -789,6 +798,7 @@ static void calc_envelope(OPLL_SLOT *slot, int32 lfo)
 
     case SUSHOLD:
         egout = HIGHBITS(slot->eg_phase, EG_DP_BITS - EG_BITS);
+
         if (slot->patch.EG == 0)
         {
             slot->eg_mode = SUSTINE;
@@ -800,6 +810,7 @@ static void calc_envelope(OPLL_SLOT *slot, int32 lfo)
     case RELEASE:
         egout = HIGHBITS(slot->eg_phase, EG_DP_BITS - EG_BITS);
         slot->eg_phase += slot->eg_dphase;
+
         if (egout >= (1 << EG_BITS))
         {
             slot->eg_mode = FINISH;
@@ -1120,6 +1131,7 @@ void OPLL_writeReg(OPLL *opll, uint32 reg, uint32 data)
         setFnumber(opll, ch, ((data & 1) << 8) + opll->LowFreq[ch]);
         setBlock(opll, ch, (data >> 1) & 7);
         setSustine(opll, ch, (data >> 5) & 1);
+
         if (data & 0x10)
             keyOn(opll, ch);
         else

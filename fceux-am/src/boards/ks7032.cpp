@@ -89,6 +89,7 @@ static void UNLSMB2JIRQHook(int a)
     if (IRQa)
     {
         IRQCount += a;
+
         if (IRQCount >= 0xFFFF)
         {
             IRQa = 0;

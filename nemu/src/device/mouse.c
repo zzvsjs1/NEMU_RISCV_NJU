@@ -112,6 +112,7 @@ static void mouse_enqueue(MouseEvent event)
    * Keep an explicit occupancy count so front == rear can represent both
    * "empty" and "all 1024 slots are full" without sacrificing one slot.
    */
+
     if (mouse_count == MOUSE_QUEUE_LEN)
     {
         if (event.type == MOUSE_EVENT_MOVE)
@@ -188,6 +189,7 @@ void send_mouse_motion(int x, int y, uint32_t buttons)
 void send_mouse_button(uint8_t sdl_button, bool is_down, int x, int y)
 {
     const uint32_t button = sdl_button_to_mouse(sdl_button);
+
     if (button == MOUSE_BUTTON_NONE)
         return;
 
@@ -195,6 +197,7 @@ void send_mouse_button(uint8_t sdl_button, bool is_down, int x, int y)
     mouse_y = y < 0 ? 0 : (uint32_t)y;
 
     const uint32_t bit = mouse_button_bit(button);
+
     if (is_down)
         mouse_buttons |= bit;
     else
@@ -217,6 +220,7 @@ void send_mouse_wheel(int dx, int dy)
    * buttons should still describe only left/middle/right state.
    */
     uint32_t button = MOUSE_BUTTON_NONE;
+
     if (dy > 0)
         button = MOUSE_BUTTON_WHEELUP;
     else if (dy < 0)
@@ -242,6 +246,7 @@ static void mouse_data_io_handler(uint32_t offset, int len, bool is_write)
    * AM reads the type first and then six payload words.  Latching on the type
    * read keeps those words from being mixed with a later SDL or scripted event.
    */
+
     if (offset == 0)
     {
         mouse_latched = mouse_dequeue();
@@ -283,11 +288,13 @@ static bool script_button_to_sdl(const char *button, uint8_t *sdl_button)
         *sdl_button = SDL_BUTTON_LEFT;
         return true;
     }
+
     if (strcmp(button, "middle") == 0)
     {
         *sdl_button = SDL_BUTTON_MIDDLE;
         return true;
     }
+
     if (strcmp(button, "right") == 0)
     {
         *sdl_button = SDL_BUTTON_RIGHT;
@@ -312,6 +319,7 @@ static void enqueue_script_event(const char *token)
     else if (sscanf(token, "down:%15[^;]", button) == 1)
     {
         uint8_t sdl_button = 0;
+
         if (script_button_to_sdl(button, &sdl_button))
         {
             send_mouse_button(sdl_button, true, mouse_x, mouse_y);
@@ -320,6 +328,7 @@ static void enqueue_script_event(const char *token)
     else if (sscanf(token, "up:%15[^;]", button) == 1)
     {
         uint8_t sdl_button = 0;
+
         if (script_button_to_sdl(button, &sdl_button))
         {
             send_mouse_button(sdl_button, false, mouse_x, mouse_y);
@@ -334,6 +343,7 @@ static void enqueue_script_event(const char *token)
 static void load_mouse_script(void)
 {
     const char *script = getenv("NEMU_MOUSE_SCRIPT");
+
     if (script == NULL || script[0] == '\0')
         return;
 

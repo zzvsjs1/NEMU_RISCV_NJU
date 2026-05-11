@@ -44,6 +44,7 @@ static void LatchPower(void)
 {
     latche = latcheinit;
     WSync();
+
     if (WRAM)
     {
         SetReadHandler(0x6000, 0xFFFF, CartBR);
@@ -73,6 +74,7 @@ static void Latch_Init(CartInfo *info, void (*proc)(void), readfunc func, uint16
     addrreg0 = adr0;
     addrreg1 = adr1;
     WSync = proc;
+
     if (func != NULL)
         defread = func;
     else
@@ -80,11 +82,13 @@ static void Latch_Init(CartInfo *info, void (*proc)(void), readfunc func, uint16
     info->Power = LatchPower;
     info->Reset = LatchReset;
     info->Close = LatchClose;
+
     if (wram)
     {
         WRAMSIZE = 8192;
         WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
         SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
+
         if (info->battery)
         {
             info->SaveGame[0] = WRAM;
@@ -238,6 +242,7 @@ static void M92Sync(void)
 {
     uint8 reg = latche & 0xF0;
     setprg16(0x8000, 0);
+
     if (latche >= 0x9000)
     {
         switch (reg)
@@ -346,6 +351,7 @@ void Mapper204_Init(CartInfo *info)
 static DECLFR(M212Read)
 {
     uint8 ret = CartBROB(A);
+
     if ((A & 0xE010) == 0x6000)
         ret |= 0x80;
     return ret;
@@ -496,6 +502,7 @@ void Mapper227_Init(CartInfo *info)
 static void M229Sync(void)
 {
     setchr8(latche);
+
     if (!(latche & 0x1e))
         setprg32(0x8000, 0);
     else
@@ -516,6 +523,7 @@ void Mapper229_Init(CartInfo *info)
 static void M231Sync(void)
 {
     setchr8(0);
+
     if (latche & 0x20)
         setprg32(0x8000, (latche >> 1) & 0x0F);
     else
@@ -566,6 +574,7 @@ void BMC190in1_Init(CartInfo *info)
 static void BMC810544CA1Sync(void)
 {
     uint32 bank = latche >> 7;
+
     if (latche & 0x40)
         setprg32(0x8000, bank);
     else
@@ -592,6 +601,7 @@ static void BMCNTD03Sync(void)
     // 1011 1010 1100 0100
     uint32 prg = ((latche >> 10) & 0x1e);
     uint32 chr = ((latche & 0x0300) >> 5) | (latche & 7);
+
     if (latche & 0x80)
     {
         setprg16(0x8000, prg | ((latche >> 6) & 1));
@@ -613,6 +623,7 @@ void BMCNTD03_Init(CartInfo *info)
 static void BMCG146Sync(void)
 {
     setchr8(0);
+
     if (latche & 0x800)
     { // UNROM mode
         setprg16(0x8000, (latche & 0x1F) | (latche & ((latche & 0x40) >> 6)));

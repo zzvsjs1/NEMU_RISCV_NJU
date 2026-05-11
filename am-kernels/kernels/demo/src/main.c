@@ -57,6 +57,7 @@ int main(const char *args)
     while (1)
     {
         AM_INPUT_KEYBRD_T ev = io_read(AM_INPUT_KEYBRD);
+
         if (ev.keydown && ev.keycode == AM_KEY_Q)
             break;
     }

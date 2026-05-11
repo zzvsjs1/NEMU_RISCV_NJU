@@ -44,24 +44,28 @@ static const char *utf8_decode(const char *o, int *val)
     const unsigned char *s = (const unsigned char *)o;
     unsigned int c = s[0];
     unsigned int res = 0; /* final result */
-    if (c < 0x80)         /* ascii? */
+
+    if (c < 0x80) /* ascii? */
         res = c;
     else
     {
         int count = 0; /* to count number of continuation bytes */
         while (c & 0x40)
-        {                                   /* still have continuation bytes? */
-            int cc = s[++count];            /* read next byte */
+        {                        /* still have continuation bytes? */
+            int cc = s[++count]; /* read next byte */
+
             if ((cc & 0xC0) != 0x80)        /* not a continuation byte? */
                 return NULL;                /* invalid byte sequence */
             res = (res << 6) | (cc & 0x3F); /* add lower 6 bits from cont. byte */
             c <<= 1;                        /* to test next bit */
         }
         res |= ((c & 0x7F) << (count * 5)); /* add first byte */
+
         if (count > 3 || res > MAXUNICODE || res <= limits[count])
             return NULL; /* invalid byte sequence */
         s += count;      /* skip continuation bytes read */
     }
+
     if (val)
         *val = res;
     return (const char *)s + 1; /* +1 to include first byte */
@@ -86,6 +90,7 @@ static int utflen(lua_State *L)
     while (posi <= posj)
     {
         const char *s1 = utf8_decode(s + posi, NULL);
+
         if (s1 == NULL)
         {                                 /* conversion error? */
             lua_pushnil(L);               /* return nil ... */
@@ -113,8 +118,10 @@ static int codepoint(lua_State *L)
     const char *se;
     luaL_argcheck(L, posi >= 1, 2, "out of range");
     luaL_argcheck(L, pose <= (lua_Integer)len, 3, "out of range");
+
     if (posi > pose)
-        return 0;               /* empty interval; return no values */
+        return 0; /* empty interval; return no values */
+
     if (pose - posi >= INT_MAX) /* (lua_Integer -> int) overflow? */
         return luaL_error(L, "string slice too long");
     n = (int)(pose - posi) + 1;
@@ -125,6 +132,7 @@ static int codepoint(lua_State *L)
     {
         int code;
         s = utf8_decode(s, &code);
+
         if (s == NULL)
             return luaL_error(L, "invalid UTF-8 code");
         lua_pushinteger(L, code);
@@ -146,7 +154,8 @@ static void pushutfchar(lua_State *L, int arg)
 static int utfchar(lua_State *L)
 {
     int n = lua_gettop(L); /* number of arguments */
-    if (n == 1)            /* optimize common case of single char */
+
+    if (n == 1) /* optimize common case of single char */
         pushutfchar(L, 1);
     else
     {
@@ -176,6 +185,7 @@ static int byteoffset(lua_State *L)
     posi = u_posrelat(luaL_optinteger(L, 3, posi), len);
     luaL_argcheck(L, 1 <= posi && --posi <= (lua_Integer)len, 3,
                   "position out of range");
+
     if (n == 0)
     {
         /* find beginning of current byte sequence */
@@ -186,6 +196,7 @@ static int byteoffset(lua_State *L)
     {
         if (iscont(s + posi))
             luaL_error(L, "initial position is a continuation byte");
+
         if (n < 0)
         {
             while (n < 0 && posi > 0)
@@ -210,6 +221,7 @@ static int byteoffset(lua_State *L)
             }
         }
     }
+
     if (n == 0) /* did it find given character? */
         lua_pushinteger(L, posi + 1);
     else /* no such character */
@@ -222,6 +234,7 @@ static int iter_aux(lua_State *L)
     size_t len;
     const char *s = luaL_checklstring(L, 1, &len);
     lua_Integer n = lua_tointeger(L, 2) - 1;
+
     if (n < 0) /* first iteration? */
         n = 0; /* start from here */
     else if (n < (lua_Integer)len)
@@ -230,12 +243,14 @@ static int iter_aux(lua_State *L)
         while (iscont(s + n))
             n++; /* and its continuations */
     }
+
     if (n >= (lua_Integer)len)
         return 0; /* no more codepoints */
     else
     {
         int code;
         const char *next = utf8_decode(s + n, &code);
+
         if (next == NULL || iscont(next))
             return luaL_error(L, "invalid UTF-8 code");
         lua_pushinteger(L, n + 1);

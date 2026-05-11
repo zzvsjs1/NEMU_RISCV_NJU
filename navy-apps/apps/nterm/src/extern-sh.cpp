@@ -10,6 +10,7 @@ static void poll_terminal()
 {
     static char buf[4096];
     int nread = read(read_fd, buf, sizeof(buf));
+
     if (nread > 0)
     {
         term->write(buf, nread);
@@ -56,6 +57,7 @@ static void fork_child(const char *nterm_proc)
     dup2(app_to_nterm[1], 2);
 
     pid_t p = vfork();
+
     if (p == 0)
     {
         execve(argv[0], (char **)argv, (char **)envp);
@@ -85,6 +87,7 @@ void extern_app_run(const char *app_path)
         while ((ch = getc(stdin)) != -1)
         {
             *p++ = ch;
+
             if (ch == '\n')
                 break;
         }
@@ -93,6 +96,7 @@ void extern_app_run(const char *app_path)
         if (buf[0] == 'k')
         {
             const char *res = term->keypress(handle_key(buf + 1));
+
             if (res)
             {
                 write(write_fd, res, strlen(res));

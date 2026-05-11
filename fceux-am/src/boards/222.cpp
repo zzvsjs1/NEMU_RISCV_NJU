@@ -43,6 +43,7 @@ static void M222IRQ(void)
     if (IRQa)
     {
         IRQCount++;
+
         if (IRQCount >= 238)
         {
             X6502_IRQBegin(FCEU_IQEXT);
@@ -105,6 +106,7 @@ static DECLFW(M222Write)
         //	case 0xC001: IRQPre=16; FCEU_printf("%04x:%02x %d\n",A,V,scanline); break;
     case 0xF000:
         IRQa = IRQCount = V;
+
         if (scanline < 240)
             IRQCount -= 8;
         else

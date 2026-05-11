@@ -57,10 +57,12 @@ static DECLFW(UNLKS7010Write)
 static void UNLKS7010Reset(void)
 {
     preg[0]++;
+
     if (preg[0] == 0x10)
     {
         preg[0] = 0;
         preg[1]++;
+
         if (preg[1] == 0x10)
         {
             preg[1] = 0;

@@ -100,6 +100,7 @@ void M106CpuHook(int a)
     if (IRQa)
     {
         IRQCount += a;
+
         if (IRQCount > 0x10000)
         {
             X6502_IRQBegin(FCEU_IQEXT);

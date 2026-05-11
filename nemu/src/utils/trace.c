@@ -16,6 +16,7 @@ void trace_iringbuf_record(const char *logbuf)
     /* Overwrite the oldest instruction once the ring is full. */
     snprintf(iringbuf[iringbuf_next], sizeof(iringbuf[iringbuf_next]), "%s", logbuf);
     iringbuf_next = (iringbuf_next + 1) % CONFIG_IRINGBUF_SIZE;
+
     if (iringbuf_count < CONFIG_IRINGBUF_SIZE)
     {
         iringbuf_count++;

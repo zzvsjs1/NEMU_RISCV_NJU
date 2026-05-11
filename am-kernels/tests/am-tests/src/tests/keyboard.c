@@ -11,11 +11,13 @@ static void drain_keys()
     // UART and keyboard are separate AM input contracts. Drain both queues until
     // their sentinel values appear, so a slow terminal or backend cannot leave
     // stale events that confuse the next polling iteration.
+
     if (has_uart)
     {
         while (1)
         {
             char ch = io_read(AM_UART_RX).data;
+
             if (ch == -1)
                 break;
             printf("Got (uart): %c (%d)\n", ch, ch & 0xff);
@@ -27,6 +29,7 @@ static void drain_keys()
         while (1)
         {
             AM_INPUT_KEYBRD_T ev = io_read(AM_INPUT_KEYBRD);
+
             if (ev.keycode == AM_KEY_NONE)
                 break;
             printf("Got  (kbd): %s (%d) %s\n", names[ev.keycode], ev.keycode, ev.keydown ? "DOWN" : "UP");

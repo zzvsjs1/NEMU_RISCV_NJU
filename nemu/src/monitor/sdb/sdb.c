@@ -178,6 +178,7 @@ static int cmd_scan_memory(char *args)
 
     // Copy the expr.
     exprStr = (char *)malloc((lenOfStr - i) * sizeof(char));
+
     if (!exprStr)
     {
         PRI_ERR_E("Cannot allocate memory.\n");
@@ -185,6 +186,7 @@ static int cmd_scan_memory(char *args)
     }
 
     // Extract numbers and expression.
+
     if (sscanf(args, "%" SCNu64 " %s", &n, exprStr) != 2)
     {
         PRI_ERR_E("Cannot get number or expression from your input.\n");
@@ -199,6 +201,7 @@ static int cmd_scan_memory(char *args)
 
     // Eval expression.
     res = expr(exprStr, &success);
+
     if (!success)
     {
         PRI_ERR("Cannot evaluate this expression \"%s\".\n", exprStr);
@@ -245,6 +248,7 @@ static int cmd_del_wp(char *args)
     }
 
     unsigned int i;
+
     if (sscanf(args, "%u", &i) != 1)
     {
         PRI_ERR_E("Cannot parse uint.\n");
@@ -265,6 +269,7 @@ static int cmd_expr(char *args)
 
     bool success;
     const word_t retVal = expr(args, &success);
+
     if (!success)
     {
         PRI_ERR_E("Invalid expression\n");
@@ -313,6 +318,7 @@ static int cmd_set_register_val(char *args)
      * rather than poking cpu directly.  That keeps hardwired-register and pc
      * special cases owned by the RISC-V register layer.
      */
+
     if (!args)
     {
         null_cmd();
@@ -329,6 +335,7 @@ static int cmd_set_register_val(char *args)
     }
 
     word_t val;
+
     if (sscanf(args, "%s " FMT_WORD_SCAN, buffer, &val) != 2)
     {
         PRI_ERR_E("Cannot scan value.");
@@ -376,6 +383,7 @@ void sdb_mainloop()
 
         /* extract the first token as the command */
         char *cmd = strtok(str, " ");
+
         if (cmd == NULL)
         {
             continue;
@@ -385,6 +393,7 @@ void sdb_mainloop()
          * which may need further parsing
          */
         char *args = cmd + strlen(cmd) + 1;
+
         if (args >= str_end)
         {
             args = NULL;

@@ -81,6 +81,7 @@ static void __am_gpu_fbdraw(AM_GPU_FBDRAW_T *draw)
    * AM uses a separate sync flag, while NDL flushes through /dev/fb writes.
    * A sync-only request therefore has no extra work here.
    */
+
     if (draw->pixels == NULL || draw->w <= 0 || draw->h <= 0)
     {
         return;
@@ -113,12 +114,16 @@ static int lookup_mouse_button(const char *name)
 {
     if (strcmp(name, "LEFT") == 0)
         return AM_MOUSE_BUTTON_LEFT;
+
     if (strcmp(name, "MIDDLE") == 0)
         return AM_MOUSE_BUTTON_MIDDLE;
+
     if (strcmp(name, "RIGHT") == 0)
         return AM_MOUSE_BUTTON_RIGHT;
+
     if (strcmp(name, "WHEELUP") == 0)
         return AM_MOUSE_BUTTON_WHEELUP;
+
     if (strcmp(name, "WHEELDOWN") == 0)
         return AM_MOUSE_BUTTON_WHEELDOWN;
     return AM_MOUSE_BUTTON_NONE;
@@ -128,6 +133,7 @@ static void __am_input_keybrd(AM_INPUT_KEYBRD_T *kbd)
 {
     char event[64];
     const int n = NDL_PollEvent(event, sizeof(event) - 1);
+
     if (n <= 0)
     {
         kbd->keydown = false;
@@ -139,6 +145,7 @@ static void __am_input_keybrd(AM_INPUT_KEYBRD_T *kbd)
 
     char prefix[3] = {};
     char name[32] = {};
+
     if (sscanf(event, "%2s %31s", prefix, name) != 2)
     {
         kbd->keydown = false;
@@ -172,6 +179,7 @@ static void __am_input_mouse(AM_INPUT_MOUSE_T *mouse)
 {
     char event[64];
     const int n = NDL_PollEvent(event, sizeof(event) - 1);
+
     if (n <= 0)
     {
         mouse->type = AM_MOUSE_NONE;
@@ -181,6 +189,7 @@ static void __am_input_mouse(AM_INPUT_MOUSE_T *mouse)
     event[n] = '\0';
 
     char prefix[3] = {};
+
     if (sscanf(event, "%2s", prefix) != 1)
     {
         mouse->type = AM_MOUSE_NONE;
@@ -267,8 +276,10 @@ static void __am_audio_status(AM_AUDIO_STATUS_T *status)
 
     const int free_bytes = NDL_QueryAudio();
     status->count = NAVY_AM_AUDIO_BUFSIZE - free_bytes;
+
     if (status->count < 0)
         status->count = 0;
+
     if (status->count > NAVY_AM_AUDIO_BUFSIZE)
         status->count = NAVY_AM_AUDIO_BUFSIZE;
 }
@@ -277,6 +288,7 @@ static void __am_audio_play(AM_AUDIO_PLAY_T *play)
 {
     uint8_t *start = (uint8_t *)play->buf.start;
     uint8_t *end = (uint8_t *)play->buf.end;
+
     if (start == NULL || end <= start)
     {
         return;
@@ -345,6 +357,7 @@ static void *lut[128] = {
 void ioe_read(int reg, void *buf)
 {
     handler_t handler = (handler_t)lut[reg];
+
     if (handler != NULL)
     {
         handler(buf);
@@ -354,6 +367,7 @@ void ioe_read(int reg, void *buf)
 void ioe_write(int reg, void *buf)
 {
     handler_t handler = (handler_t)lut[reg];
+
     if (handler != NULL)
     {
         handler(buf);

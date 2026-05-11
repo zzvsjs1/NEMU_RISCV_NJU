@@ -69,6 +69,7 @@ Window *WindowManager::spawn(const char *path, const char *argv[])
 void WindowManager::render()
 {
     draw_window(background); // TODO: more gracefully handle these
+
     if (focus)
     {
         for (auto *win : windows)
@@ -79,6 +80,7 @@ void WindowManager::render()
             }
         }
         draw_window(focus);
+
         if (display_switcher)
         {
             ((WindowSwitcher *)switcher)->sync();
@@ -103,9 +105,11 @@ void WindowManager::render()
                 for (int i = 0; i < T; i++)
                 {
                     int x1 = x * T, y1 = y * T + i;
+
                     if (y1 >= h)
                         continue;
                     int sz = T * n;
+
                     if (x1 + T * n > w)
                     {
                         sz -= x1 + T * n - w;
@@ -145,18 +149,23 @@ void WindowManager::draw_window(Window *win)
             if (changed[x + y * tw])
             {
                 int basex = x * T, basey = y * T;
+
                 if (basex + T < win->x)
                     continue;
+
                 if (basey + T < win->y)
                     continue;
+
                 if (basex >= win->x + win->w)
                     continue;
+
                 if (basey >= win->y + win->h)
                     continue;
                 for (int i = 0; i < T; i++)
                     for (int j = 0; j < T; j++)
                     {
                         int x1 = basex + i - win->x, y1 = basey + j - win->y;
+
                         if (x1 >= 0 && x1 < win->w && y1 >= 0 && y1 < win->h)
                         {
                             draw_px(basex + i, basey + j, win->canvas[y1 * win->w + x1], win->has_alpha);

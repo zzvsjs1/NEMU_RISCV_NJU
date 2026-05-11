@@ -59,6 +59,7 @@ static DECLFW(M206Write)
             V &= 0x3F;
         else
             V &= 0x0F;
+
         if (cmd <= 0x01)
             V >>= 1;
         DRegs[cmd & 0x07] = V;

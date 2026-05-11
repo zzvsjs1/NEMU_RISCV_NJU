@@ -70,6 +70,7 @@ uint64_t gdb_decode_hex_str(uint8_t *bytes)
 static struct gdb_conn *gdb_begin(int fd)
 {
     struct gdb_conn *conn = calloc(1, sizeof(struct gdb_conn));
+
     if (conn == NULL)
         err(1, "calloc");
 
@@ -77,16 +78,19 @@ static struct gdb_conn *gdb_begin(int fd)
 
     // duplicate the handle to separate read/write state
     int fd2 = dup(fd);
+
     if (fd2 < 0)
         err(1, "dup");
 
     // open a FILE* for reading
     conn->in = fdopen(fd, "rb");
+
     if (conn->in == NULL)
         err(1, "fdopen");
 
     // open a FILE* for writing
     conn->out = fdopen(fd2, "wb");
+
     if (conn->out == NULL)
         err(1, "fdopen");
 
@@ -104,13 +108,16 @@ struct gdb_conn *gdb_begin_inet(const char *addr, uint16_t port)
         .sin_family = AF_INET,
         .sin_port = htons(port),
     };
+
     if (inet_aton(addr, &sa.sin_addr) == 0)
         errx(1, "Invalid address: %s", addr);
 
     // open the socket and start the tcp connection
     int fd = socket(AF_INET, SOCK_STREAM, 0);
+
     if (fd < 0)
         err(1, "socket");
+
     if (connect(fd, (const struct sockaddr *)&sa, sizeof(sa)) != 0)
     {
         close(fd);
@@ -120,6 +127,7 @@ struct gdb_conn *gdb_begin_inet(const char *addr, uint16_t port)
     socklen_t tmp;
     tmp = 1;
     int r = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (char *)&tmp, sizeof(tmp));
+
     if (r)
     {
         perror("setsockopt");
@@ -127,6 +135,7 @@ struct gdb_conn *gdb_begin_inet(const char *addr, uint16_t port)
     }
     tmp = 1;
     r = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char *)&tmp, sizeof(tmp));
+
     if (r)
     {
         perror("setsockopt");
@@ -187,6 +196,7 @@ static uint8_t *recv_packet(FILE *in, size_t *ret_size, bool *ret_sum_ok)
     size_t i = 0;
     size_t size = 4096;
     uint8_t *reply = malloc(size);
+
     if (reply == NULL)
         err(1, "malloc");
 
@@ -219,9 +229,11 @@ static uint8_t *recv_packet(FILE *in, size_t *ret_size, bool *ret_sum_ok)
             *ret_size = i;
 
             // terminate it for good measure
+
             if (i == size)
             {
                 reply = realloc(reply, size + 1);
+
                 if (reply == NULL)
                     err(1, "realloc");
             }
@@ -242,6 +254,7 @@ static uint8_t *recv_packet(FILE *in, size_t *ret_size, bool *ret_sum_ok)
             if (i > 0)
             { // need something to repeat!
                 int c2 = fgetc(in);
+
                 if (c2 < 29 || c2 > 126 || c2 == '$' || c2 == '#')
                 {
                     // invalid count character!
@@ -252,10 +265,12 @@ static uint8_t *recv_packet(FILE *in, size_t *ret_size, bool *ret_sum_ok)
                     int count = c2 - 29;
 
                     // get a bigger buffer if needed
+
                     if (i + count > size)
                     {
                         size *= 2;
                         reply = realloc(reply, size);
+
                         if (reply == NULL)
                             err(1, "realloc");
                     }
@@ -270,6 +285,7 @@ static uint8_t *recv_packet(FILE *in, size_t *ret_size, bool *ret_sum_ok)
         }
 
         // XOR an escaped character
+
         if (escape)
         {
             c ^= 0x20;
@@ -277,10 +293,12 @@ static uint8_t *recv_packet(FILE *in, size_t *ret_size, bool *ret_sum_ok)
         }
 
         // get a bigger buffer if needed
+
         if (i == size)
         {
             size *= 2;
             reply = realloc(reply, size);
+
             if (reply == NULL)
                 err(1, "realloc");
         }

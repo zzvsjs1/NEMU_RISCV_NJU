@@ -68,6 +68,7 @@ int NDL_PollEvent(char *buf, int len)
    * names and coordinates to SDL event structures.
    */
     // Open keyborad file.
+
     if (eventsFd == -1)
     {
         eventsFd = open("/dev/events", 0);
@@ -108,9 +109,11 @@ void NDL_OpenCanvas(int *w, int *h)
         {
             // 3 = evtdev
             int nread = read(3, buf, sizeof(buf) - 1);
+
             if (nread <= 0)
                 continue;
             buf[nread] = '\0';
+
             if (strcmp(buf, "mmap ok") == 0)
                 break;
         }
@@ -130,6 +133,7 @@ void NDL_OpenCanvas(int *w, int *h)
     assert(sscanf(buffer, "WIDTH:%d\nHEIGHT:%d\n", &screen_w, &screen_h) == 2);
 
     // Make sure we check if both zero before assign canvas's size....
+
     if (*w == 0 && *h == 0)
     {
         *w = screen_w;
@@ -163,13 +167,16 @@ void NDL_TranslateMouse(int *x, int *y)
    * window positions back to framebuffer space, then NDL maps framebuffer space
    * to the app canvas.
    */
+
     if (x != NULL)
     {
         *x -= canvas_x;
+
         if (canvas_w > 0)
         {
             if (*x < 0)
                 *x = 0;
+
             if (*x >= canvas_w)
                 *x = canvas_w - 1;
         }
@@ -178,10 +185,12 @@ void NDL_TranslateMouse(int *x, int *y)
     if (y != NULL)
     {
         *y -= canvas_y;
+
         if (canvas_h > 0)
         {
             if (*y < 0)
                 *y = 0;
+
             if (*y >= canvas_h)
                 *y = canvas_h - 1;
         }
@@ -202,6 +211,7 @@ void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
    * write is enough.  This is the common full-screen image path for ONScripter
    * on a 400x300 canvas, and it avoids one syscall and one VGA sync per row.
    */
+
     if (canvas_x + x == 0 && w == screen_w)
     {
         const off_t offset = (off_t)(canvas_y + y) * screen_w * (off_t)sizeof(uint32_t);
@@ -263,6 +273,7 @@ void NDL_CloseAudio()
         close(sbFd);
         sbFd = -1;
     }
+
     if (sbctlFd >= 0)
     {
         close(sbctlFd);
@@ -282,6 +293,7 @@ int NDL_PlayAudio(void *buf, int len)
     while (written < len)
     {
         ssize_t w = write(sbFd, (uint8_t *)buf + written, len - written);
+
         if (w <= 0)
             return written; // should not happen, but be safe
         written += (int)w;
@@ -306,6 +318,7 @@ int NDL_QueryAudio()
    * /dev/sb.
    */
     ssize_t r = read(sbctlFd, &free_bytes, sizeof(free_bytes));
+
     if (r < (ssize_t)sizeof(free_bytes))
         return 0;
     return free_bytes;
@@ -329,6 +342,7 @@ int NDL_Init(uint32_t flags)
 void NDL_Quit()
 {
     // Close fds.
+
     if (eventsFd >= 0)
     {
         assert(close(eventsFd) == 0);

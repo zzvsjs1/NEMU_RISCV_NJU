@@ -46,17 +46,21 @@ static bool is_same(const char *file1, const char *file2)
     bool ret = false;
 
     fd1 = open(file1, O_RDONLY);
+
     if (fd1 < 0)
         return ret;
 
     fd2 = open(file2, O_RDONLY);
+
     if (fd2 < 0)
         goto close1;
 
     ret = fstat(fd1, &st1);
+
     if (ret)
         goto close2;
     ret = fstat(fd2, &st2);
+
     if (ret)
         goto close2;
 
@@ -64,10 +68,12 @@ static bool is_same(const char *file1, const char *file2)
         goto close2;
 
     map1 = mmap(NULL, st1.st_size, PROT_READ, MAP_PRIVATE, fd1, 0);
+
     if (map1 == MAP_FAILED)
         goto close2;
 
     map2 = mmap(NULL, st2.st_size, PROT_READ, MAP_PRIVATE, fd2, 0);
+
     if (map2 == MAP_FAILED)
         goto close2;
 
@@ -98,6 +104,7 @@ static int make_parent_dir(const char *path)
 
     /* Remove the base name. Just return if nothing is left */
     p = strrchr(tmp, '/');
+
     if (!p)
         return 0;
     *(p + 1) = 0;
@@ -112,6 +119,7 @@ static int make_parent_dir(const char *path)
         *p = 0;
 
         /* skip if the directory exists */
+
         if (!is_dir(tmp) && mkdir(tmp, 0755))
             return -1;
 
@@ -134,6 +142,7 @@ static int conf_touch_dep(const char *name)
     char *d, c;
 
     /* check overflow: prefix + name + ".h" + '\0' must fit in buffer. */
+
     if (depfile_prefix_len + strlen(name) + 3 > sizeof(depfile_path))
         return -1;
 
@@ -146,17 +155,20 @@ static int conf_touch_dep(const char *name)
 
     /* Assume directory path already exists. */
     fd = open(depfile_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
     if (fd == -1)
     {
         if (errno != ENOENT)
             return -1;
 
         ret = make_parent_dir(depfile_path);
+
         if (ret)
             return ret;
 
         /* Try it again. */
         fd = open(depfile_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
         if (fd == -1)
             return -1;
     }
@@ -255,12 +267,14 @@ static int conf_set_sym_val(struct symbol *sym, int def, int def_flags, char *p)
             sym->flags |= def_flags;
             break;
         }
+
         if (p[0] == 'n')
         {
             sym->def[def].tri = no;
             sym->flags |= def_flags;
             break;
         }
+
         if (def != S_DEF_AUTO)
             conf_warning("symbol value '%s' invalid for %s",
                          p, sym->name);
@@ -277,6 +291,7 @@ static int conf_set_sym_val(struct symbol *sym, int def, int def_flags, char *p)
             }
             memmove(p2, p2 + 1, strlen(p2));
         }
+
         if (!p2)
         {
             if (def != S_DEF_AUTO)
@@ -309,11 +324,13 @@ static int add_byte(int c, char **lineptr, size_t slen, size_t *n)
 {
     char *nline;
     size_t new_size = slen + 1;
+
     if (new_size > *n)
     {
         new_size += LINE_GROWTH - 1;
         new_size *= 2;
         nline = xrealloc(*lineptr, new_size);
+
         if (!nline)
             return -1;
 
@@ -346,6 +363,7 @@ static ssize_t compat_getline(char **lineptr, size_t *n, FILE *stream)
             if (add_byte('\0', &line, slen, n) < 0)
                 goto e_out;
             *lineptr = line;
+
             if (slen == 0)
                 return -1;
             return slen;
@@ -381,9 +399,11 @@ int conf_read_simple(const char *name, int def)
 
         name = conf_get_configname();
         in = zconf_fopen(name);
+
         if (in)
             goto load;
         sym_add_change_count(1);
+
         if (!sym_defconfig_list)
             return 1;
 
@@ -395,6 +415,7 @@ int conf_read_simple(const char *name, int def)
             sym_calc_value(prop->expr->left.sym);
             name = sym_get_string_value(prop->expr->left.sym);
             in = zconf_fopen(name);
+
             if (in)
             {
                 conf_message("using defaults found in %s",
@@ -403,6 +424,7 @@ int conf_read_simple(const char *name, int def)
             }
         }
     }
+
     if (!in)
         return 1;
 
@@ -416,6 +438,7 @@ load:
     {
         sym->flags |= SYMBOL_CHANGED;
         sym->flags &= ~(def_flags | SYMBOL_VALID);
+
         if (sym_is_choice(sym))
             sym->flags |= def_flags;
         switch (sym->type)
@@ -436,19 +459,24 @@ load:
     {
         conf_lineno++;
         sym = NULL;
+
         if (line[0] == '#')
         {
             if (memcmp(line + 2, CONFIG_, strlen(CONFIG_)))
                 continue;
             p = strchr(line + 2 + strlen(CONFIG_), ' ');
+
             if (!p)
                 continue;
             *p++ = 0;
+
             if (strncmp(p, "is not set", 10))
                 continue;
+
             if (def == S_DEF_USER)
             {
                 sym = sym_find(line + 2 + strlen(CONFIG_));
+
                 if (!sym)
                 {
                     sym_add_change_count(1);
@@ -458,9 +486,11 @@ load:
             else
             {
                 sym = sym_lookup(line + 2 + strlen(CONFIG_), 0);
+
                 if (sym->type == S_UNKNOWN)
                     sym->type = S_BOOLEAN;
             }
+
             if (sym->flags & def_flags)
             {
                 conf_warning("override: reassigning to symbol %s", sym->name);
@@ -478,18 +508,22 @@ load:
         else if (memcmp(line, CONFIG_, strlen(CONFIG_)) == 0)
         {
             p = strchr(line + strlen(CONFIG_), '=');
+
             if (!p)
                 continue;
             *p++ = 0;
             p2 = strchr(p, '\n');
+
             if (p2)
             {
                 *p2-- = 0;
+
                 if (*p2 == '\r')
                     *p2 = 0;
             }
 
             sym = sym_find(line + strlen(CONFIG_));
+
             if (!sym)
             {
                 if (def == S_DEF_AUTO)
@@ -509,6 +543,7 @@ load:
             {
                 conf_warning("override: reassigning to symbol %s", sym->name);
             }
+
             if (conf_set_sym_val(sym, def, def_flags, p))
                 continue;
         }
@@ -568,8 +603,10 @@ int conf_read(const char *name)
     for_all_symbols(i, sym)
     {
         sym_calc_value(sym);
+
         if (sym_is_choice(sym) || (sym->flags & SYMBOL_NO_WRITE))
             continue;
+
         if (sym_has_value(sym) && (sym->flags & SYMBOL_WRITE))
         {
             /* check that calculated value agrees with saved value */
@@ -602,6 +639,7 @@ int conf_read(const char *name)
              * doesn't quite work if the Kconfig and the saved
              * configuration disagree.
              */
+
             if (sym->visible == no && !conf_unsaved)
                 sym->flags &= ~SYMBOL_DEF_USER;
             switch (sym->type)
@@ -610,6 +648,7 @@ int conf_read(const char *name)
             case S_INT:
             case S_HEX:
                 /* Reset a string value if it's out of range */
+
                 if (sym_string_within_range(sym, sym->def[S_DEF_USER].val))
                     break;
                 sym->flags &= ~(SYMBOL_VALID | SYMBOL_DEF_USER);
@@ -669,6 +708,7 @@ kconfig_print_comment(FILE *fp, const char *value, void *arg)
     {
         l = strcspn(p, "\n");
         fprintf(fp, "#");
+
         if (l)
         {
             fprintf(fp, " ");
@@ -676,6 +716,7 @@ kconfig_print_comment(FILE *fp, const char *value, void *arg)
             p += l;
         }
         fprintf(fp, "\n");
+
         if (*p++ == '\0')
             break;
     }
@@ -747,6 +788,7 @@ header_print_comment(FILE *fp, const char *value, void *arg)
     {
         l = strcspn(p, "\n");
         fprintf(fp, " *");
+
         if (l)
         {
             fprintf(fp, " ");
@@ -754,6 +796,7 @@ header_print_comment(FILE *fp, const char *value, void *arg)
             p += l;
         }
         fprintf(fp, "\n");
+
         if (*p++ == '\0')
             break;
     }
@@ -812,6 +855,7 @@ int conf_write_defconfig(const char *filename)
     FILE *out;
 
     out = fopen(filename, "w");
+
     if (!out)
         return 1;
 
@@ -823,6 +867,7 @@ int conf_write_defconfig(const char *filename)
     while (menu != NULL)
     {
         sym = menu->sym;
+
         if (sym == NULL)
         {
             if (!menu_is_visible(menu))
@@ -831,13 +876,16 @@ int conf_write_defconfig(const char *filename)
         else if (!sym_is_choice(sym))
         {
             sym_calc_value(sym);
+
             if (!(sym->flags & SYMBOL_WRITE))
                 goto next_menu;
             sym->flags &= ~SYMBOL_WRITE;
             /* If we cannot change the symbol - skip */
+
             if (!sym_is_changeable(sym))
                 goto next_menu;
             /* If symbol equals to default value - skip */
+
             if (strcmp(sym_get_string_value(sym), sym_get_string_default(sym)) == 0)
                 goto next_menu;
 
@@ -848,6 +896,7 @@ int conf_write_defconfig(const char *filename)
              * choice is not "optional".
              * (If choice is "optional" then all values can be "n")
              */
+
             if (sym_is_choice_value(sym))
             {
                 struct symbol *cs;
@@ -855,6 +904,7 @@ int conf_write_defconfig(const char *filename)
 
                 cs = prop_get_symbol(sym_get_choice_prop(sym));
                 ds = sym_choice_default(cs);
+
                 if (!sym_is_optional(cs) && sym == ds)
                 {
                     if ((sym->type == S_BOOLEAN) &&
@@ -865,6 +915,7 @@ int conf_write_defconfig(const char *filename)
             conf_write_symbol(out, sym, &kconfig_printer_cb, NULL);
         }
     next_menu:
+
         if (menu->list != NULL)
         {
             menu = menu->list;
@@ -919,6 +970,7 @@ int conf_write(const char *name)
         return -1;
 
     env = getenv("KCONFIG_OVERWRITECONFIG");
+
     if (env && *env)
     {
         *tmpname = 0;
@@ -930,6 +982,7 @@ int conf_write(const char *name)
                  name, (int)getpid());
         out = fopen(tmpname, "w");
     }
+
     if (!out)
         return 1;
 
@@ -942,6 +995,7 @@ int conf_write(const char *name)
     while (menu)
     {
         sym = menu->sym;
+
         if (!sym)
         {
             if (!menu_is_visible(menu))
@@ -958,8 +1012,10 @@ int conf_write(const char *name)
                  !(sym->flags & SYMBOL_WRITTEN))
         {
             sym_calc_value(sym);
+
             if (!(sym->flags & SYMBOL_WRITE))
                 goto next;
+
             if (need_newline)
             {
                 fprintf(out, "\n");
@@ -970,11 +1026,13 @@ int conf_write(const char *name)
         }
 
     next:
+
         if (menu->list)
         {
             menu = menu->list;
             continue;
         }
+
         if (menu->next)
             menu = menu->next;
         else
@@ -987,6 +1045,7 @@ int conf_write(const char *name)
                     fprintf(out, "# end of %s\n", str);
                     need_newline = true;
                 }
+
                 if (menu->next)
                 {
                     menu = menu->next;
@@ -1011,6 +1070,7 @@ int conf_write(const char *name)
 
         snprintf(oldname, sizeof(oldname), "%s.old", name);
         rename(name, oldname);
+
         if (rename(tmpname, name))
             return 1;
     }
@@ -1029,6 +1089,7 @@ static int conf_write_dep(const char *name)
     FILE *out;
 
     out = fopen("..config.tmp", "w");
+
     if (!out)
         return 1;
     fprintf(out, "deps_config := \\\n");
@@ -1070,8 +1131,10 @@ static int conf_touch_deps(void)
     for_all_symbols(i, sym)
     {
         sym_calc_value(sym);
+
         if ((sym->flags & SYMBOL_NO_WRITE) || !sym->name)
             continue;
+
         if (sym->flags & SYMBOL_WRITE)
         {
             if (sym->flags & SYMBOL_DEF_AUTO)
@@ -1127,6 +1190,7 @@ static int conf_touch_deps(void)
          */
 
         res = conf_touch_dep(sym->name);
+
         if (res)
             return res;
     }
@@ -1151,10 +1215,12 @@ int conf_write_autoconf(int overwrite)
         return 1;
 
     out = fopen(".tmpconfig", "w");
+
     if (!out)
         return 1;
 
     out_h = fopen(".tmpconfig.h", "w");
+
     if (!out_h)
     {
         fclose(out);
@@ -1167,6 +1233,7 @@ int conf_write_autoconf(int overwrite)
     for_all_symbols(i, sym)
     {
         sym_calc_value(sym);
+
         if (!(sym->flags & SYMBOL_WRITE) || !sym->name)
             continue;
 
@@ -1178,10 +1245,13 @@ int conf_write_autoconf(int overwrite)
     fclose(out_h);
 
     name = getenv("KCONFIG_AUTOHEADER");
+
     if (!name)
         name = "include/generated/autoconf.h";
+
     if (make_parent_dir(name))
         return 1;
+
     if (rename(".tmpconfig.h", name))
         return 1;
 
@@ -1191,6 +1261,7 @@ int conf_write_autoconf(int overwrite)
      * This must be the last step, kbuild has a dependency on auto.conf
      * and this marks the successful completion of the previous steps.
      */
+
     if (rename(".tmpconfig", autoconf_name))
         return 1;
 
@@ -1204,6 +1275,7 @@ void sym_set_change_count(int count)
 {
     int _sym_change_count = sym_change_count;
     sym_change_count = count;
+
     if (conf_changed_callback &&
         (bool)_sym_change_count != (bool)count)
         conf_changed_callback();
@@ -1236,6 +1308,7 @@ static bool randomize_choice_values(struct symbol *csym)
      * and if no then no-one.
      * In both cases stop.
      */
+
     if (csym->curr.tri != yes)
         return false;
 
@@ -1308,6 +1381,7 @@ bool conf_set_all_new_symbols(enum conf_def_mode mode)
     pty = ptm = 33; /* can't go as the default in switch-case
                    * below, otherwise gcc whines about
                    * -Wmaybe-uninitialized */
+
     if (mode == def_random)
     {
         int n, p[3];
@@ -1317,6 +1391,7 @@ bool conf_set_all_new_symbols(enum conf_def_mode mode)
         {
             char *endp;
             int tmp = strtol(env, &endp, 10);
+
             if (tmp >= 0 && tmp <= 100)
             {
                 p[n++] = tmp;
@@ -1328,6 +1403,7 @@ bool conf_set_all_new_symbols(enum conf_def_mode mode)
                 exit(1);
             }
             env = (*endp == ':') ? endp + 1 : endp;
+
             if (n >= 3)
             {
                 break;
@@ -1387,6 +1463,7 @@ bool conf_set_all_new_symbols(enum conf_def_mode mode)
             case def_random:
                 sym->def[S_DEF_USER].tri = no;
                 cnt = rand() % 100;
+
                 if (sym->type == S_TRISTATE)
                 {
                     if (cnt < pty)
@@ -1400,6 +1477,7 @@ bool conf_set_all_new_symbols(enum conf_def_mode mode)
             default:
                 continue;
             }
+
             if (!(sym_is_choice(sym) && mode == def_random))
                 sym->flags |= SYMBOL_DEF_USER;
             break;
@@ -1419,6 +1497,7 @@ bool conf_set_all_new_symbols(enum conf_def_mode mode)
      * selected in a choice block and we set it to yes,
      * and the rest to no.
      */
+
     if (mode != def_random)
     {
         for_all_symbols(i, csym)
@@ -1435,6 +1514,7 @@ bool conf_set_all_new_symbols(enum conf_def_mode mode)
             continue;
 
         sym_calc_value(csym);
+
         if (mode == def_random)
             has_changed |= randomize_choice_values(csym);
         else

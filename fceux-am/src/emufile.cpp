@@ -62,6 +62,7 @@ void EMUFILE_FILE::open(const char *fname, const char *mode)
 void EMUFILE_FILE::open(const char *fname, const char *mode)
 {
     fp = fopen(fname, mode);
+
     if (!fp)
     {
         failbit = true;

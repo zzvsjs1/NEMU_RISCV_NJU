@@ -42,6 +42,7 @@ static SFORMAT StateRegs[] =
 static void Sync185(void)
 {
     // little dirty eh? ;_)
+
     if ((datareg & 3) && (datareg != 0x13)) // 1, 2, 3, 4, 5, 6
         setchr8(0);
     else

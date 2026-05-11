@@ -34,6 +34,7 @@ static void Sync(void)
 {
     uint8 prg = (addrlatch & 7);
     setchr8(datalatch);
+
     if (addrlatch & 0x80)
     {
         setprg16(0x8000, prg);

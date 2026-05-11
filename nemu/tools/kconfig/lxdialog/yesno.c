@@ -34,6 +34,7 @@ int dialog_yesno(const char *title, const char *prompt, int height, int width)
 do_resize:
     if (getmaxy(stdscr) < (height + YESNO_HEIGTH_MIN))
         return -ERRDISPLAYTOOSMALL;
+
     if (getmaxx(stdscr) < (width + YESNO_WIDTH_MIN))
         return -ERRDISPLAYTOOSMALL;
 

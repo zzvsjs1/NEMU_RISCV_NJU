@@ -97,6 +97,7 @@ word_t paddr_read(paddr_t addr, int len)
         word_t data = pmem_read(addr, len);
 #ifdef CONFIG_MTRACE
         /* Log after the read so the trace includes the returned value. */
+
         if (mtrace_in_range(addr, len))
         {
             log_write("mtrace read  pc=" FMT_WORD " addr=" FMT_PADDR " len=%d data=" FMT_WORD "\n",
@@ -122,6 +123,7 @@ void paddr_write(paddr_t addr, int len, word_t data)
     {
 #ifdef CONFIG_MTRACE
         /* Log before the write so the trace records the value being committed. */
+
         if (mtrace_in_range(addr, len))
         {
             log_write("mtrace write pc=" FMT_WORD " addr=" FMT_PADDR " len=%d data=" FMT_WORD "\n",

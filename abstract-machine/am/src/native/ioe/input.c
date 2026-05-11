@@ -28,6 +28,7 @@ static int event_thread(void *args)
             SDL_Keysym k = event.key.keysym;
             int keydown = event.key.type == SDL_KEYDOWN;
             int scancode = k.scancode;
+
             if (keymap[scancode] != 0)
             {
                 int am_code = keymap[scancode] | (keydown ? KEYDOWN_MASK : 0);
@@ -60,6 +61,7 @@ void __am_input_keybrd(AM_INPUT_KEYBRD_T *kbd)
     int k = AM_KEY_NONE;
 
     SDL_LockMutex(key_queue_lock);
+
     if (key_f != key_r)
     {
         k = key_queue[key_f];

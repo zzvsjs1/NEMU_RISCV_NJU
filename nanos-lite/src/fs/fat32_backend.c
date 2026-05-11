@@ -157,6 +157,7 @@ static int fat32_fs_readdir(FsDir *dir, FsDirent *out)
     const int ret = fat32_backend_readdir(&fat_dir, &fat_entry);
 
     from_fat32_dir(dir, &fat_dir);
+
     if (ret != 1)
     {
         return ret;

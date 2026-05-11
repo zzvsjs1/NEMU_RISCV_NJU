@@ -72,6 +72,7 @@ int main(void)
         SDL_Color bg = {.r = 0x00, .g = 0x00, .b = 0x00, .a = 0x00};
         SDL_Surface *surface = TTF_RenderGlyph_Shaded(font, ch, fg, bg);
         assert(surface != NULL);
+
         if (glyphs[i].has_ink)
         {
             assert(maxx > minx);

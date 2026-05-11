@@ -51,16 +51,19 @@ void WindowManager::evt_keydown(const char *evt)
 {
     char key[20];
     sscanf(evt, "%s", key);
+
     if (strcmp(key, "LALT") == 0)
     {
         alt = 1;
         return;
     }
+
     if (strcmp(key, "LCTRL") == 0)
     {
         ctrl = 1;
         return;
     }
+
     if (strcmp(key, "LSHIFT") == 0 || strcmp(key, "RSHIFT") == 0)
     {
         shift ^= 1;
@@ -106,19 +109,23 @@ void WindowManager::evt_keyup(const char *evt)
 {
     char key[20];
     sscanf(evt, "%s", key);
+
     if (strcmp(key, "LALT") == 0)
     {
         alt = 0;
+
         if (display_switcher)
             switcher->draw();
         display_switcher = false;
         return;
     }
+
     if (strcmp(key, "LCTRL") == 0)
     {
         ctrl = 0;
         return;
     }
+
     if (strcmp(key, "LSHIFT") == 0 || strcmp(key, "RSHIFT") == 0)
     {
         shift ^= 1;
@@ -134,9 +141,11 @@ void WindowManager::evt_keyup(const char *evt)
 void WindowManager::evt_switch_window(const char *evt)
 {
     int i = 0;
+
     if (!focus)
         return;
     display_switcher = true;
+
     if (display_appfinder)
     {
         display_appfinder = false;
@@ -147,8 +156,10 @@ void WindowManager::evt_switch_window(const char *evt)
     while (1)
     {
         i++;
+
         if (i >= 16)
             i = 0;
+
         if (windows[i])
             break;
     }

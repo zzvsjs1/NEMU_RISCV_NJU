@@ -32,6 +32,7 @@ void ant()
     while (1)
     {
         i = (y * w + x);
+
         if (pix[i])
             k = dx, dx = -dy, dy = k;
         else
@@ -43,6 +44,7 @@ void ant()
         x += dx, y += dy;
 
         k = 0;
+
         if (x < 0)
         {
             memmove(pix + 1, pix, w * h - 1);
@@ -70,6 +72,7 @@ void ant()
             memset(pix, 0, w);
             y++, k = 1;
         }
+
         if (k)
             refresh(x, y);
         set_color(ANSI_COLOR_RED);

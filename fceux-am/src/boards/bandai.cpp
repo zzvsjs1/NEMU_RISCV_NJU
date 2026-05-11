@@ -103,6 +103,7 @@ static void x24c0x_write(uint8 data)
             {
                 if (!x24c02) // X24C01 mode
                     x24c0x_word = x24c0x_addr;
+
                 if ((x24c0x_addr & 0x78) != 0x50)
                 { // Wrong device address
                     x24c0x_out = 1;
@@ -113,7 +114,8 @@ static void x24c0x_write(uint8 data)
                     x24c0x_state = X24C0X_READ;
                 }
                 else
-                {               // WRITE COMMAND
+                { // WRITE COMMAND
+
                     if (x24c02) // X24C02 mode
                         x24c0x_state = X24C0X_WORD;
                     else
@@ -132,6 +134,7 @@ static void x24c0x_write(uint8 data)
             { // WORD ADDRESS INPUT
                 x24c0x_word <<= 1;
                 x24c0x_word |= sda;
+
                 if (x24c0x_bitcount == 16)
                 { // END OF ADDRESS INPUT
                     x24c0x_bitcount = 7;
@@ -152,6 +155,7 @@ static void x24c0x_write(uint8 data)
                 x24c0x_out = x24c0x_latch >> 7;
                 x24c0x_latch <<= 1;
                 x24c0x_bitcount++;
+
                 if (x24c0x_bitcount == 8)
                 {
                     x24c0x_word++;
@@ -171,6 +175,7 @@ static void x24c0x_write(uint8 data)
                 x24c0x_latch <<= 1;
                 x24c0x_latch |= sda;
                 x24c0x_bitcount++;
+
                 if (x24c0x_bitcount == 8)
                 {
                     x24c0x_data[x24c0x_word] = x24c0x_latch;
@@ -230,6 +235,7 @@ static void Sync(void)
 static DECLFW(BandaiWrite)
 {
     A &= 0x0F;
+
     if (A < 0x0A)
     {
         reg[A & 0x0F] = V;
@@ -267,6 +273,7 @@ static void BandaiIRQHook(int a)
     if (IRQa)
     {
         IRQCount -= a;
+
         if (IRQCount < 0)
         {
             X6502_IRQBegin(FCEU_IQEXT);
@@ -398,10 +405,12 @@ int FCEUI_DatachSet(const uint8 *rcode)
     {
         if (!rcode[i])
             break;
+
         if ((code[i] = rcode[i] - '0') > 9)
             return (0);
         len++;
     }
+
     if (len != 13 && len != 12 && len != 8 && len != 7)
         return (0);
 
@@ -521,6 +530,7 @@ static void BarcodeIRQHook(int a)
     if (BarcodeCycleCount >= 1000)
     {
         BarcodeCycleCount -= 1000;
+
         if (BarcodeData[BarcodeReadPos] == 0xFF)
         {
             BarcodeOut = 0;

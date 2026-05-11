@@ -22,6 +22,7 @@ static void sub_d(int p, int s, int x, int y)
 {
     uint8_t r = (p % 16) * 16;
     uint8_t g = 180 - p;
+
     if (r < 10)
     {
         //    set_color(ANSI_COLOR_RESET);
@@ -64,6 +65,7 @@ void cmatrix()
         for (k = 1; k < W; k++)
         {
             i = rand() % (W - 1);
+
             if (t[i] > 28)
                 t[i] = 0;
             t[i] = t[i] + 1;

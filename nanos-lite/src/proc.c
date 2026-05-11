@@ -144,6 +144,7 @@ void init_proc()
 Context *schedule(Context *prev)
 {
     // Save the context of the currently running PCB.
+
     if (current != NULL)
     {
         current->cp = prev;
@@ -151,6 +152,7 @@ Context *schedule(Context *prev)
 
     // Pick the next runnable PCB.
     // First switch: from boot PCB to the selected foreground process.
+
     if (current == &pcb_boot)
     {
         // First entry into user space: keep boot as a fake previous owner so the
@@ -163,6 +165,7 @@ Context *schedule(Context *prev)
      * apps remain dormant until selected, so their framebuffer/audio state can
      * be restored as a simple foreground switch instead of a true compositor.
      */
+
         if (pcb_runnable(&pcb[HELLO_PROC]) && foreground_budget-- <= 0)
         {
             foreground_budget = FOREGROUND_QUANTA;
@@ -175,6 +178,7 @@ Context *schedule(Context *prev)
     }
 
     assert(pcb_runnable(current));
+
     if (current == fg_pcb)
     {
         // Shared foreground devices are restored only when the selected foreground

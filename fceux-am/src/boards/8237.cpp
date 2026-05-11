@@ -64,9 +64,11 @@ static void UNL8237PW(uint32 A, uint8 V)
     if (EXPREGS[0] & 0x40)
     {
         uint8 sbank = (EXPREGS[1] & 0x10);
+
         if (EXPREGS[0] & 0x80)
         {
             uint8 bank = ((EXPREGS[1] & 3) << 4) | (EXPREGS[0] & 0x7) | (sbank >> 1);
+
             if (EXPREGS[0] & 0x20)
                 setprg32(0x8000, bank >> 1);
             else
@@ -83,6 +85,7 @@ static void UNL8237PW(uint32 A, uint8 V)
         if (EXPREGS[0] & 0x80)
         {
             uint8 bank = ((EXPREGS[1] & 3) << 4) | (EXPREGS[0] & 0xF);
+
             if (EXPREGS[0] & 0x20)
                 setprg32(0x8000, bank >> 1);
             else
@@ -109,9 +112,11 @@ static void UNL8237APW(uint32 A, uint8 V)
     if (EXPREGS[0] & 0x40)
     {
         uint8 sbank = (EXPREGS[1] & 0x10);
+
         if (EXPREGS[0] & 0x80)
         {
             uint8 bank = ((EXPREGS[1] & 3) << 4) | ((EXPREGS[1] & 8) << 3) | (EXPREGS[0] & 0x7) | (sbank >> 1);
+
             if (EXPREGS[0] & 0x20)
             {
                 //				FCEU_printf("8000:%02X\n",bank>>1);
@@ -135,6 +140,7 @@ static void UNL8237APW(uint32 A, uint8 V)
         if (EXPREGS[0] & 0x80)
         {
             uint8 bank = ((EXPREGS[1] & 3) << 4) | ((EXPREGS[1] & 8) << 3) | (EXPREGS[0] & 0xF);
+
             if (EXPREGS[0] & 0x20)
             {
                 //				FCEU_printf("8000:%02X\n",(bank>>1)&0x07);
@@ -159,6 +165,7 @@ static DECLFW(UNL8237Write)
     uint8 dat = V;
     uint8 adr = adrperm[EXPREGS[2]][((A >> 12) & 6) | (A & 1)];
     uint16 addr = (adr & 1) | ((adr & 6) << 12) | 0x8000;
+
     if (adr < 4)
     {
         if (!adr)

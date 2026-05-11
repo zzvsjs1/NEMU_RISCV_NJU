@@ -60,6 +60,7 @@ static inline uint64_t set_field(
 
     // Build the field mask at its shifted position
     uint64_t field_mask;
+
     if (width >= 64 - shift)
     {
         // e.g., shift=60 → mask = 0xF000000000000000
@@ -176,6 +177,7 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc)
     word_t cause = NO & ~interruptMask;
 
     // Vectored mode only offsets interrupts; synchronous exceptions go to BASE.
+
     if (mode == 1 && isInterrupt)
     {
         return base + (cause * 4);
@@ -192,6 +194,7 @@ word_t isa_query_intr()
      * instructions.  Timer hardware sets cpu.INTR, and this function consumes it
      * only when machine interrupts are enabled.
      */
+
     if (cpu.INTR && (cpu.csr.mstatus & (1u << MSTATUS_MIE_BIT)))
     {
         cpu.INTR = false;

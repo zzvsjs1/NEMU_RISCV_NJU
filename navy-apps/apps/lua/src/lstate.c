@@ -95,6 +95,7 @@ void luaE_setdebt(global_State *g, l_mem debt)
 {
     l_mem tb = gettotalbytes(g);
     lua_assert(tb > 0);
+
     if (debt < tb - MAX_LMEM)
         debt = tb - MAX_LMEM; /* will make 'totalbytes == MAX_LMEM' */
     g->totalbytes = tb - debt;
@@ -243,7 +244,8 @@ static void close_state(lua_State *L)
     global_State *g = G(L);
     luaF_close(L, L->stack); /* close all upvalues for this thread */
     luaC_freeallobjects(L);  /* collect all objects */
-    if (g->version)          /* closing a fully built state? */
+
+    if (g->version) /* closing a fully built state? */
         luai_userstateclose(L);
     luaM_freearray(L, G(L)->strt.hash, G(L)->strt.size);
     freestack(L);
@@ -297,6 +299,7 @@ LUA_API lua_State *lua_newstate(lua_Alloc f, void *ud)
     lua_State *L;
     global_State *g;
     LG *l = cast(LG *, (*f)(ud, NULL, LUA_TTHREAD, sizeof(LG)));
+
     if (l == NULL)
         return NULL;
     L = &l->l.l;
@@ -331,6 +334,7 @@ LUA_API lua_State *lua_newstate(lua_Alloc f, void *ud)
     g->gcstepmul = LUAI_GCMUL;
     for (i = 0; i < LUA_NUMTAGS; i++)
         g->mt[i] = NULL;
+
     if (luaD_rawrunprotected(L, f_luaopen, NULL) != LUA_OK)
     {
         /* memory allocation error: free partial state */

@@ -50,6 +50,7 @@ static void Sync()
         break;
     case 0x2C:
         EXPREGS[7] = 1;
+
         if (EXPREGS[6])
             EXPREGS[0] = EXPREGS[6];
         break;
@@ -120,6 +121,7 @@ static DECLFW(M121Write)
     case 0x8001:
         EXPREGS[6] = ((V & 1) << 5) | ((V & 2) << 3) | ((V & 4) << 1) | ((V & 8) >> 1) | ((V & 0x10) >> 3) | ((V & 0x20) >> 5);
         //		FCEU_printf("bank: %02x (%02x)\n",V,EXPREGS[6]);
+
         if (!EXPREGS[7])
             Sync();
         MMC3_CMDWrite(A, V);
@@ -140,6 +142,7 @@ static uint8 prot_array[16] = {0x83, 0x83, 0x42, 0x00};
 static DECLFW(M121LoWrite)
 {
     EXPREGS[4] = prot_array[V & 3]; // 0x100 bit in address seems to be switch arrays 0, 2, 2, 3 (Contra Fighter)
+
     if ((A & 0x5180) == 0x5180)
     { // A9713 multigame extension
         EXPREGS[3] = V;

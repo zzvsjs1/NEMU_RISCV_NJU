@@ -85,9 +85,11 @@ static void Sync(void)
     uint32 bbank = reg[2];
     setchr8(0);
     setprg8r(0x10, 0x6000, reg[3] & 3);
+
     if (reg[0] & 2)
     { // UNROM mode
         setprg16(0x8000, (bbank << 3) | sbank);
+
         if (reg[0] & 4)
             setprg16(0xC000, (bbank << 3) | 6 | (reg[1] & 1));
         else
@@ -96,6 +98,7 @@ static void Sync(void)
     else
     { // NROM mode
         uint32 bank = (bbank << 3) | sbank;
+
         if (reg[0] & 4)
         {
             setprg16(0x8000, bank);
@@ -162,6 +165,7 @@ static void M178Power(void)
 static void M178SndClk(int a)
 {
     SensorDelay += a;
+
     if (SensorDelay > 0x32768)
     {
         SensorDelay -= 32768;
@@ -170,6 +174,7 @@ static void M178SndClk(int a)
         click = MouseData[2] & 1; // to prevent from continuos IRQ trigger if button is held.
                                   // actual circuit is just a D-C-R edge detector for IR-sensor
                                   // triggered by the active IR bat.
+
         if (lastclick && !click)
             X6502_IRQBegin(FCEU_IQEXT);
     }
@@ -207,6 +212,7 @@ void Mapper178_Init(CartInfo *info)
     WRAMSIZE = 32768;
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

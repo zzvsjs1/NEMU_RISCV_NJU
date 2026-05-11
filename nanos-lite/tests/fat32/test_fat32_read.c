@@ -101,10 +101,12 @@ static uint32_t find_big_bin_first_cluster(const uint8_t sector[512])
     for (size_t offset = 0; offset < 512; offset += 32)
     {
         const uint8_t *entry = &sector[offset];
+
         if (entry[0] == 0x00)
         {
             break;
         }
+
         if (memcmp(entry, "BIG     BIN", 11) == 0)
         {
             const uint32_t high = get_le16(&entry[20]);
@@ -138,6 +140,7 @@ static size_t find_root_entry_offset(const Fat32Volume *vol, const char short_na
             {
                 break;
             }
+
             if (memcmp(entry, short_name, 11) == 0)
             {
                 return sector_offset + entry_offset;

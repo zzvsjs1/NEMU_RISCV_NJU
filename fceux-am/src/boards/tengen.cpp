@@ -37,6 +37,7 @@ static SFORMAT StateRegs[] = {
 static void M64IRQHook(int a)
 {
     static int32 smallcount;
+
     if (IRQmode)
     {
         smallcount += a;
@@ -44,6 +45,7 @@ static void M64IRQHook(int a)
         {
             smallcount -= 4;
             IRQCount--;
+
             if (IRQCount == 0xFF)
                 if (IRQa)
                     X6502_IRQBegin(FCEU_IQEXT);
@@ -57,6 +59,7 @@ static void M64HBHook(void)
     {
         rmode = 0;
         IRQCount--;
+
         if (IRQCount == 0xFF)
         {
             if (IRQa)
@@ -113,6 +116,7 @@ static DECLFW(M64Write)
         break;
     case 0xC000:
         IRQLatch = V;
+
         if (rmode == 1)
             IRQCount = IRQLatch;
         break;
@@ -124,11 +128,13 @@ static DECLFW(M64Write)
     case 0xE000:
         IRQa = 0;
         X6502_IRQEnd(FCEU_IQEXT);
+
         if (rmode == 1)
             IRQCount = IRQLatch;
         break;
     case 0xE001:
         IRQa = 1;
+
         if (rmode == 1)
             IRQCount = IRQLatch;
         break;

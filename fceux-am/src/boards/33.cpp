@@ -56,6 +56,7 @@ static DECLFW(M33Write)
     {
     case 0x8000:
         regs[0] = V & 0x3F;
+
         if (!is48)
             mirr = ((V >> 6) & 1) ^ 1;
         Sync();
@@ -135,6 +136,7 @@ static void M48IRQ(void)
     if (IRQa)
     {
         IRQCount++;
+
         if (IRQCount == 0x100)
         {
             X6502_IRQBegin(FCEU_IQEXT);

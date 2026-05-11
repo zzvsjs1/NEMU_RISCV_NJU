@@ -52,6 +52,7 @@ void *iterate(void *pres)
         res->crc = crcu16(crc, res->crc);
         crc = core_bench_list(res, -1);
         res->crc = crcu16(crc, res->crc);
+
         if (i == 0)
             res->crclist = res->crc;
     }
@@ -113,6 +114,7 @@ MAIN_RETURN_TYPE main(int argc, char *argv[])
     /* first call any initializations needed */
     portable_init(&(results[0].port), &argc, argv);
     /* First some checks to make sure benchmark will run ok */
+
     if (sizeof(struct list_head_s) > 128)
     {
         ee_printf("list_head structure too big for comparable data!\n");
@@ -126,17 +128,20 @@ MAIN_RETURN_TYPE main(int argc, char *argv[])
     results[0].iterations = 1;
 #endif
     results[0].execs = get_seed_32(5);
+
     if (results[0].execs == 0)
     { /* if not supplied, execute all algorithms */
         results[0].execs = ALL_ALGORITHMS_MASK;
     }
     /* put in some default values based on one seed only for easy testing */
+
     if ((results[0].seed1 == 0) && (results[0].seed2 == 0) && (results[0].seed3 == 0))
     { /* validation run */
         results[0].seed1 = 0;
         results[0].seed2 = 0;
         results[0].seed3 = 0x66;
     }
+
     if ((results[0].seed1 == 1) && (results[0].seed2 == 0) && (results[0].seed3 == 0))
     { /* perfromance run */
         results[0].seed1 = 0x3415;
@@ -154,6 +159,7 @@ MAIN_RETURN_TYPE main(int argc, char *argv[])
     for (i = 0; i < MULTITHREAD; i++)
     {
         ee_s32 malloc_override = get_seed(7);
+
         if (malloc_override != 0)
             results[i].size = malloc_override;
         else
@@ -192,6 +198,7 @@ for (i = 0; i < MULTITHREAD; i++)
     for (i = 0; i < NUM_ALGORITHMS; i++)
     {
         ee_u32 ctx;
+
         if ((1 << (ee_u32)i) & results[0].execs)
         {
             for (ctx = 0; ctx < MULTITHREAD; ctx++)
@@ -206,10 +213,12 @@ for (i = 0; i < MULTITHREAD; i++)
         {
             results[i].list = core_list_init(results[0].size, results[i].memblock[1], results[i].seed1);
         }
+
         if (results[i].execs & ID_MATRIX)
         {
             core_init_matrix(results[0].size, results[i].memblock[2], (ee_s32)results[i].seed1 | (((ee_s32)results[i].seed2) << 16), &(results[i].mat));
         }
+
         if (results[i].execs & ID_STATE)
         {
             core_init_state(results[0].size, results[i].seed1, results[i].memblock[3]);
@@ -217,6 +226,7 @@ for (i = 0; i < MULTITHREAD; i++)
     }
 
     /* automatically determine number of iterations if not set */
+
     if (results[0].iterations == 0)
     {
         secs_ret secs_passed = 0;
@@ -232,6 +242,7 @@ for (i = 0; i < MULTITHREAD; i++)
         }
         /* now we know it executes for at least 1 sec, set actual run time at about 10 secs */
         divisor = (ee_u32)secs_passed;
+
         if (divisor == 0) /* some machines cast float to int as 0 since this conversion is not defined by ANSI, but we know at least one second passed */
             divisor = 1;
         results[0].iterations *= 1 + 10 / divisor;
@@ -290,23 +301,27 @@ for (i = 0; i < MULTITHREAD; i++)
         total_errors = -1;
         break;
     }
+
     if (known_id >= 0)
     {
         for (i = 0; i < default_num_contexts; i++)
         {
             results[i].err = 0;
+
             if ((results[i].execs & ID_LIST) &&
                 (results[i].crclist != list_known_crc[known_id]))
             {
                 ee_printf("[%u]ERROR! list crc 0x%04x - should be 0x%04x\n", i, results[i].crclist, list_known_crc[known_id]);
                 results[i].err++;
             }
+
             if ((results[i].execs & ID_MATRIX) &&
                 (results[i].crcmatrix != matrix_known_crc[known_id]))
             {
                 ee_printf("[%u]ERROR! matrix crc 0x%04x - should be 0x%04x\n", i, results[i].crcmatrix, matrix_known_crc[known_id]);
                 results[i].err++;
             }
+
             if ((results[i].execs & ID_STATE) &&
                 (results[i].crcstate != state_known_crc[known_id]))
             {
@@ -321,6 +336,7 @@ for (i = 0; i < MULTITHREAD; i++)
     ee_printf("CoreMark Size    : %d\n", (int)results[0].size);
 #if HAS_FLOAT
     ee_printf("Total time (ms)  : %f\n", time_in_secs(total_time));
+
     if (time_in_secs(total_time) > 0)
         ee_printf("Iterations/mSec  : %f\n", default_num_contexts * results[0].iterations / time_in_secs(total_time));
 #else
@@ -333,26 +349,32 @@ for (i = 0; i < MULTITHREAD; i++)
 #endif
     /* output for verification */
     ee_printf("seedcrc          : 0x%04x\n", seedcrc);
+
     if (results[0].execs & ID_LIST)
         for (i = 0; i < default_num_contexts; i++)
             ee_printf("[%d]crclist       : 0x%04x\n", i, results[i].crclist);
+
     if (results[0].execs & ID_MATRIX)
         for (i = 0; i < default_num_contexts; i++)
             ee_printf("[%d]crcmatrix     : 0x%04x\n", i, results[i].crcmatrix);
+
     if (results[0].execs & ID_STATE)
         for (i = 0; i < default_num_contexts; i++)
             ee_printf("[%d]crcstate      : 0x%04x\n", i, results[i].crcstate);
     for (i = 0; i < default_num_contexts; i++)
         ee_printf("[%d]crcfinal      : 0x%04x\n", i, results[i].crc);
     ee_printf("Finised in %d ms.\n", (int)total_time);
+
     if (total_errors == 0)
     {
         ee_printf("==================================================\n");
         ee_printf("CoreMark PASS       %d Marks\n", 2921400 / time_in_secs(total_time) * ITERATIONS / 1000);
         ee_printf("                vs. 100000 Marks (i7-7700K @ 4.20GHz)\n");
     }
+
     if (total_errors > 0)
         ee_printf("Errors detected\n");
+
     if (total_errors < 0)
         ee_printf("Cannot validate operation for these seed values, please compare with results on a known platform.\n");
 

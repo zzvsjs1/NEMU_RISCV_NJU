@@ -42,6 +42,7 @@ static void Sync(void)
     else
     {
         uint32 bank = (latche & 0x1F) + 8;
+
         if (latche & 0x20)
         {
             setprg16(0x8000, bank);

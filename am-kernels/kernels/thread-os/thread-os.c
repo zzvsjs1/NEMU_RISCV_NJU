@@ -54,6 +54,7 @@ Task tasks[] = {
 Context *on_interrupt(Event ev, Context *ctx)
 {
     extern Task tasks[];
+
     if (!current)
         current = &tasks[0];
     else

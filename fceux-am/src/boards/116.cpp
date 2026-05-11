@@ -83,6 +83,7 @@ static void SyncPRG(void)
     case 3:
     {
         uint8 bank = mmc1_regs[3] & 0xF;
+
         if (mmc1_regs[0] & 8)
         {
             if (mmc1_regs[0] & 4)
@@ -191,9 +192,11 @@ static void Sync(void)
 static DECLFW(UNLSL12ModeWrite)
 {
     //  FCEU_printf("%04X:%02X\n",A,V);
+
     if ((A & 0x4100) == 0x4100)
     {
         mode = V;
+
         if (A & 1)
         { // hacky hacky, there are two configuration modes on SOMARI HUANG-1 PCBs
             // Solder pads with P1/P2 shorted called SOMARI P,
@@ -250,14 +253,17 @@ static DECLFW(UNLSL12Write)
         {
             uint8 old_ctrl = mmc3_ctrl;
             mmc3_ctrl = V;
+
             if ((old_ctrl & 0x40) != (mmc3_ctrl & 0x40))
                 SyncPRG();
+
             if ((old_ctrl & 0x80) != (mmc3_ctrl & 0x80))
                 SyncCHR();
             break;
         }
         case 0x8001:
             mmc3_regs[mmc3_ctrl & 7] = V;
+
             if ((mmc3_ctrl & 7) < 6)
                 SyncCHR();
             else
@@ -296,6 +302,7 @@ static DECLFW(UNLSL12Write)
         {
             uint8 n = (A >> 13) - 4;
             mmc1_buffer |= (V & 1) << (mmc1_shift++);
+
             if (mmc1_shift == 5)
             {
                 mmc1_regs[n] = mmc1_buffer;
@@ -322,6 +329,7 @@ static void UNLSL12HBIRQ(void)
     if ((mode & 3) == 1)
     {
         int32 count = IRQCount;
+
         if (!count || IRQReload)
         {
             IRQCount = IRQLatch;
@@ -329,6 +337,7 @@ static void UNLSL12HBIRQ(void)
         }
         else
             IRQCount--;
+
         if (!IRQCount)
         {
             if (IRQa)

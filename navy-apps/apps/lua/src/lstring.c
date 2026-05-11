@@ -54,6 +54,7 @@ unsigned int luaS_hash(const char *str, size_t l, unsigned int seed)
 unsigned int luaS_hashlongstr(TString *ts)
 {
     lua_assert(ts->tt == LUA_TLNGSTR);
+
     if (ts->extra == 0)
     { /* no hash? */
         ts->hash = luaS_hash(getstr(ts), ts->u.lnglen, ts->hash);
@@ -69,6 +70,7 @@ void luaS_resize(lua_State *L, int newsize)
 {
     int i;
     stringtable *tb = &G(L)->strt;
+
     if (newsize > tb->size)
     { /* grow table if needed */
         luaM_reallocvector(L, tb->hash, tb->size, newsize, TString *);
@@ -88,6 +90,7 @@ void luaS_resize(lua_State *L, int newsize)
             p = hnext;
         }
     }
+
     if (newsize < tb->size)
     { /* shrink table if needed */
         /* vanishing slice should be empty */
@@ -178,11 +181,13 @@ static TString *internshrstr(lua_State *L, const char *str, size_t l)
             (memcmp(str, getstr(ts), l * sizeof(char)) == 0))
         {
             /* found! */
+
             if (isdead(g, ts))   /* dead (but not collected yet)? */
                 changewhite(ts); /* resurrect it */
             return ts;
         }
     }
+
     if (g->strt.nuse >= g->strt.size && g->strt.size <= MAX_INT / 2)
     {
         luaS_resize(L, g->strt.size * 2);
@@ -207,6 +212,7 @@ TString *luaS_newlstr(lua_State *L, const char *str, size_t l)
     else
     {
         TString *ts;
+
         if (l >= (MAX_SIZE - sizeof(TString)) / sizeof(char))
             luaM_toobig(L);
         ts = luaS_createlngstrobj(L, l);
@@ -243,6 +249,7 @@ Udata *luaS_newudata(lua_State *L, size_t s)
 {
     Udata *u;
     GCObject *o;
+
     if (s > MAX_SIZE - sizeof(Udata))
         luaM_toobig(L);
     o = luaC_newobj(L, LUA_TUSERDATA, sizeludata(s));

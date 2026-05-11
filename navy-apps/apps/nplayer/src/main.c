@@ -48,10 +48,13 @@ static void visualize(int16_t *stream, int samples)
         fixedpt multipler = fixedpt_cos(fixedpt_divi(fixedpt_muli(FIXEDPT_PI, 2 * i), samples));
         int x = i * W / samples;
         int y = center_y - fixedpt_toint(fixedpt_muli(fixedpt_divi(fixedpt_muli(multipler, stream[i]), 32768), H / 2));
+
         if (y < 0)
             y = 0;
+
         if (y >= H)
             y = H - 1;
+
         if (y < center_y)
             drawVerticalLine(x, y, center_y, color);
         else
@@ -66,6 +69,7 @@ static void AdjustVolume(int16_t *stream, int samples)
 {
     if (volume == MAX_VOLUME)
         return;
+
     if (volume == 0)
     {
         memset(stream, 0, samples * sizeof(stream[0]));
@@ -88,6 +92,7 @@ void FillAudio(void *userdata, uint8_t *stream, int len)
    */
     int samples_per_channel = stb_vorbis_get_samples_short_interleaved(v,
                                                                        info.channels, (int16_t *)stream, len / sizeof(int16_t));
+
     if (samples_per_channel != 0 || len < sizeof(int16_t))
     {
         int samples = samples_per_channel * info.channels;
@@ -98,6 +103,7 @@ void FillAudio(void *userdata, uint8_t *stream, int len)
     {
         is_end = 1;
     }
+
     if (nbyte < len)
         memset(stream + nbyte, 0, len - nbyte);
     memcpy(stream_save, stream, len);

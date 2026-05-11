@@ -80,6 +80,7 @@
 static void COOLBOYCW(uint32 A, uint8 V)
 {
     uint32 mask = 0xFF ^ (EXPREGS[0] & 0x80);
+
     if (EXPREGS[3] & 0x10)
     {
         if (EXPREGS[3] & 0x40)
@@ -132,6 +133,7 @@ static void COOLBOYPW(uint32 A, uint8 V)
 
     // Very weird mode
     // Last banks are first in this mode, ignored when MMC3_cmd&0x40
+
     if ((EXPREGS[3] & 0x40) && (V >= 0xFE) && !((MMC3_cmd & 0x40) != 0))
     {
         switch (A & 0xE000)
@@ -144,12 +146,14 @@ static void COOLBOYPW(uint32 A, uint8 V)
     }
 
     // Regular MMC3 mode, internal ROM size can be up to 2048kb!
+
     if (!(EXPREGS[3] & 0x10))
         setprg8(A, (((base << 4) & ~mask)) | (V & mask));
     else
     { // NROM mode
         mask &= 0xF0;
         uint8 emask;
+
         if ((((EXPREGS[1] & 2) != 0))) // 32kb mode
             emask = (EXPREGS[3] & 0x0C) | ((A & 0x4000) >> 13);
         else // 16kb mode
@@ -167,6 +171,7 @@ static DECLFW(COOLBOYWrite)
         CartBW(A, V);
 
     // Deny any further writes when 7th bit is 1 AND 4th is 0
+
     if ((EXPREGS[3] & 0x90) != 0x80)
     {
         EXPREGS[A & 3] = V;

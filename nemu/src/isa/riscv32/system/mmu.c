@@ -40,6 +40,7 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
      * a cross-page status instead of partially walking two leaves; the vaddr
      * layer owns deciding whether that case is supported.
      */
+
     if (is_cross_page(vaddr, len))
     {
         return (paddr_t)MEM_RET_CROSS_PAGE;

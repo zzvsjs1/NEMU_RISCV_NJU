@@ -64,6 +64,7 @@ static void Sync(void)
     setchr1(0x1400, creg[3]);
     setchr1(0x1800, creg[4]);
     setchr1(0x1C00, creg[5]);
+
     if (isExMirr)
     {
         setmirror(MI_0 + mcache[lastppu]);
@@ -201,10 +202,12 @@ static DECLFW(M95Write)
 static void MExMirrPPU(uint32 A)
 {
     static int8 lastmirr = -1, curmirr;
+
     if (A < 0x2000)
     {
         lastppu = A >> 10;
         curmirr = mcache[lastppu];
+
         if (curmirr != lastmirr)
         {
             setmirror(MI_0 + curmirr);

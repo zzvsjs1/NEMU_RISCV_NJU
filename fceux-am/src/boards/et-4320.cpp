@@ -64,6 +64,7 @@ static void BMC810131C_CW(uint32 A, uint8 V)
         setchr1(A, (V & 0x7F) | ((EXPREGS[0] & 7) << 7));
 
     TKSMIR[A >> 10] = V >> 7;
+
     if (((EXPREGS[0] >> 3) & 1) && (PPUCHRBus == (A >> 10)))
         setmirror(MI_0 + (V >> 7));
 }
@@ -107,6 +108,7 @@ static void TKSPPU(uint32 A)
     A &= 0x1FFF;
     A >>= 10;
     PPUCHRBus = A;
+
     if ((EXPREGS[0] >> 3) & 1)
         setmirror(MI_0 + TKSMIR[A]);
 }

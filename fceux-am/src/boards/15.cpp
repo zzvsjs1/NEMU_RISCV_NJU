@@ -51,6 +51,7 @@ static void Sync(void)
         {
             unsigned int b;
             b = latched & 0x3F;
+
             if (i >= 2 && !(latchea & 0x2))
                 b = b | 0x07;
             setprg8(0x8000 + (i << 13), (i & 1) + (b << 1));
@@ -67,6 +68,7 @@ static DECLFW(M15Write)
     // cah4e3 02.10.19 once again, there may be either two similar mapper 15 exist. the one for 110in1 or 168in1 carts with complex multi game features.
     // and another implified version for subor/waixing chinese originals and hacks with no different modes, working only in mode 0 and which does not
     // expect there is any CHR write protection. protecting CHR writes only for mode 3 fixes the problem, all roms may be run on the same source again.
+
     if ((latchea & 3) == 3)
         SetupCartCHRMapping(0, CHRptr[0], 0x2000, 0);
     else
@@ -115,6 +117,7 @@ void Mapper15_Init(CartInfo *info)
     WRAMSIZE = 8192;
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

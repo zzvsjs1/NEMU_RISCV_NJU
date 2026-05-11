@@ -37,6 +37,7 @@ static TTF_Font *open_font_from_buffer(void *buf, size_t size, int ptsize)
 TTF_Font *TTF_OpenFont(const char *file, int ptsize)
 {
     SDL_RWops *f = SDL_RWFromFile(file, "rb");
+
     if (f == NULL)
         return NULL;
     return TTF_OpenFontRW(f, 1, ptsize);
@@ -48,6 +49,7 @@ TTF_Font *TTF_OpenFontRW(SDL_RWops *src, int freesrc, int ptsize)
         return NULL;
 
     int64_t size64 = SDL_RWsize(src);
+
     if (size64 <= 0)
     {
         if (freesrc)
@@ -59,6 +61,7 @@ TTF_Font *TTF_OpenFontRW(SDL_RWops *src, int freesrc, int ptsize)
     void *buf = malloc(size);
     assert(buf);
     size_t nread = SDL_RWread(src, buf, size, 1);
+
     if (freesrc)
         SDL_RWclose(src);
     assert(nread == 1);
@@ -70,16 +73,19 @@ int TTF_GlyphMetrics(TTF_Font *font, Uint16 ch, int *minx, int *maxx, int *miny,
 {
     stbtt_fontinfo *finfo = font->finfo;
     int glyphIndex = stbtt_FindGlyphIndex(finfo, ch);
+
     if (glyphIndex == 0)
         return -1;
 
     int advanceWidth;
     stbtt_GetGlyphHMetrics(finfo, glyphIndex, &advanceWidth, NULL);
+
     if (advance)
         *advance = fixedpt_toint(fixedpt_muli(font->factor, advanceWidth));
 
     int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
     int ret = stbtt_GetGlyphBox(finfo, glyphIndex, &x0, &y0, &x1, &y1);
+
     if (ret == 0)
     {
         /*
@@ -87,12 +93,16 @@ int TTF_GlyphMetrics(TTF_Font *font, Uint16 ch, int *minx, int *maxx, int *miny,
      * they have no ink box.  SDL_ttf reports them as a zero-sized box instead
      * of failing; callers such as ONScripter rely on that distinction.
      */
+
         if (minx)
             *minx = 0;
+
         if (miny)
             *miny = 0;
+
         if (maxx)
             *maxx = 0;
+
         if (maxy)
             *maxy = 0;
         return 0;
@@ -100,10 +110,13 @@ int TTF_GlyphMetrics(TTF_Font *font, Uint16 ch, int *minx, int *maxx, int *miny,
 
     if (minx)
         *minx = fixedpt_toint(fixedpt_muli(font->factor, x0));
+
     if (miny)
         *miny = fixedpt_toint(fixedpt_muli(font->factor, y0));
+
     if (maxx)
         *maxx = fixedpt_toint(fixedpt_muli(font->factor, x1));
+
     if (maxy)
         *maxy = fixedpt_toint(fixedpt_muli(font->factor, y1));
     return 0;
@@ -129,6 +142,7 @@ SDL_Surface *TTF_RenderGlyph_Shaded(TTF_Font *font, Uint16 ch, SDL_Color fg, SDL
 {
     stbtt_fontinfo *finfo = font->finfo;
     int glyphIndex = stbtt_FindGlyphIndex(finfo, ch);
+
     if (glyphIndex == 0)
         return NULL;
     int w, h;
@@ -136,6 +150,7 @@ SDL_Surface *TTF_RenderGlyph_Shaded(TTF_Font *font, Uint16 ch, SDL_Color fg, SDL
 
     SDL_Surface *s = SDL_CreateRGBSurfaceFrom(pixels, w, h, 8, w, 0, 0, 0, 0);
     s->flags &= ~SDL_PREALLOC;
+
     if (!(fg.val == palCache.fg.val && bg.val == palCache.bg.val))
     {
         // cache miss

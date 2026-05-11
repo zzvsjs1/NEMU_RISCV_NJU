@@ -10,6 +10,7 @@ void init_log(const char *log_file)
      * instances in one host process.  Close only files owned by logging, leaving
      * stdout/stderr alone.
      */
+
     if (log_fp && log_fp != stdout && log_fp != stderr)
     {
         fclose(log_fp);

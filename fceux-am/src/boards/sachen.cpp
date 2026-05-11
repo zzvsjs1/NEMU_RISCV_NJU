@@ -52,6 +52,7 @@ static void S74LS374NSynco(void)
 static DECLFW(S74LS374NWrite)
 {
     A &= 0x4101;
+
     if (A == 0x4100)
         cmd = V & 7;
     else
@@ -82,6 +83,7 @@ static DECLFW(S74LS374NWrite)
 static DECLFR(S74LS374NRead)
 {
     uint8 ret;
+
     if ((A & 0x4100) == 0x4100)
         //		ret=(X.DB&0xC0)|((~cmd)&0x3F);
         ret = ((~cmd) & 0x3F) ^ dip;
@@ -132,6 +134,7 @@ static void S74LS374NASynco(void)
 static DECLFW(S74LS374NAWrite)
 {
     A &= 0x4101;
+
     if (A == 0x4100)
         cmd = V & 7;
     else
@@ -190,6 +193,7 @@ static void S8259Synco(void)
         for (x = 0; x < 4; x++)
         {
             int bank;
+
             if (latch[7] & 1)
                 bank = (latch[0] & 0x7) | ((latch[4] & 7) << 3);
             else
@@ -227,6 +231,7 @@ static void S8259Synco(void)
             }
         }
     }
+
     if (!(latch[7] & 1))
         S74LS374MSync(latch[7] >> 1);
     else
@@ -236,6 +241,7 @@ static void S8259Synco(void)
 static DECLFW(S8259Write)
 {
     A &= 0x4101;
+
     if (A == 0x4100)
         cmd = V;
     else
@@ -495,6 +501,7 @@ void TCU02_Init(CartInfo *info)
 static DECLFR(TCA01Read)
 {
     uint8 ret;
+
     if ((A & 0x4100) == 0x4100)
         ret = (X.DB & 0xC0) | ((~A) & 0x3F);
     else

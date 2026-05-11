@@ -55,6 +55,7 @@ static void kvm_set_step_mode(bool watch, uint32_t watch_addr)
     debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP | KVM_GUESTDBG_USE_HW_BP;
     debug.arch.debugreg[0] = watch_addr;
     debug.arch.debugreg[7] = (watch ? 0x1 : 0x0); // watch instruction fetch at `watch_addr`
+
     if (ioctl(vcpu.fd, KVM_SET_GUEST_DEBUG, &debug) < 0)
     {
         perror("KVM_SET_GUEST_DEBUG");
@@ -94,6 +95,7 @@ static void *create_mem(int slot, uintptr_t base, size_t mem_size)
 {
     void *mem = mmap(NULL, mem_size, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+
     if (mem == MAP_FAILED)
     {
         perror("mmap mem");
@@ -108,6 +110,7 @@ static void *create_mem(int slot, uintptr_t base, size_t mem_size)
     memreg.guest_phys_addr = base;
     memreg.memory_size = mem_size;
     memreg.userspace_addr = (unsigned long)mem;
+
     if (ioctl(vm.fd, KVM_SET_USER_MEMORY_REGION, &memreg) < 0)
     {
         perror("KVM_SET_USER_MEMORY_REGION");
@@ -121,6 +124,7 @@ static void vm_init(size_t mem_size)
     int api_ver;
 
     vm.sys_fd = open("/dev/kvm", O_RDWR);
+
     if (vm.sys_fd < 0)
     {
         perror("open /dev/kvm");
@@ -128,6 +132,7 @@ static void vm_init(size_t mem_size)
     }
 
     api_ver = ioctl(vm.sys_fd, KVM_GET_API_VERSION, 0);
+
     if (api_ver < 0)
     {
         perror("KVM_GET_API_VERSION");
@@ -142,6 +147,7 @@ static void vm_init(size_t mem_size)
     }
 
     vm.fd = ioctl(vm.sys_fd, KVM_CREATE_VM, 0);
+
     if (vm.fd < 0)
     {
         perror("KVM_CREATE_VM");
@@ -163,6 +169,7 @@ static void vcpu_init()
     int vcpu_mmap_size;
 
     vcpu.fd = ioctl(vm.fd, KVM_CREATE_VCPU, 0);
+
     if (vcpu.fd < 0)
     {
         perror("KVM_CREATE_VCPU");
@@ -170,6 +177,7 @@ static void vcpu_init()
     }
 
     vcpu_mmap_size = ioctl(vm.sys_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
+
     if (vcpu_mmap_size <= 0)
     {
         perror("KVM_GET_VCPU_MMAP_SIZE");
@@ -178,6 +186,7 @@ static void vcpu_init()
 
     vcpu.kvm_run = mmap(NULL, vcpu_mmap_size, PROT_READ | PROT_WRITE,
                         MAP_SHARED, vcpu.fd, 0);
+
     if (vcpu.kvm_run == MAP_FAILED)
     {
         perror("mmap kvm_run");
@@ -244,10 +253,13 @@ static int patching()
 {
     // patching for special instructions
     uint32_t pc = va2pa(vcpu.kvm_run->s.regs.regs.rip);
+
     if (pc == 0xffffffff)
         return 0;
+
     if (vm.mem[pc] == 0x9c)
     { // pushf
+
         if (vcpu.int_wp_state == STATE_INT_INSTR)
             return 0;
         vcpu.kvm_run->s.regs.regs.rsp -= 4;
@@ -260,6 +272,7 @@ static int patching()
     }
     else if (vm.mem[pc] == 0x9d)
     { // popf
+
         if (vcpu.int_wp_state == STATE_INT_INSTR)
             return 0;
         uint32_t esp = va2pa(vcpu.kvm_run->s.regs.regs.rsp);
@@ -290,9 +303,11 @@ static void fix_push_sreg()
 static void patching_after(uint64_t last_pc)
 {
     uint32_t pc = va2pa(last_pc);
+
     if (pc == 0xffffffff)
         return;
     uint8_t opcode = vm.mem[pc];
+
     if (opcode == 0x1e || opcode == 0x06)
     { // push %ds/%es
         fix_push_sreg();
@@ -301,6 +316,7 @@ static void patching_after(uint64_t last_pc)
     else if (opcode == 0x0f)
     {
         uint8_t opcode2 = vm.mem[pc + 1];
+
         if (opcode2 == 0xa0)
         { // push %fs
             fix_push_sreg();
@@ -317,6 +333,7 @@ static void kvm_exec(uint64_t n)
             continue;
 
         uint64_t pc = vcpu.kvm_run->s.regs.regs.rip;
+
         if (ioctl(vcpu.fd, KVM_RUN, 0) < 0)
         {
             if (errno == EINTR)
@@ -339,6 +356,7 @@ static void kvm_exec(uint64_t n)
         else
         {
             patching_after(pc);
+
             if (vcpu.int_wp_state == STATE_INT_INSTR)
             {
                 uint32_t eflag_offset = 8 + (vcpu.has_error_code ? 4 : 0);
@@ -394,6 +412,7 @@ void difftest_regcpy(void *r, bool direction)
 {
     struct kvm_regs *ref = &(vcpu.kvm_run->s.regs.regs);
     x86_CPU_state *x86 = r;
+
     if (direction == DIFFTEST_TO_REF)
     {
         ref->rax = x86->eax;

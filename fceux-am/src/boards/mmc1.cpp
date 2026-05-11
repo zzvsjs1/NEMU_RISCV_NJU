@@ -89,6 +89,7 @@ static void MMC1PRG(void)
 {
     uint8 offs_16banks = DRegs[1] & 0x10;
     uint8 prg_reg = DRegs[3] & 0xF; //homebrewers arent allowed to use more banks on MMC1. use another mapper.
+
     if (MMC1PRGHook16)
     {
         switch (DRegs[0] & 0xC)
@@ -160,9 +161,11 @@ static DECLFW(MMC1_write)
         precision isn't that great), but this should still work to
         deal with 2 writes in a row from a single RMW instruction.
     */
+
     if ((timestampbase + timestamp) < (lreset + 2))
         return;
     //	FCEU_printf("Write %04x:%02x\n",A,V);
+
     if (V & 0x80)
     {
         DRegs[0] |= 0xC;
@@ -253,14 +256,18 @@ static int DetectMMC1WRAMSize(CartInfo *info, int *bs)
             ws = (info->wram_size + info->battery_wram_size) / 1024;
             *bs = info->battery_wram_size / 1024;
             // we only support sizes between 8K and 32K
+
             if (ws > 0 && ws < 8)
                 ws = 8;
+
             if (ws > 32)
                 ws = 32;
+
             if (*bs > ws)
                 *bs = ws;
         }
     }
+
     if (ws > 8)
         FCEU_printf(" >8KB external WRAM present.  Use NES 2.0 if you hack the ROM image.\n");
     return ws;
@@ -275,6 +282,7 @@ static void NWCIRQHook(int a)
     if (!(NWCRec & 0x10))
     {
         NWCIRQCount += a;
+
         if ((NWCIRQCount | (NWCDIP << 25)) >= 0x3e000000)
         {
             NWCIRQCount = 0;
@@ -292,6 +300,7 @@ static void NWCCHRHook(uint32 A, uint8 V)
     }
 
     NWCRec = V;
+
     if (V & 0x08)
         MMC1PRG();
     else
@@ -332,6 +341,7 @@ static void GenMMC1Power(void)
         FCEU_CheatAddRAM(8, 0x6000, WRAM);
 
         // clear non-battery-backed portion of WRAM
+
         if (NONBRAMSIZE)
             FCEU_MemoryRand(WRAM, NONBRAMSIZE, true);
 
@@ -347,6 +357,7 @@ static void GenMMC1Close(void)
 {
     if (CHRRAM)
         FCEU_gfree(CHRRAM);
+
     if (WRAM)
         FCEU_gfree(WRAM);
     CHRRAM = WRAM = NULL;
@@ -369,12 +380,14 @@ static void GenMMC1Init(CartInfo *info, int prg, int chr, int wram, int bram)
         WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
         SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
         AddExState(WRAM, WRAMSIZE, 0, "WRAM");
+
         if (bram)
         {
             info->SaveGame[0] = WRAM + NONBRAMSIZE;
             info->SaveGameLen[0] = bram * 1024;
         }
     }
+
     if (!chr)
     {
         CHRRAM = (uint8 *)FCEU_gmalloc(8192);

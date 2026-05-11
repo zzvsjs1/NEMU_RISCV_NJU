@@ -3,6 +3,7 @@
 int min3(int x, int y, int z)
 {
     int m;
+
     if (x < y)
     {
         m = x;
@@ -11,6 +12,7 @@ int min3(int x, int y, int z)
     {
         m = y;
     }
+
     if (z < m)
         m = z;
     return m;

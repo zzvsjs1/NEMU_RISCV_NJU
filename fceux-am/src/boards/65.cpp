@@ -136,6 +136,7 @@ void M65IRQ(int a)
     if (IRQa)
     {
         IRQCount -= a;
+
         if (IRQCount < -4)
         {
             X6502_IRQBegin(FCEU_IQEXT);

@@ -86,6 +86,7 @@ static void short_alias_to_path_component(const uint8_t short_name[11], char out
     {
         ext_end--;
     }
+
     if (ext_end >= 8)
     {
         out[pos++] = '.';
@@ -116,10 +117,12 @@ static int ascii_equal_ignore_case(const char *a, const char *b)
         {
             ca = (char)(ca - 'A' + 'a');
         }
+
         if (cb >= 'A' && cb <= 'Z')
         {
             cb = (char)(cb - 'A' + 'a');
         }
+
         if (ca != cb)
         {
             return 0;
@@ -153,6 +156,7 @@ static int find_entry_by_short_name(const Fat32Volume *vol, uint32_t dir_cluster
                 {
                     return -1;
                 }
+
                 if (memcmp(entry, short_name, 11) == 0)
                 {
                     *entry_offset = base + (uint64_t)sector_index * FAT32_SECTOR_SIZE + i * FAT32_DIR_ENTRY_SIZE;
@@ -164,6 +168,7 @@ static int find_entry_by_short_name(const Fat32Volume *vol, uint32_t dir_cluster
 
         uint32_t next;
         assert(fat32_read_fat_entry(vol, cluster, &next) == 0);
+
         if (fat32_is_end_of_chain(next))
         {
             break;
@@ -209,12 +214,14 @@ static int find_lfn_entry(const Fat32Volume *vol, uint32_t dir_cluster, const ch
                     unsigned sequence = entry[0] & 0x1fu;
 
                     memcpy(&lfn, entry, sizeof(lfn));
+
                     if ((entry[0] & 0x40u) != 0)
                     {
                         count = sequence;
                         start = offset;
                         memset(present, 0, sizeof(present));
                     }
+
                     if (sequence > 0 && sequence < 20 && fat32_lfn_entry_to_ascii(&lfn, pieces[sequence], sizeof(pieces[sequence])) >= 0)
                     {
                         present[sequence] = 1;
@@ -254,6 +261,7 @@ static int find_lfn_entry(const Fat32Volume *vol, uint32_t dir_cluster, const ch
 
         uint32_t next;
         assert(fat32_read_fat_entry(vol, cluster, &next) == 0);
+
         if (fat32_is_end_of_chain(next))
         {
             break;

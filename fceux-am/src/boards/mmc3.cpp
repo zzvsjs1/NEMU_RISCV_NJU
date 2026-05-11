@@ -134,6 +134,7 @@ DECLFW(MMC3_CMDWrite)
     case 0x8000:
         if ((V & 0x40) != (MMC3_cmd & 0x40))
             FixMMC3PRG(V);
+
         if ((V & 0x80) != (MMC3_cmd & 0x80))
             FixMMC3CHR(V);
         MMC3_cmd = V;
@@ -234,6 +235,7 @@ DECLFW(KT008HackWrite)
 static void ClockMMC3Counter(void)
 {
     int count = IRQCount;
+
     if (!count || IRQReload)
     {
         IRQCount = IRQLatch;
@@ -241,6 +243,7 @@ static void ClockMMC3Counter(void)
     }
     else
         IRQCount--;
+
     if ((count | isRevB) && !IRQCount)
     {
         if (IRQa)
@@ -323,6 +326,7 @@ void GenMMC3Power(void)
 
     A001B = A000B = 0;
     setmirror(1);
+
     if (mmc3opts & 1)
     {
         if (WRAMSIZE == 1024)
@@ -338,10 +342,12 @@ void GenMMC3Power(void)
             SetReadHandler(0x6000, 0x6000 + ((WRAMSIZE - 1) & 0x1fff), CartBR);
             setprg8r(0x10, 0x6000, 0);
         }
+
         if (!(mmc3opts & 2))
             FCEU_MemoryRand(WRAM, WRAMSIZE, true);
     }
     MMC3RegReset();
+
     if (CHRRAM)
         FCEU_MemoryRand(CHRRAM, CHRRAMSIZE, true);
 }
@@ -350,6 +356,7 @@ static void GenMMC3Close(void)
 {
     if (CHRRAM)
         FCEU_gfree(CHRRAM);
+
     if (WRAM)
         FCEU_gfree(WRAM);
     CHRRAM = WRAM = NULL;
@@ -534,6 +541,7 @@ void Mapper37_Init(CartInfo *info)
 static void M44PW(uint32 A, uint8 V)
 {
     uint32 NV = V;
+
     if (EXPREGS[0] >= 6)
         NV &= 0x1F;
     else
@@ -545,6 +553,7 @@ static void M44PW(uint32 A, uint8 V)
 static void M44CW(uint32 A, uint8 V)
 {
     uint32 NV = V;
+
     if (EXPREGS[0] < 6)
         NV &= 0x7F;
     NV |= EXPREGS[0] << 7;
@@ -586,6 +595,7 @@ static void M45CW(uint32 A, uint8 V)
     if (!UNIFchrrama)
     {
         uint32 NV = V;
+
         if (EXPREGS[2] & 8)
             NV &= (1 << ((EXPREGS[2] & 7) + 1)) - 1;
         else if (EXPREGS[2])
@@ -602,6 +612,7 @@ static void M45PW(uint32 A, uint8 V)
 {
     uint32 MV = V & ((EXPREGS[3] & 0x3F) ^ 0x3F);
     MV |= EXPREGS[1];
+
     if (UNIFchrrama)
         MV |= ((EXPREGS[2] & 0x40) << 2);
     setprg8(A, MV);
@@ -624,6 +635,7 @@ static DECLFW(M45Write)
 static DECLFR(M45Read)
 {
     uint32 addr = 1 << (EXPREGS[5] + 4);
+
     if (A & (addr | (addr - 1)))
         return X.DB | 1;
     else
@@ -997,6 +1009,7 @@ static void TKSWRAP(uint32 A, uint8 V)
 {
     TKSMIR[A >> 10] = V >> 7;
     setchr1(A, V & 0x7F);
+
     if (PPUCHRBus == (A >> 10))
         setmirror(MI_0 + (V >> 7));
 }
@@ -1092,6 +1105,7 @@ static void M165CWM(uint32 A, uint8 V)
 {
     if (((MMC3_cmd & 0x7) == 0) || ((MMC3_cmd & 0x7) == 2))
         M165PPUFD();
+
     if (((MMC3_cmd & 0x7) == 1) || ((MMC3_cmd & 0x7) == 4))
         M165PPUFE();
 }
@@ -1152,6 +1166,7 @@ static void M192CW(uint32 A, uint8 V)
 {
     //Ying Lie Qun Xia Zhuan (Chinese),
     //You Ling Xing Dong (China) (Unl) [this will be mistakenly headered as m074 sometimes]
+
     if ((V == 8) || (V == 9) || (V == 0xA) || (V == 0xB))
         setchr1r(0x10, A, V);
     else

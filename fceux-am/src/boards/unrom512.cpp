@@ -82,6 +82,7 @@ void setfprg16(uint32 A, uint32 V)
 void inc_flash_write_count(uint8 bank, uint32 A)
 {
     flash_write_count[(bank * 4) + ((A & 0x3000) >> 12)]++;
+
     if (!flash_write_count[(bank * 4) + ((A & 0x3000) >> 12)])
         flash_write_count[(bank * 4) + ((A & 0x3000) >> 12)]++;
 }
@@ -116,6 +117,7 @@ static DECLFW(UNROM512HLatchWrite)
 static DECLFR(UNROM512LatchRead)
 {
     uint8 flash_id[3] = {0xB5, 0xB6, 0xB7};
+
     if (software_id)
     {
         if (A & 1)
@@ -123,6 +125,7 @@ static DECLFR(UNROM512LatchRead)
         else
             return 0xBF;
     }
+
     if (flash_save)
     {
         if (A < 0xC000)
@@ -144,6 +147,7 @@ static void UNROM512LatchPower(void)
     latche = latcheinit;
     WHSync();
     SetReadHandler(0x8000, 0xFFFF, UNROM512LatchRead);
+
     if (!flash_save)
         SetWriteHandler(0x8000, 0xFFFF, UNROM512HLatchWrite);
     else
@@ -157,6 +161,7 @@ static void UNROM512LatchClose(void)
 {
     if (flash_write_count)
         FCEU_gfree(flash_write_count);
+
     if (flashdata)
         FCEU_gfree(flashdata);
     flash_write_count = NULL;
@@ -174,6 +179,7 @@ static void UNROM512LSync()
         if ((latcha == erase_a[flash_state]) && (latche == erase_d[flash_state]) && (flash_bank == erase_b[flash_state]))
         {
             flash_state++;
+
             if (flash_state == 5)
             {
                 flash_mode = 1;
@@ -274,6 +280,7 @@ void UNROM512_Init(CartInfo *info)
     info->Power = UNROM512LatchPower;
     info->Close = UNROM512LatchClose;
     GameStateRestore = StateRestore;
+
     if (flash_save)
     {
         flashdata = (uint8 *)FCEU_gmalloc(ROM_size * 0x4000);

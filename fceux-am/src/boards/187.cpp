@@ -34,6 +34,7 @@ static void M187PW(uint32 A, uint8 V)
     if (EXPREGS[0] & 0x80)
     {
         uint8 bank = EXPREGS[0] & 0x1F;
+
         if (EXPREGS[0] & 0x20)
         {
             if (EXPREGS[0] & 0x40)

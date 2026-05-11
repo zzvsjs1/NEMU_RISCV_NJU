@@ -90,6 +90,7 @@ void print_periodically_busy_int(const char *msg, long interval_us)
 {
     // 1) convert microsecond interval to whole milliseconds
     uint32_t interval_ms = interval_us / 1000;
+
     if (interval_ms == 0)
         interval_ms = 1; // at least 1 ms
 
@@ -109,6 +110,7 @@ void print_periodically_busy_int(const char *msg, long interval_us)
         }
 
         // advance our “seconds” counter every two prints
+
         if (!half)
             secs++;
 

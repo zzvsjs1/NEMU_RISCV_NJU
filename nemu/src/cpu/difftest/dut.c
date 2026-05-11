@@ -113,6 +113,7 @@ void difftest_step(vaddr_t pc, vaddr_t npc)
     if (skip_dut_nr_inst > 0)
     {
         ref_difftest_regcpy(&ref_r, DIFFTEST_TO_DUT);
+
         if (ref_r.pc == npc)
         {
             skip_dut_nr_inst = 0;
@@ -120,6 +121,7 @@ void difftest_step(vaddr_t pc, vaddr_t npc)
             return;
         }
         skip_dut_nr_inst--;
+
         if (skip_dut_nr_inst == 0)
             panic("can not catch up with ref.pc = " FMT_WORD " at pc = " FMT_WORD, ref_r.pc, pc);
         return;

@@ -70,6 +70,7 @@ static void audio_stats_maybe_print(void)
     }
 
     const uint64_t now = get_time();
+
     if (audio_stats_last_us == 0)
     {
         audio_stats_last_us = now;
@@ -77,6 +78,7 @@ static void audio_stats_maybe_print(void)
     }
 
     const uint64_t elapsed = now - audio_stats_last_us;
+
     if (elapsed < AUDIO_STATS_INTERVAL_US)
     {
         return;
@@ -119,6 +121,7 @@ static void lock_audio_counter(void)
      * SDL has no callback thread and SDL_LockAudio() would only add host-side
      * work to the init path.
      */
+
     if (audio_opened)
     {
         SDL_LockAudio();
@@ -206,6 +209,7 @@ static void sdlAudioCallback(void *userdata, Uint8 *stream, int len)
     audio_count -= filledBytes;
     audio_stats_callbacks++;
     audio_stats_played_bytes += filledBytes;
+
     if (missingBytes > 0)
     {
         audio_stats_underrun_callbacks++;
@@ -226,6 +230,7 @@ static bool audio_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
 
     paddr_t paddr = 0;
     const int mmu = isa_mmu_check(addr, 1, MEM_TYPE_READ);
+
     if (mmu == MMU_DIRECT)
     {
         paddr = (paddr_t)addr;
@@ -233,6 +238,7 @@ static bool audio_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
     else if (mmu == MMU_TRANSLATE)
     {
         const paddr_t ret = isa_mmu_translate(addr, 1, MEM_TYPE_READ);
+
         if ((ret & (paddr_t)AUDIO_PAGE_MASK) != MEM_RET_OK)
         {
             return false;
@@ -251,10 +257,12 @@ static bool audio_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
 
     size_t chunk = AUDIO_PAGE_SIZE - (size_t)(addr & AUDIO_PAGE_MASK);
     const paddr_t pmem_end = (paddr_t)CONFIG_MBASE + (paddr_t)CONFIG_MSIZE;
+
     if ((paddr_t)(paddr + chunk) > pmem_end)
     {
         chunk = (size_t)(pmem_end - paddr);
     }
+
     if (chunk > wanted)
     {
         chunk = wanted;
@@ -308,6 +316,7 @@ static void append_audio_bytes(vaddr_t src, uint32_t len)
                src + (vaddr_t)done);
 
         size_t dst_chunk = CONFIG_SB_SIZE - writeIndex;
+
         if (dst_chunk > src_chunk)
         {
             dst_chunk = src_chunk;
@@ -445,6 +454,7 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
                  * format as requested and converts to the real hardware format
                  * internally when needed.
                  */
+
             if (SDL_OpenAudio(&spec, NULL) < 0)
             {
                 printf("SDL_OpenAudio error: %s\n", SDL_GetError());
@@ -496,6 +506,7 @@ void init_audio()
 {
     audio_stats_enabled = audio_env_flag_enabled("NEMU_AUDIO_STATS");
     audio_stats_last_us = get_time();
+
     if (audio_stats_enabled)
     {
         Log("audio: host stats enabled, print interval = %" PRIu64 " us",
@@ -523,6 +534,7 @@ void init_audio()
 
 #ifndef CONFIG_AUDIO_DUMMY
     // Init subsystem in here before open device.
+
     if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
     {
         printf("SDL_InitSubSystem error: %s\n", SDL_GetError());

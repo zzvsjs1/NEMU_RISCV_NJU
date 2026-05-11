@@ -41,6 +41,7 @@ static SFORMAT StateRegs[] =
 static void Sync(void)
 {
     setprg32(0x8000, prg_reg >> 2);
+
     if (!prg_mode)
         setprg8(0xC000, prg_reg);
     int i;
@@ -155,6 +156,7 @@ static void UNLCITYFIGHTIRQ(int a)
     if (IRQa)
     {
         IRQCount -= a;
+
         if (IRQCount <= 0)
         {
             X6502_IRQBegin(FCEU_IQEXT);

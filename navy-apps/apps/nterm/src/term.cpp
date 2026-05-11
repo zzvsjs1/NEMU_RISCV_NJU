@@ -228,10 +228,12 @@ Terminal::~Terminal()
 void Terminal::backspace()
 {
     cursor.x--;
+
     if (cursor.x < 0)
     {
         cursor.x = w - 1;
         cursor.y--;
+
         if (cursor.y < 0)
             cursor.x = cursor.y = 0;
     }
@@ -244,11 +246,13 @@ void Terminal::move_one()
     auto &c = cursor;
     int ret = c.y * w + c.x;
     c.x++;
+
     if (c.x >= w)
     {
         c.x = 0;
         c.y++;
     }
+
     if (c.y >= h)
     {
         scroll_up();
@@ -290,6 +294,7 @@ size_t Terminal::write_escape(const char *str, size_t count)
                 match = true;
                 break;
             }
+
             if (*cur != '#')
             {
                 if (*s != *cur)
@@ -324,6 +329,7 @@ void Terminal::write(const char *str, size_t count)
     for (size_t i = 0; i != count && str[i];)
     {
         char ch = str[i];
+
         if (ch == '\033')
         {
             i += write_escape(&str[i], count - i);
@@ -337,6 +343,7 @@ void Terminal::write(const char *str, size_t count)
             case '\n':
                 cursor.x = 0;
                 cursor.y++;
+
                 if (cursor.y >= h)
                 {
                     scroll_up();
@@ -362,6 +369,7 @@ const char *Terminal::keypress(char ch)
 {
     if (ch == '\0')
         return nullptr;
+
     if (mode == Mode::raw)
     {
         // Raw mode models a minimal terminal driver: every accepted key becomes a

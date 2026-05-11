@@ -98,6 +98,7 @@ void __am_switch(Context *c)
     // This is important for kernel threads: they may be scheduled while a user
     // page table is active, and they still need that table's copied kernel
     // mappings rather than a destructive switch back to kas.
+
     if (vme_enable && c->pdir != NULL)
     {
         set_satp(c->pdir);
@@ -175,6 +176,7 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
 
     // Mark user pages with U=1, kernel pages keep U=0.
     // User space is as->area, protect() sets it to USER_SPACE.
+
     if (va >= as->area.start && va < as->area.end)
     {
         // User pages must carry PTE_U so mret into U-mode can fetch and touch

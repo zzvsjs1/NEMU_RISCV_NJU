@@ -159,6 +159,7 @@ void isa_set_reg_val(const char *name, const word_t val)
         if (strcmp(regs[i], name) == 0)
         {
             /* RISC-V x0 is hardwired to zero, ignore writes to $0. */
+
             if (i == 0)
                 return;
 

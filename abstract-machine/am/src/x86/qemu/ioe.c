@@ -71,6 +71,7 @@ static void wait_sec(AM_TIMER_RTC_T *t1)
         for (int volatile i = 0; i < 100000; i++)
             ;
         read_rtc_async(t1);
+
         if (t0.second != t1->second)
         {
             return;
@@ -88,6 +89,7 @@ static uint32_t estimate_freq()
     wait_sec(&rtc2);
     tsc2 = rdtsc();
     t2 = rtc2.minute * 60 + rtc2.second;
+
     if (t1 >= t2)
         return estimate_freq(); // passed an hour; try again
     return ((tsc2 - tsc1) >> 20) / (t2 - t1);
@@ -404,6 +406,7 @@ static void disk_blkio(AM_DISK_BLKIO_T *bio)
         outb(0x1f6, (blkno >> 24) | 0xe0);
         outb(0x1f7, bio->write ? 0x30 : 0x20);
         wait_disk();
+
         if (bio->write)
         {
             for (int i = 0; i < BLKSZ / 4; i++)
@@ -529,6 +532,7 @@ void __am_percpu_initlapic(void)
     lapicw(TICR, 10000000);
     lapicw(LINT0, MASKED);
     lapicw(LINT1, MASKED);
+
     if (((__am_lapic[VER] >> 16) & 0xFF) >= 4)
         lapicw(PCINT, MASKED);
     lapicw(ERROR, T_IRQ0 + IRQ_ERROR);

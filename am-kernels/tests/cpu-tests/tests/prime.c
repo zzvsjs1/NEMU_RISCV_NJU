@@ -17,6 +17,7 @@ int main()
                 break;
             }
         }
+
         if (prime)
         {
             check(i == ans[n]);

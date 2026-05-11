@@ -54,6 +54,7 @@ class EMUFILE
     bool fail(bool unset = false)
     {
         bool ret = failbit;
+
         if (unset)
             unfail();
         return ret;
@@ -132,6 +133,7 @@ class EMUFILE_FILE
         size_t ret = (bytes <= remain ? bytes : remain);
         memcpy(const_cast<void *>(ptr), data + curpos, ret);
         curpos += ret;
+
         if (ret < bytes)
             failbit = true;
         return ret;
@@ -157,6 +159,7 @@ class EMUFILE_FILE
             curpos += offset;
             break;
         }
+
         if (curpos < 0)
             curpos = 0;
         else if (curpos > filesize)
@@ -214,6 +217,7 @@ class EMUFILE_FILE : public EMUFILE
     virtual size_t _fread(const void *ptr, size_t bytes)
     {
         size_t ret = ::fread((void *)ptr, 1, bytes, fp);
+
         if (ret < bytes)
             failbit = true;
         return ret;
@@ -225,6 +229,7 @@ class EMUFILE_FILE : public EMUFILE
     virtual void fwrite(const void *ptr, size_t bytes)
     {
         size_t ret = ::fwrite((void *)ptr, 1, bytes, fp);
+
         if (ret < bytes)
             failbit = true;
     }

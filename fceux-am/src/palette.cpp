@@ -106,6 +106,7 @@ static void ApplyDeemphasisBisqwit(int entry, u8& r, u8& g, u8& b)
             float spot = lo_and_hi[bisqwit_wave(p,color)];
 
             // De-emphasis bits attenuate a part of the signal:
+
             if(pass==1)
             {
                 if(((entry & 0x40) && bisqwit_wave(p,12))
@@ -208,6 +209,7 @@ void SetNESDeemph_OldHacky(uint8 d, int force)
     /* If it's not forced(only forced when the palette changes),
     don't waste cpu time if the same deemphasis bits are set as the last call.
     */
+
     if (!force)
     {
         if (d == lastd)
@@ -228,15 +230,19 @@ void SetNESDeemph_OldHacky(uint8 d, int force)
             m = (m * r) >> 15;
             n = (n * g) >> 15;
             o = (o * b) >> 15;
+
             if (m > 0xff)
                 m = 0xff;
+
             if (n > 0xff)
                 n = 0xff;
+
             if (o > 0xff)
                 o = 0xff;
             FCEUD_SetPalette(x | 0xC0, m, n, o);
         }
     }
+
     if (!d)
         return; /* No deemphasis, so return. */
 
@@ -254,10 +260,13 @@ void SetNESDeemph_OldHacky(uint8 d, int force)
         m = (m * r) >> 15;
         n = (n * g) >> 15;
         o = (o * b) >> 15;
+
         if (m > 0xff)
             m = 0xff;
+
         if (n > 0xff)
             n = 0xff;
+
         if (o > 0xff)
             o = 0xff;
 

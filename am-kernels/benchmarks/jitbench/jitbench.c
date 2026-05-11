@@ -41,6 +41,7 @@ __attribute__((noinline)) static uint32_t alu_hot_loop(uint32_t count)
         a += b ^ (i * 0x045d9f3bu);
         b = rotl32(b + c + i, 7);
         c ^= a + rotl32(b, 11);
+
         if ((i & 15u) == 0)
         {
             a ^= c >> 3;

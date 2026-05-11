@@ -211,6 +211,7 @@ static inline bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t 
     const uint32_t satp = cpu.csr.satp;
 
     /* In Bare mode virtual address == physical address. */
+
     if (rv32_fast_direct_mode())
     {
         *paddr = (paddr_t)addr;
@@ -235,6 +236,7 @@ static inline bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t 
    * A hit is valid only for the same satp, same virtual page, and an access type
    * allowed by the cached leaf permissions.
    */
+
     if (likely(entry->valid && entry->satp == satp && entry->vpn == vpn &&
                (entry->perm & need_perm) != 0))
     {
@@ -250,6 +252,7 @@ static inline bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t 
     const uint32_t pte1 = (uint32_t)paddr_read(pte1_addr, 4);
 
     /* Invalid first-level PTEs need the full slow path for the usual handling. */
+
     if ((pte1 & RV32_FAST_PTE_V) == 0)
     {
         return false;
@@ -260,6 +263,7 @@ static inline bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t 
    * an Sv32 superpage, so let the existing page-walk code deal with it.
    */
     const uint32_t pte1_rwx = pte1 & (RV32_FAST_PTE_R | RV32_FAST_PTE_W | RV32_FAST_PTE_X);
+
     if (pte1_rwx != 0)
     {
         return false;
@@ -270,12 +274,14 @@ static inline bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t 
     const uint32_t pte0 = (uint32_t)paddr_read(pte0_addr, 4);
 
     /* The second-level PTE must be valid and must be a leaf. */
+
     if ((pte0 & RV32_FAST_PTE_V) == 0)
     {
         return false;
     }
 
     const uint32_t perm = pte0 & (RV32_FAST_PTE_R | RV32_FAST_PTE_W | RV32_FAST_PTE_X);
+
     if (perm == 0 || (perm & need_perm) == 0)
     {
         return false;
@@ -319,6 +325,7 @@ static inline bool rv32_fast_store_may_touch_page_table(paddr_t paddr)
     for (size_t i = 0; i < RV32_FAST_TLB_SIZE; i++)
     {
         const rv32_fast_tlb_entry_t *entry = &rv32_fast_tlb[i];
+
         if (!entry->valid)
         {
             continue;
@@ -326,6 +333,7 @@ static inline bool rv32_fast_store_may_touch_page_table(paddr_t paddr)
 
         const paddr_t root =
             ((paddr_t)(entry->satp & RV32_FAST_SATP_PPN_MASK)) << PAGE_SHIFT;
+
         if (page == root || page == entry->pt_page)
         {
             return true;
@@ -347,6 +355,7 @@ static inline bool rv32_fast_read_pmem_u8(paddr_t paddr, word_t *data)
    * Byte loads cannot cross a PMEM boundary by width, so checking the starting
    * physical address is enough before dereferencing the host PMEM pointer.
    */
+
     if (!likely(in_pmem(paddr)))
     {
         return false;
@@ -362,6 +371,7 @@ static inline bool rv32_fast_read_pmem_u16(paddr_t paddr, word_t *data)
    * Halfword loads are used for LH/LHU. The cast deliberately lets the host do
    * the same little-endian unaligned access style already used by host_read().
    */
+
     if (!likely(in_pmem(paddr)))
     {
         return false;
@@ -377,6 +387,7 @@ static inline bool rv32_fast_read_pmem_u32(paddr_t paddr, word_t *data)
    * Word loads and instruction fetches are the most common hot-path memory
    * operations, so this removes the generic host_read(len) switch completely.
    */
+
     if (!likely(in_pmem(paddr)))
     {
         return false;
@@ -412,6 +423,7 @@ static inline bool rv32_fast_read_u8(vaddr_t addr, int type, word_t *data)
    * Bare mode is expected for AM benchmarks. In that case the virtual address is
    * the physical address, and the helper below only needs the PMEM bound check.
    */
+
     if (rv32_fast_direct_mode())
     {
         return rv32_fast_read_pmem_u8((paddr_t)addr, data);
@@ -425,6 +437,7 @@ static inline bool rv32_fast_read_u8(vaddr_t addr, int type, word_t *data)
 static inline bool rv32_fast_read_u16(vaddr_t addr, int type, word_t *data)
 {
     /* Same split as byte reads, specialised for the LH/LHU access width. */
+
     if (rv32_fast_direct_mode())
     {
         return rv32_fast_read_pmem_u16((paddr_t)addr, data);
@@ -441,6 +454,7 @@ static inline bool rv32_fast_read_u32(vaddr_t addr, int type, word_t *data)
    * This serves both LW and normal 32-bit RISC-V instruction fetches. Keeping it
    * width-specific avoids a switch in the common direct-PMEM case.
    */
+
     if (rv32_fast_direct_mode())
     {
         return rv32_fast_read_pmem_u32((paddr_t)addr, data);
@@ -461,6 +475,7 @@ static inline bool rv32_fast_write_pmem_u8(paddr_t paddr, word_t data)
    * Store helpers truncate naturally through the target pointer type, matching
    * host_write() for SB/SH/SW without carrying a runtime length argument.
    */
+
     if (!likely(in_pmem(paddr)))
     {
         return false;
@@ -469,6 +484,7 @@ static inline bool rv32_fast_write_pmem_u8(paddr_t paddr, word_t data)
     const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
     *(uint8_t *)guest_to_host(paddr) = data;
     isa_jit_invalidate_paddr(paddr, 1);
+
     if (unlikely(flush_tlb))
     {
         rv32_fast_tlb_flush();
@@ -479,6 +495,7 @@ static inline bool rv32_fast_write_pmem_u8(paddr_t paddr, word_t data)
 static inline bool rv32_fast_write_pmem_u16(paddr_t paddr, word_t data)
 {
     /* Halfword store for SH; falls back before dereference if the address is MMIO. */
+
     if (!likely(in_pmem(paddr)))
     {
         return false;
@@ -487,6 +504,7 @@ static inline bool rv32_fast_write_pmem_u16(paddr_t paddr, word_t data)
     const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
     *(uint16_t *)guest_to_host(paddr) = data;
     isa_jit_invalidate_paddr(paddr, 2);
+
     if (unlikely(flush_tlb))
     {
         rv32_fast_tlb_flush();
@@ -497,6 +515,7 @@ static inline bool rv32_fast_write_pmem_u16(paddr_t paddr, word_t data)
 static inline bool rv32_fast_write_pmem_u32(paddr_t paddr, word_t data)
 {
     /* Word store for SW, the dominant benchmark store width. */
+
     if (!likely(in_pmem(paddr)))
     {
         return false;
@@ -505,6 +524,7 @@ static inline bool rv32_fast_write_pmem_u32(paddr_t paddr, word_t data)
     const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
     *(uint32_t *)guest_to_host(paddr) = data;
     isa_jit_invalidate_paddr(paddr, 4);
+
     if (unlikely(flush_tlb))
     {
         rv32_fast_tlb_flush();
@@ -523,12 +543,14 @@ static inline bool rv32_fast_write_u8(vaddr_t addr, word_t data)
    * In Bare mode this is just SB to PMEM plus the same JIT/fast-TLB write
    * notification used after translated PMEM stores.
    */
+
     if (rv32_fast_direct_mode())
     {
         return rv32_fast_write_pmem_u8((paddr_t)addr, data);
     }
 
     paddr_t paddr = 0;
+
     if (!rv32_fast_translate_pmem(addr, 1, MEM_TYPE_WRITE, &paddr))
     {
         return false;
@@ -540,12 +562,14 @@ static inline bool rv32_fast_write_u8(vaddr_t addr, word_t data)
 static inline bool rv32_fast_write_u16(vaddr_t addr, word_t data)
 {
     /* SH version of rv32_fast_write_u8(), with the same fallback and TLB rules. */
+
     if (rv32_fast_direct_mode())
     {
         return rv32_fast_write_pmem_u16((paddr_t)addr, data);
     }
 
     paddr_t paddr = 0;
+
     if (!rv32_fast_translate_pmem(addr, 2, MEM_TYPE_WRITE, &paddr))
     {
         return false;
@@ -561,12 +585,14 @@ static inline bool rv32_fast_write_u32(vaddr_t addr, word_t data)
    * are detected before the store, but the flush happens after the new word is
    * visible so the next walk observes the updated PTE.
    */
+
     if (rv32_fast_direct_mode())
     {
         return rv32_fast_write_pmem_u32((paddr_t)addr, data);
     }
 
     paddr_t paddr = 0;
+
     if (!rv32_fast_translate_pmem(addr, 4, MEM_TYPE_WRITE, &paddr))
     {
         return false;
@@ -813,6 +839,7 @@ static inline bool rv32_fast_exec_op_imm(uint32_t instr, vaddr_t pc)
        * forms, especially ADDI used by li/mv and stack adjustment, avoid this
        * extraction on their hot path.
        */
+
         if (rv32_fast_bits(instr, 31, 25) != 0x00)
             return false;
         rv32_fast_write_gpr(rd, src << rv32_fast_bits(instr, 24, 20));
@@ -820,6 +847,7 @@ static inline bool rv32_fast_exec_op_imm(uint32_t instr, vaddr_t pc)
     case 0x5:
     {
         const uint32_t funct7 = rv32_fast_bits(instr, 31, 25);
+
         if (funct7 == 0x00)
         {
             rv32_fast_write_gpr(rd, src >> rv32_fast_bits(instr, 24, 20));
@@ -1035,6 +1063,7 @@ static inline bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
     case 0x2:
         /* CSRRS writes only when rs1 is not x0; reads still return the old value. */
         rv32_fast_write_gpr(rd, old);
+
         if (isCSRWriteable(csr_addr) && rs1 != 0)
         {
             *csr = old | rs1_value;
@@ -1044,6 +1073,7 @@ static inline bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
     case 0x3:
         /* CSRRC clears only the bits present in rs1, again only when rs1 is not x0. */
         rv32_fast_write_gpr(rd, old);
+
         if (isCSRWriteable(csr_addr) && rs1 != 0)
         {
             *csr = old & ~rs1_value;
@@ -1059,6 +1089,7 @@ static inline bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
     case 0x6:
         /* CSRRSI sets bits from the immediate value when zimm is non-zero. */
         rv32_fast_write_gpr(rd, old);
+
         if (isCSRWriteable(csr_addr) && rs1 != 0)
         {
             *csr = old | rs1;
@@ -1068,6 +1099,7 @@ static inline bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
     case 0x7:
         /* CSRRCI clears bits from the immediate value when zimm is non-zero. */
         rv32_fast_write_gpr(rd, old);
+
         if (isCSRWriteable(csr_addr) && rs1 != 0)
         {
             *csr = old & ~(word_t)rs1;

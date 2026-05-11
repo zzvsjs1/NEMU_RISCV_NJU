@@ -318,6 +318,7 @@ static void render_short_name(const uint8_t short_name[11], char out[13])
     {
         ext_end--;
     }
+
     if (ext_end >= 8)
     {
         out[pos++] = '.';
@@ -486,15 +487,18 @@ static int read_directory_slot(const Fat32Volume *vol, uint32_t dir_cluster, uin
                 return -1;
             }
             const uint64_t real_sector = (uint64_t)first_sector + sector_index;
+
             if (real_sector > SIZE_MAX / FAT32_SECTOR_SIZE)
             {
                 return -1;
             }
             offset = (size_t)real_sector * FAT32_SECTOR_SIZE + (size_t)slot_index * FAT32_DIR_ENTRY_SIZE;
+
             if (disk_read(raw_entry, offset, FAT32_DIR_ENTRY_SIZE) != FAT32_DIR_ENTRY_SIZE)
             {
                 return -1;
             }
+
             if (entry_offset != 0)
             {
                 *entry_offset = (uint64_t)offset;
@@ -505,14 +509,17 @@ static int read_directory_slot(const Fat32Volume *vol, uint32_t dir_cluster, uin
         uint32_t next_cluster;
 
         index -= per_cluster;
+
         if (fat32_read_fat_entry(vol, cluster, &next_cluster) != 0)
         {
             return -1;
         }
+
         if (fat32_is_bad_cluster(next_cluster))
         {
             return -1;
         }
+
         if (fat32_is_end_of_chain(next_cluster))
         {
             return 0;
@@ -533,6 +540,7 @@ static int write_directory_slot(const Fat32Volume *vol, uint32_t dir_cluster, ui
     const int ret = read_directory_slot(vol, dir_cluster, entry_index, old_entry, &offset);
 
     (void)old_entry;
+
     if (ret != 1 || offset > SIZE_MAX)
     {
         return -1;
@@ -577,6 +585,7 @@ static int entry_name_matches(const Fat32LfnState *lfn, const uint8_t raw_entry[
     char long_name[FAT32_MAX_NAME + 1u];
 
     short_name_to_alias(raw_entry, alias);
+
     if (ascii_case_equal(alias, component))
     {
         return 1;
@@ -611,6 +620,7 @@ static int find_in_directory_full(const Fat32Volume *vol, uint32_t dir_cluster, 
         {
             return -1;
         }
+
         if (ret == 0)
         {
             return -1;
@@ -740,6 +750,7 @@ static int split_parent_path(const char *path, char parent[FAT32_MAX_PATH], char
     }
 
     len = strlen(path);
+
     if (len == 0 || len >= FAT32_MAX_PATH)
     {
         return -1;
@@ -750,6 +761,7 @@ static int split_parent_path(const char *path, char parent[FAT32_MAX_PATH], char
     {
         end--;
     }
+
     if (end == 1)
     {
         return -1;
@@ -760,12 +772,14 @@ static int split_parent_path(const char *path, char parent[FAT32_MAX_PATH], char
     {
         slash--;
     }
+
     if (slash == 0)
     {
         return -1;
     }
 
     name_len = end - slash;
+
     if (name_len == 0 || name_len > FAT32_MAX_NAME)
     {
         return -1;
@@ -798,6 +812,7 @@ static int lookup_parent(const Fat32Volume *vol, const char *path, uint32_t *par
     {
         return -1;
     }
+
     if (fat32_lookup_path(vol, parent, &parent_entry) != 0 || (parent_entry.attr & FAT32_ATTR_DIRECTORY) == 0)
     {
         return -1;
@@ -821,14 +836,17 @@ static int short_name_in_use(const Fat32Volume *vol, uint32_t dir_cluster, const
         {
             return 1;
         }
+
         if (ret == 0 || raw_entry[0] == 0x00)
         {
             return 0;
         }
+
         if (raw_entry[0] == 0xe5 || raw_entry[11] == FAT32_ATTR_LONG_NAME)
         {
             continue;
         }
+
         if (memcmp(raw_entry, short_name, 11) == 0)
         {
             return 1;
@@ -875,10 +893,12 @@ static int make_short_alias(const Fat32Volume *vol, uint32_t dir_cluster, const 
         }
         suffix_len = strlen(suffix);
         prefix_len = 8u > suffix_len ? 8u - suffix_len : 1u;
+
         if (prefix_len > strlen(base))
         {
             prefix_len = strlen(base);
         }
+
         if (prefix_len == 0)
         {
             prefix_len = 1;
@@ -1009,10 +1029,12 @@ static int find_directory_tail(const Fat32Volume *vol, uint32_t dir_cluster, uin
         {
             return -1;
         }
+
         if (fat32_is_bad_cluster(next))
         {
             return -1;
         }
+
         if (fat32_is_end_of_chain(next))
         {
             *out_tail = cluster;
@@ -1050,6 +1072,7 @@ static int append_directory_clusters(Fat32Volume *vol, uint32_t dir_cluster, uin
         {
             return -1;
         }
+
         if (fat32_write_fat_entry(vol, tail, new_cluster) != 0)
         {
             (void)fat32_free_chain(vol, new_cluster);
@@ -1080,6 +1103,7 @@ static int find_free_entry_run(Fat32Volume *vol, uint32_t dir_cluster, uint32_t 
         {
             return -1;
         }
+
         if (ret == 0)
         {
             break;
@@ -1092,6 +1116,7 @@ static int find_free_entry_run(Fat32Volume *vol, uint32_t dir_cluster, uint32_t 
                 run_start = entry_index;
             }
             run_count++;
+
             if (run_count >= needed_entries)
             {
                 *out_start_index = run_start;
@@ -1120,11 +1145,13 @@ static int write_entry_set(Fat32Volume *vol, uint32_t parent_cluster, uint32_t s
     for (uint32_t sequence = lfn_count; sequence >= 1; sequence--)
     {
         fill_lfn_entry(raw_entry, name, sequence, lfn_count, short_name);
+
         if (write_directory_slot(vol, parent_cluster, slot, raw_entry) != 0)
         {
             return -1;
         }
         slot++;
+
         if (sequence == 1)
         {
             break;
@@ -1132,14 +1159,17 @@ static int write_entry_set(Fat32Volume *vol, uint32_t parent_cluster, uint32_t s
     }
 
     fill_short_entry(raw_entry, short_name, attr, first_cluster, size);
+
     if (write_directory_slot(vol, parent_cluster, slot, raw_entry) != 0)
     {
         return -1;
     }
+
     if (read_directory_slot(vol, parent_cluster, slot, raw_entry, &short_offset) != 1)
     {
         return -1;
     }
+
     if (out != 0)
     {
         fill_dir_entry(vol, raw_entry, short_offset, out);
@@ -1163,6 +1193,7 @@ static int create_entry_in_directory(Fat32Volume *vol, uint32_t parent_cluster, 
     }
 
     needed_entries = 1u + (name_needs_lfn(name, short_name) ? lfn_entry_count_for_name(name) : 0u);
+
     if (find_free_entry_run(vol, parent_cluster, needed_entries, &start_index) != 0)
     {
         return -1;
@@ -1180,12 +1211,14 @@ static int initialise_directory_cluster(Fat32Volume *vol, uint32_t dir_cluster, 
     const uint32_t parent_for_dotdot = parent_cluster == vol->root_cluster ? 0 : parent_cluster;
 
     fill_dot_entry(raw_entry, ".", dir_cluster);
+
     if (write_directory_slot(vol, dir_cluster, 0, raw_entry) != 0)
     {
         return -1;
     }
 
     fill_dot_entry(raw_entry, "..", parent_for_dotdot);
+
     if (write_directory_slot(vol, dir_cluster, 1, raw_entry) != 0)
     {
         return -1;
@@ -1331,6 +1364,7 @@ int fat32_lookup_path(const Fat32Volume *vol, const char *path, Fat32DirEntry *o
         {
             return -1;
         }
+
         if (ret == 0)
         {
             *out = current;
@@ -1360,6 +1394,7 @@ int fat32_lookup_path(const Fat32Volume *vol, const char *path, Fat32DirEntry *o
         {
             return -1;
         }
+
         if (has_more && (current.attr & FAT32_ATTR_DIRECTORY) == 0)
         {
             return -1;
@@ -1380,6 +1415,7 @@ int fat32_opendir_path(const Fat32Volume *vol, const char *path, Fat32Dir *out)
     {
         return -1;
     }
+
     if (fat32_lookup_path(vol, path, &entry) != 0 || (entry.attr & FAT32_ATTR_DIRECTORY) == 0)
     {
         return -1;
@@ -1413,6 +1449,7 @@ int fat32_readdir(Fat32Volume *vol, Fat32Dir *dir, Fat32Dirent *out)
         {
             return -1;
         }
+
         if (ret == 0)
         {
             return 0;
@@ -1427,16 +1464,19 @@ int fat32_readdir(Fat32Volume *vol, Fat32Dir *dir, Fat32Dirent *out)
         }
 
         dir->next_entry_index++;
+
         if (first_byte == 0xe5)
         {
             lfn_reset(&lfn);
             continue;
         }
+
         if (attr == FAT32_ATTR_LONG_NAME)
         {
             lfn_add(&lfn, raw_entry);
             continue;
         }
+
         if ((attr & FAT32_ATTR_VOLUME_ID) != 0)
         {
             lfn_reset(&lfn);
@@ -1465,6 +1505,7 @@ int fat32_create_path(Fat32Volume *vol, const char *path, uint8_t attr, Fat32Dir
     {
         return -1;
     }
+
     if (fat32_lookup_path(vol, path, &(Fat32DirEntry){0}) == 0)
     {
         return -1;
@@ -1476,6 +1517,7 @@ int fat32_create_path(Fat32Volume *vol, const char *path, uint8_t attr, Fat32Dir
         {
             return -1;
         }
+
         if (initialise_directory_cluster(vol, first_cluster, parent_cluster) != 0)
         {
             (void)fat32_free_chain(vol, first_cluster);
@@ -1506,6 +1548,7 @@ int fat32_unlink_path(Fat32Volume *vol, const char *path)
     {
         return -1;
     }
+
     if ((located.entry.attr & FAT32_ATTR_DIRECTORY) != 0)
     {
         return -1;
@@ -1525,10 +1568,12 @@ int fat32_rmdir_path(Fat32Volume *vol, const char *path)
     {
         return -1;
     }
+
     if ((located.entry.attr & FAT32_ATTR_DIRECTORY) == 0)
     {
         return -1;
     }
+
     if (directory_is_empty(vol, located.entry.first_cluster) != 1)
     {
         return -1;
@@ -1555,12 +1600,14 @@ int fat32_rename_path(Fat32Volume *vol, const char *old_path, const char *new_pa
     {
         return -1;
     }
+
     if (lookup_parent(vol, new_path, &new_parent_cluster, new_name) != 0)
     {
         return -1;
     }
 
     new_exists = find_in_directory_full(vol, new_parent_cluster, new_name, &new_entry) == 0;
+
     if (new_exists && new_entry.parent_cluster == old_entry.parent_cluster && new_entry.entry_index == old_entry.entry_index)
     {
         return 0;
@@ -1568,20 +1615,24 @@ int fat32_rename_path(Fat32Volume *vol, const char *old_path, const char *new_pa
 
     old_is_dir = (old_entry.entry.attr & FAT32_ATTR_DIRECTORY) != 0;
     new_is_dir = new_exists && (new_entry.entry.attr & FAT32_ATTR_DIRECTORY) != 0;
+
     if (old_is_dir && old_entry.parent_cluster != new_parent_cluster)
     {
         return -1;
     }
+
     if (new_exists)
     {
         if (old_is_dir != new_is_dir)
         {
             return -1;
         }
+
         if (new_is_dir && directory_is_empty(vol, new_entry.entry.first_cluster) != 1)
         {
             return -1;
         }
+
         if (delete_located_entry(vol, &new_entry, 1) != 0)
         {
             return -1;

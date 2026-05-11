@@ -123,6 +123,7 @@ static DECLFW(UNLVRC7Write)
     case 0xf000:
         IRQa = V & 2;
         IRQd = V & 1;
+
         if (V & 2)
             IRQCount = IRQLatch;
         CycleCount = 0;
@@ -154,6 +155,7 @@ static void UNLVRC7IRQHook(int a)
         {
             CycleCount -= 341;
             IRQCount++;
+
             if (IRQCount == 248)
             {
                 IRQCount = IRQLatch;

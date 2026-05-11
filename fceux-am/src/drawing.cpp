@@ -118,8 +118,10 @@ void DrawTextTransWH(uint8 *dest, int width, uint8 *textmsg, uint8 fgcolor, int 
     memset(target, 0, 64 * 256);
 
     assert(width == 256);
+
     if (max_w > 256)
         max_w = 256;
+
     if (max_h > 64)
         max_h = 64;
 
@@ -150,6 +152,7 @@ void DrawTextTransWH(uint8 *dest, int width, uint8 *textmsg, uint8 fgcolor, int 
             for (nx = 0; nx < wid; ++nx)
             {
                 pixel_color = (d >> (7 - nx)) & 1;
+
                 if (pixel_color)
                 {
                     if (y + ny >= 62)
@@ -167,15 +170,18 @@ void DrawTextTransWH(uint8 *dest, int width, uint8 *textmsg, uint8 fgcolor, int 
         }
         // proceed to next char
         x += wid;
+
         if (max_x < x)
             max_x = x;
     }
 textoverflow:
 
     max_x += 2;
+
     if (max_x > width)
         max_x = width;
     int max_y = y + ny + 2;
+
     if (max_y > 62)
         max_y = 62;
 
@@ -194,6 +200,7 @@ textoverflow:
                 y >= (1) && (pixel_color += target[y - 1][x]);
                 y < (16 - 1) && (pixel_color += target[y + 1][x]);
             }
+
             if (border >= 2)
             {
                 x >= (1) && (pixel_color += target[y][x - 1] * 10);

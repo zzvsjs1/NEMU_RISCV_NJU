@@ -85,6 +85,7 @@ static DECLFW(B4016)
         //I dont see why it is unreasonable here.
         for (int i = 0; i < 2; i++)
             joyports[i].driver->Strobe(i);
+
         if (portFC.driver)
             portFC.driver->Strobe();
     }
@@ -123,8 +124,10 @@ static uint8 ReadGP(int w)
         ret = ((joy[2 + w] >> (joy_readbit[w] & 7)) & 1);
     else
         ret = ((joy[w] >> (joy_readbit[w])) & 1);
+
     if (joy_readbit[w] >= 16)
         ret = 0;
+
     if (!FSAttached)
     {
         if (joy_readbit[w] >= 8)
@@ -135,6 +138,7 @@ static uint8 ReadGP(int w)
         if (joy_readbit[w] == 19 - w)
             ret |= 1;
     }
+
     if (!fceuindbg)
         joy_readbit[w]++;
     return ret;
@@ -153,6 +157,7 @@ void FCEU_DrawInput(uint8 *buf)
 {
     for (int pad = 0; pad < 2; pad++)
         joyports[pad].driver->Draw(pad, buf, joyports[pad].attrib);
+
     if (portFC.driver)
         portFC.driver->Draw(buf, portFC.attrib);
 }

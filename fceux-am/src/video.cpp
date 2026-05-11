@@ -60,6 +60,7 @@ int FCEU_InitVirtualVideo(void)
     // the NES core deliberately stays at its native 256-wide buffer contract.
     //Some driver code may allocate XBuf externally.
     //256 bytes per scanline, * 240 scanline maximum, +16 for alignment,
+
     if (XBuf)
         return 1;
 
@@ -67,6 +68,7 @@ int FCEU_InitVirtualVideo(void)
     //XBackBuf = (u8*)FCEU_malloc(256 * 256 + 16);
     //XDBuf = (u8*)FCEU_malloc(256 * 256 + 16);
     //XDBackBuf = (u8*)FCEU_malloc(256 * 256 + 16);
+
     if (!XBuf)
     //if(!XBuf || !XBackBuf || !XDBuf || !XDBackBuf)
     {
@@ -110,6 +112,7 @@ static int boopcount = 0;
 void ShowFPS(void)
 {
     static uint32 tsc = 0;
+
     if (Show_FPS == false)
         return;
     uint32 now = FCEUD_GetTime();

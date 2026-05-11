@@ -62,6 +62,7 @@ static DECLFW(M42Write)
         break;
     case 0xE002:
         IRQa = V & 2;
+
         if (!IRQa)
             IRQCount = 0;
         X6502_IRQEnd(FCEU_IQEXT);
@@ -83,8 +84,10 @@ static void M42IRQHook(int a)
     if (IRQa)
     {
         IRQCount += a;
+
         if (IRQCount >= 32768)
             IRQCount -= 32768;
+
         if (IRQCount >= 24576)
             X6502_IRQBegin(FCEU_IQEXT);
         else

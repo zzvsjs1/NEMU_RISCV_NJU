@@ -41,6 +41,7 @@ static void Sync(void)
         setprg16(0x8000, (bank << 1) | (mode >> 4));
         setprg16(0xC000, ((bank & 0xC) << 1) | 7);
     }
+
     if (mode == 0x12)
         setmirror(MI_H);
     else
@@ -57,6 +58,7 @@ static DECLFW(M51WriteMode)
 static DECLFW(M51WriteBank)
 {
     bank = V & 0x0F;
+
     if (A & 0x4000)
         mode = (mode & 2) | (V & 0x10);
     Sync();

@@ -57,10 +57,12 @@ static int is_valid_file_data_cluster(const Fat32Volume *vol, uint32_t cluster)
    * reserved, bad, or end-of-chain ranges are not usable cluster numbers even
    * if a malformed BPB claims a very large cluster count.
    */
+
     if (!is_data_cluster(vol, cluster))
     {
         return 0;
     }
+
     if (cluster >= FAT32_RESERVED_CLUSTER_MIN || fat32_is_bad_cluster(cluster) || fat32_is_end_of_chain(cluster))
     {
         return 0;
@@ -80,6 +82,7 @@ static int is_unusable_chain_value(const Fat32Volume *vol, uint32_t cluster)
     {
         return 1;
     }
+
     if (value >= FAT32_RESERVED_CLUSTER_MIN && value <= FAT32_RESERVED_CLUSTER_MAX)
     {
         return 1;
@@ -114,6 +117,7 @@ static int checked_cluster_byte_offset(uint32_t first_sector, size_t offset_in_c
     {
         return -1;
     }
+
     if (offset_in_cluster > SIZE_MAX - cluster_base)
     {
         return -1;
@@ -155,6 +159,7 @@ static void remember_contiguous_cluster(Fat32File *file, uint32_t cluster_index,
    * alone; callers reach this helper only after either reading the FAT link or
    * using an already verified prefix.
    */
+
     if (file->contiguous_cluster_count == cluster_index && (uint64_t)cluster == (uint64_t)file->first_cluster + cluster_index)
     {
         file->contiguous_cluster_count = cluster_index + 1u;
@@ -198,6 +203,7 @@ static int seek_cluster(Fat32File *file, uint32_t cluster_index, uint32_t *out_c
     if (file->contiguous_cluster_count > cluster_index)
     {
         const uint64_t direct_cluster = (uint64_t)file->first_cluster + cluster_index;
+
         if (direct_cluster > UINT32_MAX || !is_data_cluster(&mounted_volume, (uint32_t)direct_cluster))
         {
             return -1;
@@ -225,6 +231,7 @@ static int seek_cluster(Fat32File *file, uint32_t cluster_index, uint32_t *out_c
    * Reads commonly advance forwards.  Reusing the cached point keeps repeated
    * small reads from restarting at the first cluster every time.
    */
+
     if (file->cached_cluster != 0 && file->cached_cluster_index <= cluster_index && file->cached_cluster_index > index && is_data_cluster(&mounted_volume, file->cached_cluster))
     {
         cluster = file->cached_cluster;
@@ -239,6 +246,7 @@ static int seek_cluster(Fat32File *file, uint32_t cluster_index, uint32_t *out_c
         {
             return -1;
         }
+
         if (is_unusable_chain_value(&mounted_volume, next_cluster))
         {
             return -1;
@@ -276,6 +284,7 @@ static int ensure_cluster(Fat32File *file, uint32_t cluster_index, uint32_t *out
     }
 
     cluster = file->first_cluster;
+
     if (!is_data_cluster(&mounted_volume, cluster))
     {
         return -1;
@@ -284,6 +293,7 @@ static int ensure_cluster(Fat32File *file, uint32_t cluster_index, uint32_t *out
     if (file->contiguous_cluster_count > cluster_index)
     {
         const uint64_t direct_cluster = (uint64_t)file->first_cluster + cluster_index;
+
         if (direct_cluster > UINT32_MAX || !is_data_cluster(&mounted_volume, (uint32_t)direct_cluster))
         {
             return -1;
@@ -330,6 +340,7 @@ static int ensure_cluster(Fat32File *file, uint32_t cluster_index, uint32_t *out
             {
                 return -1;
             }
+
             if (fat32_write_fat_entry(&mounted_volume, cluster, new_cluster) != 0)
             {
                 (void)fat32_free_chain(&mounted_volume, new_cluster);
@@ -367,12 +378,14 @@ static void discover_contiguous_prefix(Fat32File *file)
     {
         return;
     }
+
     if (cluster_size_bytes(&mounted_volume, &cluster_size) != 0)
     {
         return;
     }
 
     total_clusters = clusters_for_file_size(file->size, cluster_size);
+
     if (total_clusters == 0)
     {
         return;
@@ -389,12 +402,14 @@ static void discover_contiguous_prefix(Fat32File *file)
         {
             break;
         }
+
         if (is_unusable_chain_value(&mounted_volume, next_cluster))
         {
             break;
         }
 
         next_cluster &= FAT32_ENTRY_MASK;
+
         if ((uint64_t)next_cluster != (uint64_t)cluster + 1u)
         {
             break;
@@ -434,6 +449,7 @@ static int build_read_run(Fat32File *file, uint32_t cluster_index, uint32_t clus
         const size_t chunk = min_size(cluster_left, limit - run_len);
 
         run_len += chunk;
+
         if (chunk < cluster_left || run_len == limit)
         {
             break;
@@ -448,16 +464,19 @@ static int build_read_run(Fat32File *file, uint32_t cluster_index, uint32_t clus
         }
 
         uint32_t next_cluster;
+
         if (fat32_read_fat_entry(&mounted_volume, current_cluster, &next_cluster) != 0)
         {
             break;
         }
+
         if (is_unusable_chain_value(&mounted_volume, next_cluster))
         {
             break;
         }
 
         next_cluster &= FAT32_ENTRY_MASK;
+
         if ((uint64_t)next_cluster != (uint64_t)current_cluster + 1u)
         {
             break;
@@ -502,6 +521,7 @@ static int update_dir_entry(const Fat32File *file)
     {
         return -1;
     }
+
     if (disk_read(entry, offset, sizeof(entry)) != sizeof(entry))
     {
         return -1;
@@ -534,6 +554,7 @@ static size_t write_bytes(Fat32File *file, size_t offset, const void *buf, size_
     {
         return 0;
     }
+
     if (cluster_size_bytes(&mounted_volume, &cluster_size) != 0)
     {
         return 0;
@@ -553,10 +574,12 @@ static size_t write_bytes(Fat32File *file, size_t offset, const void *buf, size_
         {
             break;
         }
+
         if (ensure_cluster(file, cluster_index, &cluster) != 0)
         {
             break;
         }
+
         if (fat32_first_sector_of_cluster(&mounted_volume, cluster, &first_sector) != 0)
         {
             break;
@@ -593,6 +616,7 @@ static size_t write_bytes(Fat32File *file, size_t offset, const void *buf, size_
                     return copied;
                 }
                 memcpy(&sector[offset_in_sector], &src[copied], chunk);
+
                 if (disk_write(sector, byte_offset, sizeof(sector)) != sizeof(sector))
                 {
                     return copied;
@@ -649,6 +673,7 @@ static int open_from_dir_entry(const Fat32DirEntry *entry, Fat32File *out)
     out->first_cluster = entry->first_cluster;
     out->size = entry->size;
     out->dir_entry_offset = entry->dir_entry_offset;
+
     if (entry->size != 0)
     {
         if (!is_valid_file_data_cluster(&mounted_volume, entry->first_cluster))
@@ -692,14 +717,17 @@ int fat32_backend_open(const char *path, Fat32File *out)
     {
         return -1;
     }
+
     if (fat32_backend_init() != 0)
     {
         return -1;
     }
+
     if (fat32_lookup_path(&mounted_volume, path, &entry) != 0)
     {
         return -1;
     }
+
     if ((entry.attr & FAT32_ATTR_DIRECTORY) != 0)
     {
         return -1;
@@ -717,6 +745,7 @@ int fat32_backend_lookup(const char *path, Fat32DirEntry *out)
     {
         return -1;
     }
+
     if (fat32_backend_init() != 0)
     {
         return -1;
@@ -736,10 +765,12 @@ int fat32_backend_create(const char *path, Fat32File *out)
     {
         return -1;
     }
+
     if (fat32_backend_init() != 0)
     {
         return -1;
     }
+
     if (fat32_create_path(&mounted_volume, path, FAT32_ATTR_ARCHIVE, &entry) != 0)
     {
         return -1;
@@ -757,6 +788,7 @@ int fat32_backend_opendir(const char *path, Fat32Dir *out)
     {
         return -1;
     }
+
     if (fat32_backend_init() != 0)
     {
         return -1;
@@ -787,6 +819,7 @@ int fat32_backend_mkdir(const char *path)
     {
         return -1;
     }
+
     if (fat32_backend_init() != 0)
     {
         return -1;
@@ -804,6 +837,7 @@ int fat32_backend_unlink(const char *path)
     {
         return -1;
     }
+
     if (fat32_backend_init() != 0)
     {
         return -1;
@@ -821,6 +855,7 @@ int fat32_backend_rmdir(const char *path)
     {
         return -1;
     }
+
     if (fat32_backend_init() != 0)
     {
         return -1;
@@ -839,6 +874,7 @@ int fat32_backend_rename(const char *old_path, const char *new_path)
     {
         return -1;
     }
+
     if (fat32_backend_init() != 0)
     {
         return -1;
@@ -873,6 +909,7 @@ static int shrink_file(Fat32File *file, uint32_t size)
     }
 
     keep_clusters = clusters_for_file_size(size, cluster_size);
+
     if (keep_clusters == 0)
     {
         if (old_first_cluster != 0 && fat32_free_chain(&mounted_volume, old_first_cluster) != 0)
@@ -893,17 +930,21 @@ static int shrink_file(Fat32File *file, uint32_t size)
         {
             return -1;
         }
+
         if (fat32_read_fat_entry(&mounted_volume, last_kept, &first_freed) != 0)
         {
             return -1;
         }
+
         if (fat32_write_fat_entry(&mounted_volume, last_kept, FAT32_ENTRY_MASK) != 0)
         {
             return -1;
         }
+
         if (!fat32_is_end_of_chain(first_freed))
         {
             first_freed &= FAT32_ENTRY_MASK;
+
             if (is_data_cluster(&mounted_volume, first_freed) && fat32_free_chain(&mounted_volume, first_freed) != 0)
             {
                 return -1;
@@ -911,6 +952,7 @@ static int shrink_file(Fat32File *file, uint32_t size)
         }
         file->cached_cluster_index = keep_clusters - 1u;
         file->cached_cluster = last_kept;
+
         if (file->contiguous_cluster_count > keep_clusters)
         {
             file->contiguous_cluster_count = keep_clusters;
@@ -963,18 +1005,22 @@ size_t fat32_backend_read(Fat32File *file, size_t offset, void *buf, size_t len)
         {
             break;
         }
+
         if (seek_cluster(file, cluster_index, &cluster) != 0)
         {
             break;
         }
+
         if (fat32_first_sector_of_cluster(&mounted_volume, cluster, &first_sector) != 0)
         {
             break;
         }
+
         if (checked_cluster_byte_offset(first_sector, offset_in_cluster, &byte_offset) != 0)
         {
             return copied;
         }
+
         if (build_read_run(file, cluster_index, cluster, offset_in_cluster, cluster_size,
                            remaining, &run_len, &last_cluster_index, &last_cluster) != 0)
         {
@@ -987,6 +1033,7 @@ size_t fat32_backend_read(Fat32File *file, size_t offset, void *buf, size_t len)
      * lets disk.c use its larger DMA bounce buffer, matching the old flat
      * filesystem's large-asset behaviour while still honouring the FAT chain.
      */
+
         if (disk_read(&dst[copied], byte_offset, run_len) != run_len)
         {
             return copied;
@@ -1016,10 +1063,12 @@ size_t fat32_backend_write(Fat32File *file, size_t offset, const void *buf, size
     {
         return 0;
     }
+
     if ((file->attr & FAT32_ATTR_READ_ONLY) != 0 || file->dir_entry_offset == 0)
     {
         return 0;
     }
+
     if (offset > UINT32_MAX || len > (size_t)UINT32_MAX - offset)
     {
         return 0;
@@ -1028,6 +1077,7 @@ size_t fat32_backend_write(Fat32File *file, size_t offset, const void *buf, size
     if (offset > file->size)
     {
         const size_t gap = offset - file->size;
+
         if (zero_fill_gap(file, file->size, gap) != gap)
         {
             (void)update_dir_entry(file);
@@ -1036,6 +1086,7 @@ size_t fat32_backend_write(Fat32File *file, size_t offset, const void *buf, size
     }
 
     copied = write_bytes(file, offset, buf, len);
+
     if (file->first_cluster != old_first_cluster || file->size != old_size)
     {
         if (update_dir_entry(file) != 0)
@@ -1073,6 +1124,7 @@ int fat32_backend_truncate(Fat32File *file, uint32_t size)
     {
         return -1;
     }
+
     if ((file->attr & FAT32_ATTR_READ_ONLY) != 0)
     {
         return -1;

@@ -42,6 +42,7 @@ static SFORMAT StateRegs[] =
 static void Sync(void)
 {
     setprg8r(0x10, 0x6000, 0);
+
     if (ffemode)
     {
         int i;
@@ -142,6 +143,7 @@ static void FFEIRQHook(int a)
     if (IRQa)
     {
         IRQCount += a;
+
         if (IRQCount >= 0x10000)
         {
             X6502_IRQBegin(FCEU_IQEXT);
@@ -177,6 +179,7 @@ void Mapper6_Init(CartInfo *info)
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
     AddExState(WRAM, WRAMSIZE, 0, "WRAM");
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

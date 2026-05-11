@@ -39,6 +39,7 @@ static int clamp_int(int value, int low, int high)
 {
     if (value < low)
         return low;
+
     if (value > high)
         return high;
     return value;
@@ -70,6 +71,7 @@ static void fill_screen(uint32_t colour)
     {
         // Split the full-screen clear so the reusable framebuffer buffer stays small.
         int h = screen_h - y;
+
         if (h > 64)
             h = 64;
         draw_rect(0, y, screen_w, h, colour);
@@ -161,6 +163,7 @@ void mouse_test(void)
     while (1)
     {
         AM_INPUT_KEYBRD_T key = io_read(AM_INPUT_KEYBRD);
+
         if (key.keydown && key.keycode == AM_KEY_ESCAPE)
         {
             printf("Mouse test exit\n");
@@ -168,6 +171,7 @@ void mouse_test(void)
         }
 
         AM_INPUT_MOUSE_T mouse = io_read(AM_INPUT_MOUSE);
+
         if (mouse.type == AM_MOUSE_NONE)
         {
             continue;

@@ -4,8 +4,10 @@
 int isPrime(int n)
 {
     int d = 5;
+
     if (n % 2 == 0)
         return n == 2;
+
     if (n % 3 == 0)
         return n == 3;
     while (d * d <= n)
@@ -13,6 +15,7 @@ int isPrime(int n)
         if (n % d == 0)
             return 0;
         d += 2;
+
         if (n % d == 0)
             return 0;
         d += 4;
@@ -23,6 +26,7 @@ int isPrime(int n)
 int main()
 {
     int i, d, p, r, q = 929;
+
     if (!isPrime(q))
         return 1;
     r = q;
@@ -34,11 +38,14 @@ int main()
         for (p = r, i = 1; p; p <<= 1)
         {
             i = ((long long)i * i) % d;
+
             if (p < 0)
                 i *= 2;
+
             if (i > d)
                 i -= d;
         }
+
         if (i != 1)
             d += 2 * q;
         else

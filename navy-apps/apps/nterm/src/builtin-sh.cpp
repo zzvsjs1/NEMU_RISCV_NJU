@@ -27,6 +27,7 @@ static int sh_split_argv(char *s, char *argv[], int max_args)
     {
         while (isspace((unsigned char)*s))
             s++;
+
         if (*s == '\0')
             break;
 
@@ -34,6 +35,7 @@ static int sh_split_argv(char *s, char *argv[], int max_args)
             break;
 
         char quote = 0;
+
         if (*s == '"' || *s == '\'')
         {
             quote = *s;
@@ -41,6 +43,7 @@ static int sh_split_argv(char *s, char *argv[], int max_args)
             argv[argc++] = s;
             while (*s && *s != quote)
                 s++;
+
             if (*s == quote)
             {
                 *s = '\0';
@@ -52,6 +55,7 @@ static int sh_split_argv(char *s, char *argv[], int max_args)
             argv[argc++] = s;
             while (*s && !isspace((unsigned char)*s))
                 s++;
+
             if (*s)
             {
                 *s = '\0';
@@ -68,6 +72,7 @@ static const char *sh_resolve_path(const char *cmd, char *buf, size_t bufsz)
 {
     // execvp() will search PATH for bare names. We only preserve names and
     // explicit paths here so ramdisk shortcuts can remain simple and predictable.
+
     if (cmd == NULL || cmd[0] == '\0')
         return "";
 
@@ -159,6 +164,7 @@ int nterm_selftest(bool to_terminal)
 
     const char *msg = ok ? "NTERM_SELFTEST: PASS\n" : "NTERM_SELFTEST: FAIL\n";
     printf("%s", msg);
+
     if (to_terminal && term != NULL)
     {
         term->write(msg, strlen(msg));
@@ -170,11 +176,13 @@ int nterm_selftest(bool to_terminal)
 static void sh_handle_cmd(const char *cmd)
 {
     // 0) Defensive checks
+
     if (!cmd)
         return;
 
     // 1) Make a mutable copy and strip trailing newline(s)
     char *line = strdup(cmd);
+
     if (!line)
         return;
 
@@ -188,6 +196,7 @@ static void sh_handle_cmd(const char *cmd)
     char *p = line;
     while (*p && isspace((unsigned char)*p))
         p++;
+
     if (*p == '\0')
     {
         free(line);
@@ -197,6 +206,7 @@ static void sh_handle_cmd(const char *cmd)
     // 3) Split into argv
     char *argv[SH_MAX_ARGS];
     int argc = sh_split_argv(p, argv, SH_MAX_ARGS);
+
     if (argc <= 0)
     {
         free(line);
@@ -204,6 +214,7 @@ static void sh_handle_cmd(const char *cmd)
     }
 
     // Ensure argv is NULL-terminated for exec*
+
     if (argc >= SH_MAX_ARGS)
     {
         // If sh_split_argv can return SH_MAX_ARGS, reserve space for NULL.
@@ -214,6 +225,7 @@ static void sh_handle_cmd(const char *cmd)
     argv[argc] = NULL;
 
     // 4) Built-ins
+
     if (strcmp(argv[0], "echo") == 0)
     {
         for (int i = 1; i < argc; i++)
@@ -313,6 +325,7 @@ static void sh_handle_cmd(const char *cmd)
     // 5) External command
     char path[SH_MAX_PATH];
     const char *filename = sh_resolve_path(argv[0], path, sizeof(path));
+
     if (!filename || filename[0] == '\0')
     {
         // If your resolver can tell "not found", handle it explicitly.
@@ -337,11 +350,13 @@ void builtin_sh_run()
     while (1)
     {
         SDL_Event ev;
+
         if (SDL_PollEvent(&ev))
         {
             if (ev.type == SDL_KEYUP || ev.type == SDL_KEYDOWN)
             {
                 const char *res = term->keypress(handle_key(&ev));
+
                 if (res)
                 {
                     sh_handle_cmd(res);

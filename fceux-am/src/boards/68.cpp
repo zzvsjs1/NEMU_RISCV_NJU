@@ -94,6 +94,7 @@ static DECLFR(M68Read)
     if (!(kogame & 8))
     {
         count++;
+
         if (count == 1784)
             setprg16r(0, 0x8000, prg_reg);
     }
@@ -181,6 +182,7 @@ void Mapper68_Init(CartInfo *info)
     WRAMSIZE = 8192;
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

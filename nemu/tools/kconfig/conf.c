@@ -65,8 +65,10 @@ static void strip(char *str)
     while ((isspace(*p)))
         p++;
     l = strlen(p);
+
     if (p != str)
         memmove(str, p, l + 1);
+
     if (!l)
         return;
     p = str + l - 1;
@@ -143,8 +145,10 @@ static int conf_string(struct menu *menu)
         printf("%*s%s ", indent - 1, "", menu->prompt->text);
         printf("(%s) ", sym->name);
         def = sym_get_string_value(sym);
+
         if (sym_get_string_value(sym))
             printf("[%s] ", def);
+
         if (!conf_askvalue(sym, def))
             return 0;
         switch (line[0])
@@ -153,6 +157,7 @@ static int conf_string(struct menu *menu)
             break;
         case '?':
             /* print help */
+
             if (line[1] == '\n')
             {
                 print_help(menu);
@@ -164,6 +169,7 @@ static int conf_string(struct menu *menu)
             line[strlen(line) - 1] = 0;
             def = line;
         }
+
         if (def && sym_set_string_value(sym, def))
             return 0;
     }
@@ -177,6 +183,7 @@ static int conf_sym(struct menu *menu)
     while (1)
     {
         printf("%*s%s ", indent - 1, "", menu->prompt->text);
+
         if (sym->name)
             printf("(%s) ", sym->name);
         putchar('[');
@@ -193,13 +200,17 @@ static int conf_sym(struct menu *menu)
             putchar('Y');
             break;
         }
+
         if (oldval != no && sym_tristate_within_range(sym, no))
             printf("/n");
+
         if (oldval != mod && sym_tristate_within_range(sym, mod))
             printf("/m");
+
         if (oldval != yes && sym_tristate_within_range(sym, yes))
             printf("/y");
         printf("/?] ");
+
         if (!conf_askvalue(sym, sym_get_string_value(sym)))
             return 0;
         strip(line);
@@ -209,18 +220,21 @@ static int conf_sym(struct menu *menu)
         case 'n':
         case 'N':
             newval = no;
+
             if (!line[1] || !strcmp(&line[1], "o"))
                 break;
             continue;
         case 'm':
         case 'M':
             newval = mod;
+
             if (!line[1])
                 break;
             continue;
         case 'y':
         case 'Y':
             newval = yes;
+
             if (!line[1] || !strcmp(&line[1], "es"))
                 break;
             continue;
@@ -232,6 +246,7 @@ static int conf_sym(struct menu *menu)
         default:
             continue;
         }
+
         if (sym_set_tristate_value(sym, newval))
             return 0;
     help:
@@ -247,6 +262,7 @@ static int conf_choice(struct menu *menu)
 
     sym = menu->sym;
     is_new = !sym_has_value(sym);
+
     if (sym_is_changeable(sym))
     {
         conf_sym(menu);
@@ -287,12 +303,14 @@ static int conf_choice(struct menu *menu)
         {
             if (!menu_is_visible(child))
                 continue;
+
             if (!child->sym)
             {
                 printf("%*c %s\n", indent, '*', menu_get_prompt(child));
                 continue;
             }
             cnt++;
+
             if (child->sym == def_sym)
             {
                 def = cnt;
@@ -301,13 +319,16 @@ static int conf_choice(struct menu *menu)
             else
                 printf("%*c", indent, ' ');
             printf(" %d. %s", cnt, menu_get_prompt(child));
+
             if (child->sym->name)
                 printf(" (%s)", child->sym->name);
+
             if (!sym_has_value(child->sym))
                 printf(" (NEW)");
             printf("\n");
         }
         printf("%*schoice", indent - 1, "");
+
         if (cnt == 1)
         {
             printf("[1]: 1\n");
@@ -329,11 +350,13 @@ static int conf_choice(struct menu *menu)
             fflush(stdout);
             xfgets(line, sizeof(line), stdin);
             strip(line);
+
             if (line[0] == '?')
             {
                 print_help(menu);
                 continue;
             }
+
             if (!line[0])
                 cnt = def;
             else if (isdigit(line[0]))
@@ -350,11 +373,14 @@ static int conf_choice(struct menu *menu)
         {
             if (!child->sym || !menu_is_visible(child))
                 continue;
+
             if (!--cnt)
                 break;
         }
+
         if (!child)
             continue;
+
         if (line[0] && line[strlen(line) - 1] == '?')
         {
             print_help(child);
@@ -382,6 +408,7 @@ static void conf(struct menu *menu)
 
     sym = menu->sym;
     prop = menu->prompt;
+
     if (prop)
     {
         const char *prompt;
@@ -393,6 +420,7 @@ static void conf(struct menu *menu)
              * Except in oldaskconfig mode, we show only menus that
              * contain new symbols.
              */
+
             if (input_mode != oldaskconfig && rootEntry != menu)
             {
                 check_conf(menu);
@@ -401,6 +429,7 @@ static void conf(struct menu *menu)
             /* fall through */
         case P_COMMENT:
             prompt = menu_get_prompt(menu);
+
             if (prompt)
                 printf("%*c\n%*c %s\n%*c\n",
                        indent, '*',
@@ -416,6 +445,7 @@ static void conf(struct menu *menu)
     if (sym_is_choice(sym))
     {
         conf_choice(menu);
+
         if (sym->curr.tri != mod)
             return;
         goto conf_childs;
@@ -434,10 +464,12 @@ static void conf(struct menu *menu)
     }
 
 conf_childs:
+
     if (sym)
         indent += 2;
     for (child = menu->list; child; child = child->next)
         conf(child);
+
     if (sym)
         indent -= 2;
 }
@@ -451,6 +483,7 @@ static void check_conf(struct menu *menu)
         return;
 
     sym = menu->sym;
+
     if (sym && !sym_has_value(sym))
     {
         if (sym_is_changeable(sym) ||
@@ -582,10 +615,12 @@ int main(int ac, char **av)
             seed = (unsigned int)((now.tv_sec + 1) * (now.tv_usec + 1));
 
             seed_env = getenv("KCONFIG_SEED");
+
             if (seed_env && *seed_env)
             {
                 char *endp;
                 int tmp = (int)strtol(seed_env, &endp, 0);
+
                 if (*endp == '\0')
                 {
                     seed = tmp;
@@ -613,6 +648,7 @@ int main(int ac, char **av)
             break;
         }
     }
+
     if (ac == optind)
     {
         fprintf(stderr, "%s: Kconfig file missing\n", av[0]);
@@ -653,8 +689,10 @@ int main(int ac, char **av)
     case alldefconfig:
     case randconfig:
         name = getenv("KCONFIG_ALLCONFIG");
+
         if (!name)
             break;
+
         if ((strcmp(name, "") != 0) && (strcmp(name, "1") != 0))
         {
             if (conf_read_simple(name, S_DEF_USER))
@@ -686,6 +724,7 @@ int main(int ac, char **av)
         default:
             break;
         }
+
         if (conf_read_simple(name, S_DEF_USER) &&
             conf_read_simple("all.config", S_DEF_USER))
         {
@@ -702,6 +741,7 @@ int main(int ac, char **av)
     if (sync_kconfig)
     {
         name = getenv("KCONFIG_NOSILENTUPDATE");
+
         if (name && *name)
         {
             if (conf_get_changed())
@@ -791,6 +831,7 @@ int main(int ac, char **av)
          * syncconfig always creates or updates auto.conf because it is
          * used during the build.
          */
+
         if (conf_write_autoconf(sync_kconfig) && sync_kconfig)
         {
             fprintf(stderr,

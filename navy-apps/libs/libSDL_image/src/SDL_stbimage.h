@@ -61,6 +61,7 @@
   void yourFunction(const char* imageFilePath)
   {
     SDL_Surface* surf = STBIMG_Load(imageFilePath);
+
     if(surf == NULL) {
       printf("ERROR: Couldn't load %s, reason: %s\n", imageFilePath, SDL_GetError());
       exit(1);
@@ -192,6 +193,7 @@ SDL_STBIMG_DEF SDL_Surface *STBIMG_LoadFromMemory(const unsigned char *buffer, i
         SDL_SetError("STBIMG_LoadFromMemory(): passed buffer was NULL!");
         return NULL;
     }
+
     if (length <= 0)
     {
         SDL_SetError("STBIMG_LoadFromMemory(): passed invalid length: %d!", length);
@@ -199,6 +201,7 @@ SDL_STBIMG_DEF SDL_Surface *STBIMG_LoadFromMemory(const unsigned char *buffer, i
     }
 
     inforet = stbi_info_from_memory(buffer, length, &img.w, &img.h, &img.format);
+
     if (!inforet)
     {
         SDL_SetError("STBIMG_LoadFromMemory(): Couldn't get image info: %s!\n", stbi_failure_reason());
@@ -210,6 +213,7 @@ SDL_STBIMG_DEF SDL_Surface *STBIMG_LoadFromMemory(const unsigned char *buffer, i
     bppToUse = STBI_rgb_alpha;
 
     img.data = stbi_load_from_memory(buffer, length, &img.w, &img.h, &img.format, bppToUse);
+
     if (img.data == NULL)
     {
         SDL_SetError("STBIMG_LoadFromMemory(): Couldn't load image: %s!\n", stbi_failure_reason());
@@ -238,11 +242,13 @@ SDL_STBIMG_DEF SDL_Surface *STBIMG_CreateSurface(unsigned char *pixelData, int w
         SDL_SetError("STBIMG_CreateSurface(): passed pixelData was NULL!");
         return NULL;
     }
+
     if (bytesPerPixel != 3 && bytesPerPixel != 4)
     {
         SDL_SetError("STBIMG_CreateSurface(): passed bytesPerPixel = %d, only 3 (24bit RGB) and 4 (32bit RGBA) are allowed!", bytesPerPixel);
         return NULL;
     }
+
     if (width <= 0 || height <= 0)
     {
         SDL_SetError("STBIMG_CreateSurface(): width and height must be > 0!");

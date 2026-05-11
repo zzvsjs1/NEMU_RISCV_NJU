@@ -75,6 +75,7 @@ static void mira(void)
     if ((tkcom[0] & 0x20 && is209) || is211)
     {
         int x;
+
         if (tkcom[0] & 0x40) // Name tables are ROM-only
         {
             for (x = 0; x < 4; x++)
@@ -162,6 +163,7 @@ static void tekprom(void)
 static void tekvrom(void)
 {
     int x, bank = 0, mask = 0xFFFF;
+
     if (!(tkcom[3] & 0x20))
     {
         bank = (tkcom[3] & 1) | ((tkcom[3] & 0x18) >> 2);
@@ -263,6 +265,7 @@ static DECLFW(M90CHRhiWrite)
 static DECLFW(M90NTWrite)
 {
     //  FCEU_printf("bs %04x %02x\n",A,V);
+
     if (A & 4)
     {
         names[A & 3] &= 0x00FF;
@@ -283,6 +286,7 @@ static DECLFW(M90IRQWrite)
     {
     case 00: //FCEU_printf("%s IRQ (C000)\n",V&1?"Enable":"Disable");
         IRQa = V & 1;
+
         if (!(V & 1))
             X6502_IRQEnd(FCEU_IQEXT);
         break;
@@ -343,6 +347,7 @@ static DECLFW(M90ModeWrite)
         FCEU_printf("  CHR Banking mode: %d\n", (V >> 3) & 3);
         FCEU_printf("  6000-7FFF addresses mapping: %s\n", (V & 0x80) ? "Yes" : "No");
         FCEU_printf("  Nametable control: %s\n", (V & 0x20) ? "Enabled" : "Disabled");
+
         if (V & 0x20)
             FCEU_printf("  Nametable can be: %s\n", (V & 0x40) ? "ROM Only" : "RAM or ROM");
         break;
@@ -371,6 +376,7 @@ static DECLFW(M90ModeWrite)
         break;
     case 03:
         FCEU_printf("CHR Banking mode: %s\n", (V & 0x20) ? "Entire CHR ROM" : "256Kb Switching mode");
+
         if (!(V & 0x20))
             FCEU_printf("256K CHR bank number: %02x\n", (V & 1) | ((V & 0x18) >> 2));
         FCEU_printf("512K PRG bank number: %d\n", (V & 6) >> 1);
@@ -389,6 +395,7 @@ static void CCL(void)
     if ((IRQMode >> 6) == 1) // Count Up
     {
         IRQCount++;
+
         if ((IRQCount == 0) && IRQa)
         {
             X6502_IRQBegin(FCEU_IQEXT);
@@ -397,6 +404,7 @@ static void CCL(void)
     else if ((IRQMode >> 6) == 2) // Count down
     {
         IRQCount--;
+
         if ((IRQCount == 0xFF) && IRQa)
         {
             X6502_IRQBegin(FCEU_IQEXT);
@@ -412,15 +420,18 @@ static void ClockCounter(void)
         premask = 0x7;
     else
         premask = 0xFF;
+
     if ((IRQMode >> 6) == 1) // Count up
     {
         IRQPre++;
+
         if ((IRQPre & premask) == 0)
             CCL();
     }
     else if ((IRQMode >> 6) == 2) // Count down
     {
         IRQPre--;
+
         if ((IRQPre & premask) == premask)
             CCL();
     }
@@ -429,6 +440,7 @@ static void ClockCounter(void)
 void CPUWrap(int a)
 {
     int x;
+
     if ((IRQMode & 3) == 0)
         for (x = 0; x < a; x++)
             ClockCounter();
@@ -437,6 +449,7 @@ void CPUWrap(int a)
 static void SLWrap(void)
 {
     int x;
+
     if ((IRQMode & 3) == 1)
         for (x = 0; x < 8; x++)
             ClockCounter();
@@ -459,9 +472,11 @@ static void M90PPU(uint32 A)
     {
         uint8 l, h;
         h = A >> 8;
+
         if (h < 0x20 && ((h & 0x0F) == 0xF))
         {
             l = A & 0xF0;
+
             if (l == 0xD0)
             {
                 chr[(h & 0x10) >> 4] = ((h & 0x10) >> 2);

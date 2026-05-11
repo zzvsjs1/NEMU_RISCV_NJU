@@ -178,6 +178,7 @@ ee_u32 core_init_matrix(ee_u32 blksize, void *memblk, ee_s32 seed, mat_params *p
     ee_s32 order = 1;
     MATDAT val;
     ee_u32 i = 0, j = 0;
+
     if (seed == 0)
         seed = 1;
     while (j < blksize)
@@ -236,6 +237,7 @@ ee_s16 matrix_sum(ee_u32 N, MATRES *C, MATDAT clipval)
         {
             cur = C[i * N + j];
             tmp += cur;
+
             if (tmp > clipval)
             {
                 ret += 10;

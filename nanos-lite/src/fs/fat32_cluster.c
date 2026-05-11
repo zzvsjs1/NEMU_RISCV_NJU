@@ -54,10 +54,12 @@ static int checked_fat_entry_location(const Fat32Volume *vol, uint32_t cluster,
    * Data clusters start at 2.  A validated volume has cluster_count usable
    * data clusters, so the highest legal data cluster number is count + 1.
    */
+
     if (cluster < 2 || (uint64_t)cluster > (uint64_t)vol->cluster_count + 1u)
     {
         return -1;
     }
+
     if (fat_index >= vol->fat_count)
     {
         return -1;
@@ -66,6 +68,7 @@ static int checked_fat_entry_location(const Fat32Volume *vol, uint32_t cluster,
     const uint64_t fat_entry_count =
         (uint64_t)vol->fat_size_sectors * FAT32_SECTOR_SIZE / FAT32_ENTRY_SIZE;
     const uint64_t fat_offset = (uint64_t)cluster * FAT32_ENTRY_SIZE;
+
     if ((uint64_t)cluster >= fat_entry_count)
     {
         return -1;
@@ -74,6 +77,7 @@ static int checked_fat_entry_location(const Fat32Volume *vol, uint32_t cluster,
     const uint64_t fat_sector_index = fat_offset / FAT32_SECTOR_SIZE;
     const uint64_t sector_number = (uint64_t)vol->reserved_sector_count + (uint64_t)fat_index * (uint64_t)vol->fat_size_sectors + fat_sector_index;
     const uint64_t fat_end = (uint64_t)vol->reserved_sector_count + (uint64_t)(fat_index + 1u) * (uint64_t)vol->fat_size_sectors;
+
     if (sector_number >= fat_end || sector_number > SIZE_MAX / FAT32_SECTOR_SIZE)
     {
         return -1;
@@ -119,6 +123,7 @@ static int zero_cluster(const Fat32Volume *vol, uint32_t cluster)
         {
             return -1;
         }
+
         if (disk_write(zero, byte_offset, sizeof(zero)) != sizeof(zero))
         {
             return -1;
@@ -183,6 +188,7 @@ int fat32_read_fat_entry(const Fat32Volume *vol, uint32_t cluster, uint32_t *nex
    * costs one disk command per 128 FAT32 entries instead of one per entry.
    */
     Fat32Volume *cache = (Fat32Volume *)vol;
+
     if (!cache->fat_sector_cache_valid || cache->fat_sector_cache_fat_index != vol->active_fat || cache->fat_sector_cache_offset != (uint64_t)byte_offset)
     {
         if (disk_read(cache->fat_sector_cache, byte_offset, sizeof(cache->fat_sector_cache)) != sizeof(cache->fat_sector_cache))
@@ -219,6 +225,7 @@ int fat32_write_fat_entry(const Fat32Volume *vol, uint32_t cluster, uint32_t val
         {
             return -1;
         }
+
         if (disk_read(sector, byte_offset, sizeof(sector)) != sizeof(sector))
         {
             return -1;
@@ -239,6 +246,7 @@ int fat32_write_fat_entry(const Fat32Volume *vol, uint32_t cluster, uint32_t val
         }
 
         Fat32Volume *cache = (Fat32Volume *)vol;
+
         if (cache->fat_sector_cache_valid && cache->fat_sector_cache_fat_index == fat_index && cache->fat_sector_cache_offset == (uint64_t)byte_offset)
         {
             memcpy(cache->fat_sector_cache, sector, sizeof(cache->fat_sector_cache));
@@ -266,10 +274,12 @@ int fat32_load_fsinfo(Fat32Volume *vol)
     {
         return 0;
     }
+
     if (checked_sector_byte_offset(vol->fsinfo_sector, &byte_offset) != 0)
     {
         return -1;
     }
+
     if (disk_read(sector, byte_offset, sizeof(sector)) != sizeof(sector))
     {
         return -1;
@@ -288,6 +298,7 @@ int fat32_load_fsinfo(Fat32Volume *vol)
     {
         vol->free_cluster_count = FAT32_UNKNOWN_COUNT;
     }
+
     if (vol->next_free_cluster != FAT32_UNKNOWN_COUNT && !is_data_cluster(vol, vol->next_free_cluster))
     {
         vol->next_free_cluster = FAT32_UNKNOWN_COUNT;
@@ -302,6 +313,7 @@ int fat32_flush_fsinfo(const Fat32Volume *vol)
     {
         return -1;
     }
+
     if (!vol->fsinfo_valid)
     {
         return 0;
@@ -321,14 +333,17 @@ int fat32_flush_fsinfo(const Fat32Volume *vol)
         {
             continue;
         }
+
         if (checked_sector_byte_offset(sectors[i], &byte_offset) != 0)
         {
             return -1;
         }
+
         if (disk_read(sector, byte_offset, sizeof(sector)) != sizeof(sector))
         {
             return -1;
         }
+
         if (get_le32(&sector[0]) != FAT32_FSINFO_LEAD_SIG || get_le32(&sector[484]) != FAT32_FSINFO_STRUCT_SIG || get_le32(&sector[508]) != FAT32_FSINFO_TRAIL_SIG)
         {
             continue;
@@ -336,6 +351,7 @@ int fat32_flush_fsinfo(const Fat32Volume *vol)
 
         put_le32(&sector[488], vol->free_cluster_count);
         put_le32(&sector[492], vol->next_free_cluster);
+
         if (disk_write(sector, byte_offset, sizeof(sector)) != sizeof(sector))
         {
             return -1;
@@ -376,6 +392,7 @@ int fat32_alloc_cluster(Fat32Volume *vol, uint32_t preferred_after, uint32_t *ou
         {
             return -1;
         }
+
         if (value != 0)
         {
             continue;
@@ -385,6 +402,7 @@ int fat32_alloc_cluster(Fat32Volume *vol, uint32_t preferred_after, uint32_t *ou
         {
             return -1;
         }
+
         if (zero_cluster(vol, cluster) != 0)
         {
             (void)fat32_write_fat_entry(vol, cluster, 0);
@@ -392,6 +410,7 @@ int fat32_alloc_cluster(Fat32Volume *vol, uint32_t preferred_after, uint32_t *ou
         }
 
         mark_cluster_allocated(vol, cluster);
+
         if (fat32_flush_fsinfo(vol) != 0)
         {
             return -1;
@@ -412,10 +431,12 @@ int fat32_free_chain(Fat32Volume *vol, uint32_t first_cluster)
     {
         return -1;
     }
+
     if (first_cluster == 0)
     {
         return 0;
     }
+
     if (!is_data_cluster(vol, first_cluster))
     {
         return -1;
@@ -429,6 +450,7 @@ int fat32_free_chain(Fat32Volume *vol, uint32_t first_cluster)
         {
             return -1;
         }
+
         if (fat32_write_fat_entry(vol, cluster, 0) != 0)
         {
             return -1;
@@ -439,6 +461,7 @@ int fat32_free_chain(Fat32Volume *vol, uint32_t first_cluster)
         {
             return fat32_flush_fsinfo(vol);
         }
+
         if (next == 0 || fat32_is_bad_cluster(next) || !is_data_cluster(vol, next))
         {
             return -1;

@@ -57,6 +57,7 @@ void donut(void)
 
                 int o = x + 80 * y;
                 signed char zz = (x6 - K2) >> 15;
+
                 if (22 > y && y > 0 && x > 0 && 80 > x && zz < z[o])
                 {
                     z[o] = zz;

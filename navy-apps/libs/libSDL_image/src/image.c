@@ -13,6 +13,7 @@ SDL_Surface *IMG_Load_RW(SDL_RWops *src, int freesrc)
         return NULL;
 
     int64_t size = SDL_RWsize(src);
+
     if (size <= 0)
     {
         if (freesrc)
@@ -28,6 +29,7 @@ SDL_Surface *IMG_Load_RW(SDL_RWops *src, int freesrc)
      * match the "stream has been consumed" behaviour of the file-backed path.
      */
         int64_t pos = SDL_RWtell(src);
+
         if (pos < 0 || pos > size || size - pos > INT_MAX)
         {
             if (freesrc)
@@ -39,12 +41,14 @@ SDL_Surface *IMG_Load_RW(SDL_RWops *src, int freesrc)
         unsigned char *base = src->mem.base + pos;
         SDL_Surface *surface = STBIMG_LoadFromMemory(base, len);
         SDL_RWseek(src, size, RW_SEEK_SET);
+
         if (freesrc)
             SDL_RWclose(src);
         return surface;
     }
 
     uint8_t *buf = malloc((size_t)size);
+
     if (buf == NULL)
     {
         if (freesrc)
@@ -58,12 +62,14 @@ SDL_Surface *IMG_Load_RW(SDL_RWops *src, int freesrc)
    */
     size_t got = SDL_RWread(src, buf, 1, (size_t)size);
     SDL_Surface *surface = NULL;
+
     if (got == (size_t)size)
     {
         surface = STBIMG_LoadFromMemory(buf, (int)size);
     }
 
     free(buf);
+
     if (freesrc)
         SDL_RWclose(src);
     return surface;
@@ -84,6 +90,7 @@ SDL_Surface *IMG_Load(const char *filename)
    */
     // 1. Open the file in binary mode
     FILE *fp = fopen(filename, "rb");
+
     if (!fp)
     {
         printf("IMG_Load: could not open '%s'\n", filename);
@@ -91,6 +98,7 @@ SDL_Surface *IMG_Load(const char *filename)
     }
 
     // 2. Determine file size
+
     if (fseek(fp, 0, SEEK_END) != 0)
     {
         printf("IMG_Load: fseek failed");
@@ -99,6 +107,7 @@ SDL_Surface *IMG_Load(const char *filename)
     }
 
     long size = ftell(fp);
+
     if (size < 0)
     {
         printf("IMG_Load: ftell failed");
@@ -110,6 +119,7 @@ SDL_Surface *IMG_Load(const char *filename)
 
     // 3. Allocate temporary buffer
     unsigned char *buf = (unsigned char *)malloc((size_t)size);
+
     if (!buf)
     {
         printf("IMG_Load: out of memory allocating %ld bytes", size);
@@ -119,6 +129,7 @@ SDL_Surface *IMG_Load(const char *filename)
 
     // 4. Read file into buffer
     size_t read_bytes = fread(buf, 1, (size_t)size, fp);
+
     if (read_bytes != (size_t)size)
     {
         printf("IMG_Load: read error (%zu of %ld bytes)", read_bytes, size);
@@ -131,6 +142,7 @@ SDL_Surface *IMG_Load(const char *filename)
     //    STBIMG_LoadFromMemory takes ownership of buf on success,
     //    or you must free it yourself if it fails.
     SDL_Surface *surface = STBIMG_LoadFromMemory(buf, (size_t)size);
+
     if (!surface)
     {
         // STBIMG_LoadFromMemory should call SDL_SetError on failure
@@ -158,6 +170,7 @@ int IMG_isPNG(SDL_RWops *src)
         0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
     uint8_t buf[8];
     int64_t pos = SDL_RWtell(src);
+
     if (pos < 0)
         return 0;
 

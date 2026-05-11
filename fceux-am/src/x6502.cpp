@@ -865,6 +865,7 @@ void X6502_Run(int32 cycles)
     // The PPU drives CPU execution in scanline-sized chunks.  ADDCYC updates the
     // shared video/audio timestamps, so callers must not treat this as an isolated
     // CPU loop detached from frame timing.
+
     if (PAL)
         cycles *= 15; // 15*4=60
     else
@@ -924,6 +925,7 @@ void X6502_Run(int32 cycles)
                 }
             }
             _IRQlow &= ~(FCEU_IQTEMP);
+
             if (_count <= 0)
             {
                 _PI = _P;
@@ -944,6 +946,7 @@ void X6502_Run(int32 cycles)
 
         temp = _tcount;
         _tcount = 0;
+
         if (MapIRQHook)
             MapIRQHook(temp);
 
@@ -956,6 +959,7 @@ void X6502_Run(int32 cycles)
         {
 #include "ops.inc"
         }
+
         if (lastPC == _PC && _count > 0)
         {
             // spinning, just finish the run

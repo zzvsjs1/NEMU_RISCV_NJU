@@ -40,6 +40,7 @@ static void Sync(void)
     setprg8r(0x10, 0x6000, 0);
     setprg16(0x8000, prg);
     setprg16(0xC000, ~0);
+
     if (mirrisused)
         setmirror(mirr ^ 1);
     else

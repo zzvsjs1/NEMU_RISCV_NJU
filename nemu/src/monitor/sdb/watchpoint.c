@@ -74,6 +74,7 @@ void addWp(char *exprs)
 
     bool ok;
     const word_t res = expr(temp, &ok);
+
     if (!ok)
     {
         PRI_ERR_E("Expr eval failed.\n");
@@ -100,6 +101,7 @@ void delWp(const int n)
     }
 
     // One wp.
+
     if (!head->next)
     {
         if (head->NO != n)
@@ -115,6 +117,7 @@ void delWp(const int n)
     }
 
     WP *cur = head;
+
     if (cur->NO == n)
     {
         head = cur->next;
@@ -154,6 +157,7 @@ bool checkEachWpAndPrint()
         strcpy(temp, cur->exprStr);
 
         const word_t newVal = expr(temp, &success);
+
         if (!success)
         {
             PRI_ERR("Calculate watch point %d's expression failed.\n", cur->NO);

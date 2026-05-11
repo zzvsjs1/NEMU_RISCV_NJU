@@ -50,6 +50,7 @@ static DECLFW(M50Write)
     {
     case 0x4120:
         IRQa = V & 1;
+
         if (!IRQa)
             IRQCount = 0;
         X6502_IRQEnd(FCEU_IQEXT);

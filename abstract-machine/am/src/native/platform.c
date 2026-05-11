@@ -180,6 +180,7 @@ void __am_exit_platform(int code)
 {
     // let Linux clean up other resource
     extern int __am_mpe_init;
+
     if (__am_mpe_init && cpu_count() > 1)
         kill(0, SIGKILL);
     exit(code);
@@ -191,8 +192,10 @@ void __am_pmem_map(void *va, void *pa, int prot)
     int mmap_prot = PROT_NONE;
     // we do not support executable bit, so mark
     // all readable pages executable as well
+
     if (prot & MMAP_READ)
         mmap_prot |= PROT_READ | PROT_EXEC;
+
     if (prot & MMAP_WRITE)
         mmap_prot |= PROT_WRITE;
     void *ret = mmap(va, __am_pgsize, mmap_prot,

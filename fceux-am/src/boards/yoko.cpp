@@ -54,6 +54,7 @@ static void UNLYOKOSync(void)
     setchr2(0x0800, reg[4]);
     setchr2(0x1000, reg[5]);
     setchr2(0x1800, reg[6]);
+
     if (mode & 0x10)
     {
         uint32 base = (bank & 8) << 1;
@@ -91,6 +92,7 @@ static void M83Sync(void)
         setmirror(MI_1);
         break;
     }
+
     if (is2kbank && !isnot2kbank)
     {
         setchr2(0x0000, reg[0]);
@@ -105,6 +107,7 @@ static void M83Sync(void)
             setchr1(x << 10, reg[x] | ((bank & 0x30) << 4));
     }
     setprg8r(0x10, 0x6000, 0);
+
     if (mode & 0x40)
     {
         setprg16(0x8000, (bank & 0x3F)); // DBZ Party [p1]
@@ -322,6 +325,7 @@ static void UNLYOKOIRQHook(int a)
     if (IRQa)
     {
         IRQCount -= a;
+
         if (IRQCount < 0)
         {
             X6502_IRQBegin(FCEU_IQEXT);

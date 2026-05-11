@@ -73,6 +73,7 @@ static bool vga_fps_env_enabled()
 static void init_vga_fps_counter()
 {
     vga_fps_enabled = vga_fps_env_enabled();
+
     if (!vga_fps_enabled)
         return;
 
@@ -96,6 +97,7 @@ static void vga_fps_count_vmem_write(uint32_t offset, int len, uint64_t fb_size)
         return;
 
     uint64_t bytes = (uint64_t)len;
+
     if (bytes > fb_size - (uint64_t)offset)
     {
         bytes = fb_size - (uint64_t)offset;
@@ -120,6 +122,7 @@ static void vga_fps_count_frame(bool had_dirty, uint64_t dirty_area)
         return;
 
     const uint64_t now = get_time();
+
     if (vga_fps_last_us == 0)
     {
         vga_fps_last_us = now;
@@ -127,10 +130,12 @@ static void vga_fps_count_frame(bool had_dirty, uint64_t dirty_area)
     }
 
     vga_fps_frames++;
+
     if (had_dirty)
     {
         vga_fps_dirty_frames++;
         vga_fps_dirty_area += dirty_area;
+
         if (dirty_area >= (uint64_t)screen_width() * (uint64_t)screen_height())
         {
             vga_fps_full_frames++;
@@ -142,6 +147,7 @@ static void vga_fps_count_frame(bool had_dirty, uint64_t dirty_area)
     }
 
     const uint64_t elapsed = now - vga_fps_last_us;
+
     if (elapsed < VGA_FPS_INTERVAL_US)
         return;
 
@@ -213,6 +219,7 @@ static bool vga_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
 
     paddr_t paddr = 0;
     const int mmu = isa_mmu_check(addr, 1, MEM_TYPE_READ);
+
     if (mmu == MMU_DIRECT)
     {
         paddr = (paddr_t)addr;
@@ -220,6 +227,7 @@ static bool vga_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
     else if (mmu == MMU_TRANSLATE)
     {
         const paddr_t ret = isa_mmu_translate(addr, 1, MEM_TYPE_READ);
+
         if ((ret & (paddr_t)VGA_PAGE_MASK) != MEM_RET_OK)
         {
             return false;
@@ -236,10 +244,12 @@ static bool vga_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
 
     size_t chunk = VGA_PAGE_SIZE - (size_t)(addr & VGA_PAGE_MASK);
     const paddr_t pmem_end = (paddr_t)CONFIG_MBASE + (paddr_t)CONFIG_MSIZE;
+
     if ((paddr_t)(paddr + chunk) > pmem_end)
     {
         chunk = (size_t)(pmem_end - paddr);
     }
+
     if (chunk > wanted)
     {
         chunk = wanted;
@@ -258,6 +268,7 @@ static bool vga_guest_write_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
 
     paddr_t paddr = 0;
     const int mmu = isa_mmu_check(addr, 1, MEM_TYPE_WRITE);
+
     if (mmu == MMU_DIRECT)
     {
         paddr = (paddr_t)addr;
@@ -265,6 +276,7 @@ static bool vga_guest_write_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
     else if (mmu == MMU_TRANSLATE)
     {
         const paddr_t ret = isa_mmu_translate(addr, 1, MEM_TYPE_WRITE);
+
         if ((ret & (paddr_t)VGA_PAGE_MASK) != MEM_RET_OK)
         {
             return false;
@@ -281,10 +293,12 @@ static bool vga_guest_write_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
 
     size_t chunk = VGA_PAGE_SIZE - (size_t)(addr & VGA_PAGE_MASK);
     const paddr_t pmem_end = (paddr_t)CONFIG_MBASE + (paddr_t)CONFIG_MSIZE;
+
     if ((paddr_t)(paddr + chunk) > pmem_end)
     {
         chunk = (size_t)(pmem_end - paddr);
     }
+
     if (chunk > wanted)
     {
         chunk = wanted;
@@ -380,6 +394,7 @@ static void vgactl_io_handler(uint32_t offset, int len, bool is_write)
         return;
 
     const uint32_t reg = offset / sizeof(uint32_t);
+
     if (reg == NEMU_VGACTL_BLIT_CMD)
     {
         if (vgactl_port_base[NEMU_VGACTL_BLIT_CMD] != NEMU_VGACTL_BLIT_CMD_COPY)
@@ -413,12 +428,16 @@ static void mark_vmem_dirty_rect(int x0, int y0, int x1, int y1)
 {
     if (x0 < 0)
         x0 = 0;
+
     if (y0 < 0)
         y0 = 0;
+
     if (x1 >= (int)screen_width())
         x1 = (int)screen_width() - 1;
+
     if (y1 >= (int)screen_height())
         y1 = (int)screen_height() - 1;
+
     if (x0 > x1 || y0 > y1)
         return;
 
@@ -434,10 +453,13 @@ static void mark_vmem_dirty_rect(int x0, int y0, int x1, int y1)
 
     if (x0 < dirty_x0)
         dirty_x0 = x0;
+
     if (y0 < dirty_y0)
         dirty_y0 = y0;
+
     if (x1 > dirty_x1)
         dirty_x1 = x1;
+
     if (y1 > dirty_y1)
         dirty_y1 = y1;
 }
@@ -453,11 +475,13 @@ static void vmem_io_handler(uint32_t offset, int len, bool is_write)
         return;
 
     const uint64_t fb_size = screen_size();
+
     if ((uint64_t)offset >= fb_size)
         return;
     vga_fps_count_vmem_write(offset, len, fb_size);
 
     uint64_t end_byte = (uint64_t)offset + (uint64_t)len - 1;
+
     if (end_byte >= fb_size)
         end_byte = fb_size - 1;
 
@@ -533,6 +557,7 @@ static SDL_Rect screen_dst_rect()
     SDL_GetRendererOutputSize(renderer, &out_w, &out_h);
 
     SDL_Rect dst = {.x = 0, .y = 0, .w = out_w, .h = out_h};
+
     if (out_w <= 0 || out_h <= 0)
         return dst;
 
@@ -544,6 +569,7 @@ static SDL_Rect screen_dst_rect()
      * visual rule and an input rule: vga_translate_mouse_position() uses the same
      * rectangle to undo letterboxing before mouse coordinates reach the guest.
      */
+
     if (h_from_width <= out_h)
     {
         dst.w = out_w;
@@ -590,10 +616,13 @@ void vga_translate_mouse_position(int *x, int *y)
 
     if (guest_x < 0)
         guest_x = 0;
+
     if (guest_y < 0)
         guest_y = 0;
+
     if (guest_x >= width)
         guest_x = width - 1;
+
     if (guest_y >= height)
         guest_y = height - 1;
 
@@ -615,8 +644,10 @@ static void init_screen() {}
 void vga_translate_mouse_position(int *x, int *y)
 {
     assert(x != NULL && y != NULL);
+
     if (*x < 0)
         *x = 0;
+
     if (*y < 0)
         *y = 0;
 }
@@ -637,8 +668,10 @@ void vga_translate_mouse_position(int *x, int *y)
      * device even during performance runs.  With no host window transform to
      * undo, translation only normalises negative scripted coordinates.
      */
+
     if (*x < 0)
         *x = 0;
+
     if (*y < 0)
         *y = 0;
 }

@@ -68,10 +68,12 @@ void ParseGIInput(FCEUGI *gi)
     {
         CurInputType[0] = gi->input[0];
     }
+
     if (gi->input[1] >= 0)
     {
         CurInputType[1] = gi->input[1];
     }
+
     if (gi->inputfc >= 0)
     {
         CurInputType[2] = gi->inputfc;
@@ -107,6 +109,7 @@ static void KeyboardCommands()
         assert(ev.keycode < 256);
         keycode = ev.keycode;
         g_keyState[keycode] = ev.keydown;
+
         if (ev.keydown && (keycode == AM_KEY_ESCAPE || keycode == AM_KEY_Q))
             halt(0);
     } while (keycode != AM_KEY_NONE);
@@ -203,6 +206,7 @@ UpdateGamepad(void)
         }
 
         // rapid-fire a, rapid-fire b
+
         if (rapid)
         {
             for (x = 0; x < 2; x++)

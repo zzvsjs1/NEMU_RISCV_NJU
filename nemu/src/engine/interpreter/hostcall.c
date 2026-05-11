@@ -58,6 +58,7 @@ def_rtl(hostcall, uint32_t id, rtlreg_t *dest, const rtlreg_t *src1,
     {
         int width = imm & 0xf;
         bool is_in = ((imm & ~0xf) != 0);
+
         if (is_in)
             *dest = pio_read(*src1, width);
         else

@@ -26,6 +26,7 @@ static char *dup_name(const char *s)
 {
     size_t len = strlen(s) + 1;
     char *ret = malloc(len);
+
     if (ret != NULL)
     {
         memcpy(ret, s, len);
@@ -49,6 +50,7 @@ static void clear_symbols()
 static bool add_symbol(vaddr_t start, vaddr_t size, const char *name)
 {
     FuncSymbol *new_funcs = realloc(funcs, (nr_func + 1) * sizeof(*funcs));
+
     if (new_funcs == NULL)
     {
         return false;
@@ -59,6 +61,7 @@ static bool add_symbol(vaddr_t start, vaddr_t size, const char *name)
     /* Some toolchains emit zero-sized FUNC symbols; keep a one-byte lookup range. */
     funcs[nr_func].end = start + (size == 0 ? 1 : size);
     funcs[nr_func].name = dup_name(name);
+
     if (funcs[nr_func].name == NULL)
     {
         return false;
@@ -91,6 +94,7 @@ static const char *find_func(vaddr_t addr, vaddr_t *entry)
 static bool load_elf32(FILE *fp, const Elf32_Ehdr *eh)
 {
     Elf32_Shdr *shdrs = malloc(eh->e_shnum * sizeof(*shdrs));
+
     if (shdrs == NULL)
     {
         return false;
@@ -100,6 +104,7 @@ static bool load_elf32(FILE *fp, const Elf32_Ehdr *eh)
     for (int i = 0; ok && i < eh->e_shnum; i++)
     {
         /* .symtab points at its string table through sh_link. */
+
         if (shdrs[i].sh_type != SHT_SYMTAB)
         {
             continue;
@@ -117,6 +122,7 @@ static bool load_elf32(FILE *fp, const Elf32_Ehdr *eh)
         for (size_t j = 0; ok && j < n; j++)
         {
             /* ftrace only needs named function ranges, not objects or section symbols. */
+
             if (ELF32_ST_TYPE(syms[j].st_info) == STT_FUNC &&
                 syms[j].st_name < strtab.sh_size &&
                 syms[j].st_value != 0)
@@ -136,6 +142,7 @@ static bool load_elf32(FILE *fp, const Elf32_Ehdr *eh)
 static bool load_elf64(FILE *fp, const Elf64_Ehdr *eh)
 {
     Elf64_Shdr *shdrs = malloc(eh->e_shnum * sizeof(*shdrs));
+
     if (shdrs == NULL)
     {
         return false;
@@ -145,6 +152,7 @@ static bool load_elf64(FILE *fp, const Elf64_Ehdr *eh)
     for (int i = 0; ok && i < eh->e_shnum; i++)
     {
         /* .symtab points at its string table through sh_link. */
+
         if (shdrs[i].sh_type != SHT_SYMTAB)
         {
             continue;
@@ -162,6 +170,7 @@ static bool load_elf64(FILE *fp, const Elf64_Ehdr *eh)
         for (size_t j = 0; ok && j < n; j++)
         {
             /* ftrace only needs named function ranges, not objects or section symbols. */
+
             if (ELF64_ST_TYPE(syms[j].st_info) == STT_FUNC &&
                 syms[j].st_name < strtab.sh_size &&
                 syms[j].st_value != 0)
@@ -181,12 +190,14 @@ static bool load_elf64(FILE *fp, const Elf64_Ehdr *eh)
 void ftrace_init(const char *elf_file)
 {
     clear_symbols();
+
     if (elf_file == NULL)
     {
         return;
     }
 
     FILE *fp = fopen(elf_file, "rb");
+
     if (fp == NULL)
     {
         perror("ftrace elf");

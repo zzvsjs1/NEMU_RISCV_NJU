@@ -113,12 +113,14 @@ static void M252IRQ(int a)
     if (IRQa)
     {
         IRQClock += a * 3;
+
         if (IRQClock >= LCYCS)
         {
             while (IRQClock >= LCYCS)
             {
                 IRQClock -= LCYCS;
                 IRQCount++;
+
                 if (IRQCount & 0x100)
                 {
                     X6502_IRQBegin(FCEU_IQEXT);
@@ -133,6 +135,7 @@ static void M252Close(void)
 {
     if (WRAM)
         FCEU_gfree(WRAM);
+
     if (CHRRAM)
         FCEU_gfree(CHRRAM);
     WRAM = CHRRAM = NULL;
@@ -158,6 +161,7 @@ void Mapper252_Init(CartInfo *info)
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
     AddExState(WRAM, WRAMSIZE, 0, "WRAM");
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

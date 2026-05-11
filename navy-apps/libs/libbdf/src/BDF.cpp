@@ -13,9 +13,11 @@ void BDF_Font::create(uint32_t ch, int *bbx, uint32_t *bitmap, int count)
         {
             int x1 = x - bbx[2];
             int y1 = y - (h - bbx[1] - bbx[3]) - h1;
+
             if (x1 >= 0 && y1 >= 0 && y1 < bbx[1])
             {
                 uint32_t mask = bitmap[y1];
+
                 if ((mask >> (x1)) & 1)
                 {
                     row |= (1 << x);
@@ -40,22 +42,27 @@ BDF_Font::BDF_Font(const char *fname)
     while (fgets(buf, 256, fp))
     {
         sscanf(buf, "%s ", cmd);
+
         if (strcmp(cmd, "STARTFONT") == 0)
         {
             valid_file = true;
         }
+
         if (strcmp(cmd, "FONTBOUNDINGBOX") == 0)
         {
             sscanf(buf, "%*s %d %d %d %d", &w, &h, &w1, &h1);
         }
+
         if (strcmp(cmd, "STARTCHAR") == 0)
         {
             sscanf(buf, "%*s %x", &ch);
         }
+
         if (strcmp(cmd, "BBX") == 0)
         {
             sscanf(buf, "%*s %d %d %d %d", &bm_bbx[0], &bm_bbx[1], &bm_bbx[2], &bm_bbx[3]);
         }
+
         if (strcmp(cmd, "ENDCHAR") == 0)
         {
             if (ch < 256)
@@ -77,6 +84,7 @@ BDF_Font::BDF_Font(const char *fname)
             for (const char *p = buf; *p != '\n'; p++)
             {
                 int val;
+
                 if (*p >= '0' && *p <= '9')
                     val = *p - '0';
                 else
@@ -92,6 +100,7 @@ BDF_Font::BDF_Font(const char *fname)
             }
             bm_idx++;
         }
+
         if (strcmp(cmd, "ENDFONT") == 0)
         {
             break;

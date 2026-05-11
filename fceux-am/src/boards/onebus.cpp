@@ -225,6 +225,7 @@ static DECLFW(UNLOneBusWriteMMC3)
 static void UNLOneBusIRQHook(void)
 {
     uint32 count = IRQCount;
+
     if (!count || IRQReload)
     {
         IRQCount = IRQLatch;
@@ -232,6 +233,7 @@ static void UNLOneBusIRQHook(void)
     }
     else
         IRQCount--;
+
     if (count && !IRQCount)
     {
         if (IRQa)
@@ -261,11 +263,13 @@ static DECLFW(UNLOneBusWriteAPU40XX)
         if (apu40xx[0x30] & 0x10)
         {
             pcm_enable = V & 0x10;
+
             if (pcm_irq)
             {
                 X6502_IRQEnd(FCEU_IQEXT);
                 pcm_irq = 0;
             }
+
             if (pcm_enable)
                 pcm_latch = pcm_clock;
             V &= 0xef;
@@ -296,10 +300,12 @@ static void UNLOneBusCpuHook(int a)
     if (pcm_enable)
     {
         pcm_latch -= a;
+
         if (pcm_latch <= 0)
         {
             pcm_latch += pcm_clock;
             pcm_size--;
+
             if (pcm_size < 0)
             {
                 pcm_irq = 0x80;

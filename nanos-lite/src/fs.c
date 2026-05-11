@@ -308,12 +308,14 @@ int fs_open(const char *pathname, int flags, int mode)
     int fd;
 
     (void)mode;
+
     if (pathname == 0)
     {
         return -1;
     }
 
     fd = find_special_file(pathname);
+
     if (fd >= 0)
     {
         if ((flags & FS_O_DIRECTORY) != 0)
@@ -325,6 +327,7 @@ int fs_open(const char *pathname, int flags, int mode)
     }
 
     access_from_flags(flags, &readable, &writable);
+
     if ((flags & FS_O_DIRECTORY) != 0)
     {
         FsDir dir;
@@ -335,11 +338,13 @@ int fs_open(const char *pathname, int flags, int mode)
             return -1;
         }
         new_fd = allocate_fd(OPEN_DIRECTORY, 1, 0, 0);
+
         if (new_fd < 0)
         {
             return -1;
         }
         open_files[new_fd - FIRST_REGULAR_FD].dir = dir;
+
         if (regular_fs_backend.lookup(pathname, &open_files[new_fd - FIRST_REGULAR_FD].metadata) != 0)
         {
             open_files[new_fd - FIRST_REGULAR_FD].metadata.is_dir = 1;
@@ -350,6 +355,7 @@ int fs_open(const char *pathname, int flags, int mode)
     }
 
     FsFile file;
+
     if (regular_fs_backend.open(pathname, &file) == 0)
     {
         int new_fd;
@@ -359,6 +365,7 @@ int fs_open(const char *pathname, int flags, int mode)
             regular_fs_backend.close(&file);
             return -1;
         }
+
         if ((flags & FS_O_TRUNC) != 0)
         {
             if (!writable || regular_fs_backend.truncate(&file, 0) != 0)
@@ -369,6 +376,7 @@ int fs_open(const char *pathname, int flags, int mode)
         }
 
         new_fd = allocate_fd(OPEN_REGULAR, readable, writable, (flags & FS_O_APPEND) != 0);
+
         if (new_fd < 0)
         {
             regular_fs_backend.close(&file);
@@ -376,6 +384,7 @@ int fs_open(const char *pathname, int flags, int mode)
         }
         open_files[new_fd - FIRST_REGULAR_FD].file = file;
         open_files[new_fd - FIRST_REGULAR_FD].metadata = metadata_from_file(&file);
+
         if ((flags & FS_O_APPEND) != 0)
         {
             open_files[new_fd - FIRST_REGULAR_FD].offset = file.size;
@@ -392,6 +401,7 @@ int fs_open(const char *pathname, int flags, int mode)
             return -1;
         }
         new_fd = allocate_fd(OPEN_REGULAR, readable, writable, (flags & FS_O_APPEND) != 0);
+
         if (new_fd < 0)
         {
             regular_fs_backend.close(&file);
@@ -427,12 +437,14 @@ size_t fs_read(int fd, void *buf, size_t len)
     }
 
     OpenFile *open = open_file(fd);
+
     if (open->kind != OPEN_REGULAR || !open->readable)
     {
         return (size_t)-1;
     }
 
     const size_t ret = regular_fs_backend.read(&open->file, open->offset, buf, len);
+
     if (ret != (size_t)-1)
     {
         open->offset += ret;
@@ -459,6 +471,7 @@ size_t fs_write(int fd, const void *buf, size_t len)
     }
 
     OpenFile *open = open_file(fd);
+
     if (open->kind != OPEN_REGULAR || !open->writable)
     {
         return (size_t)-1;
@@ -470,6 +483,7 @@ size_t fs_write(int fd, const void *buf, size_t len)
     }
 
     const size_t ret = regular_fs_backend.write(&open->file, open->offset, buf, len);
+
     if (ret != (size_t)-1)
     {
         open->offset += ret;
@@ -543,6 +557,7 @@ int fs_close(int fd)
     }
 
     OpenFile *open = &open_files[fd - FIRST_REGULAR_FD];
+
     if (open->kind == OPEN_NONE)
     {
         return 0;
@@ -567,11 +582,13 @@ int fs_stat(const char *pathname, struct stat *buf)
     }
 
     fd = find_special_file(pathname);
+
     if (fd >= 0)
     {
         fill_stat_from_special(buf, fd);
         return 0;
     }
+
     if (regular_fs_backend.lookup(pathname, &metadata) != 0)
     {
         return -1;
@@ -590,6 +607,7 @@ int fs_fstat(int fd, struct stat *buf)
     {
         return -1;
     }
+
     if (fd < FIRST_REGULAR_FD)
     {
         fill_stat_from_special(buf, fd);
@@ -600,6 +618,7 @@ int fs_fstat(int fd, struct stat *buf)
     FsMetadata metadata;
 
     metadata = open->metadata;
+
     if (open->kind == OPEN_REGULAR)
     {
         metadata.size = open->file.size;
@@ -646,6 +665,7 @@ int fs_getdents(int fd, void *buf, int len)
     }
 
     OpenFile *open = open_file(fd);
+
     if (open->kind != OPEN_DIRECTORY)
     {
         return -1;
@@ -663,13 +683,16 @@ int fs_getdents(int fd, void *buf, int len)
         {
             return used != 0 ? (int)used : -1;
         }
+
         if (ret == 0)
         {
             break;
         }
+
         if (pack_dirent(&dst[used], (size_t)len - used, &entry, next_offset, &record_len) != 0)
         {
             open->dir = saved_dir;
+
             if (used == 0)
             {
                 return -1;
@@ -694,12 +717,14 @@ int fs_ftruncate(int fd, size_t size)
     }
 
     OpenFile *open = open_file(fd);
+
     if (open->kind != OPEN_REGULAR || !open->writable)
     {
         return -1;
     }
 
     const int ret = regular_fs_backend.truncate(&open->file, size);
+
     if (ret == 0)
     {
         open->metadata.size = open->file.size;
@@ -745,6 +770,7 @@ int fs_unlink(const char *pathname)
 int fs_mkdir(const char *pathname, int mode)
 {
     (void)mode;
+
     if (pathname == 0)
     {
         return -1;

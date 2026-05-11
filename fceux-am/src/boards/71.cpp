@@ -34,6 +34,7 @@ static void Sync(void)
     setprg16(0x8000, preg);
     setprg16(0xC000, ~0);
     setchr8(0);
+
     if (mirr)
         setmirror(mirr);
     else

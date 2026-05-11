@@ -48,6 +48,7 @@ static void draw_tile(int y, int x, uint32_t color)
 {
     static uint32_t buf[TILE_W * TILE_W];
     uint32_t last_color = 0xffffffff;
+
     if (last_color != color)
     {
         for (int i = 0; i < LENGTH(buf); i++)
@@ -63,6 +64,7 @@ static int read_key()
     while (1)
     {
         AM_INPUT_KEYBRD_T ev = io_read(AM_INPUT_KEYBRD);
+
         if (ev.keydown || ev.keycode == AM_KEY_NONE)
             return ev.keycode;
     }
@@ -106,6 +108,7 @@ static void print_head(snake_t *snake, rect_t board)
 static void clear_tail(snake_t *snake, rect_t board)
 {
     int t = snake->index - snake->length;
+
     if (t < 0)
     {
         t += MAX_LENGTH;
@@ -151,6 +154,7 @@ static void move_snake(snake_t *snake, dir_t dir)
         break;
     }
     snake->index++;
+
     if (snake->index == MAX_LENGTH)
     {
         snake->index = 0;
@@ -161,22 +165,28 @@ static void move_snake(snake_t *snake, dir_t dir)
 static int is_dead(snake_t *snake, dim_t game_size)
 {
     point_t head = snake->body[snake->index];
+
     if (head.x == -1)
         return 1;
+
     if (head.x == game_size.width)
         return 1;
+
     if (head.y == -1)
         return 1;
+
     if (head.y == game_size.height)
         return 1;
 
     for (int i = 1; i != snake->length; i++)
     {
         int j = snake->index - i;
+
         if (j < 0)
         {
             j += MAX_LENGTH;
         }
+
         if (head.x == snake->body[j].x && head.y == snake->body[j].y)
         {
             return 1;

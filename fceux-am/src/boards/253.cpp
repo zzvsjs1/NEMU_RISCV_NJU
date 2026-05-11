@@ -51,6 +51,7 @@ static void Sync(void)
     for (i = 0; i < 8; i++)
     {
         uint32 chr = chrlo[i] | (chrhi[i] << 8);
+
         if (((chrlo[i] == 4) || (chrlo[i] == 5)) && !vlock)
             setchr1r(0x10, i << 10, chr & 1);
         else
@@ -81,6 +82,7 @@ static DECLFW(M253Write)
         uint8 sar = A & 4;
         uint8 clo = (chrlo[ind] & (0xF0 >> sar)) | ((V & 0x0F) << sar);
         chrlo[ind] = clo;
+
         if (ind == 0)
         {
             if (clo == 0xc8)
@@ -88,6 +90,7 @@ static DECLFW(M253Write)
             else if (clo == 0x88)
                 vlock = 1;
         }
+
         if (sar)
             chrhi[ind] = V >> 4;
         Sync();
@@ -141,6 +144,7 @@ static void M253Close(void)
 {
     if (WRAM)
         FCEU_gfree(WRAM);
+
     if (CHRRAM)
         FCEU_gfree(CHRRAM);
     WRAM = CHRRAM = NULL;
@@ -152,12 +156,14 @@ static void M253IRQ(int a)
     if (IRQa)
     {
         IRQClock += a * 3;
+
         if (IRQClock >= LCYCS)
         {
             while (IRQClock >= LCYCS)
             {
                 IRQClock -= LCYCS;
                 IRQCount++;
+
                 if (IRQCount & 0x100)
                 {
                     X6502_IRQBegin(FCEU_IQEXT);
@@ -189,6 +195,7 @@ void Mapper253_Init(CartInfo *info)
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
     AddExState(WRAM, WRAMSIZE, 0, "WRAM");
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

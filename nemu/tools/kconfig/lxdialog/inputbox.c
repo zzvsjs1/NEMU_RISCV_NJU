@@ -45,6 +45,7 @@ int dialog_inputbox(const char *title, const char *prompt, int height, int width
 do_resize:
     if (getmaxy(stdscr) <= (height - INPUTBOX_HEIGTH_MIN))
         return -ERRDISPLAYTOOSMALL;
+
     if (getmaxx(stdscr) <= (width - INPUTBOX_WIDTH_MIN))
         return -ERRDISPLAYTOOSMALL;
 
@@ -124,6 +125,7 @@ do_resize:
                 if (pos)
                 {
                     wattrset(dialog, dlg.inputbox.atr);
+
                     if (input_x == 0)
                     {
                         show_x--;
@@ -212,6 +214,7 @@ do_resize:
                     if (len < MAX_LEN)
                     {
                         wattrset(dialog, dlg.inputbox.atr);
+
                         if (pos < len)
                         {
                             for (i = len; i > pos; i--)

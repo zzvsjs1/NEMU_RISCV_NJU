@@ -49,6 +49,7 @@ int LoadGame(const char *path)
     {
         CloseGame();
     }
+
     if (!FCEUI_LoadGame(path, 1))
     {
         return 0;
@@ -158,6 +159,7 @@ void FCEUD_Update(uint8 *XBuf,
 {
     int ocount = Count;
     int blitDone = 0;
+
     if (Count)
     {
         int32 can = GetWriteSound();
@@ -165,6 +167,7 @@ void FCEUD_Update(uint8 *XBuf,
         int32 tmpcan;
 
         // don't underflow when scaling fps
+
         if (can >= (int)GetMaxSound())
             uflow = 1; /* Go into massive underflow mode. */
 
@@ -179,6 +182,7 @@ void FCEUD_Update(uint8 *XBuf,
         tmpcan = GetWriteSound();
 
         // don't underflow when scaling fps
+
         if ((tmpcan < Count * 9 / 10) && !uflow)
         {
             if (XBuf && (inited & 4) && !(NoWaiting & 2))
@@ -188,11 +192,13 @@ void FCEUD_Update(uint8 *XBuf,
             }
             Buffer += can;
             Count -= can;
+
             if (Count)
             {
                 if (NoWaiting)
                 {
                     can = GetWriteSound();
+
                     if (Count > can)
                         Count = can;
                     WriteSound(Buffer, Count);
@@ -217,12 +223,14 @@ void FCEUD_Update(uint8 *XBuf,
                 FCEUD_UpdateInput();
             }
         }
+
         if (XBuf && (inited & 4))
         {
             BlitScreen(XBuf);
             blitDone = 1;
         }
     }
+
     if (!blitDone)
     {
         if (XBuf && (inited & 4))
@@ -255,6 +263,7 @@ static void UpdateEMUCore()
     {
         if (srendlinev[x] < 0 || srendlinev[x] > 239)
             srendlinev[x] = 0;
+
         if (erendlinev[x] < srendlinev[x] || erendlinev[x] > 239)
             erendlinev[x] = 239;
     }
@@ -310,6 +319,7 @@ static const char *NormaliseRomPath(const char *romname)
 
     // Users normally pass "ba" as mainargs.  The real host/Navy filename still
     // has the .nes suffix, so add it only for simple ROM names.
+
     if (has_dir || HasNesExtension(romname))
     {
         snprintf(fullpath, sizeof(fullpath), "%s%s", prefix, romname);
@@ -336,6 +346,7 @@ int main(int argc, char *argv[])
 
 #ifdef __NAVY__
     const char *romname;
+
     if (argc < 2)
     {
         romname = NULL;
@@ -355,6 +366,7 @@ int main(int argc, char *argv[])
 
     // initialize the infrastructure
     error = FCEUI_Initialize();
+
     if (error != 1)
     {
         return -1;
@@ -368,6 +380,7 @@ int main(int argc, char *argv[])
 
     // load the specified game
     error = LoadGame(romname);
+
     if (error != 1)
     {
         DriverKill();

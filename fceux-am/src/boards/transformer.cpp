@@ -31,6 +31,7 @@ static int TransformerCycleCount, TransformerChar = 0;
 static void TransformerIRQHook(int a)
 {
     TransformerCycleCount += a;
+
     if (TransformerCycleCount >= 1000)
     {
         uint32 i;
@@ -104,6 +105,7 @@ void Transformer_Init(CartInfo *info)
     WRAMSIZE = 8192;
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

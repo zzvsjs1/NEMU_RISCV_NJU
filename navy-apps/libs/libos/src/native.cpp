@@ -188,8 +188,10 @@ static Uint32 texture_sync(Uint32 interval, void *param)
 static void audio_fill(void *userdata, uint8_t *stream, int len)
 {
     int nread = glibc_read(sb_fifo[0], stream, len);
+
     if (nread == -1)
         nread = 0;
+
     if (nread < len)
         memset(stream + nread, 0, len - nread);
 }
@@ -210,6 +212,7 @@ static void open_display()
    * Navy devices, but they must not open a host window.  This is important for
    * Codex and CI sessions where SDL video access may hang or be unavailable.
    */
+
     if (use_dummy_video())
     {
         return;
@@ -241,6 +244,7 @@ static void open_audio()
 static const char *redirect_path(char *newpath, const char *path)
 {
     get_fsimg_path(newpath, path);
+
     if (0 == access(newpath, 0))
     {
         fprintf(stderr, "Redirecting file open: %s -> %s\n", path, newpath);
@@ -258,6 +262,7 @@ extern "C" int execve(const char *filename, char *const argv[], char *const envp
 FILE *fopen(const char *path, const char *mode)
 {
     char newpath[512];
+
     if (glibc_fopen == NULL)
     {
         glibc_fopen = (FILE * (*)(const char *, const char *)) dlsym(RTLD_NEXT, "fopen");
@@ -308,6 +313,7 @@ ssize_t read(int fd, void *buf, size_t count)
         int has_key = 0;
         SDL_Event ev = {};
         SDL_LockMutex(key_queue_lock);
+
         if (key_f != key_r)
         {
             ev = key_queue[key_f];
@@ -324,6 +330,7 @@ ssize_t read(int fd, void *buf, size_t count)
 
             const char *name = NULL;
             _KEYS(COND);
+
             if (name)
                 return snprintf((char *)buf, count, "k%c %s\n", keydown ? 'd' : 'u', name);
         }
@@ -402,6 +409,7 @@ struct Init
      * reaches main().  Each simulated device below initialises the exact host
      * SDL subsystem it needs.
      */
+
         if (!getenv("NWM_APP"))
         {
             open_display();

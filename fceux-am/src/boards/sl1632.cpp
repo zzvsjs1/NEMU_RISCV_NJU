@@ -66,10 +66,12 @@ static DECLFW(UNLSL1632CMDWrite)
     {
         bbrk = V;
     }
+
     if (bbrk & 2)
     {
         FixMMC3PRG(MMC3_cmd);
         FixMMC3CHR(MMC3_cmd);
+
         if (A < 0xC000)
             MMC3_CMDWrite(A, V);
         else

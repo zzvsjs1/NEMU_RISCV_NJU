@@ -73,6 +73,7 @@ static void StateRestore(int version)
 static DECLFW(UNLTF1201Write)
 {
     A = (A & 0xF003) | ((A & 0xC) >> 2);
+
     if ((A >= 0xB000) && (A <= 0xE003))
     {
         int ind = (((A >> 11) - 6) | (A & 1)) & 7;
@@ -109,6 +110,7 @@ static DECLFW(UNLTF1201Write)
         case 0xF003:
             IRQa = V & 2;
             X6502_IRQEnd(FCEU_IQEXT);
+
             if (scanline < 240)
                 IRQCount -= 8;
             break;
@@ -120,6 +122,7 @@ static void UNLTF1201IRQCounter(void)
     if (IRQa)
     {
         IRQCount++;
+
         if (IRQCount == 237)
         {
             X6502_IRQBegin(FCEU_IQEXT);

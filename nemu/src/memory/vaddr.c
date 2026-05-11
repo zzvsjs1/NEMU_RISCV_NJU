@@ -35,6 +35,7 @@ word_t vaddr_ifetch(vaddr_t addr, int len)
      * MMU check when satp.MODE is clear; paged mode still goes through the
      * common translation path so faults and cross-page limits stay centralised.
      */
+
     if (rv32_mmu_direct_mode())
     {
         return paddr_ifetch((paddr_t)addr);
@@ -136,6 +137,7 @@ void vaddr_write(vaddr_t addr, int len, word_t data)
      * an apparently simple store can still be self-modifying code or MMIO once
      * the physical address is decoded.
      */
+
     if (rv32_mmu_direct_mode())
     {
         paddr_write((paddr_t)addr, len, data);

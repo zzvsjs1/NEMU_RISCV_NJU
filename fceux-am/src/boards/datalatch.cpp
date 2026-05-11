@@ -30,6 +30,7 @@ static void (*WSync)(void);
 static DECLFW(LatchWrite)
 {
     //	FCEU_printf("bs %04x %02x\n",A,V);
+
     if (bus_conflict)
         latche = V & CartBR(A);
     else
@@ -41,6 +42,7 @@ static void LatchPower(void)
 {
     latche = latcheinit;
     WSync();
+
     if (WRAM)
     {
         SetReadHandler(0x6000, 0xFFFF, CartBR);
@@ -76,9 +78,11 @@ static void Latch_Init(CartInfo *info, void (*proc)(void), uint8 init, uint16 ad
     info->Power = LatchPower;
     info->Close = LatchClose;
     GameStateRestore = StateRestore;
+
     if (info->ines2)
         if (info->battery_wram_size + info->wram_size > 0)
             wram = 1;
+
     if (wram)
     {
         if (info->ines2)
@@ -110,6 +114,7 @@ static void Latch_Init(CartInfo *info, void (*proc)(void), uint8 init, uint16 ad
             SetReadHandler(0x6000, 0x7FFF, CartBR);
             SetWriteHandler(0x6000, 0x7FFF, CartBW);
             setprg8r(0x10, 0x6000, 0);
+
             if (info->battery_wram_size)
             {
                 info->SaveGame[0] = WRAM;
@@ -121,6 +126,7 @@ static void Latch_Init(CartInfo *info, void (*proc)(void), uint8 init, uint16 ad
             WRAMSIZE = 8192;
             WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
             SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
+
             if (info->battery)
             {
                 info->SaveGame[0] = WRAM;
@@ -168,6 +174,7 @@ void NROM_Init(CartInfo *info)
     WRAMSIZE = 8192;
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;
@@ -564,6 +571,7 @@ static void M241Sync(void)
 {
     setchr8(0);
     setprg8r(0x10, 0x6000, 0);
+
     if (latche & 0x80)
         setprg32(0x8000, latche | 8); // no 241 actually, but why not afterall?
     else
@@ -592,6 +600,7 @@ static void BMCA65ASSync(void)
         setprg16(0xC000, ((latche & 0x30) >> 1) | 7);
     }
     setchr8(0);
+
     if (latche & 0x80)
         setmirror(MI_0 + (((latche >> 5) & 1)));
     else

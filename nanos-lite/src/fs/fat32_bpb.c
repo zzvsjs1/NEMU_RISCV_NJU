@@ -40,6 +40,7 @@ int fat32_first_sector_of_cluster(const Fat32Volume *vol, uint32_t cluster, uint
     }
 
     const uint64_t sector = (uint64_t)vol->first_data_sector + ((uint64_t)cluster - 2u) * (uint64_t)vol->sectors_per_cluster;
+
     if (sector > UINT32_MAX)
     {
         return -1;
@@ -114,6 +115,7 @@ int fat32_parse_bpb(const uint8_t sector[512], uint32_t disk_block_size, Fat32Vo
     }
 
     const uint64_t first_data_sector = (uint64_t)reserved_sector_count + (uint64_t)fat_count * (uint64_t)fat_size_32;
+
     if ((uint64_t)total_sectors_32 <= first_data_sector || first_data_sector > UINT32_MAX)
     {
         return -1;
@@ -121,6 +123,7 @@ int fat32_parse_bpb(const uint8_t sector[512], uint32_t disk_block_size, Fat32Vo
 
     const uint64_t data_sectors = (uint64_t)total_sectors_32 - first_data_sector;
     const uint64_t cluster_count = data_sectors / (uint64_t)sectors_per_cluster;
+
     if (data_sectors > UINT32_MAX || cluster_count > UINT32_MAX)
     {
         return -1;
@@ -137,6 +140,7 @@ int fat32_parse_bpb(const uint8_t sector[512], uint32_t disk_block_size, Fat32Vo
     }
 
     const uint64_t fat_entries = (uint64_t)fat_size_32 * 512u / 4u;
+
     if (fat_entries < cluster_count + 2u)
     {
         return -1;

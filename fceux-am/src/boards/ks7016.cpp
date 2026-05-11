@@ -63,6 +63,7 @@ static DECLFW(UNLKS7016Write)
     }
     case 0xD903:
     { // this case isn't usedby the game, but addressing does this as a side effect
+
         if (mask == 0x30)
         {
             preg = 8 | ((A >> 2) & 3); // also masked C-F from output

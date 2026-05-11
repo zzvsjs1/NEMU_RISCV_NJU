@@ -47,6 +47,7 @@ static void Sync(void)
         int bank = ((regs[1] & 0x1f) << 1) | ((regs[1] >> 6) & 1);
         setprg16(0xC000, bank);
     }
+
     if (regs[0] & 0x20)
         setmirror(MI_H);
     else

@@ -41,6 +41,7 @@ static void Sync(void)
     }
     else
         setprg32r(banks[bank], 0x8000, (reg[0] >> 1) & 0x0F);
+
     if (reg[1] & 2)
         setchr8r(0x10, 0);
     else

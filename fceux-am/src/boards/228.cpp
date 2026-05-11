@@ -33,6 +33,7 @@ static SFORMAT StateRegs[] =
 static void Sync(void)
 {
     uint32 prgl, prgh, page = (areg >> 7) & 0x3F;
+
     if ((page & 0x30) == 0x30)
         page -= 0x10;
     prgl = prgh = (page << 1) + (((areg >> 6) & 1) & ((areg >> 5) & 1));

@@ -30,10 +30,12 @@ static SFORMAT StateRegs[] =
 static void Sync(void)
 {
     setchr8(0);
+
     if (PRGptr[1])
         setprg8r((cmd0 & 0xC) >> 2, 0x6000, ((cmd0 & 0x3) << 4) | 0xF);
     else
         setprg8(0x6000, (((cmd0 & 0xF) << 4) | 0xF) + 4);
+
     if (cmd0 & 0x10)
     {
         if (PRGptr[1])

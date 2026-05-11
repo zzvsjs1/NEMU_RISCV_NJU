@@ -54,9 +54,11 @@ void str_free(struct gstr *gs)
 void str_append(struct gstr *gs, const char *s)
 {
     size_t l;
+
     if (s)
     {
         l = strlen(gs->s) + strlen(s) + 1;
+
         if (l > gs->len)
         {
             gs->s = xrealloc(gs->s, l);
@@ -86,6 +88,7 @@ const char *str_get(struct gstr *gs)
 void *xmalloc(size_t size)
 {
     void *p = malloc(size);
+
     if (p)
         return p;
     fprintf(stderr, "Out of memory.\n");
@@ -95,6 +98,7 @@ void *xmalloc(size_t size)
 void *xcalloc(size_t nmemb, size_t size)
 {
     void *p = calloc(nmemb, size);
+
     if (p)
         return p;
     fprintf(stderr, "Out of memory.\n");
@@ -104,6 +108,7 @@ void *xcalloc(size_t nmemb, size_t size)
 void *xrealloc(void *p, size_t size)
 {
     p = realloc(p, size);
+
     if (p)
         return p;
     fprintf(stderr, "Out of memory.\n");
@@ -115,6 +120,7 @@ char *xstrdup(const char *s)
     char *p;
 
     p = strdup(s);
+
     if (p)
         return p;
     fprintf(stderr, "Out of memory.\n");
@@ -126,6 +132,7 @@ char *xstrndup(const char *s, size_t n)
     char *p;
 
     p = strndup(s, n);
+
     if (p)
         return p;
     fprintf(stderr, "Out of memory.\n");

@@ -334,6 +334,7 @@ static void jit_tlb_flush(void)
 static bool jit_pmem_page_index(paddr_t page, size_t *idx)
 {
     const paddr_t base = (paddr_t)CONFIG_MBASE;
+
     if (page < base || page >= base + (paddr_t)CONFIG_MSIZE)
     {
         return false;
@@ -346,6 +347,7 @@ static bool jit_pmem_page_index(paddr_t page, size_t *idx)
 static void jit_tlb_ref_page(paddr_t page)
 {
     size_t idx = 0;
+
     if (jit_pmem_page_index(page, &idx) &&
         jit_tlb_pt_page_refs[idx] != UINT16_MAX)
     {
@@ -356,6 +358,7 @@ static void jit_tlb_ref_page(paddr_t page)
 static void jit_tlb_unref_page(paddr_t page)
 {
     size_t idx = 0;
+
     if (jit_pmem_page_index(page, &idx) && jit_tlb_pt_page_refs[idx] > 0)
     {
         jit_tlb_pt_page_refs[idx]--;
@@ -377,12 +380,14 @@ static bool jit_write_may_touch_page_table(paddr_t addr, int len)
    * purely physical: any write to a PMEM page referenced by a cached walk drops
    * all local JIT translations.
    */
+
     if (len <= 0)
     {
         return false;
     }
 
     const paddr_t end = addr + (paddr_t)len - 1u;
+
     if (end < addr)
     {
         return true;
@@ -448,9 +453,11 @@ static uint32_t jit_required_perm(int type)
 static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *paddr)
 {
     const uint32_t satp = cpu.csr.satp;
+
     if ((satp & RV32_JIT_SATP_MODE_MASK) == 0)
     {
         const paddr_t direct = (paddr_t)addr;
+
         if (!jit_pmem_range(direct, len))
         {
             return false;
@@ -473,6 +480,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
                (entry->perm & need_perm) != 0))
     {
         const paddr_t translated = entry->pg_paddr | (paddr_t)(addr & PAGE_MASK);
+
         if (!jit_pmem_range(translated, len))
         {
             return false;
@@ -498,6 +506,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
    * to the full MMU path, which already owns those less common checks.
    */
     const uint32_t pte1_rwx = pte1 & (RV32_JIT_PTE_R | RV32_JIT_PTE_W | RV32_JIT_PTE_X);
+
     if (pte1_rwx != 0)
     {
         return false;
@@ -506,18 +515,21 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
     const paddr_t l0_pt = ((paddr_t)(pte1 >> 10)) << PAGE_SHIFT;
     const paddr_t pte0_addr = l0_pt + (paddr_t)(vpn0 * 4u);
     const uint32_t pte0 = (uint32_t)paddr_read(pte0_addr, 4);
+
     if ((pte0 & RV32_JIT_PTE_V) == 0)
     {
         return false;
     }
 
     const uint32_t perm = pte0 & (RV32_JIT_PTE_R | RV32_JIT_PTE_W | RV32_JIT_PTE_X);
+
     if (perm == 0 || (perm & need_perm) == 0)
     {
         return false;
     }
 
     const paddr_t pg_paddr = ((paddr_t)(pte0 >> 10)) << PAGE_SHIFT;
+
     if (!jit_pmem_range(pg_paddr | (paddr_t)(addr & PAGE_MASK), len))
     {
         return false;
@@ -595,6 +607,7 @@ static uint32_t jit_load_raw(vaddr_t addr, uint32_t len)
    */
     paddr_t paddr = 0;
     uint32_t value = 0;
+
     if (jit_translate_pmem(addr, len, MEM_TYPE_READ, &paddr))
     {
         JIT_STAT_INC(helper_load_direct);
@@ -656,6 +669,7 @@ static uint32_t jit_store_raw_continue(vaddr_t addr, uint32_t len, uint32_t data
     JIT_STAT_INC(helper_stores);
 
     paddr_t paddr = 0;
+
     if (jit_translate_pmem(addr, len, MEM_TYPE_WRITE, &paddr))
     {
         JIT_STAT_INC(helper_store_direct);
@@ -830,6 +844,7 @@ static void jit_source_chunks_ref(paddr_t addr, uint32_t len)
    * the same source bytes through different PCs or satp values, so a chunk is
    * considered interesting until the last owning block is discarded.
    */
+
     if (len == 0)
     {
         return;
@@ -838,6 +853,7 @@ static void jit_source_chunks_ref(paddr_t addr, uint32_t len)
     size_t first = 0;
     size_t last = 0;
     const paddr_t end = addr + (paddr_t)len - 1u;
+
     if (end < addr || !jit_pmem_source_chunk_index(addr, &first) ||
         !jit_pmem_source_chunk_index(end, &last))
     {
@@ -863,6 +879,7 @@ static void jit_source_chunks_unref(paddr_t addr, uint32_t len)
     size_t first = 0;
     size_t last = 0;
     const paddr_t end = addr + (paddr_t)len - 1u;
+
     if (end < addr || !jit_pmem_source_chunk_index(addr, &first) ||
         !jit_pmem_source_chunk_index(end, &last))
     {
@@ -890,6 +907,7 @@ static bool jit_write_may_touch_source_chunk(paddr_t addr, int len)
    * for ambiguous ranges is acceptable because it only costs extra invalidation
    * work; returning false for real source bytes would be a stale-code bug.
    */
+
     if (len <= 0)
     {
         return false;
@@ -899,6 +917,7 @@ static bool jit_write_may_touch_source_chunk(paddr_t addr, int len)
     const paddr_t pmem_end = (paddr_t)CONFIG_MBASE + (paddr_t)CONFIG_MSIZE - 1u;
     paddr_t start = addr;
     paddr_t end = addr + (paddr_t)len - 1u;
+
     if (end < start)
     {
         return true;
@@ -913,6 +932,7 @@ static bool jit_write_may_touch_source_chunk(paddr_t addr, int len)
     {
         start = pmem_start;
     }
+
     if (end > pmem_end)
     {
         end = pmem_end;
@@ -920,6 +940,7 @@ static bool jit_write_may_touch_source_chunk(paddr_t addr, int len)
 
     size_t first = 0;
     size_t last = 0;
+
     if (!jit_pmem_source_chunk_index(start, &first) ||
         !jit_pmem_source_chunk_index(end, &last))
     {
@@ -950,6 +971,7 @@ static void jit_block_discard(rv32_jit_block_t *block)
    * NULL and therefore no refcount to release, even though they still carry a
    * source address for cache matching.
    */
+
     if (block->entry != NULL && block->source_len != 0)
     {
         jit_source_chunks_unref(block->paddr_start, block->source_len);
@@ -985,6 +1007,7 @@ static bool jit_code_init(void)
 
     void *mem = mmap(NULL, RV32_JIT_CODE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
     if (mem == MAP_FAILED)
     {
         jit_disabled = true;
@@ -1019,6 +1042,7 @@ static bool emit_u8(rv32_jit_writer_t *w, uint8_t value)
    * "do not publish this block"; callers either roll back to a known boundary or
    * abandon the translation before the cache entry becomes executable.
    */
+
     if (w->cur >= w->end)
     {
         return false;
@@ -1099,6 +1123,7 @@ static bool emit_mov_eax_imm(rv32_jit_writer_t *w, uint32_t value)
 static bool emit_add_eax_imm(rv32_jit_writer_t *w, uint32_t value)
 {
     const int32_t signed_value = (int32_t)value;
+
     if (signed_value == 0)
     {
         return true;
@@ -1408,10 +1433,12 @@ static uint8_t jit_modrm(uint8_t mod, uint8_t reg, uint8_t rm)
 static bool emit_rex32_if_needed(rv32_jit_writer_t *w, uint8_t reg, uint8_t rm)
 {
     uint8_t rex = 0x40;
+
     if ((reg & 8u) != 0)
     {
         rex |= 0x04;
     }
+
     if ((rm & 8u) != 0)
     {
         rex |= 0x01;
@@ -1551,6 +1578,7 @@ static rv32_jit_reg_slot_t *jit_reg_find(rv32_jit_reg_cache_t *regs,
     for (uint32_t i = 0; i < RV32_JIT_HREG_COUNT; i++)
     {
         rv32_jit_reg_slot_t *slot = &regs->slots[i];
+
         if (slot->valid && slot->guest_reg == reg)
         {
             return slot;
@@ -1634,6 +1662,7 @@ static rv32_jit_reg_slot_t *jit_reg_choose_slot(rv32_jit_reg_cache_t *regs)
     for (uint32_t i = 0; i < RV32_JIT_HREG_COUNT; i++)
     {
         rv32_jit_reg_slot_t *slot = &regs->slots[i];
+
         if (!slot->valid)
         {
             return slot;
@@ -1653,6 +1682,7 @@ static rv32_jit_reg_slot_t *jit_reg_alloc(rv32_jit_writer_t *w,
                                           rv32_jit_reg_cache_t *regs, uint32_t reg)
 {
     rv32_jit_reg_slot_t *slot = jit_reg_find(regs, reg);
+
     if (slot != NULL)
     {
         slot->age = regs->next_age++;
@@ -1660,6 +1690,7 @@ static rv32_jit_reg_slot_t *jit_reg_alloc(rv32_jit_writer_t *w,
     }
 
     slot = jit_reg_choose_slot(regs);
+
     if (!jit_reg_flush_slot(w, slot))
     {
         return NULL;
@@ -1683,6 +1714,7 @@ static bool jit_reg_read_eax(rv32_jit_writer_t *w,
     }
 
     rv32_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+
     if (slot == NULL)
     {
         return false;
@@ -1711,6 +1743,7 @@ static bool jit_reg_read_ecx(rv32_jit_writer_t *w,
     }
 
     rv32_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+
     if (slot == NULL)
     {
         return false;
@@ -1739,6 +1772,7 @@ static bool jit_reg_write_eax(rv32_jit_writer_t *w,
     }
 
     rv32_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+
     if (slot == NULL)
     {
         return false;
@@ -1765,6 +1799,7 @@ static bool jit_reg_write_imm(rv32_jit_writer_t *w,
     }
 
     rv32_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+
     if (slot == NULL)
     {
         return false;
@@ -1786,6 +1821,7 @@ static rv32_jit_reg_slot_t *jit_reg_loaded_slot(rv32_jit_writer_t *w,
                                                 rv32_jit_reg_cache_t *regs, uint32_t reg)
 {
     rv32_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+
     if (slot == NULL)
     {
         return NULL;
@@ -1830,6 +1866,7 @@ static bool emit_hreg_alu_imm(rv32_jit_writer_t *w, rv32_jit_hreg_t hreg,
 {
     const uint8_t dst = jit_hreg_x86_reg(hreg);
     const int32_t simm = (int32_t)imm;
+
     if (simm >= INT8_MIN && simm <= INT8_MAX)
     {
         /* 83 /subop ib sign-extends the immediate, matching these RV32 values. */
@@ -1861,6 +1898,7 @@ static bool jit_reg_apply_imm(rv32_jit_writer_t *w,
                               rv32_jit_reg_cache_t *regs, uint32_t reg, uint8_t subop, uint32_t imm)
 {
     rv32_jit_reg_slot_t *slot = jit_reg_loaded_slot(w, regs, reg);
+
     if (slot == NULL)
     {
         return false;
@@ -1880,6 +1918,7 @@ static bool jit_reg_apply_shift_imm(rv32_jit_writer_t *w,
                                     rv32_jit_reg_cache_t *regs, uint32_t reg, uint8_t subop, uint8_t amount)
 {
     rv32_jit_reg_slot_t *slot = jit_reg_loaded_slot(w, regs, reg);
+
     if (slot == NULL)
     {
         return false;
@@ -1900,12 +1939,14 @@ static bool jit_reg_apply_reg(rv32_jit_writer_t *w,
                               uint8_t opcode)
 {
     rv32_jit_reg_slot_t *dst = jit_reg_loaded_slot(w, regs, dst_reg);
+
     if (dst == NULL)
     {
         return false;
     }
 
     rv32_jit_reg_slot_t *src = jit_reg_loaded_slot(w, regs, src_reg);
+
     if (src == NULL)
     {
         return false;
@@ -1935,6 +1976,7 @@ static bool jit_reg_copy(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     }
 
     rv32_jit_reg_slot_t *src = jit_reg_loaded_slot(w, regs, src_reg);
+
     if (src == NULL)
     {
         return false;
@@ -1946,6 +1988,7 @@ static bool jit_reg_copy(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     }
 
     rv32_jit_reg_slot_t *dst = jit_reg_alloc(w, regs, dst_reg);
+
     if (dst == NULL)
     {
         return false;
@@ -1966,6 +2009,7 @@ static bool jit_reg_apply_shift_reg(rv32_jit_writer_t *w,
                                     uint8_t subop)
 {
     rv32_jit_reg_slot_t *dst = jit_reg_loaded_slot(w, regs, dst_reg);
+
     if (dst == NULL || !jit_reg_read_ecx(w, regs, src_reg))
     {
         return false;
@@ -1998,6 +2042,7 @@ static bool emit_rv32_divu(rv32_jit_writer_t *w,
    * RISC-V division by zero is not a trap: DIVU returns all ones. x86 DIV would
    * fault, so emit an explicit zero-divisor side exit around the native divide.
    */
+
     if (!emit_test_ecx_ecx(w) ||
         !emit_jcc_rel32_placeholder(w, 0x84, &zero_disp) ||
         !emit_xor_edx_edx(w) ||
@@ -2008,6 +2053,7 @@ static bool emit_rv32_divu(rv32_jit_writer_t *w,
     }
 
     patch_rel32(zero_disp, w->cur);
+
     if (!emit_mov_eax_imm(w, UINT32_MAX))
     {
         return false;
@@ -2027,6 +2073,7 @@ static bool emit_rv32_remu(rv32_jit_writer_t *w,
    * REMU by zero returns the original dividend. EAX already contains rs1, so
    * the zero-divisor branch can skip the native divide and keep EAX unchanged.
    */
+
     if (!emit_test_ecx_ecx(w) ||
         !emit_jcc_rel32_placeholder(w, 0x84, &done_disp) ||
         !emit_xor_edx_edx(w) ||
@@ -2054,6 +2101,7 @@ static bool emit_rv32_div(rv32_jit_writer_t *w,
    * x86 IDIV traps on zero divisors and on INT_MIN / -1. RISC-V defines both
    * cases, so guard them before using the native signed divide.
    */
+
     if (!emit_test_ecx_ecx(w) ||
         !emit_jcc_rel32_placeholder(w, 0x84, &zero_disp) ||
         !emit_cmp_eax_imm(w, 0x80000000u) ||
@@ -2065,6 +2113,7 @@ static bool emit_rv32_div(rv32_jit_writer_t *w,
     }
 
     patch_rel32(normal_disp, w->cur);
+
     if (!emit_cdq(w) ||
         !emit_idiv_ecx(w) ||
         !emit_jmp_rel32_placeholder(w, &normal_done_disp))
@@ -2073,6 +2122,7 @@ static bool emit_rv32_div(rv32_jit_writer_t *w,
     }
 
     patch_rel32(zero_disp, w->cur);
+
     if (!emit_mov_eax_imm(w, UINT32_MAX) ||
         !emit_jmp_rel32_placeholder(w, &zero_done_disp))
     {
@@ -2080,6 +2130,7 @@ static bool emit_rv32_div(rv32_jit_writer_t *w,
     }
 
     patch_rel32(overflow_disp, w->cur);
+
     if (!emit_mov_eax_imm(w, 0x80000000u))
     {
         return false;
@@ -2111,6 +2162,7 @@ static bool emit_rv32_rem(rv32_jit_writer_t *w,
     }
 
     patch_rel32(normal_disp, w->cur);
+
     if (!emit_cdq(w) ||
         !emit_idiv_ecx(w) ||
         !emit_mov_eax_edx(w) ||
@@ -2120,12 +2172,14 @@ static bool emit_rv32_rem(rv32_jit_writer_t *w,
     }
 
     patch_rel32(zero_disp, w->cur);
+
     if (!emit_jmp_rel32_placeholder(w, &zero_done_disp))
     {
         return false;
     }
 
     patch_rel32(overflow_disp, w->cur);
+
     if (!emit_mov_eax_imm(w, 0))
     {
         return false;
@@ -2307,6 +2361,7 @@ static bool emit_direct_pmem_guard(rv32_jit_writer_t *w, uint32_t len,
    * runtime satp reload on every memory access; translated-mode blocks still
    * jump straight to the helper path.
    */
+
     if ((cpu.csr.satp & 0x80000000u) != 0)
     {
         if (!emit_jmp_rel32_placeholder(w, &patch->satp_slow_disp))
@@ -2408,6 +2463,7 @@ static bool emit_paged_tlb_load_eax(rv32_jit_writer_t *w, uint32_t funct3,
    * host multiply.  If the C struct layout changes, the typedef assertion near
    * rv32_jit_tlb_entry_t fails at build time.
    */
+
     if (!emit_mov_ecx_eax(w) ||
         !emit_mov_edx_eax(w) ||
         !emit_shr_edx_imm(w, PAGE_SHIFT) ||
@@ -2637,6 +2693,7 @@ static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
      * masks EAX down to a page offset. Restore EAX so the old helper path keeps
      * the same argument and fault/MMIO behaviour as before.
      */
+
         if (!emit_mov_eax_ecx(w) ||
             !jit_reg_emit_flush_all_dirty(w, regs) ||
             !emit_set_pc_imm(w, cur_pc) ||
@@ -2655,6 +2712,7 @@ static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
 
     rv32_jit_pmem_guard_patch_t guard = {0};
     uint8_t *done_disp = NULL;
+
     if (!jit_reg_read_eax(w, regs, rs1) ||
         !emit_add_eax_imm(w, (uint32_t)imm_i(instr)) ||
         !emit_direct_pmem_guard(w, len, &guard) ||
@@ -2671,6 +2729,7 @@ static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
    * translation, or bounds failures using cpu.pc. EAX still holds the guest
    * address here, so writing cpu.pc first does not disturb the helper argument.
    */
+
     if (!jit_reg_emit_flush_all_dirty(w, regs) ||
         !emit_set_pc_imm(w, cur_pc) ||
         !emit_u8(w, 0x89) || !emit_u8(w, 0xc7) ||
@@ -2739,6 +2798,7 @@ static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
      * pages: source-code writes and page-table writes still go through the
      * helper and then exit so invalidation is observed before the next fetch.
      */
+
         if (!jit_reg_read_eax(w, regs, rs1) ||
             !emit_add_eax_imm(w, (uint32_t)imm_s(instr)) ||
             !jit_reg_read_ecx(w, regs, rs2) ||
@@ -2773,6 +2833,7 @@ static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
         }
 
         patch_rel32(exit_disp, w->cur);
+
         if (!emit_set_pc_imm(w, next_pc) ||
             !emit_epilogue_return_count(w, exit_count))
         {
@@ -2795,6 +2856,7 @@ static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
    * bytes divert to the helper, which invalidates by physical address and exits
    * before the dispatcher performs the next block lookup.
    */
+
     if (!jit_reg_read_eax(w, regs, rs1) ||
         !emit_add_eax_imm(w, (uint32_t)imm_s(instr)) ||
         !jit_reg_read_ecx(w, regs, rs2) ||
@@ -2821,6 +2883,7 @@ static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
    * successful helper return, advance cpu.pc and leave the native block; the JIT
    * dispatcher may run another block, but it will start from the post-store PC.
    */
+
     if (!jit_reg_emit_flush_all_dirty(w, regs) ||
         !emit_set_pc_imm(w, cur_pc) ||
         !emit_u8(w, 0x89) || !emit_u8(w, 0xc7) ||
@@ -2906,6 +2969,7 @@ static bool emit_branch_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
    * the taken path materialises the same register state into cpu.gpr[] and
    * returns to the dispatcher at the branch target.
    */
+
     if (!jit_reg_read_eax(w, regs, rs1) || !jit_reg_read_ecx(w, regs, rs2) ||
         !emit_cmp_eax_ecx(w) ||
         !emit_jcc_rel32_placeholder(w, (uint8_t)(jcc ^ 1u),
@@ -2983,6 +3047,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     if (opcode == 0x13)
     {
         const uint32_t imm = (uint32_t)imm_i(instr);
+
         if (rs1 == 0)
         {
             switch (funct3)
@@ -3037,6 +3102,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                     return jit_reg_apply_shift_imm(w, regs, rd, 5,
                                                    (uint8_t)bits(instr, 24, 20));
                 }
+
                 if (bits(instr, 31, 25) == 0x20)
                 {
                     return jit_reg_apply_shift_imm(w, regs, rd, 7,
@@ -3084,6 +3150,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                            (shamt == 0 ||
                             jit_reg_apply_shift_imm(w, regs, rd, 5, shamt));
                 }
+
                 if (bits(instr, 31, 25) == 0x20)
                 {
                     return jit_reg_copy(w, regs, rd, rs1) &&
@@ -3132,6 +3199,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
             {
                 return emit_u8(w, 0xc1) && emit_u8(w, 0xe8) && emit_u8(w, bits(instr, 24, 20)) && jit_reg_write_eax(w, regs, rd);
             }
+
             if (bits(instr, 31, 25) == 0x20)
             {
                 return emit_u8(w, 0xc1) && emit_u8(w, 0xf8) && emit_u8(w, bits(instr, 24, 20)) && jit_reg_write_eax(w, regs, rd);
@@ -3149,6 +3217,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     if (opcode == 0x33)
     {
         const uint32_t key = (funct7 << 3) | funct3;
+
         if (rd != 0)
         {
             switch (key)
@@ -3158,6 +3227,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs2, 0x01);
                 }
+
                 if (rd == rs2 && rs1 != 0)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs1, 0x01);
@@ -3180,6 +3250,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs2, 0x31);
                 }
+
                 if (rd == rs2 && rs1 != 0)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs1, 0x31);
@@ -3202,6 +3273,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs2, 0x09);
                 }
+
                 if (rd == rs2 && rs1 != 0)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs1, 0x09);
@@ -3212,6 +3284,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs2, 0x21);
                 }
+
                 if (rd == rs2 && rs1 != 0)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs1, 0x21);
@@ -3236,10 +3309,12 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return jit_reg_copy(w, regs, rd, rs2);
                 }
+
                 if (rs2 == 0)
                 {
                     return jit_reg_copy(w, regs, rd, rs1);
                 }
+
                 if (rd != rs1 && rd != rs2)
                 {
                     return jit_reg_copy(w, regs, rd, rs1) &&
@@ -3251,6 +3326,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return rs1 == rs2 ? jit_reg_write_imm(w, regs, rd, 0) : jit_reg_copy(w, regs, rd, rs1);
                 }
+
                 if (rd != rs1 && rd != rs2)
                 {
                     return jit_reg_copy(w, regs, rd, rs1) &&
@@ -3262,10 +3338,12 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return jit_reg_write_imm(w, regs, rd, 0);
                 }
+
                 if (rs2 == 0)
                 {
                     return jit_reg_copy(w, regs, rd, rs1);
                 }
+
                 if (rd != rs1 && rd != rs2)
                 {
                     return jit_reg_copy(w, regs, rd, rs1) &&
@@ -3284,14 +3362,17 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return jit_reg_write_imm(w, regs, rd, 0);
                 }
+
                 if (rs1 == 0)
                 {
                     return jit_reg_copy(w, regs, rd, rs2);
                 }
+
                 if (rs2 == 0)
                 {
                     return jit_reg_copy(w, regs, rd, rs1);
                 }
+
                 if (rd != rs1 && rd != rs2)
                 {
                     return jit_reg_copy(w, regs, rd, rs1) &&
@@ -3304,10 +3385,12 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return jit_reg_write_imm(w, regs, rd, 0);
                 }
+
                 if (rs2 == 0)
                 {
                     return jit_reg_copy(w, regs, rd, rs1);
                 }
+
                 if (rd != rs1 && rd != rs2)
                 {
                     return jit_reg_copy(w, regs, rd, rs1) &&
@@ -3320,10 +3403,12 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return jit_reg_copy(w, regs, rd, rs2);
                 }
+
                 if (rs2 == 0)
                 {
                     return jit_reg_copy(w, regs, rd, rs1);
                 }
+
                 if (rd != rs1 && rd != rs2)
                 {
                     return jit_reg_copy(w, regs, rd, rs1) &&
@@ -3335,6 +3420,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return jit_reg_write_imm(w, regs, rd, 0);
                 }
+
                 if (rd != rs1 && rd != rs2)
                 {
                     return jit_reg_copy(w, regs, rd, rs1) &&
@@ -3413,6 +3499,7 @@ void isa_jit_flush_all(void)
    * and local Sv32 translations.  Snapshot restore is the clearest example: PMEM
    * and CSRs may both change while old (pc, satp) tags still look plausible.
    */
+
     if (jit_code != NULL)
     {
         jit_arena_reset();
@@ -3435,6 +3522,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
    *
    * The source-code check below uses the half-open interval [addr, addr + len).
    */
+
     if (len <= 0)
     {
         return;
@@ -3455,12 +3543,14 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
     for (size_t i = 0; i < RV32_JIT_CACHE_SIZE; i++)
     {
         rv32_jit_block_t *block = &jit_cache[i];
+
         if (!block->valid)
         {
             continue;
         }
 
         const paddr_t block_end = block->paddr_start + block->source_len;
+
         if (addr < block_end && end > block->paddr_start)
         {
             JIT_STAT_INC(invalidated_blocks);
@@ -3478,6 +3568,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
 static bool jit_translate_ifetch(vaddr_t pc, paddr_t *paddr)
 {
     const int mmu = isa_mmu_check(pc, 4, MEM_TYPE_IFETCH);
+
     if (mmu == MMU_DIRECT)
     {
         *paddr = (paddr_t)pc;
@@ -3487,6 +3578,7 @@ static bool jit_translate_ifetch(vaddr_t pc, paddr_t *paddr)
     if (mmu == MMU_TRANSLATE)
     {
         const paddr_t ret = isa_mmu_translate(pc, 4, MEM_TYPE_IFETCH);
+
         if ((ret & (paddr_t)PAGE_MASK) == MEM_RET_OK)
         {
             *paddr = (ret & ~(paddr_t)PAGE_MASK) | (paddr_t)(pc & PAGE_MASK);
@@ -3505,6 +3597,7 @@ static bool jit_block_matches(const rv32_jit_block_t *block, vaddr_t pc)
    * their PC and satp still match; the caller will see entry == NULL and fall
    * back without trying to execute native code.
    */
+
     if (!block->valid || block->pc != pc || block->satp != cpu.csr.satp)
     {
         return false;
@@ -3515,6 +3608,7 @@ static bool jit_block_matches(const rv32_jit_block_t *block, vaddr_t pc)
    * the same virtual PC points at different physical source bytes. Re-translate
    * the first instruction before trusting cached native code.
    */
+
     if ((cpu.csr.satp & 0x80000000u) != 0)
     {
         paddr_t now = 0;
@@ -3523,6 +3617,7 @@ static bool jit_block_matches(const rv32_jit_block_t *block, vaddr_t pc)
      * of cases where the normal interpreter path needs to raise or report the
      * underlying memory problem.
      */
+
         if (!jit_translate_ifetch(pc, &now) || now != block->paddr_start)
         {
             return false;
@@ -3591,6 +3686,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     jit_code_used = jit_align_up(jit_code_used, RV32_JIT_CODE_ALIGN);
 
     paddr_t first_paddr = 0;
+
     if (!jit_translate_ifetch(pc, &first_paddr) || !in_pmem(first_paddr))
     {
         return NULL;
@@ -3624,6 +3720,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
      * mode has no virtual remapping, so it can still use the physical-contiguity
      * check below to span normal PMEM bytes.
      */
+
         if (count != 0 && (cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) != 0 &&
             ((cur_pc ^ pc) & ~(vaddr_t)PAGE_MASK) != 0)
         {
@@ -3636,6 +3733,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
      * adjacent virtual PCs are adjacent physical bytes.
      */
         paddr_t cur_paddr = 0;
+
         if (!jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr))
         {
             break;
@@ -3645,6 +3743,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
      * Source invalidation records one physical byte range. Stop if virtual
      * aliases make the next guest instruction non-contiguous in PMEM.
      */
+
         if (cur_paddr != first_paddr + (paddr_t)source_len)
         {
             break;
@@ -3659,6 +3758,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         rv32_jit_reg_cache_t regs_start = regs;
         bool end_block = false;
         const uint32_t opcode = instr & 0x7fu;
+
         if (opcode == 0x63)
         {
             if (!emit_branch_instr(&w, &regs, instr, cur_pc, count + 1u))
@@ -3683,6 +3783,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         {
             w.cur = instr_start;
             jit_reg_cache_restore(&regs, &regs_start);
+
             if (!emit_load_store_instr(&w, &regs, instr, cur_pc, count + 1u))
             {
                 /*
@@ -3755,6 +3856,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed)
 {
     *executed = 0;
+
     if (remaining == 0 || device_budget == 0)
     {
         return false;
@@ -3765,6 +3867,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
    * Keep the repeated block-dispatch path cheap, but still handle direct calls
    * before initialisation.
    */
+
     if (jit_code == NULL && !isa_jit_available())
     {
         return false;
@@ -3775,6 +3878,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
     uint32_t batch_budget = remaining > RV32_JIT_BATCH_MAX_INSNS
                                 ? RV32_JIT_BATCH_MAX_INSNS
                                 : (uint32_t)remaining;
+
     if (batch_budget > device_budget)
     {
         batch_budget = device_budget;
@@ -3789,12 +3893,14 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
      * helper exits and control-flow terminators keep device timing bounded.
      */
         uint32_t block_budget = batch_budget - total;
+
         if (block_budget > RV32_JIT_BLOCK_MAX_INSNS)
         {
             block_budget = RV32_JIT_BLOCK_MAX_INSNS;
         }
 
         rv32_jit_block_t *block = jit_cache_slot(cpu.pc);
+
         if (jit_block_matches(block, cpu.pc))
         {
             /*
@@ -3802,6 +3908,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
        * cannot run it, return to cpu_exec() rather than replacing it with a
        * shorter budget-limited variant that would hurt later hot executions.
        */
+
             if (block->entry != NULL && block->insn_count > block_budget)
             {
                 break;

@@ -64,6 +64,7 @@ static void setup_stack(uintptr_t event, ucontext_t *uc)
         __am_pmem_unprotect();
 
     // skip the instructions causing SIGSEGV for syscall
+
     if (event == EVENT_SYSCALL)
     {
         rip += SYSCALL_INSTR_LEN;
@@ -74,6 +75,7 @@ static void setup_stack(uintptr_t event, ucontext_t *uc)
     uintptr_t rsp = trap_from_user ? thiscpu->ksp : uc->uc_mcontext.gregs[REG_RSP];
     rsp -= sizeof(Context);
     // keep (rsp + 8) % 16 == 0 to support SSE
+
     if ((rsp + 8) % 16 != 0)
         rsp -= 8;
     Context *c = (void *)rsp;
@@ -96,6 +98,7 @@ static void iret(ucontext_t *uc)
     // restore the context
     *uc = c->uc;
     thiscpu->ksp = c->ksp;
+
     if (__am_in_userspace((void *)uc->uc_mcontext.gregs[REG_RIP]))
         __am_pmem_protect();
 }
@@ -128,6 +131,7 @@ static void sig_handler(int sig, siginfo_t *info, void *ucontext)
                 return;
             }
         }
+
         if (__am_in_userspace(info->si_addr))
         {
             assert(thiscpu->ev.event == EVENT_ERROR);

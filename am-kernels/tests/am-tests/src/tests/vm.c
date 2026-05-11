@@ -9,6 +9,7 @@ void *simple_pgalloc(int size)
 {
     // The VM test only needs monotonically allocated pages. Aligning by walking st
     // is slow but explicit, which makes the page-size assumption easy to see.
+
     if (st == 0)
     {
         st = (uintptr_t)heap.start;
@@ -53,6 +54,7 @@ Context *vm_handler(Event ev, Context *ctx)
     default:
         assert(0);
     }
+
     if (first_trap)
     {
         first_trap = 0;
@@ -89,6 +91,7 @@ void vm_test()
     // This test validates the AM VME API shape rather than every architecture.
     // Unsupported ISAs return early so their test suites can still include the
     // source file without executing incompatible instruction bytes.
+
     if (!strncmp(__ISA__, "x86", 3) == 0 &&
         !strcmp(__ISA__, "native") == 0)
     {

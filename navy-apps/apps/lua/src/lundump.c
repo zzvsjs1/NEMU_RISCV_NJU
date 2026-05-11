@@ -84,8 +84,10 @@ static lua_Integer LoadInteger(LoadState *S)
 static TString *LoadString(LoadState *S)
 {
     size_t size = LoadByte(S);
+
     if (size == 0xFF)
         LoadVar(S, size);
+
     if (size == 0)
         return NULL;
     else if (--size <= LUAI_MAXSHORTLEN)
@@ -204,6 +206,7 @@ static void LoadDebug(LoadState *S, Proto *f)
 static void LoadFunction(LoadState *S, Proto *f, TString *psource)
 {
     f->source = LoadString(S);
+
     if (f->source == NULL)   /* no source in dump? */
         f->source = psource; /* reuse parent's source */
     f->linedefined = LoadInt(S);
@@ -223,6 +226,7 @@ static void checkliteral(LoadState *S, const char *s, const char *msg)
     char buff[sizeof(LUA_SIGNATURE) + sizeof(LUAC_DATA)]; /* larger than both */
     size_t len = strlen(s);
     LoadVector(S, buff, len);
+
     if (memcmp(s, buff, len) != 0)
         error(S, msg);
 }
@@ -238,8 +242,10 @@ static void fchecksize(LoadState *S, size_t size, const char *tname)
 static void checkHeader(LoadState *S)
 {
     checkliteral(S, LUA_SIGNATURE + 1, "not a"); /* 1st char already checked */
+
     if (LoadByte(S) != LUAC_VERSION)
         error(S, "version mismatch in");
+
     if (LoadByte(S) != LUAC_FORMAT)
         error(S, "format mismatch in");
     checkliteral(S, LUAC_DATA, "corrupted");
@@ -248,8 +254,10 @@ static void checkHeader(LoadState *S)
     checksize(S, Instruction);
     checksize(S, lua_Integer);
     checksize(S, lua_Number);
+
     if (LoadInteger(S) != LUAC_INT)
         error(S, "endianness mismatch in");
+
     if (LoadNumber(S) != LUAC_NUM)
         error(S, "float format mismatch in");
 }
@@ -261,6 +269,7 @@ LClosure *luaU_undump(lua_State *L, ZIO *Z, const char *name)
 {
     LoadState S;
     LClosure *cl;
+
     if (*name == '@' || *name == '=')
         S.name = name + 1;
     else if (*name == LUA_SIGNATURE[0])

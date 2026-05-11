@@ -66,6 +66,7 @@ FCEUGI::~FCEUGI() {}
 void FCEU_TogglePPU(void)
 {
     newppu ^= 1;
+
     if (newppu)
     {
         FCEU_DispMessage("New PPU loaded");
@@ -103,6 +104,7 @@ static void FCEU_CloseGame(void)
 
         //clear screen when game is closed
         extern uint8 *XBuf;
+
         if (XBuf)
             memset(XBuf, 0, 256 * 256);
 
@@ -168,6 +170,7 @@ static int RegisterARead(readfunc func)
     {
         if (ARead[i] == NULL)
             ARead[i] = func;
+
         if (ARead[i] == func)
             return i;
     }
@@ -182,6 +185,7 @@ static int RegisterBWrite(writefunc func)
     {
         if (BWrite[i] == NULL)
             BWrite[i] = func;
+
         if (BWrite[i] == func)
             return i;
     }
@@ -193,6 +197,7 @@ static uint8 GetIdx(uint8 *array, uint32 addr)
 {
 #ifdef FUNC_IDX_MAX16
     uint8 i = array[addr >> 1];
+
     if (addr & 1)
         i >>= 4;
     else
@@ -209,6 +214,7 @@ static void SetIdx(uint8 *array, uint32 addr, uint8 i)
     assert(i < FUNC_IDX_MAX);
 #ifdef FUNC_IDX_MAX16
     uint8 mask = 0xf;
+
     if (addr & 1)
     {
         mask <<= 4;
@@ -342,6 +348,7 @@ void ResetGameLoaded(void)
     GameHBIRQHook = NULL;
     FFCEUX_PPURead = NULL;
     FFCEUX_PPUWrite = NULL;
+
     if (GameExpSound.Kill)
         GameExpSound.Kill();
     memset(&GameExpSound, 0, sizeof(GameExpSound));
@@ -379,6 +386,7 @@ FCEUGI *FCEUI_LoadGameVirtual(const char *name, int OverwriteVidMode, bool silen
     if (!fp)
     {
         // Although !fp, if the operation was canceled from archive select dialog box, don't show the error message;
+
         if (!silent && !userCancel)
             FCEU_PrintError("Error opening \"%s\"!", name);
 
@@ -509,6 +517,7 @@ void FCEUI_Emulate(uint8 **pXBuf, int32 **SoundBuf, int32 *SoundBufSize, int ski
     {
         if (frameAdvance_Delay_count == 0 || frameAdvance_Delay_count >= frameAdvance_Delay)
             EmulationPaused = EMULATIONPAUSED_FA;
+
         if (frameAdvance_Delay_count < frameAdvance_Delay)
             frameAdvance_Delay_count++;
     }
@@ -554,6 +563,7 @@ void FCEUI_Emulate(uint8 **pXBuf, int32 **SoundBuf, int32 *SoundBufSize, int ski
     soundtimestamp = 0;
 
     *pXBuf = skip ? 0 : XBuf;
+
     if (skip == 2)
     { //If skip = 2, then bypass sound
         *SoundBuf = 0;
@@ -695,6 +705,7 @@ void FCEUI_SetRenderedLines(int ntscf, int ntscl, int palf, int pall)
     FSettings.UsrLastSLine[0] = ntscl;
     FSettings.UsrFirstSLine[1] = palf;
     FSettings.UsrLastSLine[1] = pall;
+
     if (PAL || dendy)
     {
         FSettings.FirstSLine = FSettings.UsrFirstSLine[1];
@@ -710,6 +721,7 @@ void FCEUI_SetRenderedLines(int ntscf, int ntscl, int palf, int pall)
 void FCEUI_SetVidSystem(int a)
 {
     FSettings.PAL = a ? 1 : 0;
+
     if (GameInfo)
     {
         FCEU_ResetVidSys();
@@ -722,6 +734,7 @@ int FCEUI_GetCurrentVidSystem(int *slstart, int *slend)
 {
     if (slstart)
         *slstart = FSettings.FirstSLine;
+
     if (slend)
         *slend = FSettings.LastSLine;
     return (PAL);

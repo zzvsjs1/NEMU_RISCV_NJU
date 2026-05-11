@@ -70,6 +70,7 @@ ee_u16 core_bench_state(ee_u32 blksize, ee_u8 *memblock,
     p = memblock;
     while (p < (memblock + blksize))
     { /* insert some corruption */
+
         if (*p != ',')
             *p ^= (ee_u8)seed1;
         p += step;
@@ -90,6 +91,7 @@ ee_u16 core_bench_state(ee_u32 blksize, ee_u8 *memblock,
     p = memblock;
     while (p < (memblock + blksize))
     { /* undo corruption is seed1 and seed2 are equal */
+
         if (*p != ',')
             *p ^= (ee_u8)seed2;
         p += step;
@@ -200,6 +202,7 @@ enum CORE_STATE core_state_transition(ee_u8 **instr, ee_u32 *transition_count)
     for (; *str && state != CORE_INVALID; str++)
     {
         NEXT_SYMBOL = *str;
+
         if (NEXT_SYMBOL == ',') /* end of this input */
         {
             str++;

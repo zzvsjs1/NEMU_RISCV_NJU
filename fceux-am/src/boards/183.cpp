@@ -119,6 +119,7 @@ static DECLFW(M183Write)
             break;
         case 0xF008:
             IRQa = V;
+
             if (!V)
                 IRQPre = 0;
             X6502_IRQEnd(FCEU_IQEXT);
@@ -134,6 +135,7 @@ static void M183IRQCounter(void)
     if (IRQa)
     {
         IRQCount++;
+
         if ((IRQCount - IRQPre) == 238)
             X6502_IRQBegin(FCEU_IQEXT);
     }

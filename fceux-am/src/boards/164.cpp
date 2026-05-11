@@ -83,6 +83,7 @@ static void M163HB(void)
             setchr4(0x1000, 1);
         }
         /*
+
             if(scanline>=127)     // Hu Lu Jin Gang (NJ039) (Ch) [!] don't like it
             {
                 setchr4(0x0000,1);
@@ -180,6 +181,7 @@ static DECLFW(Write2)
         case 0x5000:
             reg[1] = V;
             WSync();
+
             if (!(reg[1] & 0x80) && (scanline < 128))
                 setchr8(0); /* setchr8(0); */
             break;

@@ -219,6 +219,7 @@ struct PPUREGS
         int fv_overflow = (fv >> 3);
         vt += fv_overflow;
         vt &= 31; //fixed tecmo super bowl
+
         if (vt == 30 && fv_overflow == 1)
         { //caution here (only do it at the exact instant of overflow) fixes p'radikus conflict
             v++;
@@ -277,6 +278,7 @@ struct PPUREGS
         //If the VRAM address increment bit is set (inc. amt. = 32), the only
         //difference is that the HT counter is no longer being clocked, and the VT
         //counter is now being clocked by access to 2007.
+
         if (by32)
         {
             vt++;
@@ -479,6 +481,7 @@ int FCEUPPU_GetAttr(int ntnum, int xt, int yt)
     int attraddr = 0x3C0 + ((yt >> 2) << 3) + (xt >> 2);
     int temp = (((yt & 2) << 1) + (xt & 2));
     int refreshaddr = xt + yt * 32;
+
     if (MMC5Hack && MMC5HackCHRMode == 1)
         return (MMC5HackExNTARAMPtr[refreshaddr & 0x3ff] & 0xC0) >> 6;
     else
@@ -540,6 +543,7 @@ int GetCHRAddress(int A)
     if (cdloggerVideoDataSize)
     {
         int result = &VPage[A >> 10][A] - CHRptr[0];
+
         if ((result >= 0) && (result < (int)cdloggerVideoDataSize))
             return result;
     }
@@ -551,6 +555,7 @@ int GetCHRAddress(int A)
 int GetCHROffset(uint8 *ptr)
 {
     int result = ptr - CHRptr[0];
+
     if (cdloggerVideoDataSize)
     {
         if ((result >= 0) && (result < (int)cdloggerVideoDataSize))
@@ -624,6 +629,7 @@ uint8 FASTCALL FFCEUX_PPURead_Default(uint32 A)
     else
     {
         uint8 ret;
+
         if (!(tmp & 3))
         {
             if (!(tmp & 0xC))
@@ -659,6 +665,7 @@ void ppu_getScroll(int &xpos, int &ypos)
         xpos = ((RefreshAddr & 0x400) >> 2) | ((RefreshAddr & 0x1F) << 3) | XOffset;
 
         ypos = ((RefreshAddr & 0x3E0) >> 2) | ((RefreshAddr & 0x7000) >> 12);
+
         if (RefreshAddr & 0x800)
             ypos += 240;
     }
@@ -698,6 +705,7 @@ static DECLFR(A2004)
             // from cycles 0 to 63, the
             // 32 byte OAM buffer gets init
             // to 0xFF
+
             if (ppur.status.cycle < 64)
                 return spr_read.ret = 0xFF;
             else
@@ -722,6 +730,7 @@ static DECLFR(A2004)
                             {
                                 //odd cycle
                                 //see if in range
+
                                 if (!((ppur.status.sl - 1 - spr_read.ret) & ~(Sprite16 ? 0xF : 0x7)))
                                 {
                                     ++spr_read.found;
@@ -747,9 +756,11 @@ static DECLFR(A2004)
                             if (i & 1)
                             {
                                 ++spr_read.fetch;
+
                                 if (spr_read.fetch == 4)
                                 {
                                     spr_read.fetch = 1;
+
                                     if (++spr_read.count == 64)
                                     {
                                         spr_read.count = 0;
@@ -774,6 +785,7 @@ static DECLFR(A2004)
                             break;
                         case 2: //8th sprite fetched
                             spr_read.ret = SPRAM[(spr_read.count << 2) | spr_read.fetch];
+
                             if (i & 1)
                             {
                                 if (!((ppur.status.sl - 1 - SPRAM[((spr_read.count << 2) | spr_read.fetch)]) & ~((Sprite16) ? 0xF : 0x7)))
@@ -796,6 +808,7 @@ static DECLFR(A2004)
                             break;
                         case 3: //9th sprite overflow detected
                             spr_read.ret = SPRAM[spr_read.count | spr_read.fetch];
+
                             if (i & 1)
                             {
                                 if (++spr_read.fetch == 4)
@@ -816,6 +829,7 @@ static DECLFR(A2004)
                     else if (i < 320)
                     {
                         spr_read.ret = (i & 0x38) >> 3;
+
                         if (spr_read.found < (spr_read.ret + 1))
                         {
                             if (spr_read.num)
@@ -830,6 +844,7 @@ static DECLFR(A2004)
                         {
                             spr_read.ret =
                                 SPRAM[spr_read.found_pos[spr_read.ret] | spr_read.fetch++];
+
                             if (spr_read.fetch == 4)
                                 spr_read.fetch = 0;
                         }
@@ -877,6 +892,7 @@ static DECLFR(A2007)
             if (!(cdloggervdata[LogAddress] & 2))
             {
                 cdloggervdata[LogAddress] |= 2;
+
                 if ((!(cdloggervdata[LogAddress] & 1)) && cdloggerVideoDataSize)
                     undefinedvromcount--;
                 vromreadcount++;
@@ -890,6 +906,7 @@ static DECLFR(A2007)
     {
         ret = VRAMBuffer;
         RefreshAddr = ppur.get_2007access() & 0x3FFF;
+
         if ((RefreshAddr & 0x3F00) == 0x3F00)
         {
             //if it is in the palette range bypass the
@@ -897,6 +914,7 @@ static DECLFR(A2007)
             //buffer is the address - 0x1000, also
             //if grayscale is set then the return is AND with 0x30
             //to get a gray color reading
+
             if (!(tmp & 3))
             {
                 if (!(tmp & 0xC))
@@ -926,6 +944,7 @@ static DECLFR(A2007)
 
         if (tmp >= 0x3F00)
         { // Palette RAM tied directly to the output data, without VRAM buffer
+
             if (!(tmp & 3))
             {
                 if (!(tmp & 0xC))
@@ -940,6 +959,7 @@ static DECLFR(A2007)
                     VRAMBuffer = VPage[(tmp - 0x1000) >> 10][tmp - 0x1000];
                 else
                     VRAMBuffer = vnapage[((tmp - 0x1000) >> 10) & 0x3][(tmp - 0x1000) & 0x3FF];
+
                 if (PPU_hook)
                     PPU_hook(tmp);
             }
@@ -951,11 +971,13 @@ static DECLFR(A2007)
                 if (PPU_hook)
                     PPU_hook(tmp);
                 PPUGenLatch = VRAMBuffer;
+
                 if (tmp < 0x2000)
                 {
 
                     if (debug_loggingCD)
                         LogAddress = GetCHRAddress(tmp);
+
                     if (MMC5Hack && newppu)
                         VRAMBuffer = *MMC5BGVRAMADR(tmp);
                     else
@@ -970,9 +992,11 @@ static DECLFR(A2007)
             if ((ScreenON || SpriteON) && (scanline < 240))
             {
                 uint32 rad = RefreshAddr;
+
                 if ((rad & 0x7000) == 0x7000)
                 {
                     rad ^= 0x7000;
+
                     if ((rad & 0x3E0) == 0x3A0)
                         rad ^= 0xBA0;
                     else if ((rad & 0x3E0) == 0x3e0)
@@ -991,6 +1015,7 @@ static DECLFR(A2007)
                 else
                     RefreshAddr++;
             }
+
             if (PPU_hook)
                 PPU_hook(RefreshAddr & 0x3fff);
         }
@@ -1018,10 +1043,12 @@ static DECLFW(B2000)
 static DECLFW(B2001)
 {
     FCEUPPU_LineUpdate();
+
     if (paldeemphswap)
         V = (V & 0x9F) | ((V & 0x40) >> 1) | ((V & 0x20) << 1);
     PPUGenLatch = V;
     PPU[1] = V;
+
     if (V & 0xE0)
         deemp = V >> 5;
 }
@@ -1041,11 +1068,13 @@ static DECLFW(B2003)
 static DECLFW(B2004)
 {
     PPUGenLatch = V;
+
     if (newppu)
     {
         //the attribute upper bits are not connected
         //so AND them out on write, since reading them
         //should return 0 in those bits.
+
         if ((PPU[3] & 3) == 2)
             V &= 0xE3;
         SPRAM[PPU[3]] = V;
@@ -1072,6 +1101,7 @@ static DECLFW(B2005)
     uint32 tmp = TempAddr;
     FCEUPPU_LineUpdate();
     PPUGenLatch = V;
+
     if (!vtoggle)
     {
         tmp &= 0xFFE0;
@@ -1097,6 +1127,7 @@ static DECLFW(B2006)
     FCEUPPU_LineUpdate();
 
     PPUGenLatch = V;
+
     if (!vtoggle)
     {
         TempAddr &= 0x00FF;
@@ -1115,6 +1146,7 @@ static DECLFW(B2006)
 
         RefreshAddr = TempAddr;
         DummyRead = 1;
+
         if (PPU_hook)
             PPU_hook(RefreshAddr);
 
@@ -1149,6 +1181,7 @@ static DECLFW(B2007)
     else
     {
         PPUGenLatch = V;
+
         if (tmp < 0x2000)
         {
             if (PPUCHRRAM & (1 << (tmp >> 10)))
@@ -1184,10 +1217,12 @@ static DECLFW(B2007)
                 PALcache_outdate = 1;
             }
         }
+
         if (INC32)
             RefreshAddr += 32;
         else
             RefreshAddr++;
+
         if (PPU_hook)
             PPU_hook(RefreshAddr & 0x3fff);
     }
@@ -1257,6 +1292,7 @@ static void CheckSpriteHit(int p);
 static void EndRL(void)
 {
     RefreshLine(272);
+
     if (tofix)
         Fixit1();
     CheckSpriteHit(272);
@@ -1327,6 +1363,7 @@ static void RefreshLine(int lastpixel)
     vofs = ((PPU[0] & 0x10) << 8) | ((RefreshAddr >> 12) & 7);
 
     uint8_t tem8 = READPAL(0) | 0x40;
+
     if (!ScreenON && !SpriteON)
     {
         memset(Pline, tem8, numtiles * 8);
@@ -1347,6 +1384,7 @@ static void RefreshLine(int lastpixel)
     uint32 cc = 0;
     uint8 cc2;
     uint8 *C0 = vnapage[(RefreshAddr >> 10) & 3];
+
     if (RefreshAddr % 4 != 0)
     {
         uint8 zz = RefreshAddr >> 2;
@@ -1360,6 +1398,7 @@ static void RefreshLine(int lastpixel)
 #undef RefreshAddr
 
     RefreshAddr = smorkus;
+
     if (firsttile <= 2 && 2 < lasttile && !(PPU[1] & 2))
     {
         uint32 tem = tem8 | (tem8 << 8) | (tem8 << 16) | (tem8 << 24);
@@ -1372,11 +1411,13 @@ static void RefreshLine(int lastpixel)
 
         tcount = lasttile - firsttile;
         tstart = firsttile - 2;
+
         if (tstart < 0)
         {
             tcount += tstart;
             tstart = 0;
         }
+
         if (tcount > 0)
             memset(Plinef + tstart * 8, tem8, tcount * 8);
     }
@@ -1414,6 +1455,7 @@ static void Fixit1(void)
         if ((rad & 0x7000) == 0x7000)
         {
             rad ^= 0x7000;
+
             if ((rad & 0x3E0) == 0x3A0)
                 rad ^= 0xBA0;
             else if ((rad & 0x3E0) == 0x3e0)
@@ -1451,6 +1493,7 @@ static void DoLine(void)
     if (!renderbg)
     { // User asked to not display background data.
         uint8 col;
+
         if (gNoBGFillColor == 0xFF)
             col = READPAL(0);
         else
@@ -1463,6 +1506,7 @@ static void DoLine(void)
         CopySprites((uint8 *)target);
 
     //greyscale handling (mask some bits off the color) ? ? ?
+
     if (ScreenON || SpriteON)
     {
         if (PPU[1] & 0x01)
@@ -1473,6 +1517,7 @@ static void DoLine(void)
     }
 
     //some pathetic attempts at deemph
+
     if ((PPU[1] >> 5) == 0x7)
     {
         for (x = 63; x >= 0; x--)
@@ -1509,6 +1554,7 @@ static void DoLine(void)
         X6502_Run(85 - 6 - 16);
 
         // A semi-hack for Star Trek: 25th Anniversary
+
         if (GameHBIRQHook && (ScreenON || SpriteON) && ((PPU[0] & 0x38) != 0x18))
             GameHBIRQHook();
     }
@@ -1517,9 +1563,11 @@ static void DoLine(void)
 
     if (SpriteON)
         RefreshSprites();
+
     if (GameHBIRQHook2 && (ScreenON || SpriteON))
         GameHBIRQHook2();
     scanline++;
+
     if (scanline < 240)
     {
         ResetRL(XBuf + (scanline << 8));
@@ -1569,6 +1617,7 @@ static void FetchSpriteData(void)
         {
             if ((uint32)(scanline - spr->y) >= H)
                 continue;
+
             if (ns < maxsprites)
             {
                 if (n == 63)
@@ -1601,6 +1650,7 @@ static void FetchSpriteData(void)
                     }
 
                     /* Fix this geniestage hack */
+
                     if (MMC5Hack)
                         C = MMC5SPRVRAMADR(vadr);
                     else
@@ -1609,6 +1659,7 @@ static void FetchSpriteData(void)
                     if (SpriteON)
                         RENDER_LOGP(C);
                     dst.ca[0] = C[0];
+
                     if (SpriteON)
                         RENDER_LOGP(C + 8);
                     dst.ca[1] = C[8];
@@ -1667,14 +1718,17 @@ static void FetchSpriteData(void)
                         C = MMC5SPRVRAMADR(vadr);
                     else
                         C = VRAMADR(vadr);
+
                     if (SpriteON)
                         RENDER_LOGP(C);
                     dst.ca[0] = C[0];
+
                     if (ns < 8)
                     {
                         PPU_hook(0x2000);
                         PPU_hook(vadr);
                     }
+
                     if (SpriteON)
                         RENDER_LOGP(C + 8);
                     dst.ca[1] = C[8];
@@ -1694,6 +1748,7 @@ static void FetchSpriteData(void)
         }
 
     //Handle case when >8 sprites per scanline option is enabled.
+
     if (ns > 8)
         PPU_status |= 0x20;
     else if (PPU_hook)
@@ -1714,6 +1769,7 @@ static void RefreshSprites(void)
     SPRB *spr;
 
     spork = 0;
+
     if (!numsprites)
         return;
 
@@ -1740,6 +1796,7 @@ static void RefreshSprites(void)
             {
                 sphitx = x;
                 sphitdata = J;
+
                 if (atr & H_FLIP)
                     sphitdata = ((J << 7) & 0x80) |
                                 ((J << 5) & 0x40) |
@@ -1761,24 +1818,31 @@ static void RefreshSprites(void)
                     if (J & 0x80)
                         C[7] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x40)
                         C[6] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x20)
                         C[5] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x10)
                         C[4] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x08)
                         C[3] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x04)
                         C[2] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x02)
                         C[1] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x01)
                         C[0] = READPAL(VB | pixdata) | 0x40;
                 }
@@ -1787,24 +1851,31 @@ static void RefreshSprites(void)
                     if (J & 0x80)
                         C[0] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x40)
                         C[1] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x20)
                         C[2] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x10)
                         C[3] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x08)
                         C[4] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x04)
                         C[5] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x02)
                         C[6] = READPAL(VB | (pixdata & 3)) | 0x40;
                     pixdata >>= 4;
+
                     if (J & 0x01)
                         C[7] = READPAL(VB | pixdata) | 0x40;
                 }
@@ -1816,24 +1887,31 @@ static void RefreshSprites(void)
                     if (J & 0x80)
                         C[7] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x40)
                         C[6] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x20)
                         C[5] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x10)
                         C[4] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x08)
                         C[3] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x04)
                         C[2] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x02)
                         C[1] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x01)
                         C[0] = READPAL(VB | pixdata);
                 }
@@ -1842,24 +1920,31 @@ static void RefreshSprites(void)
                     if (J & 0x80)
                         C[0] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x40)
                         C[1] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x20)
                         C[2] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x10)
                         C[3] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x08)
                         C[4] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x04)
                         C[5] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x02)
                         C[6] = READPAL(VB | (pixdata & 3));
                     pixdata >>= 4;
+
                     if (J & 0x01)
                         C[7] = READPAL(VB | pixdata);
                 }
@@ -1885,12 +1970,14 @@ static void CopySprites(uint8 *target)
         return;
 
     int start = 0;
+
     if (PPU[1] & 0x04)
         start = 8;
 
     for (int i = start; i < 256; i++)
     {
         uint8 t = sprlinebuf[i];
+
         if (!(t & 0x80))
             if (!(t & 0x40) || (P[i] & 0x40)) // Normal sprite || behind bg sprite
                 P[i] = t;
@@ -1994,6 +2081,7 @@ int FCEUPPU_Loop(int skip)
     // a port-level performance lever; it must avoid drawing work without changing
     // CPU-visible timing for games.
     //Needed for Knight Rider, possibly others.
+
     if (ppudead)
     {
         memset(XBuf, 0x80, 256 * 240);
@@ -2012,6 +2100,7 @@ int FCEUPPU_Loop(int skip)
 
         //I need to figure out the true nature and length of this delay.
         X6502_Run(12);
+
         if (GameInfo->type == GIT_NSF)
         {
             assert(0);
@@ -2022,6 +2111,7 @@ int FCEUPPU_Loop(int skip)
                 TriggerNMI();
         }
         X6502_Run((scanlines_per_frame - 242) * (256 + 85) - 12);
+
         if (overclock_enabled && vblankscanlines)
         {
             if (!DMC_7bit || !skip_7bit_overclocking)
@@ -2041,19 +2131,23 @@ int FCEUPPU_Loop(int skip)
             {
                 if (GameHBIRQHook && ((PPU[0] & 0x38) != 0x18))
                     GameHBIRQHook();
+
                 if (PPU_hook)
                     for (x = 0; x < 42; x++)
                     {
                         PPU_hook(0x2000);
                         PPU_hook(0);
                     }
+
                 if (GameHBIRQHook2)
                     GameHBIRQHook2();
             }
             X6502_Run(85 - 16);
+
             if (ScreenON || SpriteON)
             {
                 RefreshAddr = TempAddr;
+
                 if (PPU_hook)
                     PPU_hook(RefreshAddr & 0x3fff);
             }
@@ -2065,6 +2159,7 @@ int FCEUPPU_Loop(int skip)
             X6502_Run(16 - kook);
             kook ^= 1;
         }
+
         if (GameInfo->type == GIT_NSF)
             X6502_Run((256 + 85) * normalscanlines);
 #ifdef FRAMESKIP
@@ -2076,6 +2171,7 @@ int FCEUPPU_Loop(int skip)
             y++;
 
             PPU_status |= 0x20; // Fixes "Bee 52".  Does it break anything?
+
             if (GameHBIRQHook)
             {
                 X6502_Run(256);
@@ -2083,6 +2179,7 @@ int FCEUPPU_Loop(int skip)
                 {
                     if (ScreenON || SpriteON)
                         GameHBIRQHook();
+
                     if (scanline == y && SpriteON)
                         PPU_status |= 0x40;
                     X6502_Run((scanline == 239) ? 85 : (256 + 85));
@@ -2091,6 +2188,7 @@ int FCEUPPU_Loop(int skip)
             else if (y < 240)
             {
                 X6502_Run((256 + 85) * y);
+
                 if (SpriteON)
                     PPU_status |= 0x40; // Quick and very dirty hack.
                 X6502_Run((256 + 85) * (240 - y));
@@ -2104,6 +2202,7 @@ int FCEUPPU_Loop(int skip)
             deemp = PPU[1] >> 5;
 
             // manual samples can't play correctly with overclocking
+
             if (DMC_7bit && skip_7bit_overclocking) // 7bit sample started before 240th line
                 totalscanlines = normalscanlines;
             else
@@ -2112,6 +2211,7 @@ int FCEUPPU_Loop(int skip)
             for (scanline = 0; scanline < totalscanlines;)
             { //scanline is incremented in  DoLine.  Evil. :/
                 deempcnt[deemp]++;
+
                 if (scanline < 240)
                     DEBUG(FCEUD_UpdatePPUView(scanline, 1));
                 DoLine();
@@ -2243,6 +2343,7 @@ const int kFetchTime = 2;
 void runppu(int x)
 {
     ppur.status.cycle = (ppur.status.cycle + x) % ppur.status.end_cycle;
+
     if (!new_ppu_reset) // if resetting, suspend CPU until the first frame
     {
         X6502_Run(x);
@@ -2260,6 +2361,7 @@ struct BGData
         INLINE void Read()
         {
             NTRefreshAddr = RefreshAddr = ppur.get_ntread();
+
             if (PEC586Hack)
                 ppur.s = (RefreshAddr & 0x200) >> 9;
             else if (QTAIHack)
@@ -2278,8 +2380,10 @@ struct BGData
             at = CALL_PPUREAD(RefreshAddr);
 
             //modify at to get appropriate palette shift
+
             if (ppur.vt & 2)
                 at >>= 4;
+
             if (ppur.ht & 2)
                 at >>= 2;
             at &= 0x03;
@@ -2288,9 +2392,11 @@ struct BGData
             //vertical scroll at 251
             ppu1[2] = PPU[1];
             runppu(1);
+
             if (PPUON)
             {
                 ppur.increment_hsc();
+
                 if (ppur.status.cycle == 251)
                     ppur.increment_vs();
             }
@@ -2299,6 +2405,7 @@ struct BGData
 
             ppur.par = nt;
             RefreshAddr = ppur.get_ptread();
+
             if (PEC586Hack)
             {
                 pt[0] = CALL_PPUREAD(RefreshAddr | pecnt);
@@ -2336,6 +2443,7 @@ struct BGData
                 ppu1[5] = PPU[1];
                 runppu(1);
                 RefreshAddr |= 8;
+
                 if (ScreenON)
                     RENDER_LOG(RefreshAddr);
                 pt[1] = CALL_PPUREAD(RefreshAddr);
@@ -2372,6 +2480,7 @@ int FCEUX_PPU_Loop(int skip)
     }
 
     //262 scanlines
+
     if (ppudead)
     {
         // not quite emulating all the NES power up behavior
@@ -2380,6 +2489,7 @@ int FCEUX_PPU_Loop(int skip)
         // should write to those regs during that time, it needs
         // to wait for vblank
         ppur.status.sl = 241;
+
         if (PAL)
             runppu(70 * kLineTime);
         else
@@ -2461,6 +2571,7 @@ int FCEUX_PPU_Loop(int skip)
 
             //hack to fix SDF ship intro screen with split. is it right?
             //well, if we didnt do this, we'd be passing in a negative scanline, so that's a sign something is fishy..
+
             if (sl != 0)
                 if (MMC5Hack)
                     MMC5_hb(yp);
@@ -2483,6 +2594,7 @@ int FCEUX_PPU_Loop(int skip)
 
                 //ok, we're also going to draw here.
                 //unless we're on the first dummy scanline
+
                 if (sl != 0 && sl < 241)
                 { // cape at 240 for dendy, its PPU does nothing afterwards
                     int xstart = xt << 3;
@@ -2508,10 +2620,12 @@ int FCEUX_PPU_Loop(int skip)
                         uint8 pixelcolor = blank;
 
                         //according to qeed's doc, use palette 0 or $2006's value if it is & 0x3Fxx
+
                         if (!ScreenON && !SpriteON)
                         {
                             // if there's anything wrong with how we're doing this, someone please chime in
                             int addr = ppur.get_2007access();
+
                             if ((addr & 0x3F00) == 0x3F00)
                             {
                                 pixel = addr & 0x1F;
@@ -2520,11 +2634,13 @@ int FCEUX_PPU_Loop(int skip)
                         }
 
                         //generate the BG data
+
                         if (renderbgnow)
                         {
                             uint8 *pt = bgdata.main[bgtile].pt;
                             pixel = ((pt[0] >> (7 - bgpx)) & 1) | (((pt[1] >> (7 - bgpx)) & 1) << 1) | bgdata.main[bgtile].at;
                         }
+
                         if (renderbg)
                             pixelcolor = READPALNOGS(pixel);
 
@@ -2534,6 +2650,7 @@ int FCEUX_PPU_Loop(int skip)
                         {
                             uint8 *oam = oams[renderslot][s];
                             int x = oam[3];
+
                             if (rasterpos >= x && rasterpos < x + 8)
                             {
                                 //build the pixel.
@@ -2549,10 +2666,12 @@ int FCEUX_PPU_Loop(int skip)
                                     continue;
 
                                 //bail out if we already have a pixel from a higher priority sprite
+
                                 if (havepixel)
                                     continue;
 
                                 //transparent pixel bailout
+
                                 if (spixel == 0)
                                     continue;
 
@@ -2560,6 +2679,7 @@ int FCEUX_PPU_Loop(int skip)
                                 //1. is it sprite#0?
                                 //2. is the bg pixel nonzero?
                                 //then, it is spritehit.
+
                                 if (oam[6] == 0 && (pixel & 3) != 0 &&
                                     rasterpos < 255)
                                 {
@@ -2568,9 +2688,11 @@ int FCEUX_PPU_Loop(int skip)
                                 havepixel = true;
 
                                 //priority handling
+
                                 if (oam[2] & 0x20)
                                 {
                                     //behind background:
+
                                     if ((pixel & 3) != 0)
                                         continue;
                                 }
@@ -2586,6 +2708,7 @@ int FCEUX_PPU_Loop(int skip)
                         // Some games change grayscale or de-emphasis mid-line.
                         // Use the sampled PPU mask value for this pixel instead of
                         // the final register value after the whole tile fetch.
+
                         if (bgdata.main[xt + 2].ppu1[xp] & 1)
                             pixelcolor &= 0x30;
                         *ptr++ = PaletteAdjustPixel(pixelcolor, bgdata.main[xt + 2].ppu1[xp]);
@@ -2602,13 +2725,16 @@ int FCEUX_PPU_Loop(int skip)
             {
                 oams[scanslot][oamcount][7] = 0;
                 uint8 *spr = SPRAM + i * 4;
+
                 if (yp >= spr[0] && yp < spr[0] + spriteHeight)
                 {
                     //if we already have maxsprites, then this new one causes an overflow,
                     //set the flag and bail out.
+
                     if (oamcount >= 8 && PPUON)
                     {
                         PPU_status |= 0x20;
+
                         if (maxsprites == 8)
                             break;
                     }
@@ -2644,6 +2770,7 @@ int FCEUX_PPU_Loop(int skip)
             for (int s = 0; s < maxsprites; s++)
             {
                 //if we have hit our eight sprite pattern and we dont have any more sprites, then bail
+
                 if (s == oamcount && s >= 8)
                     break;
 
@@ -2655,6 +2782,7 @@ int FCEUX_PPU_Loop(int skip)
 
                 uint8 *const oam = oams[scanslot][s];
                 uint32 line = yp - oam[0];
+
                 if (oam[2] & 0x80) //vflip
                     line = spriteHeight - line - 1;
 
@@ -2662,6 +2790,7 @@ int FCEUX_PPU_Loop(int skip)
                 uint32 patternAddress;
 
                 //create deterministic dummy fetch pattern
+
                 if (!oam[7])
                 {
                     patternNumber = 0;
@@ -2669,6 +2798,7 @@ int FCEUX_PPU_Loop(int skip)
                 }
 
                 //8x16 sprite handling:
+
                 if (Sprite16)
                 {
                     uint32 bank = (patternNumber & 1) << 12;
@@ -2688,26 +2818,31 @@ int FCEUX_PPU_Loop(int skip)
 
                 //garbage nametable fetches
                 int garbage_todo = 2;
+
                 if (PPUON)
                 {
                     if (sl == 0 && ppur.status.cycle == 304)
                     {
                         runppu(1);
+
                         if (PPUON)
                             ppur.install_latches();
                         runppu(1);
                         garbage_todo = 0;
                     }
+
                     if ((sl != 0 && sl < 241) && ppur.status.cycle == 256)
                     {
                         runppu(1);
                         //at 257: 3d world runner is ugly if we do this at 256
+
                         if (PPUON)
                             ppur.install_h_latches();
                         runppu(1);
                         garbage_todo = 0;
                     }
                 }
+
                 if (realSprite)
                     runppu(garbage_todo);
 
@@ -2715,6 +2850,7 @@ int FCEUX_PPU_Loop(int skip)
                 //does not set SpriteON in the beginning but it does
                 //set the bg on so if using the conditional SpriteON the MMC3 counter
                 //the counter will never count and no IRQs will be fired so use PPUON
+
                 if (((PPU[0] & 0x38) != 0x18) && s == 2 && PPUON)
                 {
                     //(The MMC3 scanline counter is based entirely on PPU A12, triggered on rising edges (after the line remains low for a sufficiently long period of time))
@@ -2730,6 +2866,7 @@ int FCEUX_PPU_Loop(int skip)
                 }
 
                 //blind attempt to replicate old ppu functionality
+
                 if (s == 2 && PPUON)
                 {
                     if (GameHBIRQHook2)
@@ -2743,20 +2880,25 @@ int FCEUX_PPU_Loop(int skip)
 
                 //pattern table fetches
                 RefreshAddr = patternAddress;
+
                 if (SpriteON)
                     RENDER_LOG(RefreshAddr);
                 oam[4] = CALL_PPUREAD(RefreshAddr);
+
                 if (realSprite)
                     runppu(kFetchTime);
 
                 RefreshAddr += 8;
+
                 if (SpriteON)
                     RENDER_LOG(RefreshAddr);
                 oam[5] = CALL_PPUREAD(RefreshAddr);
+
                 if (realSprite)
                     runppu(kFetchTime);
 
                 //hflip
+
                 if (!(oam[2] & 0x40))
                 {
                     oam[4] = bitrevlut[oam[4]];
@@ -2777,6 +2919,7 @@ int FCEUX_PPU_Loop(int skip)
             //the PPU is fetching background data on the next scanline).
             //(not implemented yet)
             runppu(kFetchTime);
+
             if (sl == 0)
             {
                 if (idleSynch && PPUON && !PAL)
@@ -2793,6 +2936,7 @@ int FCEUX_PPU_Loop(int skip)
             //equivelant of half a memory access cycle) before repeating the whole
             //pixel/scanline rendering process. If the scanline being rendered is the very
             //first one on every second frame, then this delay simply doesn't exist.
+
             if (ppur.status.end_cycle == 341)
                 runppu(1);
         } //scanline loop

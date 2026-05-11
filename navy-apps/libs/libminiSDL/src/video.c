@@ -15,6 +15,7 @@ static uint32_t *ensure_update_argb_buffer(size_t pixels)
    * process-wide scratch buffer is enough.  It grows to the largest dirty
    * rectangle seen and avoids repeated allocation during palette refreshes.
    */
+
     if (pixels <= update_argb_cap)
     {
         return update_argb_buf;
@@ -33,8 +34,10 @@ static void build_palette_argb_lut(const SDL_Palette *palette, uint32_t lut[256]
     assert(palette->colors);
 
     int ncolors = palette->ncolors;
+
     if (ncolors < 0)
         ncolors = 0;
+
     if (ncolors > 256)
         ncolors = 256;
 
@@ -82,6 +85,7 @@ void SDL_BlitSurface(SDL_Surface *src, SDL_Rect *srcrect,
     int dst_y = dstrect ? dstrect->y : 0;
 
     /* 2) Clip against the source surface bounds */
+
     if (src_x < 0)
     {
         /* shift right */
@@ -108,6 +112,7 @@ void SDL_BlitSurface(SDL_Surface *src, SDL_Rect *srcrect,
     }
 
     /* 3) Clip against the destination surface bounds */
+
     if (dst_x < 0)
     {
         /* source must shift right now */
@@ -134,6 +139,7 @@ void SDL_BlitSurface(SDL_Surface *src, SDL_Rect *srcrect,
     }
 
     /* 4) If nothing to blit, set dstrect to empty and return */
+
     if (w <= 0 || h <= 0)
     {
         if (dstrect)
@@ -148,6 +154,7 @@ void SDL_BlitSurface(SDL_Surface *src, SDL_Rect *srcrect,
     }
 
     /* 5) Write back the final blit rectangle */
+
     if (dstrect)
     {
         dstrect->x = dst_x;
@@ -188,6 +195,7 @@ void SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, uint32_t color)
     int fill_h = dstrect ? dstrect->h : dst->h;
 
     // 3) clip to [0..w) × [0..h)
+
     if (fill_x < 0)
     {
         fill_w += fill_x;
@@ -206,12 +214,14 @@ void SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, uint32_t color)
      * can turn a negative size into a huge positive value.  Keep the signed
      * intermediate values until the empty-rectangle check has finished.
      */
+
     if (fill_x >= dst->w || fill_y >= dst->h)
     {
         return;
     }
 
     // Clip again.
+
     if (fill_x + fill_w > dst->w)
     {
         fill_w = dst->w - fill_x;
@@ -223,6 +233,7 @@ void SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, uint32_t color)
     }
 
     // nothing to do?
+
     if (fill_w <= 0 || fill_h <= 0)
     {
         return;
@@ -296,6 +307,7 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h)
    * a full row/column can turn a bad glyph or clipping rectangle into a large
    * framebuffer update.
    */
+
     if (x == 0 && y == 0 && w == 0 && h == 0)
     {
         w = s->w;
@@ -413,6 +425,7 @@ SDL_Surface *SDL_CreateRGBSurface(uint32_t flags, int width, int height, int dep
     s->flags = flags;
     s->format = malloc(sizeof(SDL_PixelFormat));
     assert(s->format);
+
     if (depth == 8)
     {
         s->format->palette = malloc(sizeof(SDL_Palette));
@@ -495,6 +508,7 @@ void SDL_FreeSurface(SDL_Surface *s)
             }
             free(s->format);
         }
+
         if (s->pixels != NULL && !(s->flags & SDL_PREALLOC))
             free(s->pixels);
         free(s);
@@ -564,6 +578,7 @@ void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_
         };
         SDL_Rect dst_rect = *dst_area;
         SDL_BlitSurface(src, &src_rect, dst, &dst_rect);
+
         if (dstrect != NULL)
             *dstrect = dst_rect;
         return;
@@ -584,8 +599,10 @@ void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_
     int clip_y0 = dst_y < 0 ? 0 : dst_y;
     int clip_x1 = dst_x + dst_w;
     int clip_y1 = dst_y + dst_h;
+
     if (clip_x1 > dst->w)
         clip_x1 = dst->w;
+
     if (clip_y1 > dst->h)
         clip_y1 = dst->h;
 
@@ -667,6 +684,7 @@ void SDL_SoftStretchUpdate(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst
         dst->format->BitsPerPixel != 8)
     {
         SDL_SoftStretch(src, srcrect, dst, dstrect);
+
         if (dstrect != NULL)
         {
             SDL_UpdateRect(dst, dstrect->x, dstrect->y, dstrect->w, dstrect->h);
@@ -708,8 +726,10 @@ void SDL_SoftStretchUpdate(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst
     int clip_y0 = dst_y < 0 ? 0 : dst_y;
     int clip_x1 = dst_x + dst_w;
     int clip_y1 = dst_y + dst_h;
+
     if (clip_x1 > dst->w)
         clip_x1 = dst->w;
+
     if (clip_y1 > dst->h)
         clip_y1 = dst->h;
 
@@ -887,6 +907,7 @@ uint32_t SDL_MapRGBA(SDL_PixelFormat *fmt, uint8_t r, uint8_t g, uint8_t b, uint
 {
     assert(fmt->BytesPerPixel == 4);
     uint32_t p = (r << fmt->Rshift) | (g << fmt->Gshift) | (b << fmt->Bshift);
+
     if (fmt->Amask)
         p |= (a << fmt->Ashift);
     return p;

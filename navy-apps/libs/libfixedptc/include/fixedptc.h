@@ -169,6 +169,7 @@ typedef __uint128_t fixedptud;
         // for positive A, just zero out fractional bits
         // for negative A with nonzero fraction, subtract one more unit
         fixedpt mask = FIXEDPT_FMASK;
+
         if (A >= 0)
         {
             return A & ~mask;
@@ -185,6 +186,7 @@ typedef __uint128_t fixedptud;
         // for positive A with nonzero fraction, add one unit
         // for negative A, just zero out fractional bits
         fixedpt mask = FIXEDPT_FMASK;
+
         if (A >= 0)
         {
             return (A + mask) & ~mask;
@@ -257,6 +259,7 @@ typedef __uint128_t fixedptud;
     {
         if (exp == 0)
             return (FIXEDPT_ONE);
+
         if (n < 0)
             return 0;
         return (fixedpt_exp(fixedpt_mul(fixedpt_ln(n), exp)));

@@ -61,19 +61,23 @@ int dialog_textbox(const char *title, char *tbuf, int initial_height,
         for (i = 0; i < *_vscroll; i++)
             get_line();
     }
+
     if (_hscroll)
         hscroll = *_hscroll;
 
 do_resize:
     getmaxyx(stdscr, height, width);
+
     if (height < TEXTBOX_HEIGTH_MIN || width < TEXTBOX_WIDTH_MIN)
         return -ERRDISPLAYTOOSMALL;
+
     if (initial_height != 0)
         height = initial_height;
     else if (height > 4)
         height -= 4;
     else
         height = 0;
+
     if (initial_width != 0)
         width = initial_width;
     else if (width > 5)
@@ -246,6 +250,7 @@ do_resize:
     }
     delwin(box);
     delwin(dialog);
+
     if (_vscroll)
     {
         const char *s;
@@ -259,6 +264,7 @@ do_resize:
             s++;
         }
     }
+
     if (_hscroll)
         *_hscroll = hscroll;
     return key;
@@ -284,6 +290,7 @@ static void back_lines(int n)
                 continue;
             }
         }
+
         if (page == buf)
         {
             begin_reached = 1;
@@ -325,8 +332,10 @@ static void print_page(WINDOW *win, int height, int width, update_text_fn update
     for (i = 0; i < height; i++)
     {
         print_line(win, i, width);
+
         if (!passed_end)
             page_length++;
+
         if (end_reached && !passed_end)
             passed_end = 1;
     }
@@ -382,13 +391,16 @@ static char *get_line(void)
         else
         {
             /* Truncate lines longer than MAX_LEN characters */
+
             if (i == MAX_LEN)
                 line[i++] = '\0';
             page++;
         }
     }
+
     if (i <= MAX_LEN)
         line[i] = '\0';
+
     if (!end_reached)
         page++; /* move past '\n' */
 

@@ -126,6 +126,7 @@ static void nemu_transfer_block_pio(struct nemu_host *host, bool is_read)
         }
 
         len = min(host->sg_miter.length, blksize);
+
         if (len % 4)
         {
             host->data->error = -EINVAL;
@@ -146,6 +147,7 @@ static void nemu_transfer_block_pio(struct nemu_host *host, bool is_read)
 
             burst_words = min(SDDATA_FIFO_PIO_BURST, copy_words);
             edm = (8 << 4);
+
             if (is_read)
                 words = ((edm >> 4) & 0x1f);
             else
@@ -192,6 +194,7 @@ static void nemu_prepare_data(struct nemu_host *host, struct mmc_command *cmd)
     WARN_ON(host->data);
 
     host->data = data;
+
     if (!data)
         return;
 
@@ -199,6 +202,7 @@ static void nemu_prepare_data(struct nemu_host *host, struct mmc_command *cmd)
     host->data->bytes_xfered = 0;
 
     /* Use PIO */
+
     if (data->flags & MMC_DATA_READ)
         flags |= SG_MITER_TO_SG;
     else
@@ -242,6 +246,7 @@ static bool nemu_send_command(struct nemu_host *host, struct mmc_command *cmd)
     {
         if (cmd->flags & MMC_RSP_136)
             sdcmd |= SDCMD_LONG_RESPONSE;
+
         if (cmd->flags & MMC_RSP_BUSY)
         {
             sdcmd |= SDCMD_BUSYWAIT;
@@ -254,6 +259,7 @@ static bool nemu_send_command(struct nemu_host *host, struct mmc_command *cmd)
         {
             sdcmd |= SDCMD_WRITE_CMD;
         }
+
         if (cmd->data->flags & MMC_DATA_READ)
             sdcmd |= SDCMD_READ_CMD;
     }
@@ -276,6 +282,7 @@ static void nemu_transfer_complete(struct nemu_host *host)
      * a) open-ended multiblock transfer (no CMD23)
      * b) error in multiblock transfer
      */
+
     if (host->mrq->stop && (data->error || !host->use_sbc))
     {
         if (nemu_send_command(host, host->mrq->stop))
@@ -340,6 +347,7 @@ static void nemu_finish_command(struct nemu_host *host)
     {
         /* Finished CMD23, now send actual command. */
         host->cmd = NULL;
+
         if (nemu_send_command(host, host->mrq->cmd))
         {
             if (host->data)
@@ -365,6 +373,7 @@ static void nemu_finish_command(struct nemu_host *host)
     {
         /* Processed actual command. */
         host->cmd = NULL;
+
         if (!host->data)
         {
             nemu_finish_request(host);
@@ -382,12 +391,16 @@ static void nemu_request(struct mmc_host *mmc, struct mmc_request *mrq)
     struct device *dev = &host->pdev->dev;
 
     /* Reset the error statuses in case this is a retry */
+
     if (mrq->sbc)
         mrq->sbc->error = 0;
+
     if (mrq->cmd)
         mrq->cmd->error = 0;
+
     if (mrq->data)
         mrq->data->error = 0;
+
     if (mrq->stop)
         mrq->stop->error = 0;
 
@@ -410,6 +423,7 @@ static void nemu_request(struct mmc_host *mmc, struct mmc_request *mrq)
 
     host->use_sbc = !!mrq->sbc && host->mrq->data &&
                     (host->mrq->data->flags & MMC_DATA_READ);
+
     if (host->use_sbc)
     {
         if (nemu_send_command(host, mrq->sbc))
@@ -479,6 +493,7 @@ static int nemu_add_host(struct nemu_host *host)
     mmc->ocr_avail = MMC_VDD_32_33 | MMC_VDD_33_34;
 
     ret = mmc_add_host(mmc);
+
     if (ret)
     {
         return ret;
@@ -500,6 +515,7 @@ static int nemu_probe(struct platform_device *pdev)
 
     dev_dbg(dev, "%s\n", __func__);
     mmc = mmc_alloc_host(sizeof(*host), dev);
+
     if (!mmc)
         return -ENOMEM;
 
@@ -511,6 +527,7 @@ static int nemu_probe(struct platform_device *pdev)
 
     iomem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
     host->ioaddr = devm_ioremap_resource(dev, iomem);
+
     if (IS_ERR(host->ioaddr))
     {
         ret = PTR_ERR(host->ioaddr);
@@ -521,6 +538,7 @@ static int nemu_probe(struct platform_device *pdev)
      * DMA to our registers.
      */
     regaddr_p = of_get_address(pdev->dev.of_node, 0, NULL, NULL);
+
     if (!regaddr_p)
     {
         dev_err(dev, "Can't get phys address\n");
@@ -533,10 +551,12 @@ static int nemu_probe(struct platform_device *pdev)
     host->max_clk = 1000000; //clk_get_rate(clk);
 
     ret = mmc_of_parse(mmc);
+
     if (ret)
         goto err;
 
     ret = nemu_add_host(host);
+
     if (ret)
         goto err;
 

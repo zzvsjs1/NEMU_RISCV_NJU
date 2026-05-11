@@ -43,6 +43,7 @@ static void UNLAX5705IRQ(void)
     if(IRQa)
     {
         IRQCount++;
+
         if(IRQCount>=238)
         {
             X6502_IRQBegin(FCEU_IQEXT);

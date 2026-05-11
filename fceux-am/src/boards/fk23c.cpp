@@ -39,6 +39,7 @@ static void BMCFK23CCW(uint32 A, uint8 V)
     else
     {
         uint16 base = (EXPREGS[2] & 0x7F) << 3;
+
         if (EXPREGS[3] & 2)
         {
             int cbase = (MMC3_cmd & 0x80) << 5;
@@ -128,9 +129,11 @@ static DECLFW(BMCFK23CHiWrite)
 {
     //	FCEU_printf("K4:(exp0=%02x)\n",EXPREGS[0]);
     //	FCEU_printf("W0:%04X:%02X (exp0=%02x)\n",A,V,EXPREGS[0]);
+
     if ((EXPREGS[0] & 0x60) == 0x40)
     {
         //		FCEU_printf("W2:%04X:%02X (exp0=%02x)\n",A,V,EXPREGS[0]);
+
         if (EXPREGS[0] & 0x30)
             unromchr = 0;
         else
@@ -153,6 +156,7 @@ static DECLFW(BMCFK23CHiWrite)
             if (UNIFchrrama)
             { // hacky... strange behaviour, must be bit scramble due to pcb layot restrictions
                 // check if it not interfer with other dumps
+
                 if ((A == 0x8000) && (V == 0x46))
                     V = 0x47;
                 else if ((A == 0x8000) && (V == 0x47))

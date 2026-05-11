@@ -47,6 +47,7 @@ static void Sync(void)
 static DECLFW(UNLKS7017Write)
 {
     //	FCEU_printf("bs %04x %02x\n",A,V);
+
     if ((A & 0xFF00) == 0x4A00)
     {
         reg = ((A >> 2) & 3) | ((A >> 4) & 4);
@@ -84,6 +85,7 @@ static void UNL7017IRQ(int a)
     if (IRQa)
     {
         IRQCount -= a;
+
         if (IRQCount <= 0)
         {
             IRQa = 0;

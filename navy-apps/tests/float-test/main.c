@@ -36,6 +36,7 @@ static void test_conversion()
             printf("[FAIL] rconst:  orig=%.6f, back=%.6f\n", f, back);
             fails++;
         }
+
         if (!nearly(back2, f))
         {
             printf("[FAIL] fromfloat: orig=%.6f, back=%.6f\n", f, back2);
@@ -68,6 +69,7 @@ static void test_floor_ceil()
                    f, f_floor, our_floor);
             fails++;
         }
+
         if (!nearly(f_ceil, our_ceil))
         {
             printf("[FAIL] ceil : orig=%.6f, ceilf =%.6f, ours =%.6f\n",
@@ -105,11 +107,13 @@ static void test_arithmetic()
         }
 
         // div (skip div by zero)
+
         if (b != 0.0f)
         {
             fixedpt fdiv = fixedpt_div(fa, fb);
             float fdiv_f = fixedpt_tofloat(fdiv);
             float exp_div = a / b;
+
             if (!nearly(fdiv_f, exp_div))
             {
                 printf("[FAIL] div: %.4f / %.4f = %.4f (exp=%.4f)\n",
@@ -137,6 +141,7 @@ static void test_arithmetic()
             // muli
             fixedpt fm = fixedpt_muli(fp, I);
             float fm_f = fixedpt_tofloat(fm);
+
             if (!nearly(fm_f, f * I))
             {
                 printf("[FAIL] muli: %.4f * %d = %.4f (exp=%.4f)\n",
@@ -145,10 +150,12 @@ static void test_arithmetic()
             }
 
             // divi (avoid div by zero)
+
             if (I != 0)
             {
                 fixedpt fd = fixedpt_divi(fp, I);
                 float fd_f = fixedpt_tofloat(fd);
+
                 if (!nearly(fd_f, f / I))
                 {
                     printf("[FAIL] divi: %.4f / %d = %.4f (exp=%.4f)\n",
@@ -160,6 +167,7 @@ static void test_arithmetic()
             // abs
             fixedpt ab = fixedpt_abs(fp);
             float ab_f = fixedpt_tofloat(ab);
+
             if (!nearly(ab_f, fabsf(f)))
             {
                 printf("[FAIL] abs: |%.4f| = %.4f (exp=%.4f)\n",

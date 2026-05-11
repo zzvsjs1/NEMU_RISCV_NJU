@@ -68,6 +68,7 @@ static void Sync(void)
 {
     setchr8(0);
     setprg8r(0x10, 0x6000, 0);
+
     if (PRGsize[0] == 512 * 1024)
     {
         if (reg[0] & 0x010)
@@ -79,6 +80,7 @@ static void Sync(void)
             if (reg[0] & 0x40)
                 setprg8(0x8000, (reg[0] & 0x0F) | 0x20 | ((reg[0] & 0x20) >> 1));
         }
+
         if ((reg[0] & 0x18) == 0x18)
             setmirror(MI_H);
         else
@@ -123,6 +125,7 @@ static void UNLPEC586Power(void)
     Sync();
     SetReadHandler(0x6000, 0x7FFF, CartBR);
     SetWriteHandler(0x6000, 0x7FFF, CartBW);
+
     if (PRGsize[0] == 512 * 1024)
         SetReadHandler(0x8000, 0xFFFF, UNLPEC586ReadHi);
     else

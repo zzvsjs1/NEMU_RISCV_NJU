@@ -42,6 +42,7 @@ static DECLFW(M72Write)
 {
     if (V & 0x80)
         preg = V & 0xF;
+
     if (V & 0x40)
         creg = V & 0xF;
     Sync();

@@ -87,6 +87,7 @@ word ppu_get_real_ram_address(word address)
     else if (address < 0x4000)
     {
         address = 0x3F00 | (address & 0x1F);
+
         if (address == 0x3F10 || address == 0x3F14 || address == 0x3F18 || address == 0x3F1C)
             address -= 0x10;
         return address;
@@ -144,6 +145,7 @@ void ppu_draw_background_scanline(bool mirror)
     for (tile_x = ppu_shows_background_in_leftmost_8px() ? 0 : 1; tile_x < 32; tile_x++)
     {
         // Skipping off-screen pixels
+
         if (((tile_x << 3) - ppu.PPUSCROLL_X + (mirror ? 256 : 0)) > 256)
             continue;
 
@@ -161,6 +163,7 @@ void ppu_draw_background_scanline(bool mirror)
             byte color = ppu_l_h_addition_table[l][h][x];
 
             // Color 0 is transparent
+
             if (color != 0)
             {
                 word attribute_address = (ppu_base_nametable_address() + (mirror ? 0x400 : 0) + 0x3C0 + (tile_x >> 2) + (ppu.scanline >> 5) * 8);
@@ -173,6 +176,7 @@ void ppu_draw_background_scanline(bool mirror)
                 {
                     palette_attribute >>= 4;
                 }
+
                 if (!left)
                 {
                     palette_attribute >>= 2;
@@ -200,12 +204,14 @@ void ppu_draw_sprite_scanline()
         byte sprite_y = PPU_SPRRAM[n];
 
         // Skip if sprite not on scanline
+
         if (sprite_y > ppu.scanline || sprite_y + ppu_sprite_height() < ppu.scanline)
             continue;
 
         scanline_sprite_count++;
 
         // PPU can't render > 8 sprites
+
         if (scanline_sprite_count > 8)
         {
             ppu_set_sprite_overflow(true);
@@ -228,12 +234,14 @@ void ppu_draw_sprite_scanline()
             int color = hflip ? ppu_l_h_addition_flip_table[l][h][x] : ppu_l_h_addition_table[l][h][x];
 
             // Color 0 is transparent
+
             if (color != 0)
             {
                 int screen_x = sprite_x + x;
                 int idx = ppu_ram_read(palette_address + color);
 
                 // FIXME: we do not distinguish bbg and fg here to improve performance
+
                 if (PPU_SPRRAM[n + 2] & 0x20)
                 {
                     draw(screen_x, sprite_y + y_in_tile + 1, idx); // bbg
@@ -244,6 +252,7 @@ void ppu_draw_sprite_scanline()
                 }
 
                 // Checking sprite 0 hit
+
                 if (ppu_shows_background() && !ppu_sprite_hit_occured && n == 0 && ppu_screen_background[screen_x][sprite_y + y_in_tile] == color)
                 {
                     ppu_set_sprite_0_hit(true);

@@ -32,6 +32,7 @@ static void print_item(WINDOW *win, int choice, int selected)
     wmove(win, choice, check_x);
     wattrset(win, selected ? dlg.check_selected.atr
                            : dlg.check.atr);
+
     if (!item_is_tag(':'))
         wprintw(win, "(%c)", item_is_tag('X') ? 'X' : ' ');
 
@@ -39,6 +40,7 @@ static void print_item(WINDOW *win, int choice, int selected)
     mvwaddch(win, choice, item_x, list_item[0]);
     wattrset(win, selected ? dlg.item_selected.atr : dlg.item.atr);
     waddstr(win, list_item + 1);
+
     if (selected)
     {
         wmove(win, choice, check_x + 1);
@@ -120,6 +122,7 @@ int dialog_checklist(const char *title, const char *prompt, int height,
     {
         if (item_is_tag('X'))
             choice = item_n();
+
         if (item_is_selected())
         {
             choice = item_n();
@@ -130,6 +133,7 @@ int dialog_checklist(const char *title, const char *prompt, int height,
 do_resize:
     if (getmaxy(stdscr) < (height + CHECKLIST_HEIGTH_MIN))
         return -ERRDISPLAYTOOSMALL;
+
     if (getmaxx(stdscr) < (width + CHECKLIST_WIDTH_MIN))
         return -ERRDISPLAYTOOSMALL;
 
@@ -210,6 +214,7 @@ do_resize:
         for (i = 0; i < max_choice; i++)
         {
             item_set(i + scroll);
+
             if (toupper(key) == toupper(item_str()[0]))
                 break;
         }
@@ -224,6 +229,7 @@ do_resize:
                     if (!scroll)
                         continue;
                     /* Scroll list down */
+
                     if (list_height > 1)
                     {
                         /* De-highlight current first item */
@@ -254,6 +260,7 @@ do_resize:
                     if (scroll + choice >= item_count() - 1)
                         continue;
                     /* Scroll list up */
+
                     if (list_height > 1)
                     {
                         /* De-highlight current last item before scrolling up */
@@ -280,6 +287,7 @@ do_resize:
                 else
                     i = choice + 1;
             }
+
             if (i != choice)
             {
                 /* De-highlight current item */

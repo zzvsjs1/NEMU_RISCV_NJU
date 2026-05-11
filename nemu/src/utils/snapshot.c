@@ -50,6 +50,7 @@ void save_snapshot(const char *path)
     }
 
     FILE *fp = fopen(path, "wb");
+
     if (fp == NULL)
     {
         perror("save snapshot");
@@ -89,6 +90,7 @@ void load_snapshot(const char *path)
     }
 
     FILE *fp = fopen(path, "rb");
+
     if (fp == NULL)
     {
         perror("load snapshot");
@@ -108,6 +110,7 @@ void load_snapshot(const char *path)
 
     CPU_state saved_cpu;
     NEMUState saved_state;
+
     if (ok)
     {
         ok = read_exact(fp, &saved_cpu, sizeof(saved_cpu)) &&

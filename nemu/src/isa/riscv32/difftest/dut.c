@@ -85,6 +85,7 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
     }
 
     /* CSR */
+
     if (ref_r->csr.mcause != cpu.csr.mcause)
     {
         PRI_ERR(

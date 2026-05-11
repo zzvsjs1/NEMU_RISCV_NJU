@@ -338,6 +338,7 @@ COMPILER_RT_ABI tu_int __udivmodti4(tu_int a, tu_int b, tu_int *rem);
 uint32_t __inline __builtin_ctz(uint32_t value)
 {
     unsigned long trailing_zero = 0;
+
     if (_BitScanForward(&trailing_zero, value))
         return trailing_zero;
     return 32;
@@ -346,6 +347,7 @@ uint32_t __inline __builtin_ctz(uint32_t value)
 uint32_t __inline __builtin_clz(uint32_t value)
 {
     unsigned long leading_zero = 0;
+
     if (_BitScanReverse(&leading_zero, value))
         return 31 - leading_zero;
     return 32;
@@ -355,6 +357,7 @@ uint32_t __inline __builtin_clz(uint32_t value)
 uint32_t __inline __builtin_clzll(uint64_t value)
 {
     unsigned long leading_zero = 0;
+
     if (_BitScanReverse64(&leading_zero, value))
         return 63 - leading_zero;
     return 64;
@@ -366,6 +369,7 @@ uint32_t __inline __builtin_clzll(uint64_t value)
         return 64;
     uint32_t msh = (uint32_t)(value >> 32);
     uint32_t lsh = (uint32_t)(value & 0xFFFFFFFF);
+
     if (msh != 0)
         return __builtin_clz(msh);
     return 32 + __builtin_clz(lsh);
@@ -449,6 +453,7 @@ __udivmoddi4(du_int a, du_int b, du_int *rem)
     udwords r;
     unsigned sr;
     /* special cases, X is unknown, K != 0 */
+
     if (n.s.high == 0)
     {
         if (d.s.high == 0)
@@ -457,6 +462,7 @@ __udivmoddi4(du_int a, du_int b, du_int *rem)
              * ---
              * 0 X
              */
+
             if (rem)
                 *rem = n.s.low % d.s.low;
             return n.s.low / d.s.low;
@@ -465,11 +471,13 @@ __udivmoddi4(du_int a, du_int b, du_int *rem)
          * ---
          * K X
          */
+
         if (rem)
             *rem = n.s.low;
         return 0;
     }
     /* n.s.high != 0 */
+
     if (d.s.low == 0)
     {
         if (d.s.high == 0)
@@ -478,17 +486,20 @@ __udivmoddi4(du_int a, du_int b, du_int *rem)
              * ---
              * 0 0
              */
+
             if (rem)
                 *rem = n.s.high % d.s.low;
             return n.s.high / d.s.low;
         }
         /* d.s.high != 0 */
+
         if (n.s.low == 0)
         {
             /* K 0
              * ---
              * K 0
              */
+
             if (rem)
             {
                 r.s.high = n.s.high % d.s.high;
@@ -501,6 +512,7 @@ __udivmoddi4(du_int a, du_int b, du_int *rem)
          * ---
          * K 0
          */
+
         if ((d.s.high & (d.s.high - 1)) == 0) /* if d is a power of 2 */
         {
             if (rem)
@@ -517,6 +529,7 @@ __udivmoddi4(du_int a, du_int b, du_int *rem)
          */
         sr = __builtin_clz(d.s.high) - __builtin_clz(n.s.high);
         /* 0 <= sr <= n_uword_bits - 2 or sr large */
+
         if (sr > n_uword_bits - 2)
         {
             if (rem)
@@ -540,10 +553,12 @@ __udivmoddi4(du_int a, du_int b, du_int *rem)
              * ---
              * 0 K
              */
+
             if ((d.s.low & (d.s.low - 1)) == 0) /* if d is a power of 2 */
             {
                 if (rem)
                     *rem = n.s.low & (d.s.low - 1);
+
                 if (d.s.low == 1)
                     return n.all;
                 sr = __builtin_ctz(d.s.low);
@@ -560,6 +575,7 @@ __udivmoddi4(du_int a, du_int b, du_int *rem)
              * q.all = n.all << (n_udword_bits - sr);
              * r.all = n.all >> sr;
              */
+
             if (sr == n_uword_bits)
             {
                 q.s.low = 0;
@@ -591,6 +607,7 @@ __udivmoddi4(du_int a, du_int b, du_int *rem)
              */
             sr = __builtin_clz(d.s.high) - __builtin_clz(n.s.high);
             /* 0 <= sr <= n_uword_bits - 1 or sr large */
+
             if (sr > n_uword_bits - 1)
             {
                 if (rem)
@@ -601,6 +618,7 @@ __udivmoddi4(du_int a, du_int b, du_int *rem)
             /* 1 <= sr <= n_uword_bits */
             /*  q.all = n.all << (n_udword_bits - sr); */
             q.s.low = 0;
+
             if (sr == n_uword_bits)
             {
                 q.s.high = n.s.low;
@@ -641,6 +659,7 @@ __udivmoddi4(du_int a, du_int b, du_int *rem)
         r.all -= d.all & s;
     }
     q.all = (q.all << 1) | carry;
+
     if (rem)
         *rem = r.all;
     return q.all;

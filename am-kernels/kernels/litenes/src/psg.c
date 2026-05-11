@@ -22,6 +22,7 @@ static int MAP[256] = {
 byte psgio_read(word address)
 {
     // Joystick 1
+
     if (address == 0x4016)
     {
         if (p++ < 9)
@@ -35,6 +36,7 @@ byte psgio_read(word address)
 void psgio_write(word address, byte data)
 {
     static byte prev_write;
+
     if (address == 0x4016)
     {
         if ((data & 1) == 0 && prev_write == 1)
@@ -51,6 +53,7 @@ void psg_detect_key()
     while (1)
     {
         AM_INPUT_KEYBRD_T ev = io_read(AM_INPUT_KEYBRD);
+
         if (ev.keycode == AM_KEY_NONE)
             break;
         key_state[ev.keycode] = ev.keydown;

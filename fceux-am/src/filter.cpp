@@ -55,6 +55,7 @@ void SexyFilter(int32 *in, int32 *out, int32 count)
     vmul = (FSettings.SoundVolume << 16) * 3 / 4 / 100;
 
     //FCEU_DispMessage("SoundVolume %d, vmul %d",0,FSettings.SoundVolume,vmul);
+
     if (FSettings.soundq)
         vmul /= 4;
     else
@@ -70,8 +71,10 @@ void SexyFilter(int32 *in, int32 *out, int32 count)
         {
             int32 t = (acc1 - ino + acc2) >> 16;
             //if(t>32767 || t<-32768) printf("Flow: %d\n",t);
+
             if (t > 32767)
                 t = 32767;
+
             if (t < -32768)
                 t = -32768;
             *out = t;
@@ -161,6 +164,7 @@ int32 NeoFilterSound(int32 *in, int32 *out, uint32 inlen, int32 *leftover)
         GameExpSound.NeoFill(outsave, count);
 
     SexyFilter(outsave, outsave, count);
+
     if (FSettings.lowpass)
         SexyFilter2(outsave, count);
     return (count);

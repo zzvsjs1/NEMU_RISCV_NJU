@@ -93,6 +93,7 @@ static int b_shift(lua_State *L, lua_Unsigned r, lua_Integer i)
     { /* shift right? */
         i = -i;
         r = trim(r);
+
         if (i >= LUA_NBITS)
             r = 0;
         else
@@ -100,6 +101,7 @@ static int b_shift(lua_State *L, lua_Unsigned r, lua_Integer i)
     }
     else
     { /* shift left */
+
         if (i >= LUA_NBITS)
             r = 0;
         else
@@ -124,10 +126,12 @@ static int b_arshift(lua_State *L)
 {
     lua_Unsigned r = checkunsigned(L, 1);
     lua_Integer i = luaL_checkinteger(L, 2);
+
     if (i < 0 || !(r & ((lua_Unsigned)1 << (LUA_NBITS - 1))))
         return b_shift(L, r, -i);
     else
     { /* arithmetic shift for 'negative' number */
+
         if (i >= LUA_NBITS)
             r = ALLONES;
         else
@@ -142,6 +146,7 @@ static int b_rot(lua_State *L, lua_Integer d)
     lua_Unsigned r = checkunsigned(L, 1);
     int i = d & (LUA_NBITS - 1); /* i = d % NBITS */
     r = trim(r);
+
     if (i != 0) /* avoid undefined shift of LUA_NBITS when i == 0 */
         r = (r << i) | (r >> (LUA_NBITS - i));
     pushunsigned(L, trim(r));
@@ -170,6 +175,7 @@ static int fieldargs(lua_State *L, int farg, int *width)
     lua_Integer w = luaL_optinteger(L, farg + 1, 1);
     luaL_argcheck(L, 0 <= f, farg, "field cannot be negative");
     luaL_argcheck(L, 0 < w, farg + 1, "width must be positive");
+
     if (f + w > LUA_NBITS)
         luaL_error(L, "trying to access non-existent bits");
     *width = (int)w;

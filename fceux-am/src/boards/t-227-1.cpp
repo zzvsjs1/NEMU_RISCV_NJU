@@ -28,6 +28,7 @@ static uint8 reset_flag = 0x07;
 static void BMCT2271CW(uint32 A, uint8 V)
 {
     uint32 va = V;
+
     if (EXPREGS[0] & 0x20)
     {
         va |= 0x200;
@@ -44,6 +45,7 @@ static void BMCT2271CW(uint32 A, uint8 V)
 static void BMCT2271PW(uint32 A, uint8 V)
 {
     uint32 va = V & 0x3F;
+
     if (EXPREGS[0] & 0x20)
     {
         va &= 0x1F;
@@ -63,6 +65,7 @@ static void BMCT2271PW(uint32 A, uint8 V)
     case 0x02:
     {
         va = (va & 0xFD) | ((EXPREGS[0] & 4) >> 1);
+
         if (A < 0xC000)
         {
             setprg16(0x8000, va >> 1);
@@ -89,6 +92,7 @@ static DECLFW(BMCT2271LoWrite)
 static DECLFR(BMCT2271HiRead)
 {
     uint32 av = A;
+
     if (EXPREGS[0] & 0x40)
         av = (av & 0xFFF0) | reset_flag;
     return CartBR(av);

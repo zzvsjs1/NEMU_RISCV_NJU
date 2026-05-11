@@ -79,6 +79,7 @@ static void map_disk_image(void)
     }
 
     const int fd = fileno(disk_img);
+
     if (fd < 0)
     {
         Log("disk: cannot map %s image '%s': %s",
@@ -87,6 +88,7 @@ static void map_disk_image(void)
     }
 
     void *map = mmap(NULL, disk_img_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
     if (map == MAP_FAILED)
     {
         Log("disk: mmap disabled for %s image '%s': %s",
@@ -109,6 +111,7 @@ static bool try_open_disk_image(const char *path, const char *source)
     }
 
     FILE *fp = fopen(path, "r+b");
+
     if (fp == NULL)
     {
         Log("disk: cannot open %s image '%s': %s", source, path, strerror(errno));
@@ -123,6 +126,7 @@ static bool try_open_disk_image(const char *path, const char *source)
     }
 
     long size = ftell(fp);
+
     if (size <= 0)
     {
         Log("disk: ignore empty %s image '%s'", source, path);
@@ -151,6 +155,7 @@ static void open_disk_image(void)
     if (navy_home != NULL && navy_home[0] != '\0')
     {
         int n = snprintf(navy_path, sizeof(navy_path), "%s/build/ramdisk.img", navy_home);
+
         if (n > 0 && (size_t)n < sizeof(navy_path))
         {
             if (try_open_disk_image(navy_path, "$NAVY_HOME/build/ramdisk.img"))
@@ -231,6 +236,7 @@ static void read_blocks(uint8_t *buf, uint32_t blkno, uint32_t blkcnt)
    * Only the short padded tail needs clearing; full-block reads should avoid
    * doubling the memory traffic with a redundant memset().
    */
+
     if (available < bytes)
     {
         memset(buf + available, 0, bytes - available);
@@ -256,6 +262,7 @@ static void write_blocks(const uint8_t *buf, uint32_t blkno, uint32_t blkcnt)
    * for the Navy ramdisk, but file-test uses them and later reads must observe
    * the updated bytes even if the host has not yet refreshed the shared page.
    */
+
     if (disk_map != NULL && offset + bytes <= disk_map_size)
     {
         memcpy(disk_map + offset, buf, bytes);

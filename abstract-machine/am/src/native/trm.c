@@ -21,6 +21,7 @@ void halt(int code)
     for (const char *p = fmt; *p; p++)
     {
         char ch = *p;
+
         if (ch == '0' || ch == '4')
         {
             ch = "0123456789abcdef"[(code >> (ch - '0')) & 0xf];

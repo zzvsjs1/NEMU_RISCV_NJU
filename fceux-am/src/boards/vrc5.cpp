@@ -152,6 +152,7 @@ static void Sync(void)
     chrSync();
     setprg4r(0x10, 0x6000, (regs[0] & 1) | (regs[0] >> 2)); // two 4K banks are identical, either internal or excernal
     setprg4r(0x10, 0x7000, (regs[1] & 1) | (regs[1] >> 2)); // SRAMs may be mapped in any bank independently
+
     if (PRGptr[1] == NULL)
     { // for iNES 2.0 version it even more hacky lol
         setprg8(0x8000, (regs[2] & 0x3F) + ((regs[2] & 0x40) >> 2));
@@ -234,6 +235,7 @@ static void VRC5IRQ(int a)
     if (IRQa)
     {
         IRQCount += a;
+
         if (IRQCount & 0x10000)
         {
             X6502_IRQBegin(FCEU_IQEXT);
@@ -258,6 +260,7 @@ static void QTAiClose(void)
     if (CHRRAM)
         FCEU_gfree(CHRRAM);
     CHRRAM = NULL;
+
     if (WRAM)
         FCEU_gfree(WRAM);
     WRAM = NULL;

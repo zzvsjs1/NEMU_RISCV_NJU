@@ -61,6 +61,7 @@ int InitSound()
     const int soundbufsize = 128;
     int samples = 512;
     s_BufferSize = soundbufsize * soundrate / 1000;
+
     if (s_BufferSize < samples * 2)
     {
         s_BufferSize = samples * 2;
@@ -111,6 +112,7 @@ void WriteSound(int32 *buf,
 #if SOUND_CONFIG != SOUND_NONE
     static int16_t buf16[2048 + 512] = {};
     extern int EmulationPaused;
+
     if (EmulationPaused == 0)
     {
         // FECUX stores each PCM sample as 32-bit data,

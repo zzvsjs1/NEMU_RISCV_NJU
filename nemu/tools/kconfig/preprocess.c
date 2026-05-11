@@ -77,6 +77,7 @@ static char *env_expand(const char *name)
     }
 
     value = getenv(name);
+
     if (!value)
         return NULL;
 
@@ -153,6 +154,7 @@ static char *do_shell(int argc, char *argv[])
     cmd = argv[0];
 
     p = popen(cmd, "r");
+
     if (!p)
     {
         perror(cmd);
@@ -160,6 +162,7 @@ static char *do_shell(int argc, char *argv[])
     }
 
     nread = fread(buf, 1, sizeof(buf), p);
+
     if (nread == sizeof(buf))
         nread--;
 
@@ -214,6 +217,7 @@ static char *function_expand(const char *name, int argc, char *argv[])
     for (i = 0; i < ARRAY_SIZE(function_table); i++)
     {
         f = &function_table[i];
+
         if (strcmp(f->name, name))
             continue;
 
@@ -264,6 +268,7 @@ static char *variable_expand(const char *name, int argc, char *argv[])
     char *res;
 
     v = variable_lookup(name);
+
     if (!v)
         return NULL;
 
@@ -294,9 +299,11 @@ void variable_add(const char *name, const char *value,
     bool append = false;
 
     v = variable_lookup(name);
+
     if (v)
     {
         /* For defined variables, += inherits the existing flavor */
+
         if (flavor == VAR_APPEND)
         {
             flavor = v->flavor;
@@ -310,6 +317,7 @@ void variable_add(const char *name, const char *value,
     else
     {
         /* For undefined variables, += assumes the recursive flavor */
+
         if (flavor == VAR_APPEND)
             flavor = VAR_RECURSIVE;
 
@@ -379,6 +387,7 @@ static char *eval_clause(const char *str, size_t len, int argc, char *argv[])
      * available, then look-up global-scope variables.
      */
     n = strtoul(tmp, &endptr, 10);
+
     if (!*endptr && n > 0 && n <= argc)
     {
         res = xstrdup(argv[n - 1]);
@@ -406,6 +415,7 @@ static char *eval_clause(const char *str, size_t len, int argc, char *argv[])
         if (nest == 0 && *p == ',')
         {
             *p = 0;
+
             if (new_argc >= FUNCTION_MAX_ARGS)
                 pperror("too many function arguments");
             new_argv[new_argc++] = prev;
@@ -438,18 +448,22 @@ static char *eval_clause(const char *str, size_t len, int argc, char *argv[])
 
     /* Search for variables */
     res = variable_expand(name, new_argc, new_argv);
+
     if (res)
         goto free;
 
     /* Look for built-in functions */
     res = function_expand(name, new_argc, new_argv);
+
     if (res)
         goto free;
 
     /* Last, try environment variable */
+
     if (new_argc == 0)
     {
         res = env_expand(name);
+
         if (res)
             goto free;
     }
@@ -488,6 +502,7 @@ static char *expand_dollar_with_args(const char **str, int argc, char *argv[])
      * Neither single-letter variables as in $A nor curly braces as in ${CC}
      * are supported.  '$' not followed by '(' loses its special meaning.
      */
+
     if (*p != '(')
     {
         *str = p;

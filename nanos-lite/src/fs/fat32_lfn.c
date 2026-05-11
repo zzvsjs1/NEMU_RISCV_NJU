@@ -26,6 +26,7 @@ static int copy_ascii_unit(uint16_t unit, char *out, size_t out_size, size_t *po
    * a small ASCII subset, so reject non-printable and non-ASCII units instead
    * of returning a lossy name.
    */
+
     if (unit == 0x0000)
     {
         return 0;
@@ -49,6 +50,7 @@ static int copy_ascii_unit(uint16_t unit, char *out, size_t out_size, size_t *po
 static uint16_t lfn_unit_at(const Fat32LfnEntry *entry, int index)
 {
     /* Read packed fields directly, avoiding unaligned pointers to UTF-16 units. */
+
     if (index < 5)
     {
         return entry->name1[index];
@@ -92,11 +94,13 @@ int fat32_lfn_entry_to_ascii(const Fat32LfnEntry *entry, char *out, size_t out_s
     for (int i = 0; i < 13; i++)
     {
         int ret = copy_ascii_unit(lfn_unit_at(entry, i), out, out_size, &pos);
+
         if (ret < 0)
         {
             out[0] = '\0';
             return -1;
         }
+
         if (ret == 0)
         {
             if (!lfn_has_only_padding_after(entry, i))

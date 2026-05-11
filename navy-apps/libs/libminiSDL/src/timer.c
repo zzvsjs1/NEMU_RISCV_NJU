@@ -32,6 +32,7 @@ SDL_TimerID SDL_AddTimer(uint32_t interval, SDL_NewTimerCallback callback, void 
 {
     if (callback == NULL)
         return NULL;
+
     if (interval == 0)
         interval = 1;
 
@@ -61,6 +62,7 @@ SDL_TimerID SDL_AddTimer(uint32_t interval, SDL_NewTimerCallback callback, void 
 int SDL_RemoveTimer(SDL_TimerID id)
 {
     TimerSlot *slot = (TimerSlot *)id;
+
     if (slot == NULL)
         return 0;
 
@@ -83,6 +85,7 @@ void SDL_CheckTimers(void)
     for (int i = 0; i < MAX_TIMERS; i++)
     {
         TimerSlot *slot = &timers[i];
+
         if (!slot->active || !tick_reached(now, slot->next_tick))
             continue;
 
@@ -91,6 +94,7 @@ void SDL_CheckTimers(void)
      * is still active after the callback returns.
      */
         uint32_t next_interval = slot->callback(slot->interval, slot->param);
+
         if (!slot->active)
             continue;
 

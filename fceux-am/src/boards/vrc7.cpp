@@ -52,6 +52,7 @@ static SFORMAT StateRegs[] =
 #if 0
 void DoVRC7Sound(void) {
     int32 z, a;
+
     if (FSettings.soundq >= 1)
         return;
     z = ((SOUNDTS << 16) / soundtsinc) >> 4;
@@ -74,6 +75,7 @@ void UpdateOPL(int Count)
     int32 z, a;
     z = ((SOUNDTS << 16) / soundtsinc) >> 4;
     a = z - dwave;
+
     if (VRC7Sound && a)
         OPLL_fillbuf(VRC7Sound, &Wave[dwave], a, 1);
 #endif
@@ -144,6 +146,7 @@ static DECLFW(VRC7SW)
 static DECLFW(VRC7Write)
 {
     A |= (A & 8) << 1; // another two-in-oooone
+
     if (A >= 0xA000 && A <= 0xDFFF)
     {
         A &= 0xF010;
@@ -184,6 +187,7 @@ static DECLFW(VRC7Write)
             IRQMode = V & 4;
             IRQa = V & 2;
             IRQd = V & 1;
+
             if (V & 2)
                 IRQCount = IRQLatch;
             CycleCount = 0;
@@ -223,6 +227,7 @@ static void VRC7IRQHook(int a)
             {
                 CycleCount--;
                 IRQCount++;
+
                 if (IRQCount & 0x100)
                 {
                     X6502_IRQBegin(FCEU_IQEXT);
@@ -237,6 +242,7 @@ static void VRC7IRQHook(int a)
             {
                 CycleCount -= 341;
                 IRQCount++;
+
                 if (IRQCount == 0x100)
                 {
                     IRQCount = IRQLatch;
@@ -261,6 +267,7 @@ void Mapper85_Init(CartInfo *info)
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
     AddExState(WRAM, WRAMSIZE, 0, "WRAM");
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

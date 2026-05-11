@@ -60,6 +60,7 @@ static void bench_done(Result *res)
 static const char *bench_check(Benchmark *bench)
 {
     uintptr_t freesp = (uintptr_t)heap.end - (uintptr_t)heap.start;
+
     if (freesp < setting->mlim)
     {
         return "(insufficient memory)";
@@ -87,6 +88,7 @@ static uint32_t score(Benchmark *b, uint64_t usec)
 int main(const char *args)
 {
     const char *setting_name = args;
+
     if (args == NULL || strcmp(args, "") == 0)
     {
         printf("Empty mainargs. Use \"ref\" by default\n");
@@ -126,6 +128,7 @@ int main(const char *args)
         setting = &bench->settings[setting_id];
         const char *msg = bench_check(bench);
         printf("[%s] %s: ", bench->name, bench->desc);
+
         if (msg != NULL)
         {
             printf("Ignored %s\n", msg);
@@ -140,6 +143,7 @@ int main(const char *args)
                 run_once(bench, &res);
                 printf(res.pass ? "*" : "X");
                 succ &= res.pass;
+
                 if (res.usec < usec)
                     usec = res.usec;
                 score_time += res.usec;
@@ -155,6 +159,7 @@ int main(const char *args)
             uint32_t cur = succ ? score(bench, usec) : 0;
 
             printf("\n");
+
             if (setting_id != 0)
             {
                 printf("  min time: %s ms [%d]\n", format_time(usec), cur);
@@ -169,6 +174,7 @@ int main(const char *args)
 
     printf("==================================================\n");
     printf("MicroBench %s", pass ? "PASS" : "FAIL");
+
     if (setting_id >= 2)
     {
         printf("        %d Marks\n", bench_score);

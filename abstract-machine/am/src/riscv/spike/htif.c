@@ -19,6 +19,7 @@ static spinlock_t htif_lock = SPINLOCK_INIT;
 static void __check_fromhost()
 {
     uint64_t fh = fromhost;
+
     if (!fh)
         return;
     fromhost = 0;
@@ -54,6 +55,7 @@ int htif_console_getchar()
     spinlock_lock(&htif_lock);
     __check_fromhost();
     int ch = htif_console_buf;
+
     if (ch >= 0)
     {
         htif_console_buf = -1;
@@ -72,6 +74,7 @@ static void do_tohost_fromhost(uintptr_t dev, uintptr_t cmd, uintptr_t data)
     while (1)
     {
         uint64_t fh = fromhost;
+
         if (fh)
         {
             if (FROMHOST_DEV(fh) == dev && FROMHOST_CMD(fh) == cmd)

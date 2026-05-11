@@ -81,6 +81,7 @@ void init_regex()
     for (int i = 0; i < NR_REGEX; ++i)
     {
         ret = regcomp(&re[i], rules[i].regex, REG_EXTENDED);
+
         if (ret != 0)
         {
             regerror(ret, &re[i], error_msg, 128);
@@ -167,15 +168,18 @@ static word_t strToWordT(const char *str, const size_t strLen, const word_t base
     size_t effectiveLen = strLen;
 
     // Ignore optional unsigned suffix.
+
     if (effectiveLen > 0 && (str[effectiveLen - 1] == 'u' || str[effectiveLen - 1] == 'U'))
     {
         effectiveLen--;
     }
 
     // Skip base prefix for binary and hex.
+
     if (base == 2 || base == 16)
     {
         // Expect "0b" or "0x".
+
         if (effectiveLen < 2 || str[0] != '0')
         {
             *success = false;
@@ -186,6 +190,7 @@ static word_t strToWordT(const char *str, const size_t strLen, const word_t base
     }
 
     // Handle unary '-' only for decimal input (as per existing behaviour).
+
     if (base == 10 && effectiveLen > 0 && str[0] == '-')
     {
         negative = true;
@@ -203,6 +208,7 @@ static word_t strToWordT(const char *str, const size_t strLen, const word_t base
         word_t d = chToWordT(str[i]);
 
         // Validate digit range for the base, e.g. '2' is invalid for base 2.
+
         if (d >= base)
         {
             *success = false;
@@ -417,6 +423,7 @@ static int getMainBiOp(int start, int end, bool *success)
     for (; end >= start; --end)
     {
         const TokenType curType = tokens[end].type;
+
         if (curType == TK_R_BRACKET)
         {
             ++inBracket;
@@ -446,6 +453,7 @@ static int getMainBiOp(int start, int end, bool *success)
     for (; end >= start; --end)
     {
         const TokenType curType = tokens[end].type;
+
         if (curType == TK_R_BRACKET)
         {
             ++inBracket;
@@ -489,6 +497,7 @@ static bool isAllParenthesesMatch(int start, int end)
         else if (tokens[start].type == TK_R_BRACKET)
         {
             --count;
+
             if (count < 0)
             {
                 return false;
@@ -579,6 +588,7 @@ static word_t eval(int start, int end, bool *success)
      * one matching outer parenthesis pair, applies one unary operator at the
      * front, or splits around the main binary operator.
      */
+
     if (end < start)
     {
         // Do not access tokens[start] or tokens[end] here, the range is invalid.
@@ -611,6 +621,7 @@ static word_t eval(int start, int end, bool *success)
 
             bool ok = true;
             word_t v = strToWordT(tokens[start].str, strlen(tokens[start].str), base, &ok);
+
             if (!ok)
             {
                 *success = false;
@@ -641,6 +652,7 @@ static word_t eval(int start, int end, bool *success)
     const int mainOpIndex = getMainBiOp(start, end, success);
 
     // Cannot found next main Bi op, so, do unary operator.
+
     if (!*success)
     {
         if (getNextUnaryOperation(start, end) != start)
@@ -652,6 +664,7 @@ static word_t eval(int start, int end, bool *success)
         *success = true;
 
         const word_t rVal = eval(start + 1, end, success);
+
         if (!*success)
         {
             return -1;
@@ -670,18 +683,21 @@ static word_t eval(int start, int end, bool *success)
     assert(mainOpIndex != -1);
 
     const word_t left = eval(start, mainOpIndex - 1, success);
+
     if (!*success)
     {
         return -1;
     }
 
     const word_t right = eval(mainOpIndex + 1, end, success);
+
     if (!*success)
     {
         return -1;
     }
 
     const word_t ret = biOperations(left, tokens[mainOpIndex].type, right, success);
+
     if (!*success)
     {
         return -1;
@@ -773,9 +789,11 @@ static void preProcess()
         const TokenType type = tokens[i].type;
 
         // Decide whether '-' is unary negative or binary minus.
+
         if (type == TK_MINUS)
         {
             // Unary if it is the first token, or if the previous token is not an operand.
+
             if (i == 0 || !isOperand(tokens[i - 1].type))
             {
                 tokens[i].type = TK_NEGATIVE;
@@ -785,9 +803,11 @@ static void preProcess()
         }
 
         // Decide whether '*' is dereference or binary multiply.
+
         if (type == TK_MUL)
         {
             // Unary dereference if it is the first token, or if the previous token is not an operand.
+
             if (i == 0 || !isOperand(tokens[i - 1].type))
             {
                 tokens[i].type = TK_DEFER;
@@ -814,6 +834,7 @@ static word_t calculate(bool *success)
         {
             bool ok = true;
             word_t v = strToWordT(tokens[0].str, strlen(tokens[0].str), 16, &ok);
+
             if (!ok)
             {
                 *success = false;
@@ -825,6 +846,7 @@ static word_t calculate(bool *success)
         {
             bool ok = true;
             word_t v = strToWordT(tokens[0].str, strlen(tokens[0].str), 10, &ok);
+
             if (!ok)
             {
                 *success = false;
@@ -836,6 +858,7 @@ static word_t calculate(bool *success)
         {
             bool ok = true;
             word_t v = strToWordT(tokens[0].str, strlen(tokens[0].str), 2, &ok);
+
             if (!ok)
             {
                 *success = false;
@@ -851,6 +874,7 @@ static word_t calculate(bool *success)
     }
 
     *success = isAllParenthesesMatch(0, numOfTokens - 1);
+
     if (!*success)
     {
         /*
@@ -870,10 +894,12 @@ static bool removeBlank(char *string)
     // Remove whitespace characters in-place.
     // Do NOT delete 'u' or any other meaningful character globally.
     // If we need to support numeric suffixes (e.g. 10u), handle that in token rules and parsing.
+
     if (!string)
         return false;
 
     size_t len = strlen(string);
+
     if (len == 0)
         return true;
 

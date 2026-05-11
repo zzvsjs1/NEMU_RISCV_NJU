@@ -268,6 +268,7 @@ int vsnprintf(char *out,
         if (*fmt == 'l')
         {
             fmt++;
+
             if (*fmt == 'l') /* ll */
             {
                 length_ll = 1;
@@ -285,6 +286,7 @@ int vsnprintf(char *out,
         }
 
         char spec = *fmt;
+
         if (spec == '\0') /* malformed, stop */
         {
             break;
@@ -315,6 +317,7 @@ int vsnprintf(char *out,
         case 's':
         {
             const char *s = va_arg(ap, const char *);
+
             if (!s)
             {
                 s = "(null)";
@@ -431,12 +434,14 @@ int vsnprintf(char *out,
         default:
         {
             /* Unknown specifier, print literally */
+
             if (out_pos + 1U < n)
             {
                 out[out_pos] = '%';
             }
             out_pos++;
             total_written++;
+
             if (out_pos + 1U < n)
             {
                 out[out_pos] = spec;

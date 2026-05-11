@@ -99,6 +99,7 @@ void SetPaletteBlitToHigh(uint8 *src)
     }
 
     //full size deemph palette
+
     if (palo)
     {
         for (int x = 0; x < 512; x++)

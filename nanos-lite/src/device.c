@@ -118,12 +118,14 @@ static void update_fb_backing(int owner, const void *buf, size_t offset, size_t 
    * rows from width/height. Multi-row writes and one-row writes then share the
    * same private-backing semantics, independent of how the app grouped pixels.
    */
+
     if (!fb_backing_ready || !valid_foreground_index(owner) || buf == NULL || len == 0)
     {
         return;
     }
 
     const size_t fb_size = fb_backing_size();
+
     if (offset >= fb_size)
     {
         return;
@@ -185,6 +187,7 @@ static void fb_restore_foreground(void)
     }
 
     const int owner = foreground_pcb_index();
+
     if (!valid_foreground_index(owner))
     {
         return;
@@ -206,6 +209,7 @@ static void audio_remember_current(uint32_t freq, uint32_t channels, uint32_t sa
    * sample bytes are intentionally discarded when a foreground owner is restored.
    */
     const int owner = current_pcb_index();
+
     if (owner < 0 || owner >= NR_FOREGROUND_PROC)
     {
         return;
@@ -222,12 +226,14 @@ static void audio_remember_current(uint32_t freq, uint32_t channels, uint32_t sa
 static void audio_restore_foreground(void)
 {
     const int owner = foreground_pcb_index();
+
     if (owner < 0 || owner >= NR_FOREGROUND_PROC)
     {
         return;
     }
 
     const ForegroundAudioState *state = &audio_state[owner];
+
     if (!state->configured)
     {
         return;
@@ -366,6 +372,7 @@ static size_t copy_event_record(void *buf, size_t len, const char *event, size_t
 static size_t read_keyboard_event(void *buf, size_t len)
 {
     AM_INPUT_KEYBRD_T keyboard = io_read(AM_INPUT_KEYBRD);
+
     if (keyboard.keycode == AM_KEY_NONE)
     {
         return 0;
@@ -380,6 +387,7 @@ static size_t read_keyboard_event(void *buf, size_t len)
     const char *name = keyname[keyboard.keycode];
     char event[32];
     const int format_len = snprintf(event, sizeof(event), "%s %s\n", prefix, name);
+
     if (format_len < 0 || format_len >= (int)sizeof(event))
     {
         Log("read_keyboard_event format failed, len=%d", format_len);
@@ -392,6 +400,7 @@ static size_t read_keyboard_event(void *buf, size_t len)
 static size_t read_mouse_event(void *buf, size_t len)
 {
     AM_INPUT_MOUSE_T mouse = io_read(AM_INPUT_MOUSE);
+
     if (mouse.type == AM_MOUSE_NONE)
     {
         return 0;
@@ -399,6 +408,7 @@ static size_t read_mouse_event(void *buf, size_t len)
 
     char event[64];
     const size_t event_len = format_mouse_event(event, sizeof(event), mouse);
+
     if (event_len == 0)
     {
         return 0;
@@ -429,15 +439,18 @@ size_t events_read(void *buf, size_t offset, size_t len)
    * F1/F2/F3 foreground switches, and a held key should not hide cursor updates.
    */
     size_t n = 0;
+
     if (prefer_mouse)
     {
         n = read_mouse_event(buf, len);
+
         if (n == 0)
             n = read_keyboard_event(buf, len);
     }
     else
     {
         n = read_keyboard_event(buf, len);
+
         if (n == 0)
             n = read_mouse_event(buf, len);
     }
@@ -458,6 +471,7 @@ size_t dispinfo_read(void *buf, size_t offset, size_t len)
     char buff[64];
 
     int total = sprintf(buff, "WIDTH:%d\nHEIGHT:%d\n", gpuConfig.width, gpuConfig.height);
+
     if (total < 0 || total > 64)
     {
         Log("dispinfo_read: total < 0 || total > 64  total=%d", total);
@@ -482,6 +496,7 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
 
     const int owner = current_pcb_index();
     const int foreground_owner = foreground_pcb_index();
+
     if (owner != foreground_owner)
     {
         update_fb_backing(owner, buf, offset, len);
@@ -511,6 +526,7 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
    * those as one multi-row draw so the VGA sync flag is raised once instead of
    * once per row.  Other linear spans keep the old one-span behaviour.
    */
+
     if (col == 0 && pixelCount >= (size_t)screenW && pixelCount % (size_t)screenW == 0)
     {
         const int hPixels = (int)(pixelCount / (size_t)screenW);
@@ -532,6 +548,7 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
    * AM_GPU_FBDRAW path has already presented the frame to the physical display,
    * which remains the hot backing until this app is switched away and captured.
    */
+
     if (valid_foreground_index(owner))
     {
         fb_backing_stale[owner] = true;
@@ -569,6 +586,7 @@ size_t sb_write(const void *buf, size_t offset, size_t len)
             size_t used = (size_t)st.count;
             size_t cap = (size_t)cfg.bufsize;
             free_bytes = (used >= cap) ? 0 : (cap - used);
+
             if (free_bytes > 0)
                 break;
             MULTIPROGRAM_YIELD(); // be cooperative if a scheduler exists
@@ -576,6 +594,7 @@ size_t sb_write(const void *buf, size_t offset, size_t len)
 
         // Write at most the available free space, and no more than what remains
         size_t n = free_bytes;
+
         if (n > remain)
             n = remain;
 
@@ -605,6 +624,7 @@ size_t sbctl_write(const void *buf, size_t offset, size_t len)
    * other length is rejected because a partial audio format would leave NEMU's
    * host stream in a state no app can reason about.
    */
+
     if (len != 3 * sizeof(uint32_t))
     {
         // Not supported

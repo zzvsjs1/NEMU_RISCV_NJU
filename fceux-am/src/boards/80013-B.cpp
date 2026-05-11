@@ -32,6 +32,7 @@ static SFORMAT StateRegs[] =
 static void Sync(void)
 {
     setchr8(0);
+
     if (rom_mode & 2)
     {
         setprg16r(0, 0x8000, (bios_prg & 0xF) | (rom_prg & 0x70));
@@ -47,6 +48,7 @@ static void Sync(void)
 static DECLFW(BMC80013BWrite)
 {
     uint8 reg = (A >> 13) & 3;
+
     if (reg == 0)
     {
         bios_prg = V;

@@ -29,6 +29,7 @@ void Window::draw_px(int x, int y, uint32_t color)
 void Window::draw_ch(BDF_Font *font, int x, int y, char ch, uint32_t color)
 {
     uint32_t *bm = font->font[ch];
+
     if (!bm)
         return;
     for (int j = 0; j < font->h; j++)
@@ -42,6 +43,7 @@ void Window::draw_ch(BDF_Font *font, int x, int y, char ch, uint32_t color)
 void Window::draw_raw_ch(BDF_Font *font, int x, int y, char ch, uint32_t color)
 {
     uint32_t *bm = font->font[ch];
+
     if (!bm)
         return;
     for (int j = 0; j < font->h; j++)
@@ -89,11 +91,13 @@ Window::Window(WindowManager *wm, const char *cmd, const char *const *argv, cons
         fbdev_fd = memfd_create("nwm-fbdev", 0);
 
         pid_t p = fork();
+
         if (p == 0)
         { // child
 #ifdef __ISA_NATIVE__
             // install a parent death signal in the chlid
             int r = prctl(PR_SET_PDEATHSIG, SIGTERM);
+
             if (r == -1)
             {
                 perror("prctl error");
@@ -220,6 +224,7 @@ Window::~Window()
         delete[] canvas;
         canvas = nullptr;
     }
+
     if (fbdev_fd != -1)
     {
         munmap(fb, fw * fh * sizeof(uint32_t));
@@ -227,6 +232,7 @@ Window::~Window()
         close(fbdev_fd);
         fbdev_fd = -1;
     }
+
     if (read_fd != -1)
     {
         // close pipes
@@ -246,11 +252,13 @@ void Window::update()
         {
             char buf[64];
             int nread = read(read_fd, buf, sizeof(buf) - 1); // this a non-blocking read
+
             if (nread == -1)
                 break;
             buf[nread] = '\0';
             int w, h;
             int ret = sscanf(buf, "%d %d", &w, &h);
+
             if (ret == 2)
                 resize(w, h);
         } while (1);

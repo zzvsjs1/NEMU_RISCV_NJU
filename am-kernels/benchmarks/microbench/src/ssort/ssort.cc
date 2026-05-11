@@ -64,6 +64,7 @@ void suffixArray(int *s, int *SA, int n, int K)
             c1 = s[SA12[i] + 1];
             c2 = s[SA12[i] + 2];
         }
+
         if (SA12[i] % 3 == 1)
         {
             s12[SA12[i] / 3] = name;
@@ -75,6 +76,7 @@ void suffixArray(int *s, int *SA, int n, int K)
     }
 
     // recurse if names are not yet unique
+
     if (name < n02)
     {
         suffixArray(s12, SA12, n02, name);
@@ -98,10 +100,12 @@ void suffixArray(int *s, int *SA, int n, int K)
 #define GetI() (SA12[t] < n0 ? SA12[t] * 3 + 1 : (SA12[t] - n0) * 3 + 2)
         int i = GetI(); // pos of current offset 12 suffix
         int j = SA0[p]; // pos of current offset 0  suffix
+
         if (SA12[t] < n0 ? leq(s[i], s12[SA12[t] + n0], s[j], s12[j / 3]) : leq(s[i], s[i + 1], s12[SA12[t] - n0 + 1], s[j], s[j + 1], s12[j / 3 + n0]))
         { // suffix from SA12 is smaller
             SA[k] = i;
             t++;
+
             if (t == n02)
             { // done --- only SA0 suffixes left
                 for (k++; p < n0; p++, k++)
@@ -112,6 +116,7 @@ void suffixArray(int *s, int *SA, int n, int K)
         {
             SA[k] = j;
             p++;
+
             if (p == n0)
             { // done --- only SA12 suffixes left
                 for (k++; t < n02; t++, k++)

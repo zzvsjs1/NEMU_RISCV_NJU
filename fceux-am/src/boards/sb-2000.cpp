@@ -42,35 +42,43 @@ static void Sync(void)
 {
     setchr8(0);
     setprg8r(0x10, 0x6000, 0);
+
     if (preg[0] & 0x80)
         setprg4r(0x10, 0x8000, preg[0] & 0x7f);
     else
         setprg4(0x8000, preg[0] & 0x7f);
+
     if (preg[1] & 0x80)
         setprg4r(0x10, 0x9000, preg[1] & 0x7f);
     else
         setprg4(0x9000, preg[1] & 0x7f);
+
     if (preg[2] & 0x80)
         setprg4r(0x10, 0xa000, preg[2] & 0x7f);
     else
         setprg4(0xa000, preg[2] & 0x7f);
+
     if (preg[3] & 0x80)
         setprg4r(0x10, 0xb000, preg[3] & 0x7f);
     else
         setprg4(0xb000, preg[3] & 0x7f);
     /*
+
     if(preg[4] & 0x80)
         setprg4r(0x10,0xc000,preg[4] & 0x7f);
     else
         setprg4(0xc000,preg[4] & 0x7f);
+
     if(preg[5] & 0x80)
         setprg4r(0x10,0xd000,preg[5] & 0x7f);
     else
         setprg4(0xd000,preg[5] & 0x7f);
+
     if(preg[6] & 0x80)
         setprg4r(0x10,0xe000,preg[6] & 0x7f);
     else
         setprg4(0xe000,preg[6] & 0x7f);
+
     if(preg[7] & 0x80)
         setprg4r(0x10,0xf000,preg[7] & 0x7f);
     else
@@ -159,6 +167,7 @@ static void UNLSB2000Close(void)
     if (WRAM)
         FCEU_gfree(WRAM);
     /*
+
     if (CHRRAM)
         FCEU_gfree(CHRRAM);
 */
@@ -194,6 +203,7 @@ void UNLSB2000_Init(CartInfo *info)
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
     AddExState(WRAM, WRAMSIZE, 0, "WRAM");
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

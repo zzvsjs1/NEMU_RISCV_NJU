@@ -97,6 +97,7 @@ static void *lookup_pa_page(AddrSpace *as, uintptr_t page_va)
     uint32_t vpn0 = (uint32_t)((page_va >> 12) & 0x3FFu);
 
     PTE pde = l1[vpn1];
+
     if ((pde & PTE_V) == 0)
         return NULL;
 
@@ -107,6 +108,7 @@ static void *lookup_pa_page(AddrSpace *as, uintptr_t page_va)
     PTE *l0 = (PTE *)l0_pa;
 
     PTE pte = l0[vpn0];
+
     if ((pte & PTE_V) == 0)
         return NULL;
 
@@ -166,6 +168,7 @@ static uintptr_t loader(PCB *pcb, const char *filename)
         uintptr_t mem_va_end = seg_va + phdr.p_memsz;
 
         // Track the maximum end address of all loadable segments.
+
         if (mem_va_end > max_end)
         {
             max_end = mem_va_end;
@@ -180,6 +183,7 @@ static uintptr_t loader(PCB *pcb, const char *filename)
             // ELF segments can share a page at their boundary; allocating a
             // fresh page here would lose bytes copied for the previous segment.
             void *page_pa = lookup_pa_page(&pcb->as, page_va);
+
             if (page_pa == NULL)
             {
                 page_pa = new_page(1);
@@ -300,6 +304,7 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
 {
     // Ensure envp is not NULL.
     static char *const empty_envp[] = {NULL};
+
     if (envp == NULL)
     {
         envp = empty_envp;

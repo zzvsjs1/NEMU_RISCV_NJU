@@ -90,9 +90,11 @@ DECLFW(MMC2and4Write)
 static void MMC2and4PPUHook(uint32 A)
 {
     uint8 l, h = A >> 8;
+
     if (h >= 0x20 || ((h & 0xF) != 0xF))
         return;
     l = A & 0xF0;
+
     if (h < 0x10)
     {
         if (l == 0xD0)
@@ -126,6 +128,7 @@ static void MMC2and4Power(void)
     preg = 0;
     latch0 = latch1 = 1;
     Sync();
+
     if (is10)
     {
         SetReadHandler(0x6000, 0x7FFF, CartBR);
@@ -167,6 +170,7 @@ void Mapper10_Init(CartInfo *info)
     WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
     SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
     AddExState(WRAM, WRAMSIZE, 0, "WRAM");
+
     if (info->battery)
     {
         info->SaveGame[0] = WRAM;

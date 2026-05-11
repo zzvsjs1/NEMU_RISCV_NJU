@@ -41,6 +41,7 @@ int main()
     printf("\033[H\033[J"); // screan_clear
 
     bool has_audio = io_read(AM_AUDIO_CONFIG).present;
+
     if (has_audio)
     {
         io_write(AM_AUDIO_CTRL, AUDIO_FREQ, AUDIO_CHANNEL, 1024);
@@ -66,6 +67,7 @@ int main()
         if (has_audio)
         {
             int total_to_play = (AUDIO_FREQ / FPS) * sizeof(int16_t) * AUDIO_CHANNEL;
+
             if (total_to_play > audio_left)
                 total_to_play = audio_left;
             int should_play = total_to_play;

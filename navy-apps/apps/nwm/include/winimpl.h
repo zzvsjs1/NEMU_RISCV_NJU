@@ -56,6 +56,7 @@ class WindowSwitcher : public Window
     void project(Window *win, int basex, int basey, int w, int h)
     {
         int w1, h1;
+
         if (win->h * w <= h * win->w)
         {
             w1 = w;
@@ -137,6 +138,7 @@ class WindowSwitcher : public Window
                                 draw_px(x + i - 2, preview_pad + j - 2, 0x81bef7);
                             }
                 }
+
                 if (win)
                 {
                     project(win, x, preview_pad, preview_px, preview_px);
@@ -184,6 +186,7 @@ class AppFinder : public Window
     void draw_item(int idx, int x, int y)
     {
         BDF_Font *font = wm->font;
+
         if (idx == cur)
         {
             for (int i = 0; i < item_size; i++)
@@ -227,6 +230,7 @@ class AppFinder : public Window
                 dx = 0;
                 dy += font->h;
             }
+
             if (dy + font->h >= icon_size)
                 break;
             draw_ch(font, x + icon_dx + dx, y + icon_dy + dy, *p, 0x0);

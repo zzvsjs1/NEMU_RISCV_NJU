@@ -30,6 +30,7 @@ Context *syscall_replacement_context_and_clear(void)
    * return through that new context instead of resuming the syscall frame that
    * belonged to the replaced image.
    */
+
     if (!context_replaced)
     {
         return NULL;
@@ -309,6 +310,7 @@ void do_syscall(Context *c)
         const uint64_t uptimeUs = io_read(AM_TIMER_UPTIME).us;
 
         // If tv is non-NULL, fill in time since Epoch (here: time since boot)
+
         if (tv)
         {
             tv->tv_sec = uptimeUs / 1000000;
@@ -316,6 +318,7 @@ void do_syscall(Context *c)
         }
 
         // If tz is non-NULL, zero it out (timezone support is obsolete)
+
         if (tz)
         {
             tz->tz_minuteswest = 0;
@@ -338,6 +341,7 @@ void do_syscall(Context *c)
         // follows Unix execve semantics: the caller's image disappears and does
         // not receive a normal return value.
         int fd = fs_open((char *)filename, 0, 0);
+
         if (fd < 0)
         {
             c->GPRx = (uintptr_t)-2; // ENOENT

@@ -69,8 +69,10 @@ static int64_t memory_seek(SDL_RWops *rw, int64_t offset, int whence)
     }
 
     int64_t next = base + offset;
+
     if (next < 0)
         next = 0;
+
     if (next > ctx->size)
         next = ctx->size;
     ctx->pos = next;
@@ -85,6 +87,7 @@ static size_t memory_read(SDL_RWops *rw, void *buf, size_t size, size_t nmemb)
 
     if (size == 0 || nmemb == 0 || left <= 0)
         return 0;
+
     if ((int64_t)bytes > left)
         bytes = (size_t)left;
 

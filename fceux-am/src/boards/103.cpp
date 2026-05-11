@@ -36,6 +36,7 @@ static void Sync(void)
     setchr8(0);
     setprg8(0x8000, 0xc);
     setprg8(0xe000, 0xf);
+
     if (reg2 & 0x10)
     {
         setprg8(0x6000, reg0);

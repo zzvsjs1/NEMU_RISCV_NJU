@@ -15,6 +15,7 @@ void init_isa();
 void difftest_memcpy(paddr_t addr, void *buf, size_t n, bool direction)
 {
     assert(direction == DIFFTEST_TO_REF);
+
     if (direction == DIFFTEST_TO_REF)
     {
         bool ok = gdb_memcpy_to_qemu(addr, buf, n);
@@ -26,6 +27,7 @@ void difftest_regcpy(void *dut, bool direction)
 {
     union isa_gdb_regs qemu_r;
     gdb_getregs(&qemu_r);
+
     if (direction == DIFFTEST_TO_REF)
     {
         memcpy(&qemu_r, dut, DIFFTEST_REG_SIZE);
@@ -50,6 +52,7 @@ void difftest_init(int port)
 
     int ppid_before_fork = getpid();
     int pid = fork();
+
     if (pid == -1)
     {
         perror("fork");
@@ -61,6 +64,7 @@ void difftest_init(int port)
 
         // install a parent death signal in the chlid
         int r = prctl(PR_SET_PDEATHSIG, SIGTERM);
+
         if (r == -1)
         {
             perror("prctl error");

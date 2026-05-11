@@ -144,6 +144,7 @@ static int os_execute(lua_State *L)
 {
     const char *cmd = luaL_optstring(L, 1, NULL);
     int stat = system(cmd);
+
     if (cmd != NULL)
         return luaL_execresult(L, stat);
     else
@@ -171,6 +172,7 @@ static int os_tmpname(lua_State *L)
     char buff[LUA_TMPNAMBUFSIZE];
     int err;
     lua_tmpnam(buff, err);
+
     if (err)
         return luaL_error(L, "unable to generate a unique filename");
     lua_pushstring(L, buff);
@@ -245,8 +247,10 @@ static int getfield(lua_State *L, const char *key, int d, int delta)
     int isnum;
     int t = lua_getfield(L, -1, key); /* get field and its type */
     lua_Integer res = lua_tointegerx(L, -1, &isnum);
+
     if (!isnum)
-    {                      /* field is not an integer? */
+    { /* field is not an integer? */
+
         if (t != LUA_TNIL) /* some other value? */
             return luaL_error(L, "field '%s' is not an integer", key);
         else if (d < 0) /* absent field; no default? */
@@ -294,6 +298,7 @@ static int os_date(lua_State *L)
     time_t t = luaL_opt(L, l_checktime, 2, time(NULL));
     const char *se = s + slen; /* 's' end */
     struct tm tmr, *stm;
+
     if (*s == '!')
     { /* UTC? */
         stm = l_gmtime(&t, &tmr);
@@ -301,8 +306,10 @@ static int os_date(lua_State *L)
     }
     else
         stm = l_localtime(&t, &tmr);
+
     if (stm == NULL) /* invalid date? */
         luaL_error(L, "time result cannot be represented in this installation");
+
     if (strcmp(s, "*t") == 0)
     {
         lua_createtable(L, 0, 9); /* 9 = number of fields */
@@ -336,6 +343,7 @@ static int os_date(lua_State *L)
 static int os_time(lua_State *L)
 {
     time_t t;
+
     if (lua_isnoneornil(L, 1)) /* called without args? */
         t = time(NULL);        /* get current time */
     else
@@ -353,6 +361,7 @@ static int os_time(lua_State *L)
         t = mktime(&ts);
         setallfields(L, &ts); /* update fields with normalized values */
     }
+
     if (t != (time_t)(l_timet)t || t == (time_t)(-1))
         luaL_error(L, "time result cannot be represented in this installation");
     l_pushtime(L, t);
@@ -384,12 +393,15 @@ static int os_setlocale(lua_State *L)
 static int os_exit(lua_State *L)
 {
     int status;
+
     if (lua_isboolean(L, 1))
         status = (lua_toboolean(L, 1) ? EXIT_SUCCESS : EXIT_FAILURE);
     else
         status = (int)luaL_optinteger(L, 1, EXIT_SUCCESS);
+
     if (lua_toboolean(L, 2))
         lua_close(L);
+
     if (L)
         exit(status); /* 'if' to avoid warnings for unreachable 'return' */
     return 0;
