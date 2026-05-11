@@ -3,33 +3,36 @@
 
 #include "common.h"
 
-typedef enum {
-  carry_flag     = 0x01,
-  zero_flag      = 0x02,
-  interrupt_flag = 0x04,
-  decimal_flag   = 0x08,
-  break_flag     = 0x10,
-  unused_flag    = 0x20,
-  overflow_flag  = 0x40,
-  negative_flag  = 0x80
+typedef enum
+{
+    carry_flag = 0x01,
+    zero_flag = 0x02,
+    interrupt_flag = 0x04,
+    decimal_flag = 0x08,
+    break_flag = 0x10,
+    unused_flag = 0x20,
+    overflow_flag = 0x40,
+    negative_flag = 0x80
 } cpu_p_flag;
 
-typedef enum {
-  carry_bp      = 0,
-  zero_bp       = 1,
-  interrupt_bp  = 2,
-  decimal_bp    = 3,
-  break_bp      = 4,
-  unused_bp     = 5,
-  overflow_bp   = 6,
-  negative_bp   = 7
+typedef enum
+{
+    carry_bp = 0,
+    zero_bp = 1,
+    interrupt_bp = 2,
+    decimal_bp = 3,
+    break_bp = 4,
+    unused_bp = 5,
+    overflow_bp = 6,
+    negative_bp = 7
 } cpu_p_bp;
 
-typedef struct {
-  word PC; // Program Counter,
-  byte SP; // Stack Pointer,
-  byte A, X, Y; // Registers
-  byte P; // Flag Register
+typedef struct
+{
+    word PC;      // Program Counter,
+    byte SP;      // Stack Pointer,
+    byte A, X, Y; // Registers
+    byte P;       // Flag Register
 } CPU_STATE;
 
 extern CPU_STATE cpu;

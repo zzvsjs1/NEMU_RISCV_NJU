@@ -27,60 +27,67 @@
 static uint8 isresetbased = 0;
 static uint8 latche[2], reset;
 static SFORMAT StateRegs[] =
+    {
+        {&reset, 1, "RST"},
+        {latche, 2, "LATC"},
+        {0}};
+
+static void Sync(void)
 {
-	{ &reset, 1, "RST" },
-	{ latche, 2, "LATC" },
-	{ 0 }
-};
-
-static void Sync(void) {
-	uint8 bank;
-	if (isresetbased)
-		bank = (latche[0] & 0x1f) | (reset << 5) | ((latche[1] & 1) << 6);
-	else
-		bank = (latche[0] & 0x1f) | ((latche[0] & 0x80) >> 2) | ((latche[1] & 1) << 6);
-	if (!(latche[0] & 0x20))
-		setprg32(0x8000, bank >> 1);
-	else{
-		setprg16(0x8000, bank);
-		setprg16(0xC000, bank);
-	}
-	setmirror((latche[0] >> 6) & 1);
-	setchr8(0);
+    uint8 bank;
+    if (isresetbased)
+        bank = (latche[0] & 0x1f) | (reset << 5) | ((latche[1] & 1) << 6);
+    else
+        bank = (latche[0] & 0x1f) | ((latche[0] & 0x80) >> 2) | ((latche[1] & 1) << 6);
+    if (!(latche[0] & 0x20))
+        setprg32(0x8000, bank >> 1);
+    else
+    {
+        setprg16(0x8000, bank);
+        setprg16(0xC000, bank);
+    }
+    setmirror((latche[0] >> 6) & 1);
+    setchr8(0);
 }
 
-static DECLFW(M226Write) {
-	latche[A & 1] = V;
-	Sync();
+static DECLFW(M226Write)
+{
+    latche[A & 1] = V;
+    Sync();
 }
 
-static void M226Power(void) {
-	latche[0] = latche[1] = reset = 0;
-	Sync();
-	SetWriteHandler(0x8000, 0xFFFF, M226Write);
-	SetReadHandler(0x8000, 0xFFFF, CartBR);
+static void M226Power(void)
+{
+    latche[0] = latche[1] = reset = 0;
+    Sync();
+    SetWriteHandler(0x8000, 0xFFFF, M226Write);
+    SetReadHandler(0x8000, 0xFFFF, CartBR);
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void Mapper226_Init(CartInfo *info) {
-	isresetbased = 0;
-	info->Power = M226Power;
-	AddExState(&StateRegs, ~0, 0, 0);
-	GameStateRestore = StateRestore;
+void Mapper226_Init(CartInfo *info)
+{
+    isresetbased = 0;
+    info->Power = M226Power;
+    AddExState(&StateRegs, ~0, 0, 0);
+    GameStateRestore = StateRestore;
 }
 
-static void M233Reset(void) {
-	reset ^= 1;
-	Sync();
+static void M233Reset(void)
+{
+    reset ^= 1;
+    Sync();
 }
 
-void Mapper233_Init(CartInfo *info) {
-	isresetbased = 1;
-	info->Power = M226Power;
-	info->Reset = M233Reset;
-	AddExState(&StateRegs, ~0, 0, 0);
-	GameStateRestore = StateRestore;
+void Mapper233_Init(CartInfo *info)
+{
+    isresetbased = 1;
+    info->Power = M226Power;
+    info->Reset = M233Reset;
+    AddExState(&StateRegs, ~0, 0, 0);
+    GameStateRestore = StateRestore;
 }

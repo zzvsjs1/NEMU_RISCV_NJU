@@ -7,33 +7,35 @@ static IOMap maps[NR_MAP] = {};
 static int nr_map = 0;
 
 /* device interface */
-void add_pio_map(const char *name, ioaddr_t addr, void *space, uint32_t len, io_callback_t callback) {
-  assert(nr_map < NR_MAP);
-  assert(addr + len <= PORT_IO_SPACE_MAX);
-  /*
+void add_pio_map(const char *name, ioaddr_t addr, void *space, uint32_t len, io_callback_t callback)
+{
+    assert(nr_map < NR_MAP);
+    assert(addr + len <= PORT_IO_SPACE_MAX);
+    /*
    * Port IO is a separate 16-bit bus used by some configurations instead of
    * MMIO.  The same IOMap callback contract is reused, but the address never
    * goes through the physical-memory decoder.
    */
-  maps[nr_map] = (IOMap){ .name = name, .low = addr, .high = addr + len - 1,
-    .space = space, .callback = callback };
-  Log("Add port-io map '%s' at [" FMT_PADDR ", " FMT_PADDR "]",
-      maps[nr_map].name, maps[nr_map].low, maps[nr_map].high);
+    maps[nr_map] = (IOMap){.name = name, .low = addr, .high = addr + len - 1, .space = space, .callback = callback};
+    Log("Add port-io map '%s' at [" FMT_PADDR ", " FMT_PADDR "]",
+        maps[nr_map].name, maps[nr_map].low, maps[nr_map].high);
 
-  nr_map ++;
+    nr_map++;
 }
 
 /* CPU interface */
-uint32_t pio_read(ioaddr_t addr, int len) {
-  assert(addr + len - 1 < PORT_IO_SPACE_MAX);
-  int mapid = find_mapid_by_addr(maps, nr_map, addr);
-  assert(mapid != -1);
-  return map_read(addr, len, &maps[mapid]);
+uint32_t pio_read(ioaddr_t addr, int len)
+{
+    assert(addr + len - 1 < PORT_IO_SPACE_MAX);
+    int mapid = find_mapid_by_addr(maps, nr_map, addr);
+    assert(mapid != -1);
+    return map_read(addr, len, &maps[mapid]);
 }
 
-void pio_write(ioaddr_t addr, int len, uint32_t data) {
-  assert(addr + len - 1 < PORT_IO_SPACE_MAX);
-  int mapid = find_mapid_by_addr(maps, nr_map, addr);
-  assert(mapid != -1);
-  map_write(addr, len, data, &maps[mapid]);
+void pio_write(ioaddr_t addr, int len, uint32_t data)
+{
+    assert(addr + len - 1 < PORT_IO_SPACE_MAX);
+    int mapid = find_mapid_by_addr(maps, nr_map, addr);
+    assert(mapid != -1);
+    map_write(addr, len, data, &maps[mapid]);
 }

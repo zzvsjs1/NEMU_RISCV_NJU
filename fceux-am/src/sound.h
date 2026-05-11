@@ -21,21 +21,22 @@
 #ifndef _SOUND_H_
 #define _SOUND_H_
 
-typedef struct {
-	   void (*Fill)(int Count);	/* Low quality ext sound. */
+typedef struct
+{
+    void (*Fill)(int Count); /* Low quality ext sound. */
 
-	   /* NeoFill is for sound devices that are emulated in a more
-	      high-level manner(VRC7) in HQ mode.  Interestingly,
-	      this device has slightly better sound quality(updated more
-	      often) in lq mode than in high-quality mode.  Maybe that
+    /* NeoFill is for sound devices that are emulated in a more
+          high-level manner(VRC7) in HQ mode.  Interestingly,
+          this device has slightly better sound quality(updated more
+          often) in lq mode than in high-quality mode.  Maybe that
      	      should be fixed. :)
-	   */
-           void (*NeoFill)(int32 *Wave, int Count);
-	   void (*HiFill)(void);
-	   void (*HiSync)(int32 ts);
+       */
+    void (*NeoFill)(int32 *Wave, int Count);
+    void (*HiFill)(void);
+    void (*HiSync)(int32 ts);
 
-	   void (*RChange)(void);
-	   void (*Kill)(void);
+    void (*RChange)(void);
+    void (*Kill)(void);
 } EXPSOUND;
 
 extern EXPSOUND GameExpSound;
@@ -46,11 +47,11 @@ void SetSoundVariables(void);
 
 int GetSoundBuffer(int32 **W);
 int FlushEmulateSound(void);
-extern int32 Wave[2048+512];
+extern int32 Wave[2048 + 512];
 // WaveFinal is the mixed frame audio buffer returned to the platform layer.
 // Its valid sample count is supplied separately by FlushEmulateSound, because
 // PAL/NTSC timing and frame skipping change the amount produced per frame.
-extern int32 WaveFinal[2048+512];
+extern int32 WaveFinal[2048 + 512];
 extern int32 WaveHi[];
 extern uint32 soundtsinc;
 
@@ -67,16 +68,17 @@ void FCEUSND_SaveState(void);
 void FCEUSND_LoadState(int version);
 
 void FCEU_SoundCPUHook(int);
-void Write_IRQFM (uint32 A, uint8 V); //mbg merge 7/17/06 brought over from latest mmbuild
+void Write_IRQFM(uint32 A, uint8 V); //mbg merge 7/17/06 brought over from latest mmbuild
 
 void LogDPCM(int romaddress, int dpcmsize);
 
-typedef struct {
-	uint8 Speed;
-	uint8 Mode;	/* Fixed volume(1), and loop(2) */
-	uint8 DecCountTo1;
-	uint8 decvolume;
-	int reloaddec;
+typedef struct
+{
+    uint8 Speed;
+    uint8 Mode; /* Fixed volume(1), and loop(2) */
+    uint8 DecCountTo1;
+    uint8 decvolume;
+    int reloaddec;
 } ENVUNIT;
 
 #endif

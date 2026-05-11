@@ -27,41 +27,52 @@
 #include "mapinc.h"
 #include "mmc3.h"
 
-static void BMC8IN1CW(uint32 A, uint8 V) {
-	setchr1(A, ((EXPREGS[0] & 0xC) << 5) | (V & 0x7F));
+static void BMC8IN1CW(uint32 A, uint8 V)
+{
+    setchr1(A, ((EXPREGS[0] & 0xC) << 5) | (V & 0x7F));
 }
 
-static void BMC8IN1PW(uint32 A, uint8 V) {
-	if(EXPREGS[0] & 0x10) {		// MMC3 mode
-		setprg8(A, ((EXPREGS[0] & 0xC) << 2) | (V & 0xF));
-	} else {
-		setprg32(0x8000, EXPREGS[0] & 0xF);
-	}
+static void BMC8IN1PW(uint32 A, uint8 V)
+{
+    if (EXPREGS[0] & 0x10)
+    { // MMC3 mode
+        setprg8(A, ((EXPREGS[0] & 0xC) << 2) | (V & 0xF));
+    }
+    else
+    {
+        setprg32(0x8000, EXPREGS[0] & 0xF);
+    }
 }
 
-static DECLFW(BMC8IN1Write) {
-	if(A & 0x1000) {
-		EXPREGS[0] = V;
-		FixMMC3PRG(MMC3_cmd);
-		FixMMC3CHR(MMC3_cmd);
-	} else {
-		if(A < 0xC000)
-			MMC3_CMDWrite(A, V);
-		else
-			MMC3_IRQWrite(A, V);
-	}
+static DECLFW(BMC8IN1Write)
+{
+    if (A & 0x1000)
+    {
+        EXPREGS[0] = V;
+        FixMMC3PRG(MMC3_cmd);
+        FixMMC3CHR(MMC3_cmd);
+    }
+    else
+    {
+        if (A < 0xC000)
+            MMC3_CMDWrite(A, V);
+        else
+            MMC3_IRQWrite(A, V);
+    }
 }
 
-static void BMC8IN1Power(void) {
-	EXPREGS[0] = 0;
-	GenMMC3Power();
-	SetWriteHandler(0x8000, 0xFFFF, BMC8IN1Write);
+static void BMC8IN1Power(void)
+{
+    EXPREGS[0] = 0;
+    GenMMC3Power();
+    SetWriteHandler(0x8000, 0xFFFF, BMC8IN1Write);
 }
 
-void BMC8IN1_Init(CartInfo *info) {
-	GenMMC3_Init(info, 128, 128, 0, 0);
-	cwrap = BMC8IN1CW;
-	pwrap = BMC8IN1PW;
-	info->Power = BMC8IN1Power;
-	AddExState(EXPREGS, 1, 0, "EXPR");
+void BMC8IN1_Init(CartInfo *info)
+{
+    GenMMC3_Init(info, 128, 128, 0, 0);
+    cwrap = BMC8IN1CW;
+    pwrap = BMC8IN1PW;
+    info->Power = BMC8IN1Power;
+    AddExState(EXPREGS, 1, 0, "EXPR");
 }

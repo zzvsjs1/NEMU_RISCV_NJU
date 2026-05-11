@@ -4,6 +4,6 @@
 #include <BDF.h>
 #include <SDL.h>
 
-SDL_Surface* BDF_CreateSurface(BDF_Font *font, char ch, uint32_t fg, uint32_t bg);
+SDL_Surface *BDF_CreateSurface(BDF_Font *font, char ch, uint32_t fg, uint32_t bg);
 
 #endif

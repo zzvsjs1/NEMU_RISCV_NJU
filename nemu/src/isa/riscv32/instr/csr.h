@@ -13,7 +13,7 @@ static inline void csr_flush_jit_if_satp(word_t csr_addr)
     (void)csr_addr;
 }
 
-def_EHelper(ecall) 
+def_EHelper(ecall)
 {
     bool success = false;
     const word_t mcauseVal = isa_reg_str2val("a7", &success);
@@ -34,25 +34,25 @@ def_EHelper(ecall)
 #endif
 }
 
-def_EHelper(ebreak) 
+def_EHelper(ebreak)
 {
     Log("EBREAK trigger!\n");
     Assert(false, "EBREAK instruction, this should not happend!\n");
 }
 
 // The CSRRW (Atomic Read/Write CSR) instruction atomically swaps values in the CSRs and integer
-// registers. CSRRW reads the old value of the CSR, zero-extends the value to 
+// registers. CSRRW reads the old value of the CSR, zero-extends the value to
 // XLEN bits, then writes it to
 // integer register rd. The initial value in rs1 is written to the CSR. If rd=x0, then the instruction shall not
 // read the CSR and shall not cause any of the side effects that might occur on a CSR read.
-def_EHelper(csrrw) 
+def_EHelper(csrrw)
 {
     const word_t csrAddress = id_src2->imm;
 
     // printf("\nWrite %x to CSR %x\n", *dsrc1, csrAddress);
 
     // Get csr register address.
-    rtlreg_t* csrPtr = getCSRAddress(csrAddress);
+    rtlreg_t *csrPtr = getCSRAddress(csrAddress);
 
     const rtlreg_t oldCSRValue = *csrPtr;
     const rtlreg_t newCSRValue = *dsrc1;
@@ -73,18 +73,18 @@ def_EHelper(csrrw)
 // value to XLEN bits, and writes it to integer register rd. The initial value in integer register rs1 is treated
 // as a bit mask that specifies bit positions to be set in the CSR. Any bit that is high in rs1 will cause the
 // corresponding bit to be set in the CSR, if that CSR bit is writable.
-def_EHelper(csrrs) 
+def_EHelper(csrrs)
 {
     const word_t csrAddress = id_src2->imm;
 
-    rtlreg_t* csrPtr = getCSRAddress(csrAddress);
+    rtlreg_t *csrPtr = getCSRAddress(csrAddress);
 
     // Write it to integer register rd
     rtl_li(s, ddest, *csrPtr);
-    
+
     // if that CSR bit is writable
     // For both CSRRS and CSRRC, if rs1=x0, then the instruction will not write to the CSR at all
-    if (isCSRWriteable(csrAddress) && s->isa.instr.CSR.rs1 != 0) 
+    if (isCSRWriteable(csrAddress) && s->isa.instr.CSR.rs1 != 0)
     {
         rtl_or(s, csrPtr, csrPtr, dsrc1);
         csr_flush_jit_if_satp(csrAddress);
@@ -95,15 +95,15 @@ def_EHelper(csrrs)
 // the value to XLEN bits, and writes it to integer register rd. The initial value in integer register rs1 is
 // treated as a bit mask that specifies bit positions to be cleared in the CSR. Any bit that is high in rs1 will
 // cause the corresponding bit to be cleared in the CSR, if that CSR bit is writable.
-def_EHelper(csrrc) 
+def_EHelper(csrrc)
 {
     const word_t csrAddress = id_src2->imm;
-    rtlreg_t* csrPtr = getCSRAddress(csrAddress);
+    rtlreg_t *csrPtr = getCSRAddress(csrAddress);
 
     // Write it to integer register rd
     rtl_li(s, ddest, *csrPtr);
-    
-    if (isCSRWriteable(csrAddress) && s->isa.instr.CSR.rs1 != 0) 
+
+    if (isCSRWriteable(csrAddress) && s->isa.instr.CSR.rs1 != 0)
     {
         rtl_mv(s, s0, dsrc1);
         rtl_not(s, s0, s0);
@@ -115,7 +115,7 @@ def_EHelper(csrrc)
 def_EHelper(csrrwi)
 {
     const word_t csrAddress = id_src2->imm;
-    rtlreg_t* csrPtr = getCSRAddress(csrAddress);
+    rtlreg_t *csrPtr = getCSRAddress(csrAddress);
     const rtlreg_t uimm = s->isa.instr.CSR.rs1;
 
     if (s->isa.instr.CSR.rd != 0)
@@ -130,7 +130,7 @@ def_EHelper(csrrwi)
 def_EHelper(csrrsi)
 {
     const word_t csrAddress = id_src2->imm;
-    rtlreg_t* csrPtr = getCSRAddress(csrAddress);
+    rtlreg_t *csrPtr = getCSRAddress(csrAddress);
     const rtlreg_t uimm = s->isa.instr.CSR.rs1;
 
     rtl_li(s, ddest, *csrPtr);
@@ -145,7 +145,7 @@ def_EHelper(csrrsi)
 def_EHelper(csrrci)
 {
     const word_t csrAddress = id_src2->imm;
-    rtlreg_t* csrPtr = getCSRAddress(csrAddress);
+    rtlreg_t *csrPtr = getCSRAddress(csrAddress);
     const rtlreg_t uimm = s->isa.instr.CSR.rs1;
 
     rtl_li(s, ddest, *csrPtr);

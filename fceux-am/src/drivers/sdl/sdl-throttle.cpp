@@ -11,57 +11,55 @@ static int InFrame;
 /**
  * Refreshes the FPS throttling variables.
  */
-void
-RefreshThrottleFPS()
+void RefreshThrottleFPS()
 {
-	desired_fps = FCEUI_GetDesiredFPS();
+    desired_fps = FCEUI_GetDesiredFPS();
 
-	Lasttime=0;
-	Nexttime=0;
-	InFrame=0;
+    Lasttime = 0;
+    Nexttime = 0;
+    InFrame = 0;
 }
 
 /**
  * Perform FPS speed throttling by delaying until the next time slot.
  */
-int
-SpeedThrottle()
+int SpeedThrottle()
 {
-	uint64 time_left;
-	uint64 cur_time = FCEUD_GetTime();
+    uint64 time_left;
+    uint64 cur_time = FCEUD_GetTime();
 
-	if(!Lasttime)
-		Lasttime = cur_time;
+    if (!Lasttime)
+        Lasttime = cur_time;
 
-	if(!InFrame)
-	{
-		InFrame = 1;
-		Nexttime = Lasttime + 1000 / desired_fps;
-	}
+    if (!InFrame)
+    {
+        InFrame = 1;
+        Nexttime = Lasttime + 1000 / desired_fps;
+    }
 
-	if(cur_time >= Nexttime)
-		time_left = 0;
-	else
-		time_left = Nexttime - cur_time;
+    if (cur_time >= Nexttime)
+        time_left = 0;
+    else
+        time_left = Nexttime - cur_time;
 
-	if(time_left > 50)
-	{
-		time_left = 50;
-		/* In order to keep input responsive, don't wait too long at once */
-		/* 50 ms wait gives us a 20 Hz responsetime which is nice. */
-	}
-	else
-		InFrame = 0;
+    if (time_left > 50)
+    {
+        time_left = 50;
+        /* In order to keep input responsive, don't wait too long at once */
+        /* 50 ms wait gives us a 20 Hz responsetime which is nice. */
+    }
+    else
+        InFrame = 0;
 
-  //delay
-  uint64 now;
-  while ((now = FCEUD_GetTime()) - cur_time < time_left)
-    ;
+    //delay
+    uint64 now;
+    while ((now = FCEUD_GetTime()) - cur_time < time_left)
+        ;
 
-	if(!InFrame)
-	{
-		Lasttime = now;
-		return 0; /* Done waiting */
-	}
-	return 1; /* Must still wait some more */
+    if (!InFrame)
+    {
+        Lasttime = now;
+        return 0; /* Done waiting */
+    }
+    return 1; /* Must still wait some more */
 }

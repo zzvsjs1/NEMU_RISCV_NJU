@@ -26,39 +26,48 @@ THE SOFTWARE.
 
 #include "roms.h" // from $(AM_HOME)/share/games/nes/gen/
 
-void EMUFILE_FILE::open(const char* fname, const char* mode) {
-  struct rom *cur = &roms[0];
-  int found = 0;
-  for (int i = 0; i < nroms; i++) {
-    if (strcmp(roms[i].name, fname) == 0) {
-      cur = &roms[i];
-      found = 1;
-      break;
+void EMUFILE_FILE::open(const char *fname, const char *mode)
+{
+    struct rom *cur = &roms[0];
+    int found = 0;
+    for (int i = 0; i < nroms; i++)
+    {
+        if (strcmp(roms[i].name, fname) == 0)
+        {
+            cur = &roms[i];
+            found = 1;
+            break;
+        }
     }
-  }
 
-  if (found) { printf("Found ROM '%s'\n", fname); }
-  else { printf("ROM '%s' not found, using default ROM '%s'\n", fname, cur->name); }
+    if (found)
+    {
+        printf("Found ROM '%s'\n", fname);
+    }
+    else
+    {
+        printf("ROM '%s' not found, using default ROM '%s'\n", fname, cur->name);
+    }
 
-  this->data = (u8 *)cur->body;
-  this->filesize = (int)*(cur->size);
-  this->curpos = 0;
-	this->fname = cur->name;
-	strcpy(this->mode,mode);
-  this->failbit = false;
+    this->data = (u8 *)cur->body;
+    this->filesize = (int)*(cur->size);
+    this->curpos = 0;
+    this->fname = cur->name;
+    strcpy(this->mode, mode);
+    this->failbit = false;
 }
 
 #else
 
-void EMUFILE_FILE::open(const char* fname, const char* mode)
+void EMUFILE_FILE::open(const char *fname, const char *mode)
 {
-	fp = fopen(fname,mode);
-	if(!fp)
-	{
-    failbit = true;
-	}
-	this->fname = fname;
-	strcpy(this->mode,mode);
+    fp = fopen(fname, mode);
+    if (!fp)
+    {
+        failbit = true;
+    }
+    this->fname = fname;
+    strcpy(this->mode, mode);
 }
 
 #endif

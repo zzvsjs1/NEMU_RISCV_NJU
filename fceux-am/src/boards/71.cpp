@@ -24,46 +24,50 @@ static uint8 preg, mirr;
 static int hardmirr;
 
 static SFORMAT StateRegs[] =
+    {
+        {&preg, 1, "PREG"},
+        {&mirr, 1, "MIRR"},
+        {0}};
+
+static void Sync(void)
 {
-	{ &preg, 1, "PREG" },
-	{ &mirr, 1, "MIRR" },
-	{ 0 }
-};
-
-static void Sync(void) {
-	setprg16(0x8000, preg);
-	setprg16(0xC000, ~0);
-	setchr8(0);
-	if(mirr)
-		setmirror(mirr);
-	else
-		setmirror(hardmirr);
+    setprg16(0x8000, preg);
+    setprg16(0xC000, ~0);
+    setchr8(0);
+    if (mirr)
+        setmirror(mirr);
+    else
+        setmirror(hardmirr);
 }
 
-static DECLFW(M71Write) {
-	if ((A & 0xF000) == 0x9000)
-		mirr = MI_0 + ((V >> 4) & 1);   // 2-in-1, some carts are normal hardwire V/H mirror, some uses mapper selectable 0/1 mirror
-	else
-		preg = V;
-	Sync();
+static DECLFW(M71Write)
+{
+    if ((A & 0xF000) == 0x9000)
+        mirr = MI_0 + ((V >> 4) & 1); // 2-in-1, some carts are normal hardwire V/H mirror, some uses mapper selectable 0/1 mirror
+    else
+        preg = V;
+    Sync();
 }
 
-static void M71Power(void) {
-	preg = 0;
-	mirr = 0;
-	Sync();
-	SetReadHandler(0x8000, 0xFFFF, CartBR);
-	SetWriteHandler(0x8000, 0xFFFF, M71Write);
+static void M71Power(void)
+{
+    preg = 0;
+    mirr = 0;
+    Sync();
+    SetReadHandler(0x8000, 0xFFFF, CartBR);
+    SetWriteHandler(0x8000, 0xFFFF, M71Write);
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void Mapper71_Init(CartInfo *info) {
-	hardmirr = info->mirror;
-	info->Power = M71Power;
-	GameStateRestore = StateRestore;
+void Mapper71_Init(CartInfo *info)
+{
+    hardmirr = info->mirror;
+    info->Power = M71Power;
+    GameStateRestore = StateRestore;
 
-	AddExState(&StateRegs, ~0, 0, 0);
+    AddExState(&StateRegs, ~0, 0, 0);
 }

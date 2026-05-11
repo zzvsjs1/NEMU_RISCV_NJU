@@ -27,51 +27,57 @@
 static uint8 reg, mirr;
 
 static SFORMAT StateRegs[] =
+    {
+        {&reg, 1, "REGS"},
+        {&mirr, 1, "MIRR"},
+        {0}};
+
+static void Sync(void)
 {
-	{ &reg, 1, "REGS" },
-	{ &mirr, 1, "MIRR" },
-	{ 0 }
-};
-
-static void Sync(void) {
-	setprg16(0x8000, reg);
-	setprg16(0xc000, ~0);
-	setmirror(mirr);
-	setchr8(0);
+    setprg16(0x8000, reg);
+    setprg16(0xc000, ~0);
+    setmirror(mirr);
+    setchr8(0);
 }
 
-static DECLFW(UNLKS7013BLoWrite) {
-	reg = V;
-	Sync();
+static DECLFW(UNLKS7013BLoWrite)
+{
+    reg = V;
+    Sync();
 }
 
-static DECLFW(UNLKS7013BHiWrite) {
-	mirr = (V & 1) ^ 1;
-	Sync();
+static DECLFW(UNLKS7013BHiWrite)
+{
+    mirr = (V & 1) ^ 1;
+    Sync();
 }
 
-static void UNLKS7013BPower(void) {
-	reg = 0;
-	mirr = 0;
-	Sync();
-	SetWriteHandler(0x6000, 0x7FFF, UNLKS7013BLoWrite);
-	SetReadHandler(0x8000, 0xFFFF, CartBR);
-	SetWriteHandler(0x8000, 0xFFFF, UNLKS7013BHiWrite);
+static void UNLKS7013BPower(void)
+{
+    reg = 0;
+    mirr = 0;
+    Sync();
+    SetWriteHandler(0x6000, 0x7FFF, UNLKS7013BLoWrite);
+    SetReadHandler(0x8000, 0xFFFF, CartBR);
+    SetWriteHandler(0x8000, 0xFFFF, UNLKS7013BHiWrite);
 }
 
-static void UNLKS7013BReset(void) {
-	reg = 0;
-	Sync();
+static void UNLKS7013BReset(void)
+{
+    reg = 0;
+    Sync();
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void UNLKS7013B_Init(CartInfo *info) {
-	info->Power = UNLKS7013BPower;
-	info->Reset = UNLKS7013BReset;
+void UNLKS7013B_Init(CartInfo *info)
+{
+    info->Power = UNLKS7013BPower;
+    info->Reset = UNLKS7013BReset;
 
-	GameStateRestore = StateRestore;
-	AddExState(&StateRegs, ~0, 0, 0);
+    GameStateRestore = StateRestore;
+    AddExState(&StateRegs, ~0, 0, 0);
 }

@@ -1,8 +1,9 @@
 #ifndef ARCH_H__
 #define ARCH_H__
 
-struct Context {
-  uintptr_t gpr[1];
+struct Context
+{
+    uintptr_t gpr[1];
 };
 
 #define GPR1 gpr[0]

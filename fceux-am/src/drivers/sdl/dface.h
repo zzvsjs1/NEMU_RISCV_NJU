@@ -20,7 +20,7 @@ int KillVideo(void);
 void BlitScreen(uint8 *XBuf);
 void LockConsole(void);
 void UnlockConsole(void);
-void ToggleFS();		/* SDL */
+void ToggleFS(); /* SDL */
 
 int LoadGame(const char *path);
 //int CloseGame(void);

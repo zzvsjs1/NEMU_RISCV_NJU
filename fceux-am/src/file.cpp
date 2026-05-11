@@ -30,74 +30,74 @@
 
 using namespace std;
 
-FCEUFILE * FCEU_fopen(const char *path, const char *ipsfn, const char *mode, char *ext, int index, const char** extensions, int* userCancel)
+FCEUFILE *FCEU_fopen(const char *path, const char *ipsfn, const char *mode, char *ext, int index, const char **extensions, int *userCancel)
 {
-	FCEUFILE *fceufp=0;
+    FCEUFILE *fceufp = 0;
 
-  assert(ipsfn == NULL);
+    assert(ipsfn == NULL);
 
-		// The AM/Navy port keeps ROM access as plain host-file streaming.  Archive,
-		// IPS patching and write paths from desktop FCEUX are intentionally absent,
-		// so callers should only expect direct "rb" loading here.  This follows the
-		// same port rule used by the ONS disk work: app code should open the logical
-		// file it was given and let the platform decide whether bytes come from a
-		// ramdisk, disk image, or native file, instead of probing host filesystem
-		// layout itself.
-	bool read = !strcmp(mode, "rb");
-	bool write = !strcmp(mode, "wb");
-	if((read && write) || (!read && !write))
-	{
-		FCEU_PrintError("invalid file open mode specified (only wb and rb are supported)");
-		return 0;
-	}
+    // The AM/Navy port keeps ROM access as plain host-file streaming.  Archive,
+    // IPS patching and write paths from desktop FCEUX are intentionally absent,
+    // so callers should only expect direct "rb" loading here.  This follows the
+    // same port rule used by the ONS disk work: app code should open the logical
+    // file it was given and let the platform decide whether bytes come from a
+    // ramdisk, disk image, or native file, instead of probing host filesystem
+    // layout itself.
+    bool read = !strcmp(mode, "rb");
+    bool write = !strcmp(mode, "wb");
+    if ((read && write) || (!read && !write))
+    {
+        FCEU_PrintError("invalid file open mode specified (only wb and rb are supported)");
+        return 0;
+    }
 
-	if(read)
-	{
-			//if the archive contained no files, try to open it the old fashioned way
-			//EMUFILE* fp = FCEUD_UTF8_fstream(fileToOpen.c_str(),mode);
-			EMUFILE_FILE* fp = FCEUD_UTF8_fstream(path,mode);
-			if(!fp)
-				return 0;
-			if (!fp->is_open())
-			{
-				//fp is new'ed so it has to be deleted
-				delete fp;
-				return 0;
-			}
+    if (read)
+    {
+        //if the archive contained no files, try to open it the old fashioned way
+        //EMUFILE* fp = FCEUD_UTF8_fstream(fileToOpen.c_str(),mode);
+        EMUFILE_FILE *fp = FCEUD_UTF8_fstream(path, mode);
+        if (!fp)
+            return 0;
+        if (!fp->is_open())
+        {
+            //fp is new'ed so it has to be deleted
+            delete fp;
+            return 0;
+        }
 
-			//open a plain old file
-			fceufp = new FCEUFILE();
-			fceufp->archiveIndex = -1;
-			fceufp->archiveCount = -1;
-			fceufp->stream = fp;
-			FCEU_fseek(fceufp,0,SEEK_END);
-			fceufp->size = FCEU_ftell(fceufp);
-			FCEU_fseek(fceufp,0,SEEK_SET);
+        //open a plain old file
+        fceufp = new FCEUFILE();
+        fceufp->archiveIndex = -1;
+        fceufp->archiveCount = -1;
+        fceufp->stream = fp;
+        FCEU_fseek(fceufp, 0, SEEK_END);
+        fceufp->size = FCEU_ftell(fceufp);
+        FCEU_fseek(fceufp, 0, SEEK_SET);
 
-		return fceufp;
-	}
-	return 0;
+        return fceufp;
+    }
+    return 0;
 }
 
 int FCEU_fclose(FCEUFILE *fp)
 {
-  delete fp;
-	return 1;
+    delete fp;
+    return 1;
 }
 
 uint64 FCEU_fread(void *ptr, size_t size, size_t nmemb, FCEUFILE *fp)
 {
-	return fp->stream->_fread((char*)ptr,size*nmemb);
+    return fp->stream->_fread((char *)ptr, size * nmemb);
 }
 
 int FCEU_fseek(FCEUFILE *fp, long offset, int whence)
 {
-	fp->stream->fseek(offset,whence);
+    fp->stream->fseek(offset, whence);
 
-	return FCEU_ftell(fp);
+    return FCEU_ftell(fp);
 }
 
 uint64 FCEU_ftell(FCEUFILE *fp)
 {
-	return fp->stream->ftell();
+    return fp->stream->ftell();
 }

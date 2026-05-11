@@ -2,15 +2,15 @@
 #include <nemu.h>
 #include <stdio.h>
 
-#define AUDIO_FREQ_ADDR       (AUDIO_ADDR + 0x00)
-#define AUDIO_CHANNELS_ADDR   (AUDIO_ADDR + 0x04)
-#define AUDIO_SAMPLES_ADDR    (AUDIO_ADDR + 0x08)
-#define AUDIO_SBUF_SIZE_ADDR  (AUDIO_ADDR + 0x0c)
-#define AUDIO_INIT_ADDR       (AUDIO_ADDR + 0x10)
-#define AUDIO_COUNT_ADDR      (AUDIO_ADDR + 0x14)
-#define AUDIO_BULK_SRC_ADDR   (AUDIO_ADDR + 0x18)
-#define AUDIO_BULK_LEN_ADDR   (AUDIO_ADDR + 0x1c)
-#define AUDIO_BULK_CMD_ADDR   (AUDIO_ADDR + 0x20)
+#define AUDIO_FREQ_ADDR (AUDIO_ADDR + 0x00)
+#define AUDIO_CHANNELS_ADDR (AUDIO_ADDR + 0x04)
+#define AUDIO_SAMPLES_ADDR (AUDIO_ADDR + 0x08)
+#define AUDIO_SBUF_SIZE_ADDR (AUDIO_ADDR + 0x0c)
+#define AUDIO_INIT_ADDR (AUDIO_ADDR + 0x10)
+#define AUDIO_COUNT_ADDR (AUDIO_ADDR + 0x14)
+#define AUDIO_BULK_SRC_ADDR (AUDIO_ADDR + 0x18)
+#define AUDIO_BULK_LEN_ADDR (AUDIO_ADDR + 0x1c)
+#define AUDIO_BULK_CMD_ADDR (AUDIO_ADDR + 0x20)
 #define AUDIO_BULK_CMD_APPEND 1u
 
 /* Cached after AM_AUDIO_CONFIG so AM_AUDIO_PLAY can check ring-buffer capacity
@@ -19,12 +19,12 @@
  */
 static volatile uint32_t bufferSize = 0;
 
-void __am_audio_init() 
+void __am_audio_init()
 {
     // Do nothing, delay subsystem init in ctrl call.
 }
 
-void __am_audio_config(AM_AUDIO_CONFIG_T *cfg) 
+void __am_audio_config(AM_AUDIO_CONFIG_T *cfg)
 {
     cfg->present = true;
 
@@ -33,13 +33,13 @@ void __am_audio_config(AM_AUDIO_CONFIG_T *cfg)
     bufferSize = cfg->bufsize;
 }
 
-void __am_audio_status(AM_AUDIO_STATUS_T *stat) 
+void __am_audio_status(AM_AUDIO_STATUS_T *stat)
 {
     // Read count from register.
     stat->count = inl(AUDIO_COUNT_ADDR);
 }
 
-void __am_audio_ctrl(AM_AUDIO_CTRL_T *ctrl) 
+void __am_audio_ctrl(AM_AUDIO_CTRL_T *ctrl)
 {
     /* The init register is the commit point: NEMU samples the three format
      * registers when this is written, then recreates the host audio stream.
@@ -52,10 +52,10 @@ void __am_audio_ctrl(AM_AUDIO_CTRL_T *ctrl)
     outl(AUDIO_INIT_ADDR, 1);
 }
 
-void __am_audio_play(AM_AUDIO_PLAY_T *ctl) 
+void __am_audio_play(AM_AUDIO_PLAY_T *ctl)
 {
-    uint8_t *start = (uint8_t*)ctl->buf.start;
-    uint8_t *end = (uint8_t*)ctl->buf.end;
+    uint8_t *start = (uint8_t *)ctl->buf.start;
+    uint8_t *end = (uint8_t *)ctl->buf.end;
     const uint32_t len = end - start;
 
     uint32_t bufferBeUsed = inl(AUDIO_COUNT_ADDR);

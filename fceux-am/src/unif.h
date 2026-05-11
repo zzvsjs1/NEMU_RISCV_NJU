@@ -86,7 +86,7 @@ void SLROM_Init(CartInfo *info);
 void SNROM_Init(CartInfo *info);
 void SOROM_Init(CartInfo *info);
 void SSSNROM_Init(CartInfo *info);
-void SUNSOFT_UNROM_Init(CartInfo *info);	// "Shanghi" original version mapper
+void SUNSOFT_UNROM_Init(CartInfo *info); // "Shanghi" original version mapper
 void Super24_Init(CartInfo *info);
 void Supervision16_Init(CartInfo *info);
 void TBROM_Init(CartInfo *info);
@@ -160,5 +160,5 @@ void BMC80013B_Init(CartInfo *info);
 void BMCHPxx_Init(CartInfo *info);
 void MINDKIDS_Init(CartInfo *info);
 
-extern uint8 *UNIFchrrama;	// Meh.  So I can stop CHR RAM
-							// bank switcherooing with certain boards...
+extern uint8 *UNIFchrrama; // Meh.  So I can stop CHR RAM
+                           // bank switcherooing with certain boards...

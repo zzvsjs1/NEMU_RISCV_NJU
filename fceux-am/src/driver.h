@@ -5,7 +5,7 @@
 #include "git.h"
 #include "file.h"
 
-EMUFILE_FILE* FCEUD_UTF8_fstream(const char *n, const char *m);
+EMUFILE_FILE *FCEUD_UTF8_fstream(const char *n, const char *m);
 
 //mbg 7/23/06
 const char *FCEUD_GetCompilerString();
@@ -19,7 +19,7 @@ const char *FCEUD_GetCompilerString();
 // pickers, writable save directories, or host window management into Navy.
 //Video interface
 void FCEUD_SetPalette(uint8 index, uint8 r, uint8 g, uint8 b);
-void FCEUD_GetPalette(uint8 i,uint8 *r, uint8 *g, uint8 *b);
+void FCEUD_GetPalette(uint8 i, uint8 *r, uint8 *g, uint8 *b);
 
 //Displays an error.  Can block or not.
 void FCEUD_PrintError(const char *s);
@@ -75,7 +75,6 @@ bool FCEUI_GetInputMicrophone();
 
 void FCEUI_UseInputPreset(int preset);
 
-
 //New interface functions
 
 //0 to order screen snapshots numerically(0.png), 1 to order them file base-numerically(smb3-0.png).
@@ -86,7 +85,7 @@ void FCEUI_UseInputPreset(int preset);
 void FCEUI_DisableSpriteLimitation(int a);
 
 void FCEUI_SetRenderPlanes(bool sprites, bool bg);
-void FCEUI_GetRenderPlanes(bool& sprites, bool& bg);
+void FCEUI_GetRenderPlanes(bool &sprites, bool &bg);
 
 //name=path and file to load.  returns null if it failed
 FCEUGI *FCEUI_LoadGame(const char *name, int OverwriteVidMode, bool silent = false);
@@ -156,8 +155,8 @@ int FCEUI_SelectState(int, int);
 extern void FCEUI_SelectStateNext(int);
 
 //"fname" overrides the default save state filename code if non-NULL.
-void FCEUI_SaveState(const char *fname, bool display_message=true);
-void FCEUI_LoadState(const char *fname, bool display_message=true);
+void FCEUI_SaveState(const char *fname, bool display_message = true);
+void FCEUI_LoadState(const char *fname, bool display_message = true);
 
 void FCEUD_SaveStateAs(void);
 void FCEUD_LoadStateFrom(void);
@@ -165,7 +164,6 @@ void FCEUD_LoadStateFrom(void);
 //at the minimum, you should call FCEUI_SetInput, FCEUI_SetInputFC, and FCEUI_SetInputFourscore
 //you may also need to maintain your own internal state
 void FCEUD_SetInput(bool fourscore, bool microphone, ESI port0, ESI port1, ESIFC fcexp);
-
 
 void FCEUD_MovieRecordTo(void);
 void FCEUD_MovieReplayFrom(void);
@@ -191,26 +189,26 @@ void FCEUI_CheatSearchEnd(int type, uint8 v1, uint8 v2);
 void FCEUI_ListCheats(int (*callb)(char *name, uint32 a, uint8 v, int compare, int s, int type, void *data), void *data);
 
 int FCEUI_GetCheat(uint32 which, char **name, uint32 *a, uint8 *v, int *compare, int *s, int *type);
-int FCEUI_SetCheat(uint32 which, const char *name, int32 a, int32 v, int compare,int s, int type);
+int FCEUI_SetCheat(uint32 which, const char *name, int32 a, int32 v, int compare, int s, int type);
 
 void FCEUI_CheatSearchShowExcluded(void);
 void FCEUI_CheatSearchSetCurrentAsOriginal(void);
 
 //.rom
-#define FCEUIOD_ROMS    0	//Roms
-#define FCEUIOD_NV      1	//NV = nonvolatile. save data.
-#define FCEUIOD_STATES  2	//savestates
-#define FCEUIOD_FDSROM  3	//disksys.rom
-#define FCEUIOD_SNAPS   4	//screenshots
-#define FCEUIOD_CHEATS  5	//cheats
-#define FCEUIOD_MOVIES  6	//.fm2 files
-#define FCEUIOD_MEMW    7	//memory watch fiels
-#define FCEUIOD_BBOT    8	//basicbot, obsolete
-#define FCEUIOD_MACRO   9	//macro files - old TASEdit v0.1 paradigm, not implemented, probably obsolete
-#define FCEUIOD_INPUT   10	//input presets
-#define FCEUIOD_LUA     11	//lua scripts
-#define FCEUIOD_AVI		12	//default file for avi output
-#define FCEUIOD__COUNT  13	//base directory override?
+#define FCEUIOD_ROMS 0    //Roms
+#define FCEUIOD_NV 1      //NV = nonvolatile. save data.
+#define FCEUIOD_STATES 2  //savestates
+#define FCEUIOD_FDSROM 3  //disksys.rom
+#define FCEUIOD_SNAPS 4   //screenshots
+#define FCEUIOD_CHEATS 5  //cheats
+#define FCEUIOD_MOVIES 6  //.fm2 files
+#define FCEUIOD_MEMW 7    //memory watch fiels
+#define FCEUIOD_BBOT 8    //basicbot, obsolete
+#define FCEUIOD_MACRO 9   //macro files - old TASEdit v0.1 paradigm, not implemented, probably obsolete
+#define FCEUIOD_INPUT 10  //input presets
+#define FCEUIOD_LUA 11    //lua scripts
+#define FCEUIOD_AVI 12    //default file for avi output
+#define FCEUIOD__COUNT 13 //base directory override?
 
 void FCEUI_SetDirOverride(int which, char *n);
 
@@ -263,10 +261,10 @@ void FCEUI_FrameAdvance(void);
 void FCEUI_FrameAdvanceEnd(void);
 
 //AVI Output
-int FCEUI_AviBegin(const char* fname);
+int FCEUI_AviBegin(const char *fname);
 void FCEUI_AviEnd(void);
-void FCEUI_AviVideoUpdate(const unsigned char* buffer);
-void FCEUI_AviSoundUpdate(void* soundData, int soundLen);
+void FCEUI_AviVideoUpdate(const unsigned char *buffer);
+void FCEUI_AviSoundUpdate(void *soundData, int soundLen);
 bool FCEUI_AviIsRecording();
 bool FCEUI_AviEnableHUDrecording();
 void FCEUI_SetAviEnableHUDrecording(bool enable);
@@ -279,17 +277,16 @@ void FCEUD_AviStop(void);
 ///A callback that the emu core uses to poll the state of a given emulator command key
 typedef int TestCommandState(int cmd);
 ///Signals the emu core to poll for emulator commands and take actions
-void FCEUI_HandleEmuCommands(TestCommandState* testfn);
-
+void FCEUI_HandleEmuCommands(TestCommandState *testfn);
 
 //Emulation speed
 enum EMUSPEED_SET
 {
-	EMUSPEED_SLOWEST=0,
-	EMUSPEED_SLOWER,
-	EMUSPEED_NORMAL,
-	EMUSPEED_FASTER,
-	EMUSPEED_FASTEST
+    EMUSPEED_SLOWEST = 0,
+    EMUSPEED_SLOWER,
+    EMUSPEED_NORMAL,
+    EMUSPEED_FASTER,
+    EMUSPEED_FASTEST
 };
 void FCEUD_SetEmulationSpeed(int cmd);
 void FCEUD_TurboOn(void);
@@ -325,13 +322,30 @@ void FCEUD_VideoChanged();
 
 enum EFCEUI
 {
-	FCEUI_STOPAVI, FCEUI_QUICKSAVE, FCEUI_QUICKLOAD, FCEUI_SAVESTATE, FCEUI_LOADSTATE,
-	FCEUI_NEXTSAVESTATE,FCEUI_PREVIOUSSAVESTATE,FCEUI_VIEWSLOTS,
-	FCEUI_STOPMOVIE, FCEUI_RECORDMOVIE, FCEUI_PLAYMOVIE,
-	FCEUI_OPENGAME, FCEUI_CLOSEGAME,
-	FCEUI_TASEDITOR,
-	FCEUI_RESET, FCEUI_POWER, FCEUI_PLAYFROMBEGINNING, FCEUI_EJECT_DISK, FCEUI_SWITCH_DISK, FCEUI_INSERT_COIN,
-	FCEUI_TOGGLERECORDINGMOVIE, FCEUI_TRUNCATEMOVIE, FCEUI_INSERT1FRAME, FCEUI_DELETE1FRAME
+    FCEUI_STOPAVI,
+    FCEUI_QUICKSAVE,
+    FCEUI_QUICKLOAD,
+    FCEUI_SAVESTATE,
+    FCEUI_LOADSTATE,
+    FCEUI_NEXTSAVESTATE,
+    FCEUI_PREVIOUSSAVESTATE,
+    FCEUI_VIEWSLOTS,
+    FCEUI_STOPMOVIE,
+    FCEUI_RECORDMOVIE,
+    FCEUI_PLAYMOVIE,
+    FCEUI_OPENGAME,
+    FCEUI_CLOSEGAME,
+    FCEUI_TASEDITOR,
+    FCEUI_RESET,
+    FCEUI_POWER,
+    FCEUI_PLAYFROMBEGINNING,
+    FCEUI_EJECT_DISK,
+    FCEUI_SWITCH_DISK,
+    FCEUI_INSERT_COIN,
+    FCEUI_TOGGLERECORDINGMOVIE,
+    FCEUI_TRUNCATEMOVIE,
+    FCEUI_INSERT1FRAME,
+    FCEUI_DELETE1FRAME
 };
 
 //checks whether an EFCEUI is valid right now

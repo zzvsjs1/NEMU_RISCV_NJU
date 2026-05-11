@@ -28,28 +28,33 @@
 
 extern u64 xoroshiro128plus_next(); // deterministic random
 
-static DECLFR(UNLRT01Read) {
-//	u16 i, prot_areas[2][2] = {
-//		{ 0x8E80, 0x8EFF },
-//		{ 0xFE80, 0xFEFF },
-//	};
-	if(((A >= 0xCE80) && (A < 0xCF00)) ||
-	   ((A >= 0xFE80) && (A < 0xFF00))) {
-		return 0xF2 | (xoroshiro128plus_next() & 0x0D);
-	} else
-		return CartBR(A);
+static DECLFR(UNLRT01Read)
+{
+    //	u16 i, prot_areas[2][2] = {
+    //		{ 0x8E80, 0x8EFF },
+    //		{ 0xFE80, 0xFEFF },
+    //	};
+    if (((A >= 0xCE80) && (A < 0xCF00)) ||
+        ((A >= 0xFE80) && (A < 0xFF00)))
+    {
+        return 0xF2 | (xoroshiro128plus_next() & 0x0D);
+    }
+    else
+        return CartBR(A);
 }
 
-static void UNLRT01Power(void) {
-	setprg16(0x8000, 0);
-	setprg16(0xC000, 0);
-	setchr2(0x0000,0);
-	setchr2(0x0800,0);
-	setchr2(0x1000,0);
-	setchr2(0x1800,0);
-	SetReadHandler(0x8000, 0xFFFF, UNLRT01Read);
+static void UNLRT01Power(void)
+{
+    setprg16(0x8000, 0);
+    setprg16(0xC000, 0);
+    setchr2(0x0000, 0);
+    setchr2(0x0800, 0);
+    setchr2(0x1000, 0);
+    setchr2(0x1800, 0);
+    SetReadHandler(0x8000, 0xFFFF, UNLRT01Read);
 }
 
-void UNLRT01_Init(CartInfo *info) {
-	info->Power = UNLRT01Power;
+void UNLRT01_Init(CartInfo *info)
+{
+    info->Power = UNLRT01Power;
 }

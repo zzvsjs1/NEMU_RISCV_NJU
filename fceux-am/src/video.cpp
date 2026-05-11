@@ -35,12 +35,12 @@
 //64-127 is the most-used emphasis setting per frame
 //128-195 is the palette with no emphasis
 //196-255 is the palette with all emphasis bits on
-u8 *XBuf=NULL; //used for current display
+u8 *XBuf = NULL; //used for current display
 //u8 *XBackBuf=NULL; //ppu output is stashed here before drawing happens
 //u8 *XDBuf=NULL; //corresponding to XBuf but with deemph bits
 //u8 *XDBackBuf=NULL; //corresponding to XBackBuf but with deemph bits
-int ClipSidesOffset=0;	//Used to move displayed messages when Clips left and right sides is checked
-static u8 *xbsave=NULL;
+int ClipSidesOffset = 0; //Used to move displayed messages when Clips left and right sides is checked
+static u8 *xbsave = NULL;
 
 void FCEU_KillVirtualVideo(void)
 {
@@ -53,45 +53,45 @@ void FCEU_KillVirtualVideo(void)
 **/
 int FCEU_InitVirtualVideo(void)
 {
-		// XBuf is the shared 256-byte-stride frame buffer returned from
-		// FCEUI_Emulate.  The AM/Navy display path consumes it directly, so this
-		// allocation must remain stable for the lifetime of the loaded emulator.
-		// The larger 800x600 Navy display work improved the outer blit/scaling path;
-		// the NES core deliberately stays at its native 256-wide buffer contract.
-	//Some driver code may allocate XBuf externally.
-	//256 bytes per scanline, * 240 scanline maximum, +16 for alignment,
-	if(XBuf)
-		return 1;
+    // XBuf is the shared 256-byte-stride frame buffer returned from
+    // FCEUI_Emulate.  The AM/Navy display path consumes it directly, so this
+    // allocation must remain stable for the lifetime of the loaded emulator.
+    // The larger 800x600 Navy display work improved the outer blit/scaling path;
+    // the NES core deliberately stays at its native 256-wide buffer contract.
+    //Some driver code may allocate XBuf externally.
+    //256 bytes per scanline, * 240 scanline maximum, +16 for alignment,
+    if (XBuf)
+        return 1;
 
-	XBuf = (u8*)FCEU_malloc(256 * 256 + 16);
-	//XBackBuf = (u8*)FCEU_malloc(256 * 256 + 16);
-	//XDBuf = (u8*)FCEU_malloc(256 * 256 + 16);
-	//XDBackBuf = (u8*)FCEU_malloc(256 * 256 + 16);
-	if(!XBuf)
-	//if(!XBuf || !XBackBuf || !XDBuf || !XDBackBuf)
-	{
-		return 0;
-	}
+    XBuf = (u8 *)FCEU_malloc(256 * 256 + 16);
+    //XBackBuf = (u8*)FCEU_malloc(256 * 256 + 16);
+    //XDBuf = (u8*)FCEU_malloc(256 * 256 + 16);
+    //XDBackBuf = (u8*)FCEU_malloc(256 * 256 + 16);
+    if (!XBuf)
+    //if(!XBuf || !XBackBuf || !XDBuf || !XDBackBuf)
+    {
+        return 0;
+    }
 
-	xbsave = XBuf;
+    xbsave = XBuf;
 
-	if( sizeof(uint8*) == 4 )
-	{
-		uintptr_t m = (uintptr_t)XBuf;
-		m = ( 8 - m) & 7;
-		XBuf+=m;
-	}
+    if (sizeof(uint8 *) == 4)
+    {
+        uintptr_t m = (uintptr_t)XBuf;
+        m = (8 - m) & 7;
+        XBuf += m;
+    }
 
-	memset(XBuf,128,256*256);
-	//memset(XBackBuf,128,256*256);
+    memset(XBuf, 128, 256 * 256);
+    //memset(XBackBuf,128,256*256);
 
-	return 1;
+    return 1;
 }
 
 #ifdef FRAMESKIP
 void FCEU_PutImageDummy(void)
 {
-	ShowFPS();
+    ShowFPS();
 }
 #endif
 
@@ -101,7 +101,7 @@ bool Show_FPS = false;
 
 void FCEUI_SetShowFPS(bool showFPS)
 {
-	Show_FPS = showFPS;
+    Show_FPS = showFPS;
 }
 
 static uint64 boop[60];
@@ -109,19 +109,21 @@ static int boopcount = 0;
 
 void ShowFPS(void)
 {
-	static uint32 tsc = 0;
-	if(Show_FPS == false)
-		return;
-	uint32 now = FCEUD_GetTime();
-	uint32 da = now - boop[boopcount];
-	int booplimit = PAL?50:60;
-	boop[boopcount] = now;
+    static uint32 tsc = 0;
+    if (Show_FPS == false)
+        return;
+    uint32 now = FCEUD_GetTime();
+    uint32 da = now - boop[boopcount];
+    int booplimit = PAL ? 50 : 60;
+    boop[boopcount] = now;
 
-	if (now - tsc > 1000) {
-		tsc = now;
-		for (int i = 0; i < 40; i ++) putch('\b');
-		printf("(System time: %ds) FPS = %d", now / 1000, booplimit * FCEUD_GetTimeFreq() / da);
-	}
-	// It's not averaging FPS over exactly 1 second, but it's close enough.
-	boopcount = (boopcount + 1) % booplimit;
+    if (now - tsc > 1000)
+    {
+        tsc = now;
+        for (int i = 0; i < 40; i++)
+            putch('\b');
+        printf("(System time: %ds) FPS = %d", now / 1000, booplimit * FCEUD_GetTimeFreq() / da);
+    }
+    // It's not averaging FPS over exactly 1 second, but it's close enough.
+    boopcount = (boopcount + 1) % booplimit;
 }

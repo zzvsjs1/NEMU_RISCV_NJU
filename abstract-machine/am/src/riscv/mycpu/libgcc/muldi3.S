@@ -2,12 +2,12 @@
 #define FUNC_SIZE(X)	.size X,.-X
 
 #define FUNC_BEGIN(X)		\
-	.globl X;		\
-	FUNC_TYPE (X);		\
+    .globl X;		\
+    FUNC_TYPE (X);		\
 X:
 
 #define FUNC_END(X)		\
-	FUNC_SIZE(X)
+    FUNC_SIZE(X)
 
 
 FUNC_BEGIN (__muldi3)

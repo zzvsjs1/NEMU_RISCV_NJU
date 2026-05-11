@@ -8,7 +8,7 @@
 // zero extends to 32-bits before storing in rd. LB and LBU are defined analogously for 8-bit values.
 // The SW, SH, and SB instructions store 32-bit, 16-bit, and 8-bit values from the low bits of register
 // rs2 to memory.
-def_EHelper(lb) 
+def_EHelper(lb)
 {
     rtl_li(s, s0, id_src2->imm);
     rtl_sign_ext_pos(s, s0, s0, 11);
@@ -26,7 +26,7 @@ def_EHelper(lh)
     rtl_sext(s, ddest, ddest, 2);
 }
 
-def_EHelper(lw) 
+def_EHelper(lw)
 {
     rtl_li(s, s0, id_src2->imm);
     rtl_sign_ext_pos(s, s0, s0, 11);
@@ -51,10 +51,10 @@ def_EHelper(lhu)
     rtl_zext(s, ddest, ddest, 2);
 }
 
-// The SW, SH, and SB instructions store 32-bit, 16-bit, 
+// The SW, SH, and SB instructions store 32-bit, 16-bit,
 // and 8-bit values from the low bits of register
-// rs2 to memory. 
-def_EHelper(sb) 
+// rs2 to memory.
+def_EHelper(sb)
 {
     rtl_li(s, s0, id_src2->imm);
     rtl_sign_ext_pos(s, s0, s0, 11);
@@ -62,7 +62,7 @@ def_EHelper(sb)
     rtl_sm(s, ddest, dsrc1, *s0, 1);
 }
 
-def_EHelper(sh) 
+def_EHelper(sh)
 {
     rtl_li(s, s0, id_src2->imm);
     rtl_sign_ext_pos(s, s0, s0, 11);
@@ -70,7 +70,7 @@ def_EHelper(sh)
     rtl_sm(s, ddest, dsrc1, *s0, 2);
 }
 
-def_EHelper(sw) 
+def_EHelper(sw)
 {
     rtl_li(s, s0, id_src2->imm);
     rtl_sign_ext_pos(s, s0, s0, 11);

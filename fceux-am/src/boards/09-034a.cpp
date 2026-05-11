@@ -36,62 +36,70 @@ static uint8 prg;
 static uint32 IRQCount, IRQa;
 
 static SFORMAT StateRegs[] =
+    {
+        {&IRQCount, 4, "IRQC"},
+        {&IRQa, 4, "IRQA"},
+        {&prg, 1, "PRG"},
+        {0}};
+
+static void Sync(void)
 {
-	{ &IRQCount, 4, "IRQC" },
-	{ &IRQa, 4, "IRQA" },
-	{ &prg, 1, "PRG" },
-	{ 0 }
-};
-
-static void Sync(void) {
-	setprg8r(1, 0x6000, prg);
-	setprg32(0x8000, 0);
-	setchr8(0);
+    setprg8r(1, 0x6000, prg);
+    setprg32(0x8000, 0);
+    setchr8(0);
 }
 
-static DECLFW(UNLSMB2JWrite1) {
-	prg = V & 1;
-	Sync();
+static DECLFW(UNLSMB2JWrite1)
+{
+    prg = V & 1;
+    Sync();
 }
 
-static DECLFW(UNLSMB2JWrite2) {
-	IRQa = V & 1;
-	IRQCount = 0;
-	X6502_IRQEnd(FCEU_IQEXT);
+static DECLFW(UNLSMB2JWrite2)
+{
+    IRQa = V & 1;
+    IRQCount = 0;
+    X6502_IRQEnd(FCEU_IQEXT);
 }
 
-static DECLFR(UNLSMB2JRead) {
-	return 0xFF;
+static DECLFR(UNLSMB2JRead)
+{
+    return 0xFF;
 }
 
-static void UNLSMB2JPower(void) {
-	prg = 0;
-	Sync();
-	SetReadHandler(0x6000, 0xFFFF, CartBR);
-	SetReadHandler(0x4042, 0x4055, UNLSMB2JRead);
-	SetWriteHandler(0x4068, 0x4068, UNLSMB2JWrite2);
-	SetWriteHandler(0x4027, 0x4027, UNLSMB2JWrite1);
+static void UNLSMB2JPower(void)
+{
+    prg = 0;
+    Sync();
+    SetReadHandler(0x6000, 0xFFFF, CartBR);
+    SetReadHandler(0x4042, 0x4055, UNLSMB2JRead);
+    SetWriteHandler(0x4068, 0x4068, UNLSMB2JWrite2);
+    SetWriteHandler(0x4027, 0x4027, UNLSMB2JWrite1);
 }
 
-static void UNLSMB2JIRQHook(int a) {
-	if (IRQa)
-	{
-		if (IRQCount < 5750)	// completely by guess
-			IRQCount += a;
-		else {
-			IRQa = 0;
-			X6502_IRQBegin(FCEU_IQEXT);
-		}
-	}
+static void UNLSMB2JIRQHook(int a)
+{
+    if (IRQa)
+    {
+        if (IRQCount < 5750) // completely by guess
+            IRQCount += a;
+        else
+        {
+            IRQa = 0;
+            X6502_IRQBegin(FCEU_IQEXT);
+        }
+    }
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void UNLSMB2J_Init(CartInfo *info) {
-	info->Power = UNLSMB2JPower;
-	MapIRQHook = UNLSMB2JIRQHook;
-	GameStateRestore = StateRestore;
-	AddExState(&StateRegs, ~0, 0, 0);
+void UNLSMB2J_Init(CartInfo *info)
+{
+    info->Power = UNLSMB2JPower;
+    MapIRQHook = UNLSMB2JIRQHook;
+    GameStateRestore = StateRestore;
+    AddExState(&StateRegs, ~0, 0, 0);
 }

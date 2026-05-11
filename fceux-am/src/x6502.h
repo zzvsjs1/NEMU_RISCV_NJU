@@ -24,7 +24,6 @@
 
 extern X6502 X;
 
-
 //the opsize table is used to quickly grab the instruction sizes (in bytes)
 extern const uint8 opsize[256];
 
@@ -37,8 +36,8 @@ extern const uint8 opwrite[256];
 //-----------
 //mbg 6/30/06 - some of this was removed to mimic XD
 void X6502_Debug(void (*CPUHook)(X6502 *),
-    uint8 (*ReadHook)(X6502 *, unsigned int),
-    void (*WriteHook)(X6502 *, unsigned int, uint8));
+                 uint8 (*ReadHook)(X6502 *, unsigned int),
+                 void (*WriteHook)(X6502 *, unsigned int, uint8));
 
 //extern void (*X6502_Run)(int32 cycles);
 //#else
@@ -52,29 +51,29 @@ extern uint32 timestamp;
 extern uint32 soundtimestamp;
 extern int scanline;
 
-#define N_FLAG  0x80
-#define V_FLAG  0x40
-#define U_FLAG  0x20
-#define B_FLAG  0x10
-#define D_FLAG  0x08
-#define I_FLAG  0x04
-#define Z_FLAG  0x02
-#define C_FLAG  0x01
+#define N_FLAG 0x80
+#define V_FLAG 0x40
+#define U_FLAG 0x20
+#define B_FLAG 0x10
+#define D_FLAG 0x08
+#define I_FLAG 0x04
+#define Z_FLAG 0x02
+#define C_FLAG 0x01
 
 extern void (*MapIRQHook)(int a);
 
 #define NTSC_CPU (dendy ? 1773447.467 : 1789772.7272727272727272)
-#define PAL_CPU  1662607.125
+#define PAL_CPU 1662607.125
 
-#define FCEU_IQEXT      0x001
-#define FCEU_IQEXT2     0x002
+#define FCEU_IQEXT 0x001
+#define FCEU_IQEXT2 0x002
 /* ... */
-#define FCEU_IQRESET    0x020
-#define FCEU_IQNMI2  0x040  // Delayed NMI, gets converted to *_IQNMI
-#define FCEU_IQNMI  0x080
-#define FCEU_IQDPCM     0x100
-#define FCEU_IQFCOUNT   0x200
-#define FCEU_IQTEMP     0x800
+#define FCEU_IQRESET 0x020
+#define FCEU_IQNMI2 0x040 // Delayed NMI, gets converted to *_IQNMI
+#define FCEU_IQNMI 0x080
+#define FCEU_IQDPCM 0x100
+#define FCEU_IQFCOUNT 0x200
+#define FCEU_IQTEMP 0x800
 
 void X6502_Init(void);
 void X6502_Reset(void);

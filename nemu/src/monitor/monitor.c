@@ -10,14 +10,15 @@ void init_device();
 void init_sdb();
 void init_disasm(const char *triple);
 
-static void welcome() {
-  Log("Trace: %s", MUXDEF(CONFIG_TRACE, ANSI_FMT("ON", ANSI_FG_GREEN), ANSI_FMT("OFF", ANSI_FG_RED)));
-  IFDEF(CONFIG_TRACE, Log("If trace is enabled, a log file will be generated "
-        "to record the trace. This may lead to a large log file. "
-        "If it is not necessary, you can disable it in menuconfig"));
-  Log("Build time: %s, %s", __TIME__, __DATE__);
-  printf("Welcome to %s-NEMU!\n", ANSI_FMT(str(__GUEST_ISA__), ANSI_FG_YELLOW ANSI_BG_RED));
-  printf("For help, type \"help\"\n");
+static void welcome()
+{
+    Log("Trace: %s", MUXDEF(CONFIG_TRACE, ANSI_FMT("ON", ANSI_FG_GREEN), ANSI_FMT("OFF", ANSI_FG_RED)));
+    IFDEF(CONFIG_TRACE, Log("If trace is enabled, a log file will be generated "
+                            "to record the trace. This may lead to a large log file. "
+                            "If it is not necessary, you can disable it in menuconfig"));
+    Log("Build time: %s, %s", __TIME__, __DATE__);
+    printf("Welcome to %s-NEMU!\n", ANSI_FMT(str(__GUEST_ISA__), ANSI_FG_YELLOW ANSI_BG_RED));
+    printf("For help, type \"help\"\n");
 }
 
 #ifndef CONFIG_TARGET_AM
@@ -31,7 +32,7 @@ static char *img_file = NULL;
 /* Optional ELF path used only by CONFIG_FTRACE for symbol lookup. */
 static char *elf_file = NULL;
 static int difftest_port = 1234;
-static char* expr_test_file = NULL;
+static char *expr_test_file = NULL;
 
 static long load_img()
 {
@@ -62,42 +63,56 @@ static long load_img()
     return size;
 }
 
-static int parse_args(int argc, char *argv[]) 
+static int parse_args(int argc, char *argv[])
 {
-    const struct option table[] = {     
-    {"batch"        , no_argument      , NULL, 'b'},     
-    {"log"          , required_argument, NULL, 'l'},    
-    {"diff"         , required_argument, NULL, 'd'},    
-    {"elf"          , required_argument, NULL, 'f'},
-    {"port"         , required_argument, NULL, 'p'},   
-    {"expr"         , required_argument, NULL, 'e'},   
-    {"help"         , no_argument      , NULL, 'h'},   
-    {0              , 0                , NULL,  0 },
+    const struct option table[] = {
+        {"batch", no_argument, NULL, 'b'},
+        {"log", required_argument, NULL, 'l'},
+        {"diff", required_argument, NULL, 'd'},
+        {"elf", required_argument, NULL, 'f'},
+        {"port", required_argument, NULL, 'p'},
+        {"expr", required_argument, NULL, 'e'},
+        {"help", no_argument, NULL, 'h'},
+        {0, 0, NULL, 0},
     };
 
     int o;
-    while ( (o = getopt_long(argc, argv, "-bhl:d:f:p:e:", table, NULL)) != -1)
+    while ((o = getopt_long(argc, argv, "-bhl:d:f:p:e:", table, NULL)) != -1)
     {
         switch (o)
         {
-            case 'b': sdb_set_batch_mode(); break;
-            case 'p': sscanf(optarg, "%d", &difftest_port); break;
-            case 'l': log_file = optarg; break;
-            case 'd': diff_so_file = optarg; break;
-            /* Keep --elf separate from IMAGE because ftrace needs the unstripped ELF. */
-            case 'f': elf_file = optarg; break;
-            case 'e': expr_test_file = optarg; break;
-            case 1: img_file = optarg; return optind - 1;
-            default:
-                printf("Usage: %s [OPTION...] IMAGE [args]\n\n", argv[0]);
-                printf("\t-b,--batch                      run with batch mode\n");
-                printf("\t-l,--log=FILE                   output log to FILE\n");
-                printf("\t-d,--diff=REF_SO                run DiffTest with reference REF_SO\n");
-                printf("\t-f,--elf=FILE                   load ELF symbols for ftrace\n");
-                printf("\t-p,--port=PORT                  run DiffTest with port PORT\n");
-                printf("\t-e, --expr=FILE                 run expr test with FILE\n");
-                printf("\n");
-                exit(0);
+        case 'b':
+            sdb_set_batch_mode();
+            break;
+        case 'p':
+            sscanf(optarg, "%d", &difftest_port);
+            break;
+        case 'l':
+            log_file = optarg;
+            break;
+        case 'd':
+            diff_so_file = optarg;
+            break;
+        /* Keep --elf separate from IMAGE because ftrace needs the unstripped ELF. */
+        case 'f':
+            elf_file = optarg;
+            break;
+        case 'e':
+            expr_test_file = optarg;
+            break;
+        case 1:
+            img_file = optarg;
+            return optind - 1;
+        default:
+            printf("Usage: %s [OPTION...] IMAGE [args]\n\n", argv[0]);
+            printf("\t-b,--batch                      run with batch mode\n");
+            printf("\t-l,--log=FILE                   output log to FILE\n");
+            printf("\t-d,--diff=REF_SO                run DiffTest with reference REF_SO\n");
+            printf("\t-f,--elf=FILE                   load ELF symbols for ftrace\n");
+            printf("\t-p,--port=PORT                  run DiffTest with port PORT\n");
+            printf("\t-e, --expr=FILE                 run expr test with FILE\n");
+            printf("\n");
+            exit(0);
         }
     }
     return 0;
@@ -114,16 +129,16 @@ static void exprTest()
      * followed by the expression evaluated by the same parser used by `p` and
      * watchpoints.
      */
-    FILE* f = fopen(expr_test_file, "r");
+    FILE *f = fopen(expr_test_file, "r");
     if (!f)
-	{
-    	perror("File open failed");
-	    return;
-	}
+    {
+        perror("File open failed");
+        return;
+    }
 
-	word_t a = 0;
-	char* str = (char*)malloc(INPUT_BUFFER_SIZE * sizeof(char));
-	char* otherBuffer = (char*)malloc(EXPR_BUFFER_SIZE * sizeof(char));
+    word_t a = 0;
+    char *str = (char *)malloc(INPUT_BUFFER_SIZE * sizeof(char));
+    char *otherBuffer = (char *)malloc(EXPR_BUFFER_SIZE * sizeof(char));
 
     if (!str || !otherBuffer)
     {
@@ -131,43 +146,43 @@ static void exprTest()
     }
 
     size_t count = 0;
-	while (fgets(str, INPUT_BUFFER_SIZE, f))
-	{
-		if (sscanf(str, FMT_WORD_SCAN " %[^\n]\n", &a, otherBuffer) != 2)
-		{
-			printf("Cannot scan value from buffer.\n");
-			goto error;
-		}
+    while (fgets(str, INPUT_BUFFER_SIZE, f))
+    {
+        if (sscanf(str, FMT_WORD_SCAN " %[^\n]\n", &a, otherBuffer) != 2)
+        {
+            printf("Cannot scan value from buffer.\n");
+            goto error;
+        }
 
         bool success = false;
         const word_t res = expr(otherBuffer, &success);
-        if (!success)       
+        if (!success)
         {
             printf(ANSI_FMT("Calculate failed for " FMT_DECIMAL_WORD " %s\n", ANSI_FG_RED), a, otherBuffer);
         }
-        else if (res != a)            
+        else if (res != a)
         {
             printf(ANSI_FMT(
-                    "Cal failed Input: %u %s\n" 
-                    "The out is %u\n", ANSI_FG_RED),
-                    a, otherBuffer, res
-                );
+                       "Cal failed Input: %u %s\n"
+                       "The out is %u\n",
+                       ANSI_FG_RED),
+                   a, otherBuffer, res);
         }
 
-        ++count;       
-	}
+        ++count;
+    }
 
-	if (!feof(f) && ferror(f))
-	{
-		printf("\nStream error in checking expressions.\n");
-	}
+    if (!feof(f) && ferror(f))
+    {
+        printf("\nStream error in checking expressions.\n");
+    }
 
 error:
 
-	fclose(f);
+    fclose(f);
     free(str);
     free(otherBuffer);
-	f = NULL;
+    f = NULL;
     printf(ANSI_FMT("Check %zu expressions.\n\n", ANSI_FG_MAGENTA), count);
 }
 
@@ -206,11 +221,10 @@ void init_monitor(int argc, char *argv[])
     IFDEF(CONFIG_FTRACE, ftrace_init(elf_file));
 
     IFDEF(CONFIG_ITRACE, init_disasm(
-        MUXDEF(CONFIG_ISA_x86,         "i686",
-        MUXDEF(CONFIG_ISA_mips32,    "mipsel",
-        MUXDEF(CONFIG_ISA_riscv32, "riscv32",
-        MUXDEF(CONFIG_ISA_riscv64, "riscv64", "bad")))) "-pc-linux-gnu"
-    ));
+                             MUXDEF(CONFIG_ISA_x86, "i686",
+                                    MUXDEF(CONFIG_ISA_mips32, "mipsel",
+                                           MUXDEF(CONFIG_ISA_riscv32, "riscv32",
+                                                  MUXDEF(CONFIG_ISA_riscv64, "riscv64", "bad")))) "-pc-linux-gnu"));
 
     // Chceck expression before printing welcome message.
     if (expr_test_file)

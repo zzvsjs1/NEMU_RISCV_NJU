@@ -2,13 +2,13 @@
 
 // Define bit‐positions and widths for the fields we care about.
 
-#define MSTATUS_MIE_BIT       3       // Machine‑level interrupt enable
-#define MSTATUS_MPIE_BIT      7       // Machine‑level previous interrupt enable
-#define MSTATUS_MPP_SHIFT     11      // Machine‑level previous privilege (2 bits)
-#define MSTATUS_MPP_WIDTH     2
-#define MSTATUS_MPRV_BIT      17      // Machine-Modify-Privilege bit
-#define MSTATUS_MPRV_WIDTH    1
-#define MSTATUS_GVA_BIT       18      // Guest VA valid on trap
+#define MSTATUS_MIE_BIT 3    // Machine‑level interrupt enable
+#define MSTATUS_MPIE_BIT 7   // Machine‑level previous interrupt enable
+#define MSTATUS_MPP_SHIFT 11 // Machine‑level previous privilege (2 bits)
+#define MSTATUS_MPP_WIDTH 2
+#define MSTATUS_MPRV_BIT 17 // Machine-Modify-Privilege bit
+#define MSTATUS_MPRV_WIDTH 1
+#define MSTATUS_GVA_BIT 18 // Guest VA valid on trap
 
 #define IRQ_TIMER 0x80000007u
 
@@ -37,12 +37,12 @@ static inline uint64_t get_field(uint64_t csr, uint64_t shift, uint64_t width)
     // If width+shift >= 64, we want all bits from 'shift'...63
     uint64_t mask;
 
-    if (width >= 64 - shift) 
+    if (width >= 64 - shift)
     {
         // e.g., shift=4 → mask = 0x0FFFFFFFFFFFFFFF
         mask = ~0ULL >> shift;
-    } 
-    else 
+    }
+    else
     {
         mask = (1ULL << width) - 1;
     }
@@ -60,21 +60,21 @@ static inline uint64_t set_field(
 
     // Build the field mask at its shifted position
     uint64_t field_mask;
-    if (width >= 64 - shift) 
+    if (width >= 64 - shift)
     {
         // e.g., shift=60 → mask = 0xF000000000000000
         field_mask = ~0ULL << shift;
-    } 
-    else 
+    }
+    else
     {
         field_mask = ((1ULL << width) - 1) << shift;
     }
 
     // Mask off any high bits in value beyond width.
     uint64_t value_mask = (width >= 64 - shift)
-        // full-width                     
-        ? (~0ULL >> shift)
-        : ((1ULL << width) - 1);
+                              // full-width
+                              ? (~0ULL >> shift)
+                              : ((1ULL << width) - 1);
 
     value &= value_mask;
 
@@ -123,7 +123,7 @@ static void updateMstatus()
     cpu.prvi = 0x3;
 }
 
-word_t isa_raise_intr(word_t NO, vaddr_t epc) 
+word_t isa_raise_intr(word_t NO, vaddr_t epc)
 {
     /* Trigger an interrupt/exception with ``NO''.
     * Then return the address of the interrupt/exception vector.
@@ -131,13 +131,11 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc)
 
 #ifdef CONFIG_E_TRACER
     printf(ANSI_FMT(
-        "Exception mcause: " FMT_WORD "  Exception mepc: " FMT_WORD "  Exception mtvec: " FMT_WORD "\n",
-        ANSI_FG_YELLOW
-    ),
-        NO,
-        epc,
-        cpu.csr.mtvec
-    );
+               "Exception mcause: " FMT_WORD "  Exception mepc: " FMT_WORD "  Exception mtvec: " FMT_WORD "\n",
+               ANSI_FG_YELLOW),
+           NO,
+           epc,
+           cpu.csr.mtvec);
 #endif
 
     // bool interrupt = (NO & (1 << (32 - 1))) != 0;
@@ -162,7 +160,7 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc)
     updateMstatus();
 
     // 3.1.7. Machine Trap-Vector Base-Address Register (mtvec)
-    // 
+    //
     // When MODE=Direct, all traps into machine
     // mode cause the pc to be set to the address in the BASE field. When MODE=Vectored, all synchronous
     // exceptions into machine mode cause the pc to be set to the address in the BASE field, whereas
@@ -178,7 +176,7 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc)
     word_t cause = NO & ~interruptMask;
 
     // Vectored mode only offsets interrupts; synchronous exceptions go to BASE.
-    if (mode == 1 && isInterrupt) 
+    if (mode == 1 && isInterrupt)
     {
         return base + (cause * 4);
     }
@@ -187,7 +185,7 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc)
     return base;
 }
 
-word_t isa_query_intr() 
+word_t isa_query_intr()
 {
     /*
      * The generic CPU loop asks the ISA for one pending interrupt between guest

@@ -38,9 +38,9 @@
 /* -------------------------------------------------------------------------- */
 
 static int utoa_base(unsigned long long value,
-                     char               *buf,
-                     int                 base,
-                     int                 uppercase)
+                     char *buf,
+                     int base,
+                     int uppercase)
 {
     /*
      * Conversion is done backwards into a small local buffer, then reversed
@@ -49,7 +49,7 @@ static int utoa_base(unsigned long long value,
      */
     static const char *digits_lc = "0123456789abcdef";
     static const char *digits_uc = "0123456789ABCDEF";
-    const char       *digits     = uppercase ? digits_uc : digits_lc;
+    const char *digits = uppercase ? digits_uc : digits_lc;
 
     if (base < 2 || base > 16)
     {
@@ -57,15 +57,14 @@ static int utoa_base(unsigned long long value,
         return 0;
     }
 
-    char tmp[64];                  /* enough for binary of 64‑bit value */
-    int  pos = 0;
+    char tmp[64]; /* enough for binary of 64‑bit value */
+    int pos = 0;
 
     do
     {
         tmp[pos++] = digits[value % (unsigned)base];
-        value      /= (unsigned)base;
-    }
-    while (value != 0ULL);
+        value /= (unsigned)base;
+    } while (value != 0ULL);
 
     for (int i = 0; i < pos; i++)
     {
@@ -85,17 +84,17 @@ static int ltoa_dec(long long value, char *buf)
         return 1;
     }
 
-    unsigned long long v   = (value < 0) ? (unsigned long long)(-value)
-                                            : (unsigned long long)value;
-    int                neg = (value < 0);
+    unsigned long long v = (value < 0) ? (unsigned long long)(-value)
+                                       : (unsigned long long)value;
+    int neg = (value < 0);
 
     char tmp[64];
-    int  pos = 0;
+    int pos = 0;
 
     while (v > 0ULL)
     {
         tmp[pos++] = (char)('0' + (v % 10ULL));
-        v         /= 10ULL;
+        v /= 10ULL;
     }
 
     if (neg)
@@ -116,12 +115,12 @@ static int ltoa_dec(long long value, char *buf)
 /*  Core writer helpers                                                       */
 /* -------------------------------------------------------------------------- */
 
-static void write_repeat(char         ch,
-                         int          count,
-                         char        *out,
-                         size_t       n,
-                         size_t      *out_pos,
-                         size_t      *total_written)
+static void write_repeat(char ch,
+                         int count,
+                         char *out,
+                         size_t n,
+                         size_t *out_pos,
+                         size_t *total_written)
 {
     /*
      * out_pos tracks the would-have-written position, while total_written is the
@@ -141,14 +140,14 @@ static void write_repeat(char         ch,
 }
 
 static void write_str(const char *s,
-                      int         len,
-                      int         width,
-                      int         left_align,
-                      int         zero_pad,
-                      char       *out,
-                      size_t      n,
-                      size_t     *out_pos,
-                      size_t     *total_written)
+                      int len,
+                      int width,
+                      int left_align,
+                      int zero_pad,
+                      char *out,
+                      size_t n,
+                      size_t *out_pos,
+                      size_t *total_written)
 {
     int pad = (width > len) ? (width - len) : 0;
 
@@ -178,10 +177,10 @@ static void write_str(const char *s,
 /*  vsnprintf                                                                 */
 /* -------------------------------------------------------------------------- */
 
-int vsnprintf(char       *out,
-              size_t      n,
+int vsnprintf(char *out,
+              size_t n,
               const char *fmt,
-              va_list     ap)
+              va_list ap)
 {
     /*
      * The implementation follows the hosted snprintf rule: formatting continues
@@ -189,11 +188,11 @@ int vsnprintf(char       *out,
      * length that would have been produced.
      */
     size_t total_written = 0U;
-    size_t out_pos       = 0U;
+    size_t out_pos = 0U;
 
     if (out == NULL)
     {
-        n = 0U;                    /* write count only mode */
+        n = 0U; /* write count only mode */
     }
 
     while (*fmt)
@@ -215,11 +214,11 @@ int vsnprintf(char       *out,
         /*  Parse flags and width                                             */
         /* ------------------------------------------------------------------ */
 
-        fmt++;                      /* skip '%' */
+        fmt++; /* skip '%' */
 
         int left_align = 0;
-        int zero_pad   = 0;
-        int width      = 0;
+        int zero_pad = 0;
+        int width = 0;
 
         int parsing_flags = 1;
 
@@ -227,29 +226,29 @@ int vsnprintf(char       *out,
         {
             switch (*fmt)
             {
-                case '-':
-                {
-                    left_align = 1;
-                    fmt++;
-                    break;
-                }
-                case '0':
-                {
-                    zero_pad = 1;
-                    fmt++;
-                    break;
-                }
-                default:
-                {
-                    parsing_flags = 0;
-                    break;
-                }
+            case '-':
+            {
+                left_align = 1;
+                fmt++;
+                break;
+            }
+            case '0':
+            {
+                zero_pad = 1;
+                fmt++;
+                break;
+            }
+            default:
+            {
+                parsing_flags = 0;
+                break;
+            }
             }
         }
 
         if (left_align)
         {
-            zero_pad = 0;          /* '-' overrides '0' */
+            zero_pad = 0; /* '-' overrides '0' */
         }
 
         while (*fmt >= '0' && *fmt <= '9')
@@ -262,14 +261,14 @@ int vsnprintf(char       *out,
         /*  Length modifier                                                   */
         /* ------------------------------------------------------------------ */
 
-        int length_ll   = 0;
-        int length_l    = 0;
+        int length_ll = 0;
+        int length_l = 0;
         int length_size = 0;
 
         if (*fmt == 'l')
         {
             fmt++;
-            if (*fmt == 'l')        /* ll */
+            if (*fmt == 'l') /* ll */
             {
                 length_ll = 1;
                 fmt++;
@@ -279,165 +278,173 @@ int vsnprintf(char       *out,
                 length_l = 1;
             }
         }
-        else if (*fmt == 'z')       /* size_t */
+        else if (*fmt == 'z') /* size_t */
         {
             length_size = 1;
             fmt++;
         }
 
         char spec = *fmt;
-        if (spec == '\0')          /* malformed, stop */
+        if (spec == '\0') /* malformed, stop */
         {
             break;
         }
 
-        fmt++;                      /* consume spec */
+        fmt++; /* consume spec */
 
         /* ------------------------------------------------------------------ */
         /*  Dispatch                                                          */
         /* ------------------------------------------------------------------ */
 
         char tmp[64];
-        int  len = 0;
+        int len = 0;
 
         switch (spec)
         {
-            case 'c':
+        case 'c':
+        {
+            int ch = va_arg(ap, int);
+            tmp[0] = (char)ch;
+            tmp[1] = '\0';
+            len = 1;
+            write_str(tmp, len, width, left_align, 0, out, n,
+                      &out_pos, &total_written);
+            break;
+        }
+
+        case 's':
+        {
+            const char *s = va_arg(ap, const char *);
+            if (!s)
             {
-                int ch = va_arg(ap, int);
-                tmp[0] = (char)ch;
-                tmp[1] = '\0';
-                len    = 1;
-                write_str(tmp, len, width, left_align, 0, out, n,
-                          &out_pos, &total_written);
-                break;
+                s = "(null)";
             }
 
-            case 's':
-            {
-                const char *s = va_arg(ap, const char *);
-                if (!s)
-                {
-                    s = "(null)";
-                }
+            len = (int)strlen(s);
+            write_str(s, len, width, left_align, 0, out, n,
+                      &out_pos, &total_written);
+            break;
+        }
 
-                len = (int)strlen(s);
-                write_str(s, len, width, left_align, 0, out, n,
-                          &out_pos, &total_written);
-                break;
+        case 'd':
+        case 'i':
+        {
+            long long val;
+
+            if (length_ll)
+            {
+                val = va_arg(ap, long long);
+            }
+            else if (length_l)
+            {
+                val = va_arg(ap, long);
+            }
+            // No ssize_t.
+
+            // else if (length_size)
+            // {
+            //     val = (long long)va_arg(ap, ssize_t);
+            // }
+            else
+            {
+                val = (long long)va_arg(ap, int);
             }
 
-            case 'd':
-            case 'i':
+            len = ltoa_dec(val, tmp);
+            write_str(tmp, len, width, left_align, zero_pad, out, n,
+                      &out_pos, &total_written);
+            break;
+        }
+
+        case 'u':
+        case 'x':
+        case 'X':
+        case 'o':
+        case 'O':
+        {
+            unsigned long long val;
+
+            if (length_ll)
             {
-                long long val;
-
-                if (length_ll)
-                {
-                    val = va_arg(ap, long long);
-                }
-                else if (length_l)
-                {
-                    val = va_arg(ap, long);
-                }
-                // No ssize_t.
-                
-                // else if (length_size)
-                // {
-                //     val = (long long)va_arg(ap, ssize_t);
-                // }
-                else
-                {
-                    val = (long long)va_arg(ap, int);
-                }
-
-                len = ltoa_dec(val, tmp);
-                write_str(tmp, len, width, left_align, zero_pad, out, n,
-                          &out_pos, &total_written);
-                break;
+                val = va_arg(ap, unsigned long long);
+            }
+            else if (length_l)
+            {
+                val = va_arg(ap, unsigned long);
+            }
+            else if (length_size)
+            {
+                val = (unsigned long long)va_arg(ap, size_t);
+            }
+            else
+            {
+                val = (unsigned long long)va_arg(ap, unsigned);
             }
 
-            case 'u':
-            case 'x':
-            case 'X':
-            case 'o':
-            case 'O':
+            int base = 10;
+            int upper = 0;
+
+            if (spec == 'x' || spec == 'X')
             {
-                unsigned long long val;
-
-                if (length_ll)
-                {
-                    val = va_arg(ap, unsigned long long);
-                }
-                else if (length_l)
-                {
-                    val = va_arg(ap, unsigned long);
-                }
-                else if (length_size)
-                {
-                    val = (unsigned long long)va_arg(ap, size_t);
-                }
-                else
-                {
-                    val = (unsigned long long)va_arg(ap, unsigned);
-                }
-
-                int base = 10;
-                int upper = 0;
-
-                if (spec == 'x' || spec == 'X')
-                {
-                    base  = 16;
-                    upper = (spec == 'X');
-                }
-                else if (spec == 'o' || spec == 'O')
-                {
-                    base  = 8;
-                    upper = (spec == 'O');
-                }
-
-                len = utoa_base(val, tmp, base, upper);
-                write_str(tmp, len, width, left_align, zero_pad, out, n,
-                          &out_pos, &total_written);
-                break;
+                base = 16;
+                upper = (spec == 'X');
+            }
+            else if (spec == 'o' || spec == 'O')
+            {
+                base = 8;
+                upper = (spec == 'O');
             }
 
-            case 'p':
+            len = utoa_base(val, tmp, base, upper);
+            write_str(tmp, len, width, left_align, zero_pad, out, n,
+                      &out_pos, &total_written);
+            break;
+        }
+
+        case 'p':
+        {
+            void *ptr = va_arg(ap, void *);
+            uintptr_t addr = (uintptr_t)ptr;
+
+            tmp[0] = '0';
+            tmp[1] = 'x';
+            len = 2;
+
+            int len_addr = utoa_base(addr, tmp + 2, 16, 0);
+            len += len_addr;
+
+            write_str(tmp, len, width, left_align, zero_pad, out, n,
+                      &out_pos, &total_written);
+            break;
+        }
+
+        case '%':
+        {
+            tmp[0] = '%';
+            tmp[1] = '\0';
+            len = 1;
+            write_str(tmp, len, width, left_align, 0, out, n,
+                      &out_pos, &total_written);
+            break;
+        }
+
+        default:
+        {
+            /* Unknown specifier, print literally */
+            if (out_pos + 1U < n)
             {
-                void *ptr = va_arg(ap, void *);
-                uintptr_t addr = (uintptr_t)ptr;
-
-                tmp[0] = '0';
-                tmp[1] = 'x';
-                len    = 2;
-
-                int len_addr = utoa_base(addr, tmp + 2, 16, 0);
-                len += len_addr;
-
-                write_str(tmp, len, width, left_align, zero_pad, out, n,
-                          &out_pos, &total_written);
-                break;
+                out[out_pos] = '%';
             }
-
-            case '%':
+            out_pos++;
+            total_written++;
+            if (out_pos + 1U < n)
             {
-                tmp[0] = '%';
-                tmp[1] = '\0';
-                len    = 1;
-                write_str(tmp, len, width, left_align, 0, out, n,
-                          &out_pos, &total_written);
-                break;
+                out[out_pos] = spec;
             }
-
-            default:
-            {
-                /* Unknown specifier, print literally */
-                if (out_pos + 1U < n) { out[out_pos] = '%'; }
-                out_pos++; total_written++;
-                if (out_pos + 1U < n) { out[out_pos] = spec; }
-                out_pos++; total_written++;
-                break;
-            }
+            out_pos++;
+            total_written++;
+            break;
+        }
         }
     }
 
@@ -464,8 +471,8 @@ int vsnprintf(char       *out,
 /*  Convenience wrappers                                                      */
 /* -------------------------------------------------------------------------- */
 
-int snprintf(char       *out,
-             size_t      n,
+int snprintf(char *out,
+             size_t n,
              const char *fmt,
              ...)
 {
@@ -476,7 +483,7 @@ int snprintf(char       *out,
     return ret;
 }
 
-int sprintf(char       *out,
+int sprintf(char *out,
             const char *fmt,
             ...)
 {

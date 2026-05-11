@@ -4,60 +4,66 @@
 #define SDL_HWSURFACE 0x1
 #define SDL_PHYSPAL 0x2
 #define SDL_LOGPAL 0x4
-#define SDL_SWSURFACE  0x8
-#define SDL_PREALLOC  0x10
+#define SDL_SWSURFACE 0x8
+#define SDL_PREALLOC 0x10
 #define SDL_FULLSCREEN 0x20
-#define SDL_RESIZABLE  0x40
+#define SDL_RESIZABLE 0x40
 
 #define DEFAULT_RMASK 0x00ff0000
 #define DEFAULT_GMASK 0x0000ff00
 #define DEFAULT_BMASK 0x000000ff
 #define DEFAULT_AMASK 0xff000000
 
-typedef struct {
-	int16_t x, y;
-	uint16_t w, h;
+typedef struct
+{
+    int16_t x, y;
+    uint16_t w, h;
 } SDL_Rect;
 
-typedef union {
-  struct {
-    uint8_t r, g, b, a;
-  };
-  uint32_t val;
+typedef union
+{
+    struct
+    {
+        uint8_t r, g, b, a;
+    };
+    uint32_t val;
 } SDL_Color;
 
-typedef struct {
-	int ncolors;
-	SDL_Color *colors;
+typedef struct
+{
+    int ncolors;
+    SDL_Color *colors;
 } SDL_Palette;
 
-typedef struct {
-	SDL_Palette *palette;
-	uint8_t BitsPerPixel;
-	uint8_t BytesPerPixel;
-	uint8_t Rloss, Gloss, Bloss, Aloss;
-	uint8_t Rshift, Gshift, Bshift, Ashift;
-	uint32_t Rmask, Gmask, Bmask, Amask;
+typedef struct
+{
+    SDL_Palette *palette;
+    uint8_t BitsPerPixel;
+    uint8_t BytesPerPixel;
+    uint8_t Rloss, Gloss, Bloss, Aloss;
+    uint8_t Rshift, Gshift, Bshift, Ashift;
+    uint32_t Rmask, Gmask, Bmask, Amask;
 } SDL_PixelFormat;
 
-typedef struct {
-	uint32_t flags;
-	SDL_PixelFormat *format;
-	int w, h;
-	/*
-	 * pitch is the byte distance between rows in software memory.  NDL_DrawRect()
-	 * receives tightly packed rectangles, so SDL_UpdateRect() repacks dirty
-	 * areas whenever pitch would otherwise skip over pixels outside the rect.
-	 */
-	uint16_t pitch;
-	uint8_t *pixels;
+typedef struct
+{
+    uint32_t flags;
+    SDL_PixelFormat *format;
+    int w, h;
+    /*
+     * pitch is the byte distance between rows in software memory.  NDL_DrawRect()
+     * receives tightly packed rectangles, so SDL_UpdateRect() repacks dirty
+     * areas whenever pitch would otherwise skip over pixels outside the rect.
+     */
+    uint16_t pitch;
+    uint8_t *pixels;
 } SDL_Surface;
 
-SDL_Surface* SDL_CreateRGBSurfaceFrom(void *pixels, int width, int height, int depth,
-    int pitch, uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask);
-SDL_Surface* SDL_CreateRGBSurface(uint32_t flags, int width, int height, int depth,
-    uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask);
-SDL_Surface* SDL_SetVideoMode(int width, int height, int bpp, uint32_t flags);
+SDL_Surface *SDL_CreateRGBSurfaceFrom(void *pixels, int width, int height, int depth,
+                                      int pitch, uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask);
+SDL_Surface *SDL_CreateRGBSurface(uint32_t flags, int width, int height, int depth,
+                                  uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask);
+SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, uint32_t flags);
 void SDL_FreeSurface(SDL_Surface *s);
 void SDL_BlitSurface(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_Rect *dstrect);
 void SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, uint32_t color);

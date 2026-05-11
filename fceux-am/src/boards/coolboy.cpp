@@ -77,120 +77,147 @@
 #include "mapinc.h"
 #include "mmc3.h"
 
-static void COOLBOYCW(uint32 A, uint8 V) {
-	uint32 mask = 0xFF ^ (EXPREGS[0] & 0x80);
-	if (EXPREGS[3] & 0x10) {
-		if (EXPREGS[3] & 0x40) { // Weird mode
-			int cbase = (MMC3_cmd & 0x80) << 5;
-			switch (cbase ^ A) { // Don't even try do understand
-			case 0x0400:
-			case 0x0C00: V &= 0x7F; break;
-			}
-		}
-		// Highest bit goes from MMC3 registers when EXPREGS[3]&0x80==0 or from EXPREGS[0]&0x08 otherwise
-		setchr1(A,
-			(V & 0x80 & mask) | ((((EXPREGS[0] & 0x08) << 4) & ~mask)) // 7th bit
-			| ((EXPREGS[2] & 0x0F) << 3) // 6-3 bits
-			| ((A >> 10) & 7) // 2-0 bits
-		);
-	} else {
-		if (EXPREGS[3] & 0x40) { // Weird mode, again
-			int cbase = (MMC3_cmd & 0x80) << 5;
-			switch (cbase ^ A) { // Don't even try do understand
-			case 0x0000: V = DRegBuf[0]; break;
-			case 0x0800: V = DRegBuf[1]; break;
-			case 0x0400:
-			case 0x0C00: V = 0; break;
-			}
-		}
-		// Simple MMC3 mode
-		// Highest bit goes from MMC3 registers when EXPREGS[3]&0x80==0 or from EXPREGS[0]&0x08 otherwise
-		setchr1(A, (V & mask) | (((EXPREGS[0] & 0x08) << 4) & ~mask));
-	}
+static void COOLBOYCW(uint32 A, uint8 V)
+{
+    uint32 mask = 0xFF ^ (EXPREGS[0] & 0x80);
+    if (EXPREGS[3] & 0x10)
+    {
+        if (EXPREGS[3] & 0x40)
+        { // Weird mode
+            int cbase = (MMC3_cmd & 0x80) << 5;
+            switch (cbase ^ A)
+            { // Don't even try do understand
+            case 0x0400:
+            case 0x0C00:
+                V &= 0x7F;
+                break;
+            }
+        }
+        // Highest bit goes from MMC3 registers when EXPREGS[3]&0x80==0 or from EXPREGS[0]&0x08 otherwise
+        setchr1(A,
+                (V & 0x80 & mask) | ((((EXPREGS[0] & 0x08) << 4) & ~mask)) // 7th bit
+                    | ((EXPREGS[2] & 0x0F) << 3)                           // 6-3 bits
+                    | ((A >> 10) & 7)                                      // 2-0 bits
+        );
+    }
+    else
+    {
+        if (EXPREGS[3] & 0x40)
+        { // Weird mode, again
+            int cbase = (MMC3_cmd & 0x80) << 5;
+            switch (cbase ^ A)
+            { // Don't even try do understand
+            case 0x0000:
+                V = DRegBuf[0];
+                break;
+            case 0x0800:
+                V = DRegBuf[1];
+                break;
+            case 0x0400:
+            case 0x0C00:
+                V = 0;
+                break;
+            }
+        }
+        // Simple MMC3 mode
+        // Highest bit goes from MMC3 registers when EXPREGS[3]&0x80==0 or from EXPREGS[0]&0x08 otherwise
+        setchr1(A, (V & mask) | (((EXPREGS[0] & 0x08) << 4) & ~mask));
+    }
 }
 
-static void COOLBOYPW(uint32 A, uint8 V) {
-	uint32 mask = ((0x3F | (EXPREGS[1] & 0x40) | ((EXPREGS[1] & 0x20) << 2)) ^ ((EXPREGS[0] & 0x40) >> 2)) ^ ((EXPREGS[1] & 0x80) >> 2);
-	uint32 base = ((EXPREGS[0] & 0x07) >> 0) | ((EXPREGS[1] & 0x10) >> 1) | ((EXPREGS[1] & 0x0C) << 2) | ((EXPREGS[0] & 0x30) << 2);
+static void COOLBOYPW(uint32 A, uint8 V)
+{
+    uint32 mask = ((0x3F | (EXPREGS[1] & 0x40) | ((EXPREGS[1] & 0x20) << 2)) ^ ((EXPREGS[0] & 0x40) >> 2)) ^ ((EXPREGS[1] & 0x80) >> 2);
+    uint32 base = ((EXPREGS[0] & 0x07) >> 0) | ((EXPREGS[1] & 0x10) >> 1) | ((EXPREGS[1] & 0x0C) << 2) | ((EXPREGS[0] & 0x30) << 2);
 
-	// Very weird mode
-	// Last banks are first in this mode, ignored when MMC3_cmd&0x40
-	if ((EXPREGS[3] & 0x40) && (V >= 0xFE) && !((MMC3_cmd & 0x40) != 0)) {
-		switch (A & 0xE000) {
-		case 0xC000:
-		case 0xE000:
-			V = 0;
-			break;
-		}
-	}
+    // Very weird mode
+    // Last banks are first in this mode, ignored when MMC3_cmd&0x40
+    if ((EXPREGS[3] & 0x40) && (V >= 0xFE) && !((MMC3_cmd & 0x40) != 0))
+    {
+        switch (A & 0xE000)
+        {
+        case 0xC000:
+        case 0xE000:
+            V = 0;
+            break;
+        }
+    }
 
-	// Regular MMC3 mode, internal ROM size can be up to 2048kb!
-	if (!(EXPREGS[3] & 0x10))
-		setprg8(A, (((base << 4) & ~mask)) | (V & mask));
-	else { // NROM mode
-		mask &= 0xF0;
-		uint8 emask;
-		if ((((EXPREGS[1] & 2) != 0))) // 32kb mode
-			emask = (EXPREGS[3] & 0x0C) | ((A & 0x4000) >> 13);
-		else // 16kb mode
-			emask = EXPREGS[3] & 0x0E;
-		setprg8(A, ((base << 4) & ~mask) // 7-4 bits are from base (see below)
-			| (V & mask)                   // ... or from MM3 internal regs, depends on mask
-			| emask                        // 3-1 (or 3-2 when (EXPREGS[3]&0x0C is set) from EXPREGS[3]
-			| ((A & 0x2000) >> 13));       // 0th just as is
-	}
+    // Regular MMC3 mode, internal ROM size can be up to 2048kb!
+    if (!(EXPREGS[3] & 0x10))
+        setprg8(A, (((base << 4) & ~mask)) | (V & mask));
+    else
+    { // NROM mode
+        mask &= 0xF0;
+        uint8 emask;
+        if ((((EXPREGS[1] & 2) != 0))) // 32kb mode
+            emask = (EXPREGS[3] & 0x0C) | ((A & 0x4000) >> 13);
+        else // 16kb mode
+            emask = EXPREGS[3] & 0x0E;
+        setprg8(A, ((base << 4) & ~mask)        // 7-4 bits are from base (see below)
+                       | (V & mask)             // ... or from MM3 internal regs, depends on mask
+                       | emask                  // 3-1 (or 3-2 when (EXPREGS[3]&0x0C is set) from EXPREGS[3]
+                       | ((A & 0x2000) >> 13)); // 0th just as is
+    }
 }
 
-static DECLFW(COOLBOYWrite) {
-	if(A001B & 0x80)
-		CartBW(A,V);
+static DECLFW(COOLBOYWrite)
+{
+    if (A001B & 0x80)
+        CartBW(A, V);
 
-	// Deny any further writes when 7th bit is 1 AND 4th is 0
-	if ((EXPREGS[3] & 0x90) != 0x80) {
-		EXPREGS[A & 3] = V;
-		FixMMC3PRG(MMC3_cmd);
-		FixMMC3CHR(MMC3_cmd);
-	}
+    // Deny any further writes when 7th bit is 1 AND 4th is 0
+    if ((EXPREGS[3] & 0x90) != 0x80)
+    {
+        EXPREGS[A & 3] = V;
+        FixMMC3PRG(MMC3_cmd);
+        FixMMC3CHR(MMC3_cmd);
+    }
 }
 
-static void COOLBOYReset(void) {
-	MMC3RegReset();
-	EXPREGS[0] = EXPREGS[1] = EXPREGS[2] = EXPREGS[3] = 0;
-	FixMMC3PRG(MMC3_cmd);
-	FixMMC3CHR(MMC3_cmd);
+static void COOLBOYReset(void)
+{
+    MMC3RegReset();
+    EXPREGS[0] = EXPREGS[1] = EXPREGS[2] = EXPREGS[3] = 0;
+    FixMMC3PRG(MMC3_cmd);
+    FixMMC3CHR(MMC3_cmd);
 }
 
-static void COOLBOYPower(void) {
-	GenMMC3Power();
-	EXPREGS[0] = EXPREGS[1] = EXPREGS[2] = EXPREGS[3] = 0;
-	FixMMC3PRG(MMC3_cmd);
-	FixMMC3CHR(MMC3_cmd);
-	SetWriteHandler(0x5000, 0x5fff, CartBW);            // some games access random unmapped areas and crashes because of KT-008 PCB hack in MMC3 source lol
-	SetWriteHandler(0x6000, 0x6fff, COOLBOYWrite);
+static void COOLBOYPower(void)
+{
+    GenMMC3Power();
+    EXPREGS[0] = EXPREGS[1] = EXPREGS[2] = EXPREGS[3] = 0;
+    FixMMC3PRG(MMC3_cmd);
+    FixMMC3CHR(MMC3_cmd);
+    SetWriteHandler(0x5000, 0x5fff, CartBW); // some games access random unmapped areas and crashes because of KT-008 PCB hack in MMC3 source lol
+    SetWriteHandler(0x6000, 0x6fff, COOLBOYWrite);
 }
 
-static void MINDKIDSPower(void) {
-	GenMMC3Power();
-	EXPREGS[0] = EXPREGS[1] = EXPREGS[2] = EXPREGS[3] = 0;
-	FixMMC3PRG(MMC3_cmd);
-	FixMMC3CHR(MMC3_cmd);
-	SetWriteHandler(0x5000, 0x5fff, COOLBOYWrite);
+static void MINDKIDSPower(void)
+{
+    GenMMC3Power();
+    EXPREGS[0] = EXPREGS[1] = EXPREGS[2] = EXPREGS[3] = 0;
+    FixMMC3PRG(MMC3_cmd);
+    FixMMC3CHR(MMC3_cmd);
+    SetWriteHandler(0x5000, 0x5fff, COOLBOYWrite);
 }
 
-void COOLBOY_Init(CartInfo *info) {
-	GenMMC3_Init(info, 2048, 256, 8, 1);
-	pwrap = COOLBOYPW;
-	cwrap = COOLBOYCW;
-	info->Power = COOLBOYPower;
-	info->Reset = COOLBOYReset;
-	AddExState(EXPREGS, 4, 0, "EXPR");
+void COOLBOY_Init(CartInfo *info)
+{
+    GenMMC3_Init(info, 2048, 256, 8, 1);
+    pwrap = COOLBOYPW;
+    cwrap = COOLBOYCW;
+    info->Power = COOLBOYPower;
+    info->Reset = COOLBOYReset;
+    AddExState(EXPREGS, 4, 0, "EXPR");
 }
 
-void MINDKIDS_Init(CartInfo *info) {
-	GenMMC3_Init(info, 2048, 256, 8, 1);
-	pwrap = COOLBOYPW;
-	cwrap = COOLBOYCW;
-	info->Power = MINDKIDSPower;
-	info->Reset = COOLBOYReset;
-	AddExState(EXPREGS, 4, 0, "EXPR");
+void MINDKIDS_Init(CartInfo *info)
+{
+    GenMMC3_Init(info, 2048, 256, 8, 1);
+    pwrap = COOLBOYPW;
+    cwrap = COOLBOYCW;
+    info->Power = MINDKIDSPower;
+    info->Reset = COOLBOYReset;
+    AddExState(EXPREGS, 4, 0, "EXPR");
 }

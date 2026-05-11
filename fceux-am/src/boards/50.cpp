@@ -28,58 +28,75 @@ static uint8 reg;
 static uint32 IRQCount, IRQa;
 
 static SFORMAT StateRegs[] =
+    {
+        {&IRQCount, 4, "IRQC"},
+        {&IRQa, 4, "IRQA"},
+        {&reg, 1, "REG"},
+        {0}};
+
+static void Sync(void)
 {
-	{ &IRQCount, 4, "IRQC" },
-	{ &IRQa, 4, "IRQA" },
-	{ &reg, 1, "REG" },
-	{ 0 }
-};
-
-static void Sync(void) {
-	setprg8(0x6000, 0xF);
-	setprg8(0x8000, 0x8);
-	setprg8(0xa000, 0x9);
-	setprg8(0xc000, reg);
-	setprg8(0xe000, 0xB);
-	setchr8(0);
+    setprg8(0x6000, 0xF);
+    setprg8(0x8000, 0x8);
+    setprg8(0xa000, 0x9);
+    setprg8(0xc000, reg);
+    setprg8(0xe000, 0xB);
+    setchr8(0);
 }
 
-static DECLFW(M50Write) {
-	switch (A & 0xD160) {
-	case 0x4120: IRQa = V & 1; if (!IRQa) IRQCount = 0; X6502_IRQEnd(FCEU_IQEXT); break;
-	case 0x4020: reg = ((V & 1) << 2) | ((V & 2) >> 1) | ((V & 4) >> 1) | (V & 8); Sync(); break;
-	}
+static DECLFW(M50Write)
+{
+    switch (A & 0xD160)
+    {
+    case 0x4120:
+        IRQa = V & 1;
+        if (!IRQa)
+            IRQCount = 0;
+        X6502_IRQEnd(FCEU_IQEXT);
+        break;
+    case 0x4020:
+        reg = ((V & 1) << 2) | ((V & 2) >> 1) | ((V & 4) >> 1) | (V & 8);
+        Sync();
+        break;
+    }
 }
 
-static void M50Power(void) {
-	reg = 0;
-	Sync();
-	SetReadHandler(0x6000, 0xffff, CartBR);
-	SetWriteHandler(0x4020, 0x5fff, M50Write);
+static void M50Power(void)
+{
+    reg = 0;
+    Sync();
+    SetReadHandler(0x6000, 0xffff, CartBR);
+    SetWriteHandler(0x4020, 0x5fff, M50Write);
 }
 
-static void M50Reset(void) {
+static void M50Reset(void)
+{
 }
 
-static void M50IRQHook(int a) {
-	if (IRQa) {
-		if (IRQCount < 4096)
-			IRQCount += a;
-		else{
-			IRQa = 0;
-			X6502_IRQBegin(FCEU_IQEXT);
-		}
-	}
+static void M50IRQHook(int a)
+{
+    if (IRQa)
+    {
+        if (IRQCount < 4096)
+            IRQCount += a;
+        else
+        {
+            IRQa = 0;
+            X6502_IRQBegin(FCEU_IQEXT);
+        }
+    }
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void Mapper50_Init(CartInfo *info) {
-	info->Reset = M50Reset;
-	info->Power = M50Power;
-	MapIRQHook = M50IRQHook;
-	GameStateRestore = StateRestore;
-	AddExState(&StateRegs, ~0, 0, 0);
+void Mapper50_Init(CartInfo *info)
+{
+    info->Reset = M50Reset;
+    info->Power = M50Power;
+    MapIRQHook = M50IRQHook;
+    GameStateRestore = StateRestore;
+    AddExState(&StateRegs, ~0, 0, 0);
 }

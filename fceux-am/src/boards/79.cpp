@@ -23,39 +23,44 @@
 
 static uint8 creg, preg;
 static SFORMAT StateRegs[] =
+    {
+        {&creg, 1, "CREG"},
+        {&preg, 1, "PREG"},
+        {0}};
+
+static void Sync(void)
 {
-	{ &creg, 1, "CREG" },
-	{ &preg, 1, "PREG" },
-	{ 0 }
-};
-
-static void Sync(void) {
-	setprg32(0x8000, preg);
-	setchr8(creg);
+    setprg32(0x8000, preg);
+    setchr8(creg);
 }
 
-static DECLFW(M79Write) {
-	if ((A < 0x8000) && ((A ^ 0x4100) == 0)) {
-		preg = (V >> 3) & 1;
-	}
-	creg = V & 7;
-	Sync();
+static DECLFW(M79Write)
+{
+    if ((A < 0x8000) && ((A ^ 0x4100) == 0))
+    {
+        preg = (V >> 3) & 1;
+    }
+    creg = V & 7;
+    Sync();
 }
 
-static void M79Power(void) {
-	preg = ~0;
-	Sync();
-	SetWriteHandler(0x4100, 0x5FFF, M79Write);
-	SetWriteHandler(0x8000, 0xFFFF, M79Write);
-	SetReadHandler(0x8000, 0xFFFF, CartBR);
+static void M79Power(void)
+{
+    preg = ~0;
+    Sync();
+    SetWriteHandler(0x4100, 0x5FFF, M79Write);
+    SetWriteHandler(0x8000, 0xFFFF, M79Write);
+    SetReadHandler(0x8000, 0xFFFF, CartBR);
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void Mapper79_Init(CartInfo *info) {
-	info->Power = M79Power;
-	AddExState(&StateRegs, ~0, 0, 0);
-	GameStateRestore = StateRestore;
+void Mapper79_Init(CartInfo *info)
+{
+    info->Power = M79Power;
+    AddExState(&StateRegs, ~0, 0, 0);
+    GameStateRestore = StateRestore;
 }

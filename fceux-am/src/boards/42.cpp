@@ -28,57 +28,79 @@ static uint8 preg, creg, mirr;
 static uint32 IRQCount, IRQa;
 
 static SFORMAT StateRegs[] =
+    {
+        {&preg, 1, "PREG"},
+        {&creg, 1, "CREG"},
+        {&mirr, 1, "MIRR"},
+        {&IRQCount, 4, "IRQC"},
+        {&IRQa, 4, "IRQA"},
+        {0}};
+
+static void Sync(void)
 {
-	{ &preg, 1, "PREG" },
-	{ &creg, 1, "CREG" },
-	{ &mirr, 1, "MIRR" },
-	{ &IRQCount, 4, "IRQC" },
-	{ &IRQa, 4, "IRQA" },
-	{ 0 }
-};
-
-static void Sync(void) {
-	setprg8(0x6000, preg);
-	setprg32(0x8000, ~0);
-	setchr8(creg);
-	setmirror(mirr);
+    setprg8(0x6000, preg);
+    setprg32(0x8000, ~0);
+    setchr8(creg);
+    setmirror(mirr);
 }
 
-static DECLFW(M42Write) {
-	switch (A & 0xE003) {
-	case 0x8000: creg = V; Sync(); break;
-	case 0xE000: preg = V & 0x0F; Sync(); break;
-	case 0xE001: mirr = ((V >> 3) & 1 ) ^ 1; Sync(); break;
-	case 0xE002: IRQa = V & 2; if (!IRQa) IRQCount = 0; X6502_IRQEnd(FCEU_IQEXT); break;
-	}
+static DECLFW(M42Write)
+{
+    switch (A & 0xE003)
+    {
+    case 0x8000:
+        creg = V;
+        Sync();
+        break;
+    case 0xE000:
+        preg = V & 0x0F;
+        Sync();
+        break;
+    case 0xE001:
+        mirr = ((V >> 3) & 1) ^ 1;
+        Sync();
+        break;
+    case 0xE002:
+        IRQa = V & 2;
+        if (!IRQa)
+            IRQCount = 0;
+        X6502_IRQEnd(FCEU_IQEXT);
+        break;
+    }
 }
 
-static void M42Power(void) {
-	preg = 0;
-	mirr = 1;   // Ai Senshi Nicol actually has fixed mirroring, but mapper forcing it's default value now
-	Sync();
-	SetReadHandler(0x6000, 0xffff, CartBR);
-	SetWriteHandler(0x6000, 0xffff, M42Write);
+static void M42Power(void)
+{
+    preg = 0;
+    mirr = 1; // Ai Senshi Nicol actually has fixed mirroring, but mapper forcing it's default value now
+    Sync();
+    SetReadHandler(0x6000, 0xffff, CartBR);
+    SetWriteHandler(0x6000, 0xffff, M42Write);
 }
 
-static void M42IRQHook(int a) {
-	if (IRQa) {
-		IRQCount += a;
-		if (IRQCount >= 32768) IRQCount -= 32768;
-		if (IRQCount >= 24576)
-			X6502_IRQBegin(FCEU_IQEXT);
-		else
-			X6502_IRQEnd(FCEU_IQEXT);
-	}
+static void M42IRQHook(int a)
+{
+    if (IRQa)
+    {
+        IRQCount += a;
+        if (IRQCount >= 32768)
+            IRQCount -= 32768;
+        if (IRQCount >= 24576)
+            X6502_IRQBegin(FCEU_IQEXT);
+        else
+            X6502_IRQEnd(FCEU_IQEXT);
+    }
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void Mapper42_Init(CartInfo *info) {
-	info->Power = M42Power;
-	MapIRQHook = M42IRQHook;
-	GameStateRestore = StateRestore;
-	AddExState(&StateRegs, ~0, 0, 0);
+void Mapper42_Init(CartInfo *info)
+{
+    info->Power = M42Power;
+    MapIRQHook = M42IRQHook;
+    GameStateRestore = StateRestore;
+    AddExState(&StateRegs, ~0, 0, 0);
 }

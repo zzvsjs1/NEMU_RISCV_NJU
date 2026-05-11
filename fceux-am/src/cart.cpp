@@ -38,7 +38,7 @@ uint8 *VPageG[8];
 uint8 *MMC5SPRVPage[8];
 uint8 *MMC5BGVPage[8];
 
-static uint8 PRGIsRAM[32];  /* This page is/is not PRG RAM. */
+static uint8 PRGIsRAM[32]; /* This page is/is not PRG RAM. */
 
 /* 16 are (sort of) reserved for UNIF/iNES and 16 to map other stuff. */
 uint8 CHRram[32];
@@ -61,284 +61,343 @@ uint32 CHRmask2[32];
 uint32 CHRmask4[32];
 uint32 CHRmask8[32];
 
-	// Page stores CPU-visible 2 KiB PRG windows as base-offset pointers, so the
-	// fast read path can use Page[A >> 11][A].  Mapper code changes these windows
-	// instead of copying ROM data, which keeps bank switching cheap on AM/Navy and
-	// avoids extra pressure on the same memory budget that large Navy apps had to
-	// protect by moving assets out to disk images.
-static INLINE void setpageptr(int s, uint32 A, uint8 *p, int ram) {
-	uint32 AB = A >> 11;
-	int x;
+// Page stores CPU-visible 2 KiB PRG windows as base-offset pointers, so the
+// fast read path can use Page[A >> 11][A].  Mapper code changes these windows
+// instead of copying ROM data, which keeps bank switching cheap on AM/Navy and
+// avoids extra pressure on the same memory budget that large Navy apps had to
+// protect by moving assets out to disk images.
+static INLINE void setpageptr(int s, uint32 A, uint8 *p, int ram)
+{
+    uint32 AB = A >> 11;
+    int x;
 
-	if (p)
-		for (x = (s >> 1) - 1; x >= 0; x--) {
-			PRGIsRAM[AB + x] = ram;
-			Page[AB + x] = p - A;
-		}
-	else
-		for (x = (s >> 1) - 1; x >= 0; x--) {
-			PRGIsRAM[AB + x] = 0;
-			Page[AB + x] = 0;
-		}
+    if (p)
+        for (x = (s >> 1) - 1; x >= 0; x--)
+        {
+            PRGIsRAM[AB + x] = ram;
+            Page[AB + x] = p - A;
+        }
+    else
+        for (x = (s >> 1) - 1; x >= 0; x--)
+        {
+            PRGIsRAM[AB + x] = 0;
+            Page[AB + x] = 0;
+        }
 }
 
 static uint8 nothing[8192];
-void ResetCartMapping(void) {
-	int x;
+void ResetCartMapping(void)
+{
+    int x;
 
-	// Reset mapping to harmless dummy pages before a cartridge installs its
-	// mapper.  This keeps early CPU/PPU reads deterministic even if a loader
-	// fails part-way through initialisation.
-	PPU_ResetHooks();
+    // Reset mapping to harmless dummy pages before a cartridge installs its
+    // mapper.  This keeps early CPU/PPU reads deterministic even if a loader
+    // fails part-way through initialisation.
+    PPU_ResetHooks();
 
-	for (x = 0; x < 32; x++) {
-		Page[x] = nothing - x * 2048;
-		PRGptr[x] = CHRptr[x] = 0;
-		PRGsize[x] = CHRsize[x] = 0;
-	}
-	for (x = 0; x < 8; x++) {
-		MMC5SPRVPage[x] = MMC5BGVPage[x] = VPageR[x] = nothing - 0x400 * x;
-	}
+    for (x = 0; x < 32; x++)
+    {
+        Page[x] = nothing - x * 2048;
+        PRGptr[x] = CHRptr[x] = 0;
+        PRGsize[x] = CHRsize[x] = 0;
+    }
+    for (x = 0; x < 8; x++)
+    {
+        MMC5SPRVPage[x] = MMC5BGVPage[x] = VPageR[x] = nothing - 0x400 * x;
+    }
 }
 
-void SetupCartPRGMapping(int chip, uint8 *p, uint32 size, int ram) {
-	PRGptr[chip] = p;
-	PRGsize[chip] = size;
+void SetupCartPRGMapping(int chip, uint8 *p, uint32 size, int ram)
+{
+    PRGptr[chip] = p;
+    PRGsize[chip] = size;
 
-	PRGmask2[chip] = (size >> 11) - 1;
-	PRGmask4[chip] = (size >> 12) - 1;
-	PRGmask8[chip] = (size >> 13) - 1;
-	PRGmask16[chip] = (size >> 14) - 1;
-	PRGmask32[chip] = (size >> 15) - 1;
+    PRGmask2[chip] = (size >> 11) - 1;
+    PRGmask4[chip] = (size >> 12) - 1;
+    PRGmask8[chip] = (size >> 13) - 1;
+    PRGmask16[chip] = (size >> 14) - 1;
+    PRGmask32[chip] = (size >> 15) - 1;
 
-	PRGram[chip] = ram ? 1 : 0;
+    PRGram[chip] = ram ? 1 : 0;
 }
 
-void SetupCartCHRMapping(int chip, uint8 *p, uint32 size, int ram) {
-	CHRptr[chip] = p;
-	CHRsize[chip] = size;
+void SetupCartCHRMapping(int chip, uint8 *p, uint32 size, int ram)
+{
+    CHRptr[chip] = p;
+    CHRsize[chip] = size;
 
-	CHRmask1[chip] = (size >> 10) - 1;
-	CHRmask2[chip] = (size >> 11) - 1;
-	CHRmask4[chip] = (size >> 12) - 1;
-	CHRmask8[chip] = (size >> 13) - 1;
+    CHRmask1[chip] = (size >> 10) - 1;
+    CHRmask2[chip] = (size >> 11) - 1;
+    CHRmask4[chip] = (size >> 12) - 1;
+    CHRmask8[chip] = (size >> 13) - 1;
 
-	if (CHRmask1[chip] >= (unsigned int)(-1)) CHRmask1[chip] = 0;
-	if (CHRmask2[chip] >= (unsigned int)(-1)) CHRmask2[chip] = 0;
-	if (CHRmask4[chip] >= (unsigned int)(-1)) CHRmask4[chip] = 0;
-	if (CHRmask8[chip] >= (unsigned int)(-1)) CHRmask8[chip] = 0;
+    if (CHRmask1[chip] >= (unsigned int)(-1))
+        CHRmask1[chip] = 0;
+    if (CHRmask2[chip] >= (unsigned int)(-1))
+        CHRmask2[chip] = 0;
+    if (CHRmask4[chip] >= (unsigned int)(-1))
+        CHRmask4[chip] = 0;
+    if (CHRmask8[chip] >= (unsigned int)(-1))
+        CHRmask8[chip] = 0;
 
-	CHRram[chip] = ram;
+    CHRram[chip] = ram;
 }
 
-DECLFR(CartBR) {
-	return Page[A >> 11][A];
+DECLFR(CartBR)
+{
+    return Page[A >> 11][A];
 }
 
-DECLFW(CartBW) {
-	//printf("Ok: %04x:%02x, %d\n",A,V,PRGIsRAM[A>>11]);
-	if (PRGIsRAM[A >> 11] && Page[A >> 11])
-		Page[A >> 11][A] = V;
+DECLFW(CartBW)
+{
+    //printf("Ok: %04x:%02x, %d\n",A,V,PRGIsRAM[A>>11]);
+    if (PRGIsRAM[A >> 11] && Page[A >> 11])
+        Page[A >> 11][A] = V;
 }
 
-DECLFR(CartBROB) {
-	if (!Page[A >> 11])
-		return(X.DB);
-	else
-		return Page[A >> 11][A];
+DECLFR(CartBROB)
+{
+    if (!Page[A >> 11])
+        return (X.DB);
+    else
+        return Page[A >> 11][A];
 }
 
-void setprg2r(int r, uint32 A, uint32 V) {
-	V &= PRGmask2[r];
-	setpageptr(2, A, PRGptr[r] ? (&PRGptr[r][V << 11]) : 0, PRGram[r]);
+void setprg2r(int r, uint32 A, uint32 V)
+{
+    V &= PRGmask2[r];
+    setpageptr(2, A, PRGptr[r] ? (&PRGptr[r][V << 11]) : 0, PRGram[r]);
 }
 
-void setprg2(uint32 A, uint32 V) {
-	setprg2r(0, A, V);
+void setprg2(uint32 A, uint32 V)
+{
+    setprg2r(0, A, V);
 }
 
-void setprg4r(int r, uint32 A, uint32 V) {
-	V &= PRGmask4[r];
-	setpageptr(4, A, PRGptr[r] ? (&PRGptr[r][V << 12]) : 0, PRGram[r]);
+void setprg4r(int r, uint32 A, uint32 V)
+{
+    V &= PRGmask4[r];
+    setpageptr(4, A, PRGptr[r] ? (&PRGptr[r][V << 12]) : 0, PRGram[r]);
 }
 
-void setprg4(uint32 A, uint32 V) {
-	setprg4r(0, A, V);
+void setprg4(uint32 A, uint32 V)
+{
+    setprg4r(0, A, V);
 }
 
-void setprg8r(int r, uint32 A, uint32 V) {
-	if (PRGsize[r] >= 8192) {
-		V &= PRGmask8[r];
-		setpageptr(8, A, PRGptr[r] ? (&PRGptr[r][V << 13]) : 0, PRGram[r]);
-	} else {
-		uint32 VA = V << 2;
-		int x;
-		for (x = 0; x < 4; x++)
-			setpageptr(2, A + (x << 11), PRGptr[r] ? (&PRGptr[r][((VA + x) & PRGmask2[r]) << 11]) : 0, PRGram[r]);
-	}
+void setprg8r(int r, uint32 A, uint32 V)
+{
+    if (PRGsize[r] >= 8192)
+    {
+        V &= PRGmask8[r];
+        setpageptr(8, A, PRGptr[r] ? (&PRGptr[r][V << 13]) : 0, PRGram[r]);
+    }
+    else
+    {
+        uint32 VA = V << 2;
+        int x;
+        for (x = 0; x < 4; x++)
+            setpageptr(2, A + (x << 11), PRGptr[r] ? (&PRGptr[r][((VA + x) & PRGmask2[r]) << 11]) : 0, PRGram[r]);
+    }
 }
 
-void setprg8(uint32 A, uint32 V) {
-	setprg8r(0, A, V);
+void setprg8(uint32 A, uint32 V)
+{
+    setprg8r(0, A, V);
 }
 
-void setprg16r(int r, uint32 A, uint32 V) {
-	if (PRGsize[r] >= 16384) {
-		V &= PRGmask16[r];
-		setpageptr(16, A, PRGptr[r] ? (&PRGptr[r][V << 14]) : 0, PRGram[r]);
-	} else {
-		uint32 VA = V << 3;
-		int x;
+void setprg16r(int r, uint32 A, uint32 V)
+{
+    if (PRGsize[r] >= 16384)
+    {
+        V &= PRGmask16[r];
+        setpageptr(16, A, PRGptr[r] ? (&PRGptr[r][V << 14]) : 0, PRGram[r]);
+    }
+    else
+    {
+        uint32 VA = V << 3;
+        int x;
 
-		for (x = 0; x < 8; x++)
-			setpageptr(2, A + (x << 11), PRGptr[r] ? (&PRGptr[r][((VA + x) & PRGmask2[r]) << 11]) : 0, PRGram[r]);
-	}
+        for (x = 0; x < 8; x++)
+            setpageptr(2, A + (x << 11), PRGptr[r] ? (&PRGptr[r][((VA + x) & PRGmask2[r]) << 11]) : 0, PRGram[r]);
+    }
 }
 
-void setprg16(uint32 A, uint32 V) {
-	setprg16r(0, A, V);
+void setprg16(uint32 A, uint32 V)
+{
+    setprg16r(0, A, V);
 }
 
-void setprg32r(int r, uint32 A, uint32 V) {
-	if (PRGsize[r] >= 32768) {
-		V &= PRGmask32[r];
-		setpageptr(32, A, PRGptr[r] ? (&PRGptr[r][V << 15]) : 0, PRGram[r]);
-	} else {
-		uint32 VA = V << 4;
-		int x;
+void setprg32r(int r, uint32 A, uint32 V)
+{
+    if (PRGsize[r] >= 32768)
+    {
+        V &= PRGmask32[r];
+        setpageptr(32, A, PRGptr[r] ? (&PRGptr[r][V << 15]) : 0, PRGram[r]);
+    }
+    else
+    {
+        uint32 VA = V << 4;
+        int x;
 
-		for (x = 0; x < 16; x++)
-			setpageptr(2, A + (x << 11), PRGptr[r] ? (&PRGptr[r][((VA + x) & PRGmask2[r]) << 11]) : 0, PRGram[r]);
-	}
+        for (x = 0; x < 16; x++)
+            setpageptr(2, A + (x << 11), PRGptr[r] ? (&PRGptr[r][((VA + x) & PRGmask2[r]) << 11]) : 0, PRGram[r]);
+    }
 }
 
-void setprg32(uint32 A, uint32 V) {
-	setprg32r(0, A, V);
+void setprg32(uint32 A, uint32 V)
+{
+    setprg32r(0, A, V);
 }
 
-void setchr1r(int r, uint32 A, uint32 V) {
-	if (!CHRptr[r]) return;
-	FCEUPPU_LineUpdate();
-	V &= CHRmask1[r];
-	if (CHRram[r])
-		PPUCHRRAM |= (1 << (A >> 10));
-	else
-		PPUCHRRAM &= ~(1 << (A >> 10));
-	VPageR[(A) >> 10] = &CHRptr[r][(V) << 10] - (A);
+void setchr1r(int r, uint32 A, uint32 V)
+{
+    if (!CHRptr[r])
+        return;
+    FCEUPPU_LineUpdate();
+    V &= CHRmask1[r];
+    if (CHRram[r])
+        PPUCHRRAM |= (1 << (A >> 10));
+    else
+        PPUCHRRAM &= ~(1 << (A >> 10));
+    VPageR[(A) >> 10] = &CHRptr[r][(V) << 10] - (A);
 }
 
-void setchr2r(int r, uint32 A, uint32 V) {
-	if (!CHRptr[r]) return;
-	FCEUPPU_LineUpdate();
-	V &= CHRmask2[r];
-	VPageR[(A) >> 10] = VPageR[((A) >> 10) + 1] = &CHRptr[r][(V) << 11] - (A);
-	if (CHRram[r])
-		PPUCHRRAM |= (3 << (A >> 10));
-	else
-		PPUCHRRAM &= ~(3 << (A >> 10));
+void setchr2r(int r, uint32 A, uint32 V)
+{
+    if (!CHRptr[r])
+        return;
+    FCEUPPU_LineUpdate();
+    V &= CHRmask2[r];
+    VPageR[(A) >> 10] = VPageR[((A) >> 10) + 1] = &CHRptr[r][(V) << 11] - (A);
+    if (CHRram[r])
+        PPUCHRRAM |= (3 << (A >> 10));
+    else
+        PPUCHRRAM &= ~(3 << (A >> 10));
 }
 
-void setchr4r(int r, uint32 A, uint32 V) {
-	if (!CHRptr[r]) return;
-	FCEUPPU_LineUpdate();
-	V &= CHRmask4[r];
-	VPageR[(A) >> 10] = VPageR[((A) >> 10) + 1] =
-							VPageR[((A) >> 10) + 2] = VPageR[((A) >> 10) + 3] = &CHRptr[r][(V) << 12] - (A);
-	if (CHRram[r])
-		PPUCHRRAM |= (15 << (A >> 10));
-	else
-		PPUCHRRAM &= ~(15 << (A >> 10));
+void setchr4r(int r, uint32 A, uint32 V)
+{
+    if (!CHRptr[r])
+        return;
+    FCEUPPU_LineUpdate();
+    V &= CHRmask4[r];
+    VPageR[(A) >> 10] = VPageR[((A) >> 10) + 1] =
+        VPageR[((A) >> 10) + 2] = VPageR[((A) >> 10) + 3] = &CHRptr[r][(V) << 12] - (A);
+    if (CHRram[r])
+        PPUCHRRAM |= (15 << (A >> 10));
+    else
+        PPUCHRRAM &= ~(15 << (A >> 10));
 }
 
-void setchr8r(int r, uint32 V) {
-	int x;
+void setchr8r(int r, uint32 V)
+{
+    int x;
 
-	if (!CHRptr[r]) return;
-	FCEUPPU_LineUpdate();
-	V &= CHRmask8[r];
-	for (x = 7; x >= 0; x--)
-		VPageR[x] = &CHRptr[r][V << 13];
-	if (CHRram[r])
-		PPUCHRRAM |= (255);
-	else
-		PPUCHRRAM = 0;
+    if (!CHRptr[r])
+        return;
+    FCEUPPU_LineUpdate();
+    V &= CHRmask8[r];
+    for (x = 7; x >= 0; x--)
+        VPageR[x] = &CHRptr[r][V << 13];
+    if (CHRram[r])
+        PPUCHRRAM |= (255);
+    else
+        PPUCHRRAM = 0;
 }
 
-void setchr1(uint32 A, uint32 V) {
-	setchr1r(0, A, V);
+void setchr1(uint32 A, uint32 V)
+{
+    setchr1r(0, A, V);
 }
 
-void setchr2(uint32 A, uint32 V) {
-	setchr2r(0, A, V);
+void setchr2(uint32 A, uint32 V)
+{
+    setchr2r(0, A, V);
 }
 
-void setchr4(uint32 A, uint32 V) {
-	setchr4r(0, A, V);
+void setchr4(uint32 A, uint32 V)
+{
+    setchr4r(0, A, V);
 }
 
-void setchr8(uint32 V) {
-	setchr8r(0, V);
+void setchr8(uint32 V)
+{
+    setchr8r(0, V);
 }
 
 /* This function can be called without calling SetupCartMirroring(). */
 
-void setntamem(uint8 *p, int ram, uint32 b) {
-	FCEUPPU_LineUpdate();
-	vnapage[b] = p;
-	PPUNTARAM &= ~(1 << b);
-	if (ram)
-		PPUNTARAM |= 1 << b;
+void setntamem(uint8 *p, int ram, uint32 b)
+{
+    FCEUPPU_LineUpdate();
+    vnapage[b] = p;
+    PPUNTARAM &= ~(1 << b);
+    if (ram)
+        PPUNTARAM |= 1 << b;
 }
 
 static int mirrorhard = 0;
-void setmirrorw(int a, int b, int c, int d) {
-	FCEUPPU_LineUpdate();
-	vnapage[0] = NTARAM + a * 0x400;
-	vnapage[1] = NTARAM + b * 0x400;
-	vnapage[2] = NTARAM + c * 0x400;
-	vnapage[3] = NTARAM + d * 0x400;
+void setmirrorw(int a, int b, int c, int d)
+{
+    FCEUPPU_LineUpdate();
+    vnapage[0] = NTARAM + a * 0x400;
+    vnapage[1] = NTARAM + b * 0x400;
+    vnapage[2] = NTARAM + c * 0x400;
+    vnapage[3] = NTARAM + d * 0x400;
 }
 
-void setmirror(int t) {
-	FCEUPPU_LineUpdate();
-	if (!mirrorhard) {
-		switch (t) {
-		case MI_H:
-			vnapage[0] = vnapage[1] = NTARAM; vnapage[2] = vnapage[3] = NTARAM + 0x400;
-			break;
-		case MI_V:
-			vnapage[0] = vnapage[2] = NTARAM; vnapage[1] = vnapage[3] = NTARAM + 0x400;
-			break;
-		case MI_0:
-			vnapage[0] = vnapage[1] = vnapage[2] = vnapage[3] = NTARAM;
-			break;
-		case MI_1:
-			vnapage[0] = vnapage[1] = vnapage[2] = vnapage[3] = NTARAM + 0x400;
-			break;
-		}
-		PPUNTARAM = 0xF;
-	}
+void setmirror(int t)
+{
+    FCEUPPU_LineUpdate();
+    if (!mirrorhard)
+    {
+        switch (t)
+        {
+        case MI_H:
+            vnapage[0] = vnapage[1] = NTARAM;
+            vnapage[2] = vnapage[3] = NTARAM + 0x400;
+            break;
+        case MI_V:
+            vnapage[0] = vnapage[2] = NTARAM;
+            vnapage[1] = vnapage[3] = NTARAM + 0x400;
+            break;
+        case MI_0:
+            vnapage[0] = vnapage[1] = vnapage[2] = vnapage[3] = NTARAM;
+            break;
+        case MI_1:
+            vnapage[0] = vnapage[1] = vnapage[2] = vnapage[3] = NTARAM + 0x400;
+            break;
+        }
+        PPUNTARAM = 0xF;
+    }
 }
 
-void SetupCartMirroring(int m, int hard, uint8 *extra) {
-	if (m < 4) {
-		mirrorhard = 0;
-		setmirror(m);
-	} else {
-		vnapage[0] = NTARAM;
-		vnapage[1] = NTARAM + 0x400;
-		vnapage[2] = extra;
-		vnapage[3] = extra + 0x400;
-		PPUNTARAM = 0xF;
-	}
-	mirrorhard = hard;
+void SetupCartMirroring(int m, int hard, uint8 *extra)
+{
+    if (m < 4)
+    {
+        mirrorhard = 0;
+        setmirror(m);
+    }
+    else
+    {
+        vnapage[0] = NTARAM;
+        vnapage[1] = NTARAM + 0x400;
+        vnapage[2] = extra;
+        vnapage[3] = extra + 0x400;
+        PPUNTARAM = 0xF;
+    }
+    mirrorhard = hard;
 }
 
 /* Called when a game is closed. */
-void FCEU_CloseGenie(void) {
-	/* No good reason to free() the Game Genie ROM image data. */
-	VPageR = VPage;
+void FCEU_CloseGenie(void)
+{
+    /* No good reason to free() the Game Genie ROM image data. */
+    VPageR = VPage;
 }
 
-void FCEU_KillGenie(void) {
+void FCEU_KillGenie(void)
+{
 }

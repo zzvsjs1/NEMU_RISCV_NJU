@@ -11,35 +11,41 @@
 //int32 nesincsize=0;
 uint8 *UNIFchrrama = 0;
 
-void AddExState(void *v, uint32 s, int type, const char *desc) { }
-void FCEU_CheatAddRAM(int s, uint32 A, uint8 *p) { }
+void AddExState(void *v, uint32 s, int type, const char *desc) {}
+void FCEU_CheatAddRAM(int s, uint32 A, uint8 *p) {}
 
 #ifndef __ISA_NATIVE__
-void *operator new(size_t size) {
-	void *p = malloc(size);
-	assert(p);
-	return p;
+void *operator new(size_t size)
+{
+    void *p = malloc(size);
+    assert(p);
+    return p;
 }
 
-void *operator new[](size_t size) {
-	void *p = malloc(size);
-	assert(p);
-	return p;
+void *operator new[](size_t size)
+{
+    void *p = malloc(size);
+    assert(p);
+    return p;
 }
 
-void operator delete(void *p) noexcept {
-	free(p);
+void operator delete(void *p) noexcept
+{
+    free(p);
 }
 
-void operator delete[](void *p) noexcept {
-	free(p);
+void operator delete[](void *p) noexcept
+{
+    free(p);
 }
 
-void operator delete(void *p, size_t) noexcept {
-	free(p);
+void operator delete(void *p, size_t) noexcept
+{
+    free(p);
 }
 
-void operator delete[](void *p, size_t) noexcept {
-	free(p);
+void operator delete[](void *p, size_t) noexcept
+{
+    free(p);
 }
 #endif

@@ -10,14 +10,14 @@
 static char buf[65536] = {};
 static char code_buf[65536 + 128] = {}; // a little larger than `buf`
 static char *code_format =
-"#include <stdio.h>\n"
-"#include <stdint.h>\n"
-"int main()"
-"{"
-"    uint32_t result = %s; "
-"    printf(\"%%u\", result); "
-"    return 0; "
-"}";
+    "#include <stdio.h>\n"
+    "#include <stdint.h>\n"
+    "int main()"
+    "{"
+    "    uint32_t result = %s; "
+    "    printf(\"%%u\", result); "
+    "    return 0; "
+    "}";
 
 static size_t bufSize = 0;
 
@@ -109,18 +109,18 @@ static void gen_rand_expr()
     }
 }
 
-int main(int argc, char *argv[]) 
+int main(int argc, char *argv[])
 {
     int seed = time(NULL);
     srand(seed);
     size_t loop = 1;
 
-    if (argc > 1) 
+    if (argc > 1)
     {
         sscanf(argv[1], "%zu", &loop);
     }
 
-    for (size_t i = 0; i < loop;) 
+    for (size_t i = 0; i < loop;)
     {
         bufSize = 0;
         gen_rand_expr(0);
@@ -134,7 +134,7 @@ int main(int argc, char *argv[])
         fclose(fp);
 
         int ret = system("gcc -std=c17 -Werror=div-by-zero -Werror /tmp/.code.c -o /tmp/.expr");
-        if (ret != 0) 
+        if (ret != 0)
         {
             continue;
         }

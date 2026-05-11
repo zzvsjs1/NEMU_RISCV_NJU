@@ -28,59 +28,77 @@ static uint8 reg;
 static uint32 IRQCount, IRQa;
 
 static SFORMAT StateRegs[] =
+    {
+        {&IRQCount, 4, "IRQC"},
+        {&IRQa, 4, "IRQA"},
+        {&reg, 1, "REG"},
+        {0}};
+
+static void Sync(void)
 {
-	{ &IRQCount, 4, "IRQC" },
-	{ &IRQa, 4, "IRQA" },
-	{ &reg, 1, "REG" },
-	{ 0 }
-};
-
-static void Sync(void) {
-	setprg8(0x6000, ~1);
-	setprg8(0x8000, ~3);
-	setprg8(0xa000, ~2);
-	setprg8(0xc000, reg);
-	setprg8(0xe000, ~0);
-	setchr8(0);
+    setprg8(0x6000, ~1);
+    setprg8(0x8000, ~3);
+    setprg8(0xa000, ~2);
+    setprg8(0xc000, reg);
+    setprg8(0xe000, ~0);
+    setchr8(0);
 }
 
-static DECLFW(M40Write) {
-	switch (A & 0xe000) {
-	case 0x8000: IRQa = 0; IRQCount = 0; X6502_IRQEnd(FCEU_IQEXT); break;
-	case 0xa000: IRQa = 1; break;
-	case 0xe000: reg = V & 7; Sync(); break;
-	}
+static DECLFW(M40Write)
+{
+    switch (A & 0xe000)
+    {
+    case 0x8000:
+        IRQa = 0;
+        IRQCount = 0;
+        X6502_IRQEnd(FCEU_IQEXT);
+        break;
+    case 0xa000:
+        IRQa = 1;
+        break;
+    case 0xe000:
+        reg = V & 7;
+        Sync();
+        break;
+    }
 }
 
-static void M40Power(void) {
-	reg = 0;
-	Sync();
-	SetReadHandler(0x6000, 0xffff, CartBR);
-	SetWriteHandler(0x8000, 0xffff, M40Write);
+static void M40Power(void)
+{
+    reg = 0;
+    Sync();
+    SetReadHandler(0x6000, 0xffff, CartBR);
+    SetWriteHandler(0x8000, 0xffff, M40Write);
 }
 
-static void M40Reset(void) {
+static void M40Reset(void)
+{
 }
 
-static void M40IRQHook(int a) {
-	if (IRQa) {
-		if (IRQCount < 4096)
-			IRQCount += a;
-		else{
-			IRQa = 0;
-			X6502_IRQBegin(FCEU_IQEXT);
-		}
-	}
+static void M40IRQHook(int a)
+{
+    if (IRQa)
+    {
+        if (IRQCount < 4096)
+            IRQCount += a;
+        else
+        {
+            IRQa = 0;
+            X6502_IRQBegin(FCEU_IQEXT);
+        }
+    }
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void Mapper40_Init(CartInfo *info) {
-	info->Reset = M40Reset;
-	info->Power = M40Power;
-	MapIRQHook = M40IRQHook;
-	GameStateRestore = StateRestore;
-	AddExState(&StateRegs, ~0, 0, 0);
+void Mapper40_Init(CartInfo *info)
+{
+    info->Reset = M40Reset;
+    info->Power = M40Power;
+    MapIRQHook = M40IRQHook;
+    GameStateRestore = StateRestore;
+    AddExState(&StateRegs, ~0, 0, 0);
 }

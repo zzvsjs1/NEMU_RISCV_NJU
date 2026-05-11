@@ -12,16 +12,16 @@
 #define PTE_X 0x008u
 
 /* satp fields for Sv32 */
-#define SATP_MODE_MASK   0x80000000u
-#define SATP_PPN_MASK    0x003FFFFFu  // low 22 bits
+#define SATP_MODE_MASK 0x80000000u
+#define SATP_PPN_MASK 0x003FFFFFu // low 22 bits
 
-static bool is_cross_page(vaddr_t vaddr, int len) 
+static bool is_cross_page(vaddr_t vaddr, int len)
 {
-  const word_t off = (word_t)(vaddr & PAGE_MASK);
-  return off + (word_t)len > PAGE_SIZE;
+    const word_t off = (word_t)(vaddr & PAGE_MASK);
+    return off + (word_t)len > PAGE_SIZE;
 }
 
-int isa_mmu_check(vaddr_t vaddr, int len, int type) 
+int isa_mmu_check(vaddr_t vaddr, int len, int type)
 {
     /*
      * This teaching Sv32 model treats satp.MODE as the only mode selector.  The
@@ -33,7 +33,7 @@ int isa_mmu_check(vaddr_t vaddr, int len, int type)
     return mode ? MMU_TRANSLATE : MMU_DIRECT;
 }
 
-paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type) 
+paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
 {
     /*
      * The current memory helpers handle one translated page per access.  Report
@@ -65,7 +65,7 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
 
     paddr_t pte1_addr = root + (paddr_t)(vpn1 * 4u);
     uint32_t pte1 = (uint32_t)paddr_read(pte1_addr, 4);
-    
+
     Assert((pte1 & PTE_V) != 0, "Not a valid pte at %u", (word_t)pte1_addr);
 
     uint32_t pte1_rwx = pte1 & (PTE_R | PTE_W | PTE_X);
@@ -97,17 +97,17 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
     Assert((pte0 & PTE_V) != 0, "PTE 0 invalid");
 
     uint32_t pte0_rwx = pte0 & (PTE_R | PTE_W | PTE_X);
-    assert(pte0_rwx != 0);  // must be leaf at level 0 in our assumption
+    assert(pte0_rwx != 0); // must be leaf at level 0 in our assumption
 
-    if (type == MEM_TYPE_IFETCH) 
+    if (type == MEM_TYPE_IFETCH)
     {
         assert((pte0 & PTE_X) != 0);
-    } 
+    }
     else if (type == MEM_TYPE_READ)
     {
         assert((pte0 & PTE_R) != 0);
-    } 
-    else if (type == MEM_TYPE_WRITE) 
+    }
+    else if (type == MEM_TYPE_WRITE)
     {
         assert((pte0 & PTE_W) != 0);
     }

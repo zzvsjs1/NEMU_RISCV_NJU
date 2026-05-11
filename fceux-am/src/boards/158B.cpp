@@ -24,48 +24,59 @@
 #include "mapinc.h"
 #include "mmc3.h"
 
-static uint8 lut[8] = { 0x00, 0x00, 0x00, 0x01, 0x02, 0x04, 0x0F, 0x00 };
+static uint8 lut[8] = {0x00, 0x00, 0x00, 0x01, 0x02, 0x04, 0x0F, 0x00};
 
-static void UNL158BPW(uint32 A, uint8 V) {
-	if (EXPREGS[0] & 0x80) {
-		uint32 bank = EXPREGS[0] & 7;
-		if(EXPREGS[0] & 0x20) { // 32Kb mode
-			setprg32(0x8000, bank >> 1);
-		} else {				// 16Kb mode
-			setprg16(0x8000, bank);
-			setprg16(0xC000, bank);
-		}
-	} else {
-		setprg8(A, V & 0xF);
-	}
+static void UNL158BPW(uint32 A, uint8 V)
+{
+    if (EXPREGS[0] & 0x80)
+    {
+        uint32 bank = EXPREGS[0] & 7;
+        if (EXPREGS[0] & 0x20)
+        { // 32Kb mode
+            setprg32(0x8000, bank >> 1);
+        }
+        else
+        { // 16Kb mode
+            setprg16(0x8000, bank);
+            setprg16(0xC000, bank);
+        }
+    }
+    else
+    {
+        setprg8(A, V & 0xF);
+    }
 }
 
-static DECLFW(UNL158BProtWrite) {
-	EXPREGS[A & 7] = V;
-	switch(A & 7) {
-	case 0:
-		FixMMC3PRG(MMC3_cmd);
-		break;
-	case 7:
-		FCEU_printf("UNK PROT WRITE\n");
-		break;
-	}
-
+static DECLFW(UNL158BProtWrite)
+{
+    EXPREGS[A & 7] = V;
+    switch (A & 7)
+    {
+    case 0:
+        FixMMC3PRG(MMC3_cmd);
+        break;
+    case 7:
+        FCEU_printf("UNK PROT WRITE\n");
+        break;
+    }
 }
 
-static DECLFR(UNL158BProtRead) {
-	return X.DB | lut[A & 7];
+static DECLFR(UNL158BProtRead)
+{
+    return X.DB | lut[A & 7];
 }
 
-static void UNL158BPower(void) {
-	GenMMC3Power();
-	SetWriteHandler(0x5000, 0x5FFF, UNL158BProtWrite);
-	SetReadHandler(0x5000, 0x5FFF, UNL158BProtRead);
+static void UNL158BPower(void)
+{
+    GenMMC3Power();
+    SetWriteHandler(0x5000, 0x5FFF, UNL158BProtWrite);
+    SetReadHandler(0x5000, 0x5FFF, UNL158BProtRead);
 }
 
-void UNL158B_Init(CartInfo *info) {
-	GenMMC3_Init(info, 128, 128, 0, 0);
-	pwrap = UNL158BPW;
-	info->Power = UNL158BPower;
-	AddExState(EXPREGS, 8, 0, "EXPR");
+void UNL158B_Init(CartInfo *info)
+{
+    GenMMC3_Init(info, 128, 128, 0, 0);
+    pwrap = UNL158BPW;
+    info->Power = UNL158BPower;
+    AddExState(EXPREGS, 8, 0, "EXPR");
 }

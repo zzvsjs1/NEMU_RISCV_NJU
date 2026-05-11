@@ -29,57 +29,70 @@
 static uint8 preg;
 
 static SFORMAT StateRegs[] =
+    {
+        {&preg, 1, "PREG"},
+        {0}};
+
+static void Sync(void)
 {
-	{ &preg, 1, "PREG" },
-	{ 0 }
-};
-
-static void Sync(void) {
-	setprg8(0x6000, preg);
-	setprg8(0x8000, 0xC);
-	setprg8(0xA000, 0xD);
-	setprg8(0xC000, 0xE);
-	setprg8(0xE000, 0xF);
-	setchr8(0);
+    setprg8(0x6000, preg);
+    setprg8(0x8000, 0xC);
+    setprg8(0xA000, 0xD);
+    setprg8(0xC000, 0xE);
+    setprg8(0xE000, 0xF);
+    setchr8(0);
 }
 
-static DECLFW(UNLKS7016Write) {
-	u16 mask = (A & 0x30);
-	switch(A & 0xD943) {
-	case 0xD943: {
-		if(mask == 0x30) {
-			preg = 8 | 3;				// or A, or no bus (all FF)
-		} else {
-			preg = (A >> 2) & 0xF;		// can be anything but C-F
-		}
-		Sync();
-		break;
-	}
-	case 0xD903: {						// this case isn't usedby the game, but addressing does this as a side effect
-		if(mask == 0x30) {
-			preg = 8 | ((A >> 2) & 3);	// also masked C-F from output
-		} else {
-			preg = 8 | 3;
-		}
-		Sync();
-		break;
-	}
-	}
+static DECLFW(UNLKS7016Write)
+{
+    u16 mask = (A & 0x30);
+    switch (A & 0xD943)
+    {
+    case 0xD943:
+    {
+        if (mask == 0x30)
+        {
+            preg = 8 | 3; // or A, or no bus (all FF)
+        }
+        else
+        {
+            preg = (A >> 2) & 0xF; // can be anything but C-F
+        }
+        Sync();
+        break;
+    }
+    case 0xD903:
+    { // this case isn't usedby the game, but addressing does this as a side effect
+        if (mask == 0x30)
+        {
+            preg = 8 | ((A >> 2) & 3); // also masked C-F from output
+        }
+        else
+        {
+            preg = 8 | 3;
+        }
+        Sync();
+        break;
+    }
+    }
 }
 
-static void UNLKS7016Power(void) {
-	preg = 8;
-	Sync();
-	SetReadHandler(0x6000, 0xffff, CartBR);
-	SetWriteHandler(0x8000, 0xffff, UNLKS7016Write);
+static void UNLKS7016Power(void)
+{
+    preg = 8;
+    Sync();
+    SetReadHandler(0x6000, 0xffff, CartBR);
+    SetWriteHandler(0x8000, 0xffff, UNLKS7016Write);
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void UNLKS7016_Init(CartInfo *info) {
-	info->Power = UNLKS7016Power;
-	GameStateRestore = StateRestore;
-	AddExState(&StateRegs, ~0, 0, 0);
+void UNLKS7016_Init(CartInfo *info)
+{
+    info->Power = UNLKS7016Power;
+    GameStateRestore = StateRestore;
+    AddExState(&StateRegs, ~0, 0, 0);
 }

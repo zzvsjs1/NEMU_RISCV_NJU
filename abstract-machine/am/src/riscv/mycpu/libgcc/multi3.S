@@ -61,11 +61,11 @@ __multi3 (DWtype u, DWtype v)
       w_high_tmp2x = w_high_tmp << 1;
       w_high_tmp += w_high;
       if (v_low & 1)
-	{
-	  carry = new_w_low < w_low;
-	  w_low = new_w_low;
-	  w_high = carry + w_high_tmp;
-	}
+    {
+      carry = new_w_low < w_low;
+      w_low = new_w_low;
+      w_high = carry + w_high_tmp;
+    }
       u_low_msb = (u_low >> ((sizeof (UWtype) * 8) - 1));
       v_low >>= 1;
       u_low <<= 1;

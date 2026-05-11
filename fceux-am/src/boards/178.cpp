@@ -39,10 +39,9 @@ static int32 SensorDelay;
 static uint8 pcm_enable = 0;
 
 static SFORMAT StateRegs[] =
-{
-	{ reg, 4, "REGS" },
-	{ 0 }
-};
+    {
+        {reg, 4, "REGS"},
+        {0}};
 
 //static int16 step_size[49] = {
 //	16, 17, 19, 21, 23, 25, 28, 31, 34, 37,
@@ -80,120 +79,140 @@ static SFORMAT StateRegs[] =
 //	return (acc >> 8) & 0xff;
 //}
 
-static void Sync(void) {
-	uint32 sbank = reg[1] & 0x7;
-	uint32 bbank = reg[2];
-	setchr8(0);
-	setprg8r(0x10, 0x6000, reg[3] & 3);
-	if (reg[0] & 2) {	// UNROM mode
-		setprg16(0x8000, (bbank << 3) | sbank);
-		if (reg[0] & 4)
-			setprg16(0xC000, (bbank << 3) | 6 | (reg[1] & 1));
-		else
-			setprg16(0xC000, (bbank << 3) | 7);
-	} else {			// NROM mode
-		uint32 bank = (bbank << 3) | sbank;
-		if (reg[0] & 4) {
-			setprg16(0x8000, bank);
-			setprg16(0xC000, bank);
-		} else
-			setprg32(0x8000, bank >> 1);
-	}
-	setmirror((reg[0] & 1) ^ 1);
+static void Sync(void)
+{
+    uint32 sbank = reg[1] & 0x7;
+    uint32 bbank = reg[2];
+    setchr8(0);
+    setprg8r(0x10, 0x6000, reg[3] & 3);
+    if (reg[0] & 2)
+    { // UNROM mode
+        setprg16(0x8000, (bbank << 3) | sbank);
+        if (reg[0] & 4)
+            setprg16(0xC000, (bbank << 3) | 6 | (reg[1] & 1));
+        else
+            setprg16(0xC000, (bbank << 3) | 7);
+    }
+    else
+    { // NROM mode
+        uint32 bank = (bbank << 3) | sbank;
+        if (reg[0] & 4)
+        {
+            setprg16(0x8000, bank);
+            setprg16(0xC000, bank);
+        }
+        else
+            setprg32(0x8000, bank >> 1);
+    }
+    setmirror((reg[0] & 1) ^ 1);
 }
 
-static DECLFW(M178Write) {
-	reg[A & 3] = V;
-//	FCEU_printf("cmd %04x:%02x\n", A, V);
-	Sync();
+static DECLFW(M178Write)
+{
+    reg[A & 3] = V;
+    //	FCEU_printf("cmd %04x:%02x\n", A, V);
+    Sync();
 }
 
-static DECLFW(M178WriteSnd) {
-	if (A == 0x5800) {
-		if (V & 0xF0) {
-			pcm_enable = 1;
-//			pcmwrite(0x4011, (V & 0xF) << 3);
-//			pcmwrite(0x4011, decode(V & 0xf));
-		} else
-			pcm_enable = 0;
-	}// else
-//		FCEU_printf("misc %04x:%02x\n", A, V);
+static DECLFW(M178WriteSnd)
+{
+    if (A == 0x5800)
+    {
+        if (V & 0xF0)
+        {
+            pcm_enable = 1;
+            //			pcmwrite(0x4011, (V & 0xF) << 3);
+            //			pcmwrite(0x4011, decode(V & 0xf));
+        }
+        else
+            pcm_enable = 0;
+    } // else
+    //		FCEU_printf("misc %04x:%02x\n", A, V);
 }
 
-static DECLFR(M178ReadSnd) {
-	if (A == 0x5800)
-		return (X.DB & 0xBF) | ((pcm_enable ^ 1) << 6);
-	else
-		return X.DB;
+static DECLFR(M178ReadSnd)
+{
+    if (A == 0x5800)
+        return (X.DB & 0xBF) | ((pcm_enable ^ 1) << 6);
+    else
+        return X.DB;
 }
 
-static DECLFR(M178ReadSensor) {
-	X6502_IRQEnd(FCEU_IQEXT);		// hacky-hacky, actual reg is 6000 and it clear IRQ while reading, but then I need another mapper lol
-	return 0x00;
+static DECLFR(M178ReadSensor)
+{
+    X6502_IRQEnd(FCEU_IQEXT); // hacky-hacky, actual reg is 6000 and it clear IRQ while reading, but then I need another mapper lol
+    return 0x00;
 }
 
-static void M178Power(void) {
-	reg[0] = reg[1] = reg[2] = reg[3] = SensorDelay = 0;
-	Sync();
-//	pcmwrite = GetWriteHandler(0x4011);
-	SetWriteHandler(0x4800, 0x4fff, M178Write);
-	SetWriteHandler(0x5800, 0x5fff, M178WriteSnd);
-	SetReadHandler(0x5800, 0x5fff, M178ReadSnd);
-	SetReadHandler(0x5000, 0x5000, M178ReadSensor);
-	SetReadHandler(0x6000, 0x7fff, CartBR);
-	SetWriteHandler(0x6000, 0x7fff, CartBW);
-	SetReadHandler(0x8000, 0xffff, CartBR);
-	FCEU_CheatAddRAM(WRAMSIZE >> 10, 0x6000, WRAM);
+static void M178Power(void)
+{
+    reg[0] = reg[1] = reg[2] = reg[3] = SensorDelay = 0;
+    Sync();
+    //	pcmwrite = GetWriteHandler(0x4011);
+    SetWriteHandler(0x4800, 0x4fff, M178Write);
+    SetWriteHandler(0x5800, 0x5fff, M178WriteSnd);
+    SetReadHandler(0x5800, 0x5fff, M178ReadSnd);
+    SetReadHandler(0x5000, 0x5000, M178ReadSensor);
+    SetReadHandler(0x6000, 0x7fff, CartBR);
+    SetWriteHandler(0x6000, 0x7fff, CartBW);
+    SetReadHandler(0x8000, 0xffff, CartBR);
+    FCEU_CheatAddRAM(WRAMSIZE >> 10, 0x6000, WRAM);
 }
 
-static void M178SndClk(int a) {
-	SensorDelay += a;
-	if(SensorDelay > 0x32768) {
-		SensorDelay -= 32768;
-		GetMouseData (MouseData);
-		lastclick = click;
-		click = MouseData[2] & 1;	// to prevent from continuos IRQ trigger if button is held.
-									// actual circuit is just a D-C-R edge detector for IR-sensor
-									// triggered by the active IR bat.
-		if(lastclick && !click)
-			X6502_IRQBegin(FCEU_IQEXT);
-	}
+static void M178SndClk(int a)
+{
+    SensorDelay += a;
+    if (SensorDelay > 0x32768)
+    {
+        SensorDelay -= 32768;
+        GetMouseData(MouseData);
+        lastclick = click;
+        click = MouseData[2] & 1; // to prevent from continuos IRQ trigger if button is held.
+                                  // actual circuit is just a D-C-R edge detector for IR-sensor
+                                  // triggered by the active IR bat.
+        if (lastclick && !click)
+            X6502_IRQBegin(FCEU_IQEXT);
+    }
 
-//	if (pcm_enable) {
-//		pcm_latch -= a;
-//		if (pcm_latch <= 0) {
-//			pcm_latch += pcm_clock;
-//			pcm_enable = 0;
-//		}
-//	}
+    //	if (pcm_enable) {
+    //		pcm_latch -= a;
+    //		if (pcm_latch <= 0) {
+    //			pcm_latch += pcm_clock;
+    //			pcm_enable = 0;
+    //		}
+    //	}
 }
 
-static void M178Close(void) {
-	if (WRAM)
-		FCEU_gfree(WRAM);
-	WRAM = NULL;
+static void M178Close(void)
+{
+    if (WRAM)
+        FCEU_gfree(WRAM);
+    WRAM = NULL;
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void Mapper178_Init(CartInfo *info) {
-	info->Power = M178Power;
-	info->Close = M178Close;
-	GameStateRestore = StateRestore;
-	MapIRQHook = M178SndClk;
+void Mapper178_Init(CartInfo *info)
+{
+    info->Power = M178Power;
+    info->Close = M178Close;
+    GameStateRestore = StateRestore;
+    MapIRQHook = M178SndClk;
 
-//	jedi_table_init();
+    //	jedi_table_init();
 
-	WRAMSIZE = 32768;
-	WRAM = (uint8*)FCEU_gmalloc(WRAMSIZE);
-	SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
-	if (info->battery) {
-		info->SaveGame[0] = WRAM;
-		info->SaveGameLen[0] = WRAMSIZE;
-	}
-	AddExState(WRAM, WRAMSIZE, 0, "WRAM");
+    WRAMSIZE = 32768;
+    WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
+    SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
+    if (info->battery)
+    {
+        info->SaveGame[0] = WRAM;
+        info->SaveGameLen[0] = WRAMSIZE;
+    }
+    AddExState(WRAM, WRAMSIZE, 0, "WRAM");
 
-	AddExState(&StateRegs, ~0, 0, 0);
+    AddExState(&StateRegs, ~0, 0, 0);
 }

@@ -17,12 +17,12 @@
 //  * msg         : the string to print (null-terminated)
 //  * interval_us : time between prints, in microseconds (e.g. 500000 for 0.5 s)
 //  */
-// void print_periodically_busy_int(const char *msg, long interval_us) 
+// void print_periodically_busy_int(const char *msg, long interval_us)
 // {
 //     struct timeval now, next;
 
 //     // 1) get starting time
-//     if (gettimeofday(&now, NULL) != 0) 
+//     if (gettimeofday(&now, NULL) != 0)
 //     {
 //         perror("gettimeofday");
 //         exit(EXIT_FAILURE);
@@ -38,7 +38,7 @@
 //     while (1) {
 //         // busy-wait until now >= next
 //         do {
-//             if (gettimeofday(&now, NULL) != 0) 
+//             if (gettimeofday(&now, NULL) != 0)
 //             {
 //                 perror("gettimeofday");
 //                 exit(EXIT_FAILURE);
@@ -63,7 +63,7 @@
 //     }
 // }
 
-// int main(void) 
+// int main(void)
 // {
 //     // prints "Tick" every 500 000 µs (0.5 s), busy-waiting in between
 //     print_periodically_busy_int("Tick", 500000L);
@@ -86,11 +86,12 @@
  * msg         : the string to print (null-terminated)
  * interval_us : time between prints, in microseconds (e.g. 500000 for 0.5 s)
  */
-void print_periodically_busy_int(const char *msg, long interval_us) 
+void print_periodically_busy_int(const char *msg, long interval_us)
 {
     // 1) convert microsecond interval to whole milliseconds
-    uint32_t interval_ms = interval_us / 1000;  
-    if (interval_ms == 0) interval_ms = 1;  // at least 1 ms
+    uint32_t interval_ms = interval_us / 1000;
+    if (interval_ms == 0)
+        interval_ms = 1; // at least 1 ms
 
     // 2) record the starting tick (ms since NDL_Init)
     uint32_t next_tick = NDL_GetTicks();
@@ -99,15 +100,17 @@ void print_periodically_busy_int(const char *msg, long interval_us)
     bool half = true;
 
     // 3) infinite loop: wait until NDL_GetTicks() >= next_tick, then print, then bump next_tick
-    for (;;) {
+    for (;;)
+    {
         // busy-wait for the next tick
-        while (NDL_GetTicks() < next_tick) 
+        while (NDL_GetTicks() < next_tick)
         {
             // nothing
         }
 
         // advance our “seconds” counter every two prints
-        if (!half) secs++;
+        if (!half)
+            secs++;
 
         // print with “.5” for half==true, “.0” for half==false
         printf("%s %" PRIu32 ".%s\n", msg, secs, half ? "5" : "0");
@@ -120,10 +123,9 @@ void print_periodically_busy_int(const char *msg, long interval_us)
     }
 }
 
-int main(void) 
+int main(void)
 {
     // Example: prints "Tick" every 500000 µs (0.5 s)
     print_periodically_busy_int("Tick", 500000L);
-    return 0;  // never reached
+    return 0; // never reached
 }
-

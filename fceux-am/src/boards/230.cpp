@@ -26,53 +26,63 @@
 
 static uint8 latche, reset;
 static SFORMAT StateRegs[] =
+    {
+        {&reset, 1, "RST"},
+        {&latche, 1, "LATC"},
+        {0}};
+
+static void Sync(void)
 {
-	{ &reset, 1, "RST" },
-	{ &latche, 1, "LATC" },
-	{ 0 }
-};
-
-static void Sync(void) {
-	if(reset) {
-		setprg16(0x8000, latche & 7);
-		setprg16(0xC000, 7);
-		setmirror(MI_V);
-	} else {
-		uint32 bank = (latche & 0x1F) + 8;
-		if (latche & 0x20) {
-			setprg16(0x8000, bank);
-			setprg16(0xC000, bank);
-		} else
-			setprg32(0x8000, bank >> 1);
-		setmirror((latche >> 6) & 1);
-	}
-	setchr8(0);
+    if (reset)
+    {
+        setprg16(0x8000, latche & 7);
+        setprg16(0xC000, 7);
+        setmirror(MI_V);
+    }
+    else
+    {
+        uint32 bank = (latche & 0x1F) + 8;
+        if (latche & 0x20)
+        {
+            setprg16(0x8000, bank);
+            setprg16(0xC000, bank);
+        }
+        else
+            setprg32(0x8000, bank >> 1);
+        setmirror((latche >> 6) & 1);
+    }
+    setchr8(0);
 }
 
-static DECLFW(M230Write) {
-	latche = V;
-	Sync();
+static DECLFW(M230Write)
+{
+    latche = V;
+    Sync();
 }
 
-static void M230Reset(void) {
-	reset ^= 1;
-	Sync();
+static void M230Reset(void)
+{
+    reset ^= 1;
+    Sync();
 }
 
-static void M230Power(void) {
-	latche = reset = 0;
-	Sync();
-	SetWriteHandler(0x8000, 0xFFFF, M230Write);
-	SetReadHandler(0x8000, 0xFFFF, CartBR);
+static void M230Power(void)
+{
+    latche = reset = 0;
+    Sync();
+    SetWriteHandler(0x8000, 0xFFFF, M230Write);
+    SetReadHandler(0x8000, 0xFFFF, CartBR);
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void Mapper230_Init(CartInfo *info) {
-	info->Power = M230Power;
-	info->Reset = M230Reset;
-	AddExState(&StateRegs, ~0, 0, 0);
-	GameStateRestore = StateRestore;
+void Mapper230_Init(CartInfo *info)
+{
+    info->Power = M230Power;
+    info->Reset = M230Reset;
+    AddExState(&StateRegs, ~0, 0, 0);
+    GameStateRestore = StateRestore;
 }

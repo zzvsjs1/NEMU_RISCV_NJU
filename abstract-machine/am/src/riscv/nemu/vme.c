@@ -3,24 +3,23 @@
 #include <klib.h>
 
 static AddrSpace kas = {};
-static void* (*pgalloc_usr)(int) = NULL;
-static void (*pgfree_usr)(void*) = NULL;
+static void *(*pgalloc_usr)(int) = NULL;
+static void (*pgfree_usr)(void *) = NULL;
 static int vme_enable = 0;
 
-static Area segments[] = {      // Kernel memory mappings
-    NEMU_PADDR_SPACE
-};
+static Area segments[] = { // Kernel memory mappings
+    NEMU_PADDR_SPACE};
 
 // User mappings are kept in a high half-open interval that does not overlap the
 // identity-mapped NEMU physical memory window. This lets kernel mappings be
 // copied into every address space while user pages remain easy to recognise.
 #define USER_SPACE RANGE(0x40000000, 0x80000000)
 
-#define PAGE_SHIFT        12
-#define PAGE_SIZE         (1ul << PAGE_SHIFT)
-#define PAGE_MASK         (PAGE_SIZE - 1)
+#define PAGE_SHIFT 12
+#define PAGE_SIZE (1ul << PAGE_SHIFT)
+#define PAGE_MASK (PAGE_SIZE - 1)
 
-static inline void set_satp(void *pdir) 
+static inline void set_satp(void *pdir)
 {
     // Sv32 mode is encoded in the top bit of satp on RV32. The root page-table
     // physical page number occupies the remaining low bits after shifting the
@@ -31,15 +30,15 @@ static inline void set_satp(void *pdir)
     asm volatile("csrw satp, %0" : : "r"(mode | ((uintptr_t)pdir >> 12)));
 }
 
-static inline uintptr_t get_satp() 
+static inline uintptr_t get_satp()
 {
     uintptr_t satp;
     asm volatile("csrr %0, satp" : "=r"(satp));
-    uintptr_t ppn = satp & 0x003FFFFFul;   // Sv32 PPN is low 22 bits
+    uintptr_t ppn = satp & 0x003FFFFFul; // Sv32 PPN is low 22 bits
     return ppn << 12;
 }
 
-bool vme_init(void* (*pgalloc_f)(int), void (*pgfree_f)(void*)) 
+bool vme_init(void *(*pgalloc_f)(int), void (*pgfree_f)(void *))
 {
     pgalloc_usr = pgalloc_f;
     pgfree_usr = pgfree_f;
@@ -50,9 +49,11 @@ bool vme_init(void* (*pgalloc_f)(int), void (*pgfree_f)(void*))
     // AM and the simple kernels rely on physical addresses also being valid C
     // pointers while they build page tables and touch device buffers.
     int i;
-    for (i = 0; i < LENGTH(segments); i ++) {
+    for (i = 0; i < LENGTH(segments); i++)
+    {
         void *va = segments[i].start;
-        for (; va < segments[i].end; va += PGSIZE) {
+        for (; va < segments[i].end; va += PGSIZE)
+        {
             map(&kas, va, va, 0);
         }
     }
@@ -63,9 +64,9 @@ bool vme_init(void* (*pgalloc_f)(int), void (*pgfree_f)(void*))
     return true;
 }
 
-void protect(AddrSpace *as) 
+void protect(AddrSpace *as)
 {
-    PTE *updir = (PTE*)(pgalloc_usr(PGSIZE));
+    PTE *updir = (PTE *)(pgalloc_usr(PGSIZE));
     as->ptr = updir;
     as->area = USER_SPACE;
     as->pgsize = PGSIZE;
@@ -75,12 +76,11 @@ void protect(AddrSpace *as)
     memcpy(updir, kas.ptr, PGSIZE);
 }
 
-void unprotect(AddrSpace *as) 
+void unprotect(AddrSpace *as)
 {
-
 }
 
-void __am_get_cur_as(Context *c) 
+void __am_get_cur_as(Context *c)
 {
     // mstatus.MPP describes the privilege level that was interrupted. A trap
     // from U-mode needs its current satp saved in the Context; a trap from
@@ -89,7 +89,7 @@ void __am_get_cur_as(Context *c)
     c->pdir = (vme_enable && mpp == 0 ? (void *)get_satp() : NULL);
 }
 
-void __am_switch(Context *c) 
+void __am_switch(Context *c)
 {
     // The assembly trap return path calls this before restoring registers. satp
     // is changed only for contexts that carry a user page directory. A NULL
@@ -98,13 +98,13 @@ void __am_switch(Context *c)
     // This is important for kernel threads: they may be scheduled while a user
     // page table is active, and they still need that table's copied kernel
     // mappings rather than a destructive switch back to kas.
-    if (vme_enable && c->pdir != NULL) 
+    if (vme_enable && c->pdir != NULL)
     {
         set_satp(c->pdir);
     }
 }
 
-void map(AddrSpace *as, void *va, void *pa, int prot) 
+void map(AddrSpace *as, void *va, void *pa, int prot)
 {
     // ---- Basic sanity checks ----
     assert(as != NULL);
@@ -131,7 +131,7 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
     // ---- Ensure the level-0 page table exists ----
     PTE pte1 = l1[vpn1];
 
-    if ((pte1 & PTE_V) == 0) 
+    if ((pte1 & PTE_V) == 0)
     {
         // Allocate one page for the next-level page table (level-0 page table).
         void *new_pt_page = pgalloc_usr(PGSIZE);
@@ -149,8 +149,8 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
         l1[vpn1] = (PTE)((ppn << 10) | PTE_V);
 
         pte1 = l1[vpn1];
-    } 
-    else 
+    }
+    else
     {
         // If R/W/X are not all zero at level-1, it means a superpage leaf PTE.
         // We does not build superpages, so assert to catch bugs early.
@@ -175,7 +175,7 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
 
     // Mark user pages with U=1, kernel pages keep U=0.
     // User space is as->area, protect() sets it to USER_SPACE.
-    if (va >= as->area.start && va < as->area.end) 
+    if (va >= as->area.start && va < as->area.end)
     {
         // User pages must carry PTE_U so mret into U-mode can fetch and touch
         // them. Copied kernel mappings intentionally omit PTE_U and remain
@@ -186,7 +186,7 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
     l0[vpn0] = (PTE)((leaf_ppn << 10) | flags);
 }
 
-Context *ucontext(AddrSpace *as, Area kstack, void *entry) 
+Context *ucontext(AddrSpace *as, Area kstack, void *entry)
 {
     // ucontext creates the first trap frame for a user task. It is not executing
     // in user mode yet; mret from the trap return path will consume this frame
@@ -212,7 +212,7 @@ Context *ucontext(AddrSpace *as, Area kstack, void *entry)
     c->mstatus |= (1 << 7);             // MPIE = 1
     c->mstatus &= ~((uintptr_t)0x1800); // MPP = 00 (U)
 
-    c->pdir = as->ptr;   // Use this address space's page table root
+    c->pdir = as->ptr; // Use this address space's page table root
     c->ksp = kstack.end;
     // np is consumed only by trap.S. It says the next mret enters user mode,
     // therefore mscratch must be armed with this context's kernel stack top.

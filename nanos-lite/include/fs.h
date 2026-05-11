@@ -4,9 +4,13 @@
 #include <common.h>
 
 #ifndef SEEK_SET
-enum {SEEK_SET, SEEK_CUR, SEEK_END};
+enum
+{
+    SEEK_SET,
+    SEEK_CUR,
+    SEEK_END
+};
 #endif
-
 
 /*
  * Open a special device file or a regular backend file.  pathname is always an

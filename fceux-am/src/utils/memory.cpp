@@ -29,41 +29,41 @@
 void *FCEU_gmalloc(uint32 size)
 {
 
- void *ret;
- ret=malloc(size);
- if(!ret)
- {
-  FCEU_PrintError("Error allocating memory!  Doing a hard exit.");
-  assert(0);
- }
- FCEU_MemoryRand((uint8*)ret,size,true); // initialize according to RAMInitOption, default zero
- return ret;
+    void *ret;
+    ret = malloc(size);
+    if (!ret)
+    {
+        FCEU_PrintError("Error allocating memory!  Doing a hard exit.");
+        assert(0);
+    }
+    FCEU_MemoryRand((uint8 *)ret, size, true); // initialize according to RAMInitOption, default zero
+    return ret;
 }
 
 ///allocates the specified number of bytes. returns null if this fails
 void *FCEU_malloc(uint32 size)
 {
- void *ret;
- ret=malloc(size);
- if(!ret)
- {
-  FCEU_PrintError("Error allocating memory!");
-  return(0);
- }
- memset(ret,0,size); // initialize to 0
- return ret;
+    void *ret;
+    ret = malloc(size);
+    if (!ret)
+    {
+        FCEU_PrintError("Error allocating memory!");
+        return (0);
+    }
+    memset(ret, 0, size); // initialize to 0
+    return ret;
 }
 
 ///frees memory allocated with FCEU_gmalloc
 void FCEU_gfree(void *ptr)
 {
- free(ptr);
+    free(ptr);
 }
 
 ///frees memory allocated with FCEU_malloc
-void FCEU_free(void *ptr)    // Might do something with this and FCEU_malloc later...
+void FCEU_free(void *ptr) // Might do something with this and FCEU_malloc later...
 {
- free(ptr);
+    free(ptr);
 }
 
 void *FCEU_dmalloc(uint32 size)

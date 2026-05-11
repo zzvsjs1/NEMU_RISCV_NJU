@@ -19,10 +19,10 @@ extern int vblankscanlines;
 extern bool AutoResumePlay;
 extern char romNameWhenClosingEmulator[];
 
-#define DECLFR(x) uint8 x (uint32 A)
-#define DECLFW(x) void x (uint32 A, uint8 V)
+#define DECLFR(x) uint8 x(uint32 A)
+#define DECLFW(x) void x(uint32 A, uint8 V)
 
-void FCEU_MemoryRand(uint8 *ptr, uint32 size, bool default_zero=false);
+void FCEU_MemoryRand(uint8 *ptr, uint32 size, bool default_zero = false);
 void SetOneReadHandler(int32 addr, readfunc func);
 void SetReadHandler(int32 start, int32 end, readfunc func);
 void SetOneWriteHandler(int32 addr, writefunc func);
@@ -69,22 +69,22 @@ extern uint8 qtaintramreg;
 
 #define GAME_MEM_BLOCK_SIZE 131072
 
-extern  uint8  RAM[];            //shared memory modifications
+extern uint8 RAM[]; //shared memory modifications
 extern int EmulationPaused;
 
 uint8 FCEU_ReadRomByte(uint32 i);
 void FCEU_WriteRomByte(uint32 i, uint8 value);
 
-enum GI {
-	GI_RESETM2	=1,
-	GI_POWER =2,
-	GI_CLOSE =3,
-	GI_RESETSAVE = 4
+enum GI
+{
+    GI_RESETM2 = 1,
+    GI_POWER = 2,
+    GI_CLOSE = 3,
+    GI_RESETSAVE = 4
 };
 
 extern void (*GameInterface)(GI h);
 extern void (*GameStateRestore)(int version);
-
 
 #include "git.h"
 extern FCEUGI *GameInfo;
@@ -95,37 +95,38 @@ extern int dendy;
 
 //#include "driver.h"
 
-typedef struct {
-	// Global emulator settings shared by the core and the AM/Navy-facing
-	// driver code.  These values are treated as process-wide state, so a loaded
-	// game must be closed or reset before changing assumptions such as PAL mode.
-	int PAL;
-	int NetworkPlay;
-	int SoundVolume;		//Master volume
-	int TriangleVolume;
-	int Square1Volume;
-	int Square2Volume;
-	int NoiseVolume;
-	int PCMVolume;
-	bool GameGenie;
+typedef struct
+{
+    // Global emulator settings shared by the core and the AM/Navy-facing
+    // driver code.  These values are treated as process-wide state, so a loaded
+    // game must be closed or reset before changing assumptions such as PAL mode.
+    int PAL;
+    int NetworkPlay;
+    int SoundVolume; //Master volume
+    int TriangleVolume;
+    int Square1Volume;
+    int Square2Volume;
+    int NoiseVolume;
+    int PCMVolume;
+    bool GameGenie;
 
-	//the currently selected first and last rendered scanlines.
-	int FirstSLine;
-	int LastSLine;
+    //the currently selected first and last rendered scanlines.
+    int FirstSLine;
+    int LastSLine;
 
-	//the number of scanlines in the currently selected configuration
-	int TotalScanlines() { return LastSLine - FirstSLine + 1; }
+    //the number of scanlines in the currently selected configuration
+    int TotalScanlines() { return LastSLine - FirstSLine + 1; }
 
-	//Driver-supplied user-selected first and last rendered scanlines.
-	//Usr*SLine[0] is for NTSC, Usr*SLine[1] is for PAL.
-	int UsrFirstSLine[2];
-	int UsrLastSLine[2];
+    //Driver-supplied user-selected first and last rendered scanlines.
+    //Usr*SLine[0] is for NTSC, Usr*SLine[1] is for PAL.
+    int UsrFirstSLine[2];
+    int UsrLastSLine[2];
 
-	//this variable isn't used at all, snap is always name-based
-	//bool SnapName;
-	uint32 SndRate;
-	int soundq;
-	int lowpass;
+    //this variable isn't used at all, snap is always name-based
+    //bool SnapName;
+    uint32 SndRate;
+    int soundq;
+    int lowpass;
 } FCEUS;
 
 int FCEU_TextScanlineOffset(int y);
@@ -133,7 +134,7 @@ int FCEU_TextScanlineOffsetFromBottom(int y);
 
 extern FCEUS FSettings;
 
-bool CheckFileExists(const char* filename);	//Receives a filename (fullpath) and checks to see if that file exists
+bool CheckFileExists(const char *filename); //Receives a filename (fullpath) and checks to see if that file exists
 
 void FCEU_TogglePPU();
 
@@ -150,20 +151,19 @@ extern uint8 vsdip;
 
 //#define FCEUDEF_DEBUGGER //mbg merge 7/17/06 - cleaning out conditional compiles
 
-#define JOY_A   1
-#define JOY_B   2
-#define JOY_SELECT      4
-#define JOY_START       8
-#define JOY_UP  0x10
-#define JOY_DOWN        0x20
-#define JOY_LEFT        0x40
-#define JOY_RIGHT       0x80
+#define JOY_A 1
+#define JOY_B 2
+#define JOY_SELECT 4
+#define JOY_START 8
+#define JOY_UP 0x10
+#define JOY_DOWN 0x20
+#define JOY_LEFT 0x40
+#define JOY_RIGHT 0x80
 #endif
 
-#define ARRAY_SIZE(a) (sizeof(a)/sizeof(a[0]))
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
 #define EMULATIONPAUSED_PAUSED 1
 #define EMULATIONPAUSED_FA 2
 
 #define FRAMEADVANCE_DELAY_DEFAULT 10
-

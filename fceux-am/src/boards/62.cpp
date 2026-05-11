@@ -23,47 +23,54 @@
 static uint8 bank;
 static uint16 mode;
 static SFORMAT StateRegs[] =
+    {
+        {&bank, 1, "BANK"},
+        {&mode, 2, "MODE"},
+        {0}};
+
+static void Sync(void)
 {
-	{ &bank, 1, "BANK" },
-	{ &mode, 2, "MODE" },
-	{ 0 }
-};
-
-static void Sync(void) {
-	setchr8(((mode & 0x1F) << 2) | (bank & 0x03));
-	if (mode & 0x20) {
-		setprg16(0x8000, (mode & 0x40) | ((mode >> 8) & 0x3F));
-		setprg16(0xc000, (mode & 0x40) | ((mode >> 8) & 0x3F));
-	} else
-		setprg32(0x8000, ((mode & 0x40) | ((mode >> 8) & 0x3F)) >> 1);
-	setmirror(((mode >> 7) & 1) ^ 1);
+    setchr8(((mode & 0x1F) << 2) | (bank & 0x03));
+    if (mode & 0x20)
+    {
+        setprg16(0x8000, (mode & 0x40) | ((mode >> 8) & 0x3F));
+        setprg16(0xc000, (mode & 0x40) | ((mode >> 8) & 0x3F));
+    }
+    else
+        setprg32(0x8000, ((mode & 0x40) | ((mode >> 8) & 0x3F)) >> 1);
+    setmirror(((mode >> 7) & 1) ^ 1);
 }
 
-static DECLFW(M62Write) {
-	mode = A & 0x3FFF;
-	bank = V & 3;
-	Sync();
+static DECLFW(M62Write)
+{
+    mode = A & 0x3FFF;
+    bank = V & 3;
+    Sync();
 }
 
-static void M62Power(void) {
-	bank = mode = 0;
-	Sync();
-	SetWriteHandler(0x8000, 0xFFFF, M62Write);
-	SetReadHandler(0x8000, 0xFFFF, CartBR);
+static void M62Power(void)
+{
+    bank = mode = 0;
+    Sync();
+    SetWriteHandler(0x8000, 0xFFFF, M62Write);
+    SetReadHandler(0x8000, 0xFFFF, CartBR);
 }
 
-static void M62Reset(void) {
-	bank = mode = 0;
-	Sync();
+static void M62Reset(void)
+{
+    bank = mode = 0;
+    Sync();
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void Mapper62_Init(CartInfo *info) {
-	info->Power = M62Power;
-	info->Reset = M62Reset;
-	AddExState(&StateRegs, ~0, 0, 0);
-	GameStateRestore = StateRestore;
+void Mapper62_Init(CartInfo *info)
+{
+    info->Power = M62Power;
+    info->Reset = M62Reset;
+    AddExState(&StateRegs, ~0, 0, 0);
+    GameStateRestore = StateRestore;
 }

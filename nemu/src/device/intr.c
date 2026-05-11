@@ -1,6 +1,6 @@
 #include <isa.h>
 
-void dev_raise_intr() 
+void dev_raise_intr()
 {
     /*
      * Device interrupts are edge notifications into the CPU loop.  The ISA side

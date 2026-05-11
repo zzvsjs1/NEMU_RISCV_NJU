@@ -36,7 +36,7 @@
 #endif
 
 typedef MUXDEF(CONFIG_ISA64, uint64_t, uint32_t) word_t;
-typedef MUXDEF(CONFIG_ISA64, int64_t, int32_t)  sword_t;
+typedef MUXDEF(CONFIG_ISA64, int64_t, int32_t) sword_t;
 #define FMT_WORD MUXDEF(CONFIG_ISA64, "0x%016lx", "0x%08x")
 #define FMT_DECIMAL_WORD MUXDEF(CONFIG_ISA64, "%" PRIu64, "%" PRIu32)
 #define FMT_DECIMAL_WORD_SIGN MUXDEF(CONFIG_ISA64, "%" PRId64, "%" PRId32)

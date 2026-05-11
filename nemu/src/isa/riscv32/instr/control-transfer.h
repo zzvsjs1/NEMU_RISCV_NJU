@@ -4,31 +4,31 @@
 // jump instruction to form the jump target address
 def_EHelper(jal)
 {
-	// Save next instuctions address to rd, and set new insturction address to pc.
+    // Save next instuctions address to rd, and set new insturction address to pc.
 
-	// Store next inst to ddest.
-	rtl_addi(s, ddest, &s->pc, 4);
+    // Store next inst to ddest.
+    rtl_addi(s, ddest, &s->pc, 4);
 
-	// Sign Extend.
-	rtl_li(s, s0, id_src1->imm);
-	rtl_sign_ext_pos(s, s0, s0, 20);
+    // Sign Extend.
+    rtl_li(s, s0, id_src1->imm);
+    rtl_sign_ext_pos(s, s0, s0, 20);
 
-	// Compute the inst address jump to.
-	rtl_add(s, s0, &s->pc, s0);
+    // Compute the inst address jump to.
+    rtl_add(s, s0, &s->pc, s0);
 
-	// RISC-V ABI uses x1(ra) and x5(t0) as link registers for calls.
-	/*
-	 * ftrace follows ABI call/return conventions, not every possible indirect
-	 * control transfer.  Limiting call records to x1/x5 keeps ordinary computed
-	 * jumps from corrupting the visual call stack.
-	 */
-	if (s->isa.instr.j.rd == 1 || s->isa.instr.j.rd == 5)
-	{
-		ftrace_call(s->pc, *s0);
-	}
+    // RISC-V ABI uses x1(ra) and x5(t0) as link registers for calls.
+    /*
+     * ftrace follows ABI call/return conventions, not every possible indirect
+     * control transfer.  Limiting call records to x1/x5 keeps ordinary computed
+     * jumps from corrupting the visual call stack.
+     */
+    if (s->isa.instr.j.rd == 1 || s->isa.instr.j.rd == 5)
+    {
+        ftrace_call(s->pc, *s0);
+    }
 
-	// Jump *s0
-	rtl_jr(s, s0);
+    // Jump *s0
+    rtl_jr(s, s0);
 }
 
 // Jump and link register
@@ -40,42 +40,42 @@ def_EHelper(jal)
 // required.
 def_EHelper(jalr)
 {
-	// Adding sign-extended 12-bit I-immediate to the register rs1.
-	
-	// s0 = imm[11:0].
-	rtl_li(s, s0, id_src2->imm);
+    // Adding sign-extended 12-bit I-immediate to the register rs1.
 
-	// sign ext imm[11:0] in s0.
-	rtl_sign_ext_pos(s, s0, s0, 11);
+    // s0 = imm[11:0].
+    rtl_li(s, s0, id_src2->imm);
 
-	// rd = src_1(rs1) (NOTE: The original register!) + s0(imm[11:0])
-	rtl_add(s, s0, s0, dsrc1);
+    // sign ext imm[11:0] in s0.
+    rtl_sign_ext_pos(s, s0, s0, 11);
 
-	// setting the least-significant bit of the result to zero
-	rtl_andi(s, s0, s0, ~1);
+    // rd = src_1(rs1) (NOTE: The original register!) + s0(imm[11:0])
+    rtl_add(s, s0, s0, dsrc1);
 
-	/*
-	 * ret is encoded as jalr x0, 0(x1/x5); jalr to x1/x5 records a call.
-	 * The tests below must use the original instruction fields because the RTL
-	 * operands only hold values after register reads and immediate decoding.
-	 */
-	if (s->isa.instr.i.rd == 0 &&
-		(s->isa.instr.i.rs1 == 1 || s->isa.instr.i.rs1 == 5) &&
-		s->isa.instr.i.simm11_0 == 0)
-	{
-		ftrace_ret(s->pc);
-	}
-	else if (s->isa.instr.i.rd == 1 || s->isa.instr.i.rd == 5)
-	{
-		ftrace_call(s->pc, *s0);
-	}
+    // setting the least-significant bit of the result to zero
+    rtl_andi(s, s0, s0, ~1);
 
-	// Store the next instuction(pc + 4) to ddest(rd).
-	// rd may equal to src1, so do this later.
-	rtl_addi(s, ddest, &s->pc, 4);
+    /*
+     * ret is encoded as jalr x0, 0(x1/x5); jalr to x1/x5 records a call.
+     * The tests below must use the original instruction fields because the RTL
+     * operands only hold values after register reads and immediate decoding.
+     */
+    if (s->isa.instr.i.rd == 0 &&
+        (s->isa.instr.i.rs1 == 1 || s->isa.instr.i.rs1 == 5) &&
+        s->isa.instr.i.simm11_0 == 0)
+    {
+        ftrace_ret(s->pc);
+    }
+    else if (s->isa.instr.i.rd == 1 || s->isa.instr.i.rd == 5)
+    {
+        ftrace_call(s->pc, *s0);
+    }
 
-	// Set dnpc, so it will be change later.
-	rtl_jr(s, s0);
+    // Store the next instuction(pc + 4) to ddest(rd).
+    // rd may equal to src1, so do this later.
+    rtl_addi(s, ddest, &s->pc, 4);
+
+    // Set dnpc, so it will be change later.
+    rtl_jr(s, s0);
 }
 
 // To return after handling a trap, there are separate trap return instructions per privilege level, MRET
@@ -88,62 +88,61 @@ def_EHelper(jalr)
 // register.
 def_EHelper(mret)
 {
-	// The MRET instruction is used to return from a trap taken into M-mode. MRET first determines what
+    // The MRET instruction is used to return from a trap taken into M-mode. MRET first determines what
     // the new privilege mode will be according to the values of MPP and MPV in mstatus or mstatush, as
     // encoded in Table 35. MRET then in mstatus/mstatush sets MPV=0, MPP=0, MIE=MPIE, and MPIE=1.
     // Lastly, MRET sets the privilege mode as previously determined, and sets pc=mepc
 
-	// mstatus.MPP  = bits 12–11 (2 bits)
+    // mstatus.MPP  = bits 12–11 (2 bits)
     // mstatus.MPIE = bit 7
     // mstatus.MIE  = bit 3
 
-	// Step 1: Clear MPP (bits 12–11)
-	// Clear both bits
-	// I am lazy, just use C......
-	// cpu.csr.mstatus &= ~(0b11 << 11);
+    // Step 1: Clear MPP (bits 12–11)
+    // Clear both bits
+    // I am lazy, just use C......
+    // cpu.csr.mstatus &= ~(0b11 << 11);
 
-	// // Step 2: Set MIE (bit 3) = MPIE (bit 7)
-	// const uint32_t mpie = (cpu.csr.mstatus >> 7) & 0x1;
-	// cpu.csr.mstatus = (cpu.csr.mstatus & ~(1 << 3)) | (mpie << 3);
-	
-	// // Step 3: Set MPIE (bit 7) = 1
-	// cpu.csr.mstatus |= (1 << 7);
+    // // Step 2: Set MIE (bit 3) = MPIE (bit 7)
+    // const uint32_t mpie = (cpu.csr.mstatus >> 7) & 0x1;
+    // cpu.csr.mstatus = (cpu.csr.mstatus & ~(1 << 3)) | (mpie << 3);
 
-	// // PC <- mepc
-	// // Just jump!
-	// rtl_jr(s, &cpu.csr.mepc);
+    // // Step 3: Set MPIE (bit 7) = 1
+    // cpu.csr.mstatus |= (1 << 7);
 
-	
-	/* Save old mstatus fields before modifying */
-	word_t mstatus = cpu.csr.mstatus;
+    // // PC <- mepc
+    // // Just jump!
+    // rtl_jr(s, &cpu.csr.mepc);
 
-	/* Extract old MPP and MPIE */
-	word_t mpp  = (mstatus >> 11) & 0x3u;  /* bits 12:11 */
-	word_t mpie = (mstatus >>  7) & 0x1u;  /* bit 7 */
+    /* Save old mstatus fields before modifying */
+    word_t mstatus = cpu.csr.mstatus;
 
-	/* Clear MPP */
-	mstatus &= ~((word_t)0x3u << 11);
+    /* Extract old MPP and MPIE */
+    word_t mpp = (mstatus >> 11) & 0x3u; /* bits 12:11 */
+    word_t mpie = (mstatus >> 7) & 0x1u; /* bit 7 */
 
-	/* MIE <- MPIE */
-	mstatus = (mstatus & ~((word_t)1u << 3)) | (mpie << 3);
+    /* Clear MPP */
+    mstatus &= ~((word_t)0x3u << 11);
 
-	/* MPIE <- 1 */
-	mstatus |= ((word_t)1u << 7);
+    /* MIE <- MPIE */
+    mstatus = (mstatus & ~((word_t)1u << 3)) | (mpie << 3);
 
-	/* MPRV <- 0 when returning to a mode below M-mode. */
-	if (mpp != 0x3u)
-	{
-		mstatus &= ~((word_t)1u << 17);
-	}
+    /* MPIE <- 1 */
+    mstatus |= ((word_t)1u << 7);
 
-	cpu.csr.mstatus = mstatus;
+    /* MPRV <- 0 when returning to a mode below M-mode. */
+    if (mpp != 0x3u)
+    {
+        mstatus &= ~((word_t)1u << 17);
+    }
 
-	/*
-	* If you implement privilege levels, you should restore privilege mode here.
-	* Example, cpu.priv = mpp;
-	*/
-	cpu.prvi = mpp;
+    cpu.csr.mstatus = mstatus;
 
-	/* dnpc <- mepc */
-	rtl_jr(s, &cpu.csr.mepc);
+    /*
+    * If you implement privilege levels, you should restore privilege mode here.
+    * Example, cpu.priv = mpp;
+    */
+    cpu.prvi = mpp;
+
+    /* dnpc <- mepc */
+    rtl_jr(s, &cpu.csr.mepc);
 }

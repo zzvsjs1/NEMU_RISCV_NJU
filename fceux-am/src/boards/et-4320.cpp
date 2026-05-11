@@ -46,74 +46,83 @@ static uint32 CHRRAMSize;
 static uint8 PPUCHRBus;
 static uint8 TKSMIR[8];
 
-static void BMC810131C_PW(uint32 A, uint8 V) {
-	if ((EXPREGS[0] >> 3) & 1)
-		setprg8(A, (V & 0x1F) | ((EXPREGS[0] & 7) << 4));
-	else
-		setprg8(A, (V & 0x0F) | ((EXPREGS[0] & 7) << 4));
+static void BMC810131C_PW(uint32 A, uint8 V)
+{
+    if ((EXPREGS[0] >> 3) & 1)
+        setprg8(A, (V & 0x1F) | ((EXPREGS[0] & 7) << 4));
+    else
+        setprg8(A, (V & 0x0F) | ((EXPREGS[0] & 7) << 4));
 }
 
-static void BMC810131C_CW(uint32 A, uint8 V) {
-	if ((EXPREGS[0] >> 4) & 1)
-		setchr1r(0x10, A, V);
-	else if (((EXPREGS[0] >> 5) & 1) && ((EXPREGS[0] >> 3) & 1))
-		setchr1(A, V | ((EXPREGS[0] & 7) << 7));
-	else
-		setchr1(A, (V & 0x7F) | ((EXPREGS[0] & 7) << 7));
+static void BMC810131C_CW(uint32 A, uint8 V)
+{
+    if ((EXPREGS[0] >> 4) & 1)
+        setchr1r(0x10, A, V);
+    else if (((EXPREGS[0] >> 5) & 1) && ((EXPREGS[0] >> 3) & 1))
+        setchr1(A, V | ((EXPREGS[0] & 7) << 7));
+    else
+        setchr1(A, (V & 0x7F) | ((EXPREGS[0] & 7) << 7));
 
-	TKSMIR[A >> 10] = V >> 7;
-	if (((EXPREGS[0] >> 3) & 1) && (PPUCHRBus == (A >> 10)))
-		setmirror(MI_0 + (V >> 7));
+    TKSMIR[A >> 10] = V >> 7;
+    if (((EXPREGS[0] >> 3) & 1) && (PPUCHRBus == (A >> 10)))
+        setmirror(MI_0 + (V >> 7));
 }
 
-static DECLFW(BMC810131C_Write) {
-	if (((A001B & 0xC0) == 0x80) && !(EXPREGS[0] & 7))
-	{
-		EXPREGS[0] = A & 0x3F;
-		FixMMC3PRG(MMC3_cmd);
-		FixMMC3CHR(MMC3_cmd);
-	}
-	else {
-		CartBW(A, V);
-	}
+static DECLFW(BMC810131C_Write)
+{
+    if (((A001B & 0xC0) == 0x80) && !(EXPREGS[0] & 7))
+    {
+        EXPREGS[0] = A & 0x3F;
+        FixMMC3PRG(MMC3_cmd);
+        FixMMC3CHR(MMC3_cmd);
+    }
+    else
+    {
+        CartBW(A, V);
+    }
 }
 
-static void BMC810131C_Reset(void) {
-	EXPREGS[0] = 0;
-	MMC3RegReset();
+static void BMC810131C_Reset(void)
+{
+    EXPREGS[0] = 0;
+    MMC3RegReset();
 }
 
-static void BMC810131C_Power(void) {
-	EXPREGS[0] = 0;
-	GenMMC3Power();
-	SetWriteHandler(0x6000, 0x7FFF, BMC810131C_Write);
+static void BMC810131C_Power(void)
+{
+    EXPREGS[0] = 0;
+    GenMMC3Power();
+    SetWriteHandler(0x6000, 0x7FFF, BMC810131C_Write);
 }
 
-static void BMC810131C_Close(void) {
-	if (CHRRAM)
-		FCEU_gfree(CHRRAM);
-	CHRRAM = NULL;
+static void BMC810131C_Close(void)
+{
+    if (CHRRAM)
+        FCEU_gfree(CHRRAM);
+    CHRRAM = NULL;
 }
 
-static void TKSPPU(uint32 A) {
-	A &= 0x1FFF;
-	A >>= 10;
-	PPUCHRBus = A;
-	if ((EXPREGS[0] >> 3) & 1)
-		setmirror(MI_0 + TKSMIR[A]);
+static void TKSPPU(uint32 A)
+{
+    A &= 0x1FFF;
+    A >>= 10;
+    PPUCHRBus = A;
+    if ((EXPREGS[0] >> 3) & 1)
+        setmirror(MI_0 + TKSMIR[A]);
 }
 
-void BMC810131C_Init(CartInfo *info) {
-	GenMMC3_Init(info, 256, 256, 8, 0);
-	CHRRAMSize = 8192;
-	CHRRAM = (uint8*)FCEU_gmalloc(CHRRAMSize);
-	SetupCartCHRMapping(0x10, CHRRAM, CHRRAMSize, 1);
-	AddExState(CHRRAM, CHRRAMSize, 0, "CHRR");
-	pwrap = BMC810131C_PW;
-	cwrap = BMC810131C_CW;
-	PPU_hook = TKSPPU;
-	info->Power = BMC810131C_Power;
-	info->Reset = BMC810131C_Reset;
-	info->Close = BMC810131C_Close;
-	AddExState(EXPREGS, 1, 0, "EXPR");
+void BMC810131C_Init(CartInfo *info)
+{
+    GenMMC3_Init(info, 256, 256, 8, 0);
+    CHRRAMSize = 8192;
+    CHRRAM = (uint8 *)FCEU_gmalloc(CHRRAMSize);
+    SetupCartCHRMapping(0x10, CHRRAM, CHRRAMSize, 1);
+    AddExState(CHRRAM, CHRRAMSize, 0, "CHRR");
+    pwrap = BMC810131C_PW;
+    cwrap = BMC810131C_CW;
+    PPU_hook = TKSPPU;
+    info->Power = BMC810131C_Power;
+    info->Reset = BMC810131C_Reset;
+    info->Close = BMC810131C_Close;
+    AddExState(EXPREGS, 1, 0, "EXPR");
 }

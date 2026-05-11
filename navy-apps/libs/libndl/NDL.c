@@ -21,14 +21,14 @@ static int fbFd = -1;
 
 static void clear_full_framebuffer(int width, int height)
 {
-  assert(fbFd >= 0);
-  assert(width > 0 && height > 0);
+    assert(fbFd >= 0);
+    assert(width > 0 && height > 0);
 
-  const size_t frame_bytes = (size_t)width * (size_t)height * sizeof(uint32_t);
-  uint32_t *black_frame = calloc((size_t)width * (size_t)height, sizeof(uint32_t));
-  assert(black_frame != NULL);
+    const size_t frame_bytes = (size_t)width * (size_t)height * sizeof(uint32_t);
+    uint32_t *black_frame = calloc((size_t)width * (size_t)height, sizeof(uint32_t));
+    assert(black_frame != NULL);
 
-  /*
+    /*
    * NDL centers an app canvas inside the physical display. If a new app opens
    * a smaller canvas, its later NDL_DrawRect() calls only repaint that centered
    * rectangle; pixels outside the canvas keep the previous app's framebuffer
@@ -36,10 +36,10 @@ static void clear_full_framebuffer(int width, int height)
    * transitions such as NTerm -> PAL do not leave NTerm's white background
    * around PAL's smaller game image.
    */
-  assert(lseek(fbFd, 0, SEEK_SET) == 0);
-  assert(write(fbFd, black_frame, frame_bytes) == (ssize_t)frame_bytes);
+    assert(lseek(fbFd, 0, SEEK_SET) == 0);
+    assert(write(fbFd, black_frame, frame_bytes) == (ssize_t)frame_bytes);
 
-  free(black_frame);
+    free(black_frame);
 }
 
 /* initTick holds the millisecond timestamp taken at NDL_Init() */
@@ -48,111 +48,114 @@ static uint32_t initTick = 0;
 static int sbFd = -1;
 static int sbctlFd = -1;
 
-uint32_t NDL_GetTicks() 
+uint32_t NDL_GetTicks()
 {
-  struct timeval tv;
-  assert(gettimeofday(&tv, NULL) == 0);
+    struct timeval tv;
+    assert(gettimeofday(&tv, NULL) == 0);
 
-  // NowMs is milliseconds since the Unix epoch.
-  const uint32_t nowMs = (uint32_t)(tv.tv_sec * 1000UL + tv.tv_usec / 1000UL);
+    // NowMs is milliseconds since the Unix epoch.
+    const uint32_t nowMs = (uint32_t)(tv.tv_sec * 1000UL + tv.tv_usec / 1000UL);
 
-  // Subtract the base time recorded in initTick.
-  return nowMs - initTick;
+    // Subtract the base time recorded in initTick.
+    return nowMs - initTick;
 }
 
-int NDL_PollEvent(char *buf, int len) 
+int NDL_PollEvent(char *buf, int len)
 {
-  /*
+    /*
    * /dev/events already serialises keyboard and mouse records as short text
    * lines.  NDL leaves the text format intact; miniSDL is the layer that maps
    * names and coordinates to SDL event structures.
    */
-  // Open keyborad file.
-  if (eventsFd == -1)
-  {
-    eventsFd = open("/dev/events", 0);
-  }
+    // Open keyborad file.
+    if (eventsFd == -1)
+    {
+        eventsFd = open("/dev/events", 0);
+    }
 
-  if (eventsFd < 0)
-  {
-    assert(0);
-    return 0;
-  }
+    if (eventsFd < 0)
+    {
+        assert(0);
+        return 0;
+    }
 
-  const int readLen = read(eventsFd, buf, len);
-  return readLen > 0 ? readLen : 0;
+    const int readLen = read(eventsFd, buf, len);
+    return readLen > 0 ? readLen : 0;
 }
 
-void NDL_OpenCanvas(int *w, int *h) 
+void NDL_OpenCanvas(int *w, int *h)
 {
-  // Ensure not NULL.
-  assert(w && h);
+    // Ensure not NULL.
+    assert(w && h);
 
-  if (getenv("NWM_APP")) 
-  {
-    /*
+    if (getenv("NWM_APP"))
+    {
+        /*
      * Under NWM, file descriptors 3/4/5 are part of the window-manager ABI:
      * fd 4 requests the window size, fd 3 reports mmap readiness, and fd 5 is
      * the framebuffer.  Standalone Navy apps skip this path and use /dev/fb.
      */
-    int fbctl = 4;
-    fbdev = 5;
-    screen_w = *w; screen_h = *h;
-    char buf[64];
-    int len = sprintf(buf, "%d %d", screen_w, screen_h);
-    // let NWM resize the window and create the frame buffer
-    (void) write(fbctl, buf, len);
+        int fbctl = 4;
+        fbdev = 5;
+        screen_w = *w;
+        screen_h = *h;
+        char buf[64];
+        int len = sprintf(buf, "%d %d", screen_w, screen_h);
+        // let NWM resize the window and create the frame buffer
+        (void)write(fbctl, buf, len);
 
-    while (1) 
-    {
-      // 3 = evtdev
-      int nread = read(3, buf, sizeof(buf) - 1);
-      if (nread <= 0) continue;
-      buf[nread] = '\0';
-      if (strcmp(buf, "mmap ok") == 0) break;
+        while (1)
+        {
+            // 3 = evtdev
+            int nread = read(3, buf, sizeof(buf) - 1);
+            if (nread <= 0)
+                continue;
+            buf[nread] = '\0';
+            if (strcmp(buf, "mmap ok") == 0)
+                break;
+        }
+
+        close(fbctl);
     }
 
-    close(fbctl);
-  }
-  
-  const int fd = open("/proc/dispinfo", O_CLOEXEC);
-  assert(fd >= 0);
+    const int fd = open("/proc/dispinfo", O_CLOEXEC);
+    assert(fd >= 0);
 
-  char buffer[64];
+    char buffer[64];
 
-  assert(read(fd, buffer, sizeof(buffer)) >= 0);
-  assert(close(fd) == 0);
+    assert(read(fd, buffer, sizeof(buffer)) >= 0);
+    assert(close(fd) == 0);
 
-  // Get Screen Size
-  assert(sscanf(buffer, "WIDTH:%d\nHEIGHT:%d\n", &screen_w, &screen_h) == 2);
+    // Get Screen Size
+    assert(sscanf(buffer, "WIDTH:%d\nHEIGHT:%d\n", &screen_w, &screen_h) == 2);
 
-  // Make sure we check if both zero before assign canvas's size....
-  if (*w == 0 && *h == 0) 
-  {
-    *w = screen_w;
-    *h = screen_h;
-  }
+    // Make sure we check if both zero before assign canvas's size....
+    if (*w == 0 && *h == 0)
+    {
+        *w = screen_w;
+        *h = screen_h;
+    }
 
-  canvas_h = *h;
-  canvas_w = *w;
+    canvas_h = *h;
+    canvas_w = *w;
 
-  // Ensure canvas size is smaller or equal to screen size.
-  assert(canvas_h <= screen_h && canvas_w <= screen_w);
+    // Ensure canvas size is smaller or equal to screen size.
+    assert(canvas_h <= screen_h && canvas_w <= screen_w);
 
-  // Move canvas x and y to middle.
-  canvas_x = (screen_w - canvas_w) / 2;
-  canvas_y = (screen_h - canvas_h) / 2;
+    // Move canvas x and y to middle.
+    canvas_x = (screen_w - canvas_w) / 2;
+    canvas_y = (screen_h - canvas_h) / 2;
 
-  // Open file, if failed, just exit.
-  fbFd = open("/dev/fb", O_CLOEXEC);
-  assert(fbFd >= 0);
+    // Open file, if failed, just exit.
+    fbFd = open("/dev/fb", O_CLOEXEC);
+    assert(fbFd >= 0);
 
-  clear_full_framebuffer(screen_w, screen_h);
+    clear_full_framebuffer(screen_w, screen_h);
 }
 
 void NDL_TranslateMouse(int *x, int *y)
 {
-  /*
+    /*
    * Mouse devices report physical framebuffer positions, but apps draw inside
    * the centred canvas. Convert to canvas-local coordinates and keep edge
    * input inside the drawable area once a canvas size is known.  This is the
@@ -160,174 +163,189 @@ void NDL_TranslateMouse(int *x, int *y)
    * window positions back to framebuffer space, then NDL maps framebuffer space
    * to the app canvas.
    */
-  if (x != NULL)
-  {
-    *x -= canvas_x;
-    if (canvas_w > 0)
+    if (x != NULL)
     {
-      if (*x < 0) *x = 0;
-      if (*x >= canvas_w) *x = canvas_w - 1;
+        *x -= canvas_x;
+        if (canvas_w > 0)
+        {
+            if (*x < 0)
+                *x = 0;
+            if (*x >= canvas_w)
+                *x = canvas_w - 1;
+        }
     }
-  }
 
-  if (y != NULL)
-  {
-    *y -= canvas_y;
-    if (canvas_h > 0)
+    if (y != NULL)
     {
-      if (*y < 0) *y = 0;
-      if (*y >= canvas_h) *y = canvas_h - 1;
+        *y -= canvas_y;
+        if (canvas_h > 0)
+        {
+            if (*y < 0)
+                *y = 0;
+            if (*y >= canvas_h)
+                *y = canvas_h - 1;
+        }
     }
-  }
 }
 
-void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h) 
+void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
 {
-  assert(fbFd >= 0);
+    assert(fbFd >= 0);
 
-  if (w <= 0 || h <= 0)
-  {
-    return;
-  }
+    if (w <= 0 || h <= 0)
+    {
+        return;
+    }
 
-  /*
+    /*
    * If the rectangle covers whole physical framebuffer rows, one contiguous
    * write is enough.  This is the common full-screen image path for ONScripter
    * on a 400x300 canvas, and it avoids one syscall and one VGA sync per row.
    */
-  if (canvas_x + x == 0 && w == screen_w)
-  {
-    const off_t offset = (off_t)(canvas_y + y) * screen_w * (off_t)sizeof(uint32_t);
-    const size_t bytes = (size_t)w * (size_t)h * sizeof(uint32_t);
-    assert(lseek(fbFd, offset, SEEK_SET) == offset);
-    assert(write(fbFd, pixels, bytes) == (ssize_t)bytes);
-    return;
-  }
+    if (canvas_x + x == 0 && w == screen_w)
+    {
+        const off_t offset = (off_t)(canvas_y + y) * screen_w * (off_t)sizeof(uint32_t);
+        const size_t bytes = (size_t)w * (size_t)h * sizeof(uint32_t);
+        assert(lseek(fbFd, offset, SEEK_SET) == offset);
+        assert(write(fbFd, pixels, bytes) == (ssize_t)bytes);
+        return;
+    }
 
-  for (int row = 0; row < h; ++row) 
-  {
-    const off_t offset = ((off_t)(canvas_y + y + row) * screen_w + (canvas_x + x)) * sizeof(uint32_t);
+    for (int row = 0; row < h; ++row)
+    {
+        const off_t offset = ((off_t)(canvas_y + y + row) * screen_w + (canvas_x + x)) * sizeof(uint32_t);
 
-    // Located
-    assert(lseek(fbFd, offset, SEEK_SET) == offset);
+        // Located
+        assert(lseek(fbFd, offset, SEEK_SET) == offset);
 
-    // Write data.
-    assert(write(fbFd, pixels + row * w, w * sizeof(uint32_t)) == w * sizeof(uint32_t));
-  }
+        // Write data.
+        assert(write(fbFd, pixels + row * w, w * sizeof(uint32_t)) == w * sizeof(uint32_t));
+    }
 }
 
-void NDL_OpenAudio(int freq, int channels, int samples) 
+void NDL_OpenAudio(int freq, int channels, int samples)
 {
-  if (sbctlFd < 0) 
-  {
-    /*
+    if (sbctlFd < 0)
+    {
+        /*
      * The same descriptor is also used by NDL_QueryAudio().  Open it read/write
      * here so audio clients can configure the stream and then poll writable
      * capacity without reopening the control device.
      */
-    sbctlFd = open("/dev/sbctl", O_RDWR | O_CLOEXEC);
-    assert(sbctlFd >= 0);
-  }
+        sbctlFd = open("/dev/sbctl", O_RDWR | O_CLOEXEC);
+        assert(sbctlFd >= 0);
+    }
 
-  uint32_t cfg[3];
-  cfg[0] = (uint32_t)freq;
-  cfg[1] = (uint32_t)channels;
-  cfg[2] = (uint32_t)samples;
-  /*
+    uint32_t cfg[3];
+    cfg[0] = (uint32_t)freq;
+    cfg[1] = (uint32_t)channels;
+    cfg[2] = (uint32_t)samples;
+    /*
    * The sound-control device treats this three-word write as the complete
    * stream configuration.  SDL's sample format is not sent here; callers must
    * ensure the byte stream written to /dev/sb matches the device expectation.
    */
-  // Write exactly 12 bytes
-  ssize_t w = write(sbctlFd, cfg, sizeof(cfg));
-  assert(w == (ssize_t)sizeof(cfg));
+    // Write exactly 12 bytes
+    ssize_t w = write(sbctlFd, cfg, sizeof(cfg));
+    assert(w == (ssize_t)sizeof(cfg));
 
-  if (sbFd < 0) 
-  {
-    sbFd = open("/dev/sb", O_WRONLY | O_CLOEXEC);
+    if (sbFd < 0)
+    {
+        sbFd = open("/dev/sb", O_WRONLY | O_CLOEXEC);
+        assert(sbFd >= 0);
+    }
+}
+
+void NDL_CloseAudio()
+{
+    if (sbFd >= 0)
+    {
+        close(sbFd);
+        sbFd = -1;
+    }
+    if (sbctlFd >= 0)
+    {
+        close(sbctlFd);
+        sbctlFd = -1;
+    }
+}
+
+int NDL_PlayAudio(void *buf, int len)
+{
     assert(sbFd >= 0);
-  }
-}
-
-void NDL_CloseAudio() 
-{
-  if (sbFd >= 0) { close(sbFd); sbFd = -1; }
-  if (sbctlFd >= 0) { close(sbctlFd); sbctlFd = -1; }
-}
-
-int NDL_PlayAudio(void *buf, int len) 
-{
-  assert(sbFd >= 0);
-  /*
+    /*
    * /dev/sb write is blocking until all bytes are accepted.  Looping here keeps
    * miniSDL's audio pump simple: once it has queried enough free space, it can
    * treat a short write as progress rather than rebuilding the callback buffer.
    */
-  int written = 0;
-  while (written < len) 
-  {
-    ssize_t w = write(sbFd, (uint8_t *)buf + written, len - written);
-    if (w <= 0) return written; // should not happen, but be safe
-    written += (int)w;
-  }
+    int written = 0;
+    while (written < len)
+    {
+        ssize_t w = write(sbFd, (uint8_t *)buf + written, len - written);
+        if (w <= 0)
+            return written; // should not happen, but be safe
+        written += (int)w;
+    }
 
-  return written;
+    return written;
 }
 
-int NDL_QueryAudio() 
+int NDL_QueryAudio()
 {
-  if (sbctlFd < 0) 
-  {
-    // open on demand for read as well
-    sbctlFd = open("/dev/sbctl", O_RDWR | O_CLOEXEC);
-    assert(sbctlFd >= 0);
-  }
+    if (sbctlFd < 0)
+    {
+        // open on demand for read as well
+        sbctlFd = open("/dev/sbctl", O_RDWR | O_CLOEXEC);
+        assert(sbctlFd >= 0);
+    }
 
-  int free_bytes = 0;
-  /*
+    int free_bytes = 0;
+    /*
    * The control device returns remaining writable capacity in bytes.  SDL uses
    * that value to avoid overfilling the queue before making a blocking write to
    * /dev/sb.
    */
-  ssize_t r = read(sbctlFd, &free_bytes, sizeof(free_bytes));
-  if (r < (ssize_t)sizeof(free_bytes)) return 0;
-  return free_bytes;
+    ssize_t r = read(sbctlFd, &free_bytes, sizeof(free_bytes));
+    if (r < (ssize_t)sizeof(free_bytes))
+        return 0;
+    return free_bytes;
 }
 
-int NDL_Init(uint32_t flags) 
+int NDL_Init(uint32_t flags)
 {
-  if (getenv("NWM_APP")) {
-    evtdev = 3;
-  }
+    if (getenv("NWM_APP"))
+    {
+        evtdev = 3;
+    }
 
-  // Record the “zero” point in milliseconds.
-  struct timeval tv;
-  assert(gettimeofday(&tv, NULL) == 0);
-  initTick = (uint32_t)(tv.tv_sec * 1000UL + tv.tv_usec / 1000UL);
+    // Record the “zero” point in milliseconds.
+    struct timeval tv;
+    assert(gettimeofday(&tv, NULL) == 0);
+    initTick = (uint32_t)(tv.tv_sec * 1000UL + tv.tv_usec / 1000UL);
 
-  return 0;
+    return 0;
 }
 
-void NDL_Quit() 
+void NDL_Quit()
 {
-  // Close fds.
-  if (eventsFd >= 0)
-  {
-    assert(close(eventsFd) == 0);
-  }
+    // Close fds.
+    if (eventsFd >= 0)
+    {
+        assert(close(eventsFd) == 0);
+    }
 
-  if (fbFd >= 0)
-  {
-    assert(close(fbFd) == 0);
-  }
+    if (fbFd >= 0)
+    {
+        assert(close(fbFd) == 0);
+    }
 
-  if (sbFd >= 0)
-  {
-    assert(close(sbFd) == 0);
-  }
-  
-  if (sbctlFd >= 0)
-  {
-    assert(close(sbctlFd) == 0);
-  }
+    if (sbFd >= 0)
+    {
+        assert(close(sbFd) == 0);
+    }
+
+    if (sbctlFd >= 0)
+    {
+        assert(close(sbctlFd) == 0);
+    }
 }

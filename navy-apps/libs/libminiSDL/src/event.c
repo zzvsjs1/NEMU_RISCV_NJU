@@ -6,12 +6,11 @@
 #define keyname(k) #k,
 
 static const char *keyname[] = {
-  "NONE",
-  _KEYS(keyname)
-};
+    "NONE",
+    _KEYS(keyname)};
 #define KEANAME_COUNT (sizeof(keyname) / sizeof(keyname[0]))
 
-static uint8_t keyStates[KEANAME_COUNT] = { 0 };
+static uint8_t keyStates[KEANAME_COUNT] = {0};
 
 /*
  * Key and mouse state are derived when events enter the SDL queue.  This lets
@@ -22,383 +21,403 @@ static int mouseX = 0;
 static int mouseY = 0;
 static uint8_t mouseButtons = 0;
 
-#define NDL_MOUSE_LEFT_MASK   (1 << 0)
+#define NDL_MOUSE_LEFT_MASK (1 << 0)
 #define NDL_MOUSE_MIDDLE_MASK (1 << 1)
-#define NDL_MOUSE_RIGHT_MASK  (1 << 2)
+#define NDL_MOUSE_RIGHT_MASK (1 << 2)
 
 /* Ring buffer for outgoing SDL_Events. */
 #define EVENT_QUEUE_SIZE 128
-static SDL_Event  eventQueue[EVENT_QUEUE_SIZE];
+static SDL_Event eventQueue[EVENT_QUEUE_SIZE];
 static int queueHead = 0;
 static int queueTail = 0;
 
 static int queueEmpty(void)
 {
-  return queueHead == queueTail;
+    return queueHead == queueTail;
 }
 
 static int eventMatchesMask(const SDL_Event *ev, uint32_t mask)
 {
-  return (mask & SDL_EVENTMASK(ev->type)) != 0;
+    return (mask & SDL_EVENTMASK(ev->type)) != 0;
 }
 
 static uint8_t lookupMouseButton(const char *name)
 {
-  /*
+    /*
    * NDL names wheel movement as input records, while old SDL exposes wheel
    * ticks through synthetic button numbers.  Translate at the boundary so
    * application code can stay SDL-compatible.
    */
-  if (strcmp(name, "LEFT") == 0) return SDL_BUTTON_LEFT;
-  if (strcmp(name, "MIDDLE") == 0) return SDL_BUTTON_MIDDLE;
-  if (strcmp(name, "RIGHT") == 0) return SDL_BUTTON_RIGHT;
-  if (strcmp(name, "WHEELUP") == 0) return SDL_BUTTON_WHEELUP;
-  if (strcmp(name, "WHEELDOWN") == 0) return SDL_BUTTON_WHEELDOWN;
-  return 0;
+    if (strcmp(name, "LEFT") == 0)
+        return SDL_BUTTON_LEFT;
+    if (strcmp(name, "MIDDLE") == 0)
+        return SDL_BUTTON_MIDDLE;
+    if (strcmp(name, "RIGHT") == 0)
+        return SDL_BUTTON_RIGHT;
+    if (strcmp(name, "WHEELUP") == 0)
+        return SDL_BUTTON_WHEELUP;
+    if (strcmp(name, "WHEELDOWN") == 0)
+        return SDL_BUTTON_WHEELDOWN;
+    return 0;
 }
 
 static uint8_t translateMouseButtons(int buttons)
 {
-  /*
+    /*
    * NDL reports a compact physical-button bitfield.  SDL stores button state
    * as SDL_BUTTON(n) masks, so keep that representation inside queued events
    * and the cached mouse state.
    */
-  uint8_t state = 0;
-  if (buttons & NDL_MOUSE_LEFT_MASK) state |= SDL_BUTTON(SDL_BUTTON_LEFT);
-  if (buttons & NDL_MOUSE_MIDDLE_MASK) state |= SDL_BUTTON(SDL_BUTTON_MIDDLE);
-  if (buttons & NDL_MOUSE_RIGHT_MASK) state |= SDL_BUTTON(SDL_BUTTON_RIGHT);
-  return state;
+    uint8_t state = 0;
+    if (buttons & NDL_MOUSE_LEFT_MASK)
+        state |= SDL_BUTTON(SDL_BUTTON_LEFT);
+    if (buttons & NDL_MOUSE_MIDDLE_MASK)
+        state |= SDL_BUTTON(SDL_BUTTON_MIDDLE);
+    if (buttons & NDL_MOUSE_RIGHT_MASK)
+        state |= SDL_BUTTON(SDL_BUTTON_RIGHT);
+    return state;
 }
 
 static void updateMouseStateFromEvent(const SDL_Event *ev)
 {
-  if (ev->type == SDL_MOUSEMOTION)
-  {
-    mouseX = ev->motion.x;
-    mouseY = ev->motion.y;
-    mouseButtons = ev->motion.state;
-  }
-  else if (ev->type == SDL_MOUSEBUTTONDOWN)
-  {
-    mouseX = ev->button.x;
-    mouseY = ev->button.y;
-    if (ev->button.button <= SDL_BUTTON_RIGHT)
+    if (ev->type == SDL_MOUSEMOTION)
     {
-      mouseButtons |= SDL_BUTTON(ev->button.button);
+        mouseX = ev->motion.x;
+        mouseY = ev->motion.y;
+        mouseButtons = ev->motion.state;
     }
-  }
-  else if (ev->type == SDL_MOUSEBUTTONUP)
-  {
-    mouseX = ev->button.x;
-    mouseY = ev->button.y;
-    if (ev->button.button <= SDL_BUTTON_RIGHT)
+    else if (ev->type == SDL_MOUSEBUTTONDOWN)
     {
-      mouseButtons &= (uint8_t)~SDL_BUTTON(ev->button.button);
+        mouseX = ev->button.x;
+        mouseY = ev->button.y;
+        if (ev->button.button <= SDL_BUTTON_RIGHT)
+        {
+            mouseButtons |= SDL_BUTTON(ev->button.button);
+        }
     }
-  }
+    else if (ev->type == SDL_MOUSEBUTTONUP)
+    {
+        mouseX = ev->button.x;
+        mouseY = ev->button.y;
+        if (ev->button.button <= SDL_BUTTON_RIGHT)
+        {
+            mouseButtons &= (uint8_t)~SDL_BUTTON(ev->button.button);
+        }
+    }
 }
 
 /* Append an event without changing derived input state. */
 static void enqueueEventRaw(const SDL_Event *ev)
 {
-  const int next = (queueTail + 1) % EVENT_QUEUE_SIZE;
-  if (next == queueHead) 
-  {
-      /* Buffer full: overwrite the oldest event to keep recent input live. */
-      queueHead = (queueHead + 1) % EVENT_QUEUE_SIZE;
-  }
+    const int next = (queueTail + 1) % EVENT_QUEUE_SIZE;
+    if (next == queueHead)
+    {
+        /* Buffer full: overwrite the oldest event to keep recent input live. */
+        queueHead = (queueHead + 1) % EVENT_QUEUE_SIZE;
+    }
 
-  eventQueue[queueTail] = *ev;
-  queueTail = next;
+    eventQueue[queueTail] = *ev;
+    queueTail = next;
 }
 
 static int previousQueueIndex(int index)
 {
-  return (index + EVENT_QUEUE_SIZE - 1) % EVENT_QUEUE_SIZE;
+    return (index + EVENT_QUEUE_SIZE - 1) % EVENT_QUEUE_SIZE;
 }
 
 static int replacePendingMouseMotion(const SDL_Event *ev)
 {
-  if (queueEmpty()) return 0;
+    if (queueEmpty())
+        return 0;
 
-  /*
+    /*
    * Coalesce only motion events that are still adjacent at the queue tail.
    * Replacing an older motion across a button, wheel, or key event would move
    * the cursor event to the wrong side of that input, which can change click
    * semantics in ONScripter.
    */
-  const int last = previousQueueIndex(queueTail);
-  if (eventQueue[last].type != SDL_MOUSEMOTION) return 0;
+    const int last = previousQueueIndex(queueTail);
+    if (eventQueue[last].type != SDL_MOUSEMOTION)
+        return 0;
 
-  eventQueue[last] = *ev;
-  return 1;
+    eventQueue[last] = *ev;
+    return 1;
 }
 
 /* Enqueue, dropping the oldest event if the fixed queue is full. */
 static void enqueueEvent(const SDL_Event *ev)
 {
-  updateMouseStateFromEvent(ev);
-  enqueueEventRaw(ev);
+    updateMouseStateFromEvent(ev);
+    enqueueEventRaw(ev);
 }
 
 static void enqueueMouseMotionEvent(const SDL_Event *ev)
 {
-  /*
+    /*
    * Motion can be coalesced only after updating cached state.  SDL_GetMouseState()
    * should expose the latest cursor position even if the older motion event is
    * replaced before the app polls it.
    */
-  updateMouseStateFromEvent(ev);
-  if (replacePendingMouseMotion(ev)) return;
-  enqueueEventRaw(ev);
+    updateMouseStateFromEvent(ev);
+    if (replacePendingMouseMotion(ev))
+        return;
+    enqueueEventRaw(ev);
 }
 
 /* Dequeue one event. Return 1 on success and 0 when the queue is empty. */
-static int dequeueEvent(SDL_Event *ev) 
+static int dequeueEvent(SDL_Event *ev)
 {
-  if (queueEmpty())
-  {
-    return 0;
-  }
+    if (queueEmpty())
+    {
+        return 0;
+    }
 
-  *ev = eventQueue[queueHead];
-  queueHead = (queueHead + 1) % EVENT_QUEUE_SIZE;
-  return 1;
+    *ev = eventQueue[queueHead];
+    queueHead = (queueHead + 1) % EVENT_QUEUE_SIZE;
+    return 1;
 }
 
-
 // Find the index of 'name' in keyname[], or -1 if not found.
-static int lookupKeycode(const char *name) 
+static int lookupKeycode(const char *name)
 {
-  for (int i = 0; i < KEANAME_COUNT; i++) 
-  {
-      if (strcmp(name, keyname[i]) == 0) 
-      {
-          return i;
-      }
-  }
+    for (int i = 0; i < KEANAME_COUNT; i++)
+    {
+        if (strcmp(name, keyname[i]) == 0)
+        {
+            return i;
+        }
+    }
 
-  return -1;
+    return -1;
 }
 
 /* Read every raw NDL input record and enqueue translated SDL events. */
 static void pumpInputEvents(void)
 {
-  char buf[64];
+    char buf[64];
 
-  while (true) 
-  {
-      const int n = NDL_PollEvent(buf, sizeof(buf));
-      if (n <= 0) 
-      {
-        break;
-      }
+    while (true)
+    {
+        const int n = NDL_PollEvent(buf, sizeof(buf));
+        if (n <= 0)
+        {
+            break;
+        }
 
-      buf[(n < (int)sizeof(buf) ? n : sizeof(buf)-1)] = '\0';
+        buf[(n < (int)sizeof(buf) ? n : sizeof(buf) - 1)] = '\0';
 
-      char prefix[3] = {};
-      if (sscanf(buf, "%2s", prefix) != 1)
-      {
-        continue;
-      }
+        char prefix[3] = {};
+        if (sscanf(buf, "%2s", prefix) != 1)
+        {
+            continue;
+        }
 
-      int x = 0, y = 0, buttons = 0, dx = 0, dy = 0;
-      char button_name[16] = {};
+        int x = 0, y = 0, buttons = 0, dx = 0, dy = 0;
+        char button_name[16] = {};
 
-      if (strcmp(prefix, "mm") == 0 &&
-          sscanf(buf, "%*s %d %d %d", &x, &y, &buttons) == 3)
-      {
-        /*
+        if (strcmp(prefix, "mm") == 0 &&
+            sscanf(buf, "%*s %d %d %d", &x, &y, &buttons) == 3)
+        {
+            /*
          * NDL reports physical framebuffer coordinates.  NEMU may already have
          * undone host-window resize scaling, but SDL apps still draw inside the
          * centred NDL canvas, so this second translation removes the canvas border.
          */
-        NDL_TranslateMouse(&x, &y);
-        SDL_Event ev = {};
-        ev.type = SDL_MOUSEMOTION;
-        ev.motion.x = x;
-        ev.motion.y = y;
-        ev.motion.state = translateMouseButtons(buttons);
-        ev.motion.xrel = x - mouseX;
-        ev.motion.yrel = y - mouseY;
-        enqueueMouseMotionEvent(&ev);
-        continue;
-      }
-
-      if ((strcmp(prefix, "md") == 0 || strcmp(prefix, "mu") == 0) &&
-          sscanf(buf, "%*s %15s %d %d %d", button_name, &x, &y, &buttons) == 4)
-      {
-        /* Remove the centred canvas border before publishing the button event. */
-        NDL_TranslateMouse(&x, &y);
-        SDL_Event ev = {};
-        ev.type = strcmp(prefix, "md") == 0 ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
-        ev.button.button = lookupMouseButton(button_name);
-        ev.button.state = translateMouseButtons(buttons);
-        ev.button.x = x;
-        ev.button.y = y;
-        if (ev.button.button != 0) enqueueEvent(&ev);
-        continue;
-      }
-
-      if (strcmp(prefix, "mw") == 0 &&
-          sscanf(buf, "%*s %d %d %d %d %d", &dx, &dy, &x, &y, &buttons) == 5)
-      {
-        if (dy == 0)
-        {
-          continue;
+            NDL_TranslateMouse(&x, &y);
+            SDL_Event ev = {};
+            ev.type = SDL_MOUSEMOTION;
+            ev.motion.x = x;
+            ev.motion.y = y;
+            ev.motion.state = translateMouseButtons(buttons);
+            ev.motion.xrel = x - mouseX;
+            ev.motion.yrel = y - mouseY;
+            enqueueMouseMotionEvent(&ev);
+            continue;
         }
 
-        /* Wheel pseudo-buttons keep normal button semantics but use canvas-local x/y. */
-        NDL_TranslateMouse(&x, &y);
-        SDL_Event ev = {};
-        ev.type = SDL_MOUSEBUTTONDOWN;
-        ev.button.button = dy > 0 ? SDL_BUTTON_WHEELUP : SDL_BUTTON_WHEELDOWN;
-        ev.button.state = translateMouseButtons(buttons);
-        ev.button.x = x;
-        ev.button.y = y;
+        if ((strcmp(prefix, "md") == 0 || strcmp(prefix, "mu") == 0) &&
+            sscanf(buf, "%*s %15s %d %d %d", button_name, &x, &y, &buttons) == 4)
+        {
+            /* Remove the centred canvas border before publishing the button event. */
+            NDL_TranslateMouse(&x, &y);
+            SDL_Event ev = {};
+            ev.type = strcmp(prefix, "md") == 0 ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+            ev.button.button = lookupMouseButton(button_name);
+            ev.button.state = translateMouseButtons(buttons);
+            ev.button.x = x;
+            ev.button.y = y;
+            if (ev.button.button != 0)
+                enqueueEvent(&ev);
+            continue;
+        }
+
+        if (strcmp(prefix, "mw") == 0 &&
+            sscanf(buf, "%*s %d %d %d %d %d", &dx, &dy, &x, &y, &buttons) == 5)
+        {
+            if (dy == 0)
+            {
+                continue;
+            }
+
+            /* Wheel pseudo-buttons keep normal button semantics but use canvas-local x/y. */
+            NDL_TranslateMouse(&x, &y);
+            SDL_Event ev = {};
+            ev.type = SDL_MOUSEBUTTONDOWN;
+            ev.button.button = dy > 0 ? SDL_BUTTON_WHEELUP : SDL_BUTTON_WHEELDOWN;
+            ev.button.state = translateMouseButtons(buttons);
+            ev.button.x = x;
+            ev.button.y = y;
+            enqueueEvent(&ev);
+            continue;
+        }
+
+        char name[32] = {};
+        if ((strcmp(prefix, "kd") != 0 && strcmp(prefix, "ku") != 0) ||
+            sscanf(buf, "%*s %31s", name) != 1)
+        {
+            continue;
+        }
+
+        int kc = lookupKeycode(name);
+        if (kc < 0)
+        {
+            continue;
+        }
+
+        SDL_Event ev = {0};
+        if (strcmp(prefix, "kd") == 0)
+        {
+            ev.type = SDL_KEYDOWN;
+            keyStates[kc] = 1;
+        }
+        else if (strcmp(prefix, "ku") == 0)
+        {
+            ev.type = SDL_KEYUP;
+            keyStates[kc] = 0;
+        }
+
+        ev.key.keysym.sym = kc;
         enqueueEvent(&ev);
-        continue;
-      }
-
-      char name[32] = {};
-      if ((strcmp(prefix, "kd") != 0 && strcmp(prefix, "ku") != 0) ||
-          sscanf(buf, "%*s %31s", name) != 1)
-      {
-        continue;
-      }
-
-      int kc = lookupKeycode(name);
-      if (kc < 0) 
-      {
-        continue;
-      }
-
-      SDL_Event ev = {0};
-      if (strcmp(prefix, "kd") == 0) 
-      {
-          ev.type = SDL_KEYDOWN;
-          keyStates[kc] = 1;
-      }
-      else if (strcmp(prefix, "ku") == 0) 
-      {
-          ev.type = SDL_KEYUP;
-          keyStates[kc] = 0;
-      }
-
-      ev.key.keysym.sym = kc;
-      enqueueEvent(&ev);
-  }
+    }
 }
 
-int SDL_PushEvent(SDL_Event *ev) 
+int SDL_PushEvent(SDL_Event *ev)
 {
-  if (ev == NULL) return -1;
-  /*
+    if (ev == NULL)
+        return -1;
+    /*
    * User events share the same queue as device events.  Updating derived state
    * here is harmless for non-input events and keeps manually injected input
    * consistent with events read from NDL.
    */
-  enqueueEvent(ev);
-  return 0;
+    enqueueEvent(ev);
+    return 0;
 }
 
-void SDL_PumpEvents(void) 
+void SDL_PumpEvents(void)
 {
-  void SDL_CheckTimers(void);
+    void SDL_CheckTimers(void);
 
-  /*
+    /*
    * miniSDL has no background event thread.  Polling events is also the safe
    * point for timers and audio because games call it frequently and all three
    * services remain serialised on the main thread.
    */
-  pumpInputEvents();
-  SDL_CheckTimers();
+    pumpInputEvents();
+    SDL_CheckTimers();
 
-  SDL_PumpAudio();
+    SDL_PumpAudio();
 }
 
-int SDL_PollEvent(SDL_Event *ev) 
+int SDL_PollEvent(SDL_Event *ev)
 {
-  SDL_PumpEvents();
-  return dequeueEvent(ev);
+    SDL_PumpEvents();
+    return dequeueEvent(ev);
 }
 
-int SDL_WaitEvent(SDL_Event *event) 
+int SDL_WaitEvent(SDL_Event *event)
 {
-  /*
+    /*
    * The Navy environment does not provide a blocking SDL wait primitive.  The
    * busy wait still calls SDL_PollEvent(), so timers and audio continue to be
    * pumped while the application waits for input.
    */
-  while (!SDL_PollEvent(event)) { /* busy-wait */ }
-  return 1;
+    while (!SDL_PollEvent(event))
+    { /* busy-wait */
+    }
+    return 1;
 }
 
-int SDL_PeepEvents(SDL_Event *ev, int numevents, int action, uint32_t mask) 
+int SDL_PeepEvents(SDL_Event *ev, int numevents, int action, uint32_t mask)
 {
-  if (numevents <= 0) return 0;
+    if (numevents <= 0)
+        return 0;
 
-  if (action == SDL_ADDEVENT)
-  {
-    for (int i = 0; i < numevents; i++) enqueueEvent(&ev[i]);
-    return numevents;
-  }
+    if (action == SDL_ADDEVENT)
+    {
+        for (int i = 0; i < numevents; i++)
+            enqueueEvent(&ev[i]);
+        return numevents;
+    }
 
-  SDL_PumpEvents();
+    SDL_PumpEvents();
 
-  int matched = 0;
-  SDL_Event tmp[EVENT_QUEUE_SIZE];
-  int tmp_count = 0;
+    int matched = 0;
+    SDL_Event tmp[EVENT_QUEUE_SIZE];
+    int tmp_count = 0;
 
-  /*
+    /*
    * Rebuild the queue after scanning. This keeps event ordering stable while
    * allowing SDL_GETEVENT to remove only the events that matched the mask.
    */
-  while (!queueEmpty())
-  {
-    SDL_Event cur;
-    dequeueEvent(&cur);
-
-    const int take = matched < numevents && eventMatchesMask(&cur, mask);
-    if (take)
+    while (!queueEmpty())
     {
-      if (ev != NULL) ev[matched] = cur;
-      matched++;
+        SDL_Event cur;
+        dequeueEvent(&cur);
+
+        const int take = matched < numevents && eventMatchesMask(&cur, mask);
+        if (take)
+        {
+            if (ev != NULL)
+                ev[matched] = cur;
+            matched++;
+        }
+
+        if (action != SDL_GETEVENT || !take)
+        {
+            assert(tmp_count < EVENT_QUEUE_SIZE);
+            tmp[tmp_count++] = cur;
+        }
     }
 
-    if (action != SDL_GETEVENT || !take)
-    {
-      assert(tmp_count < EVENT_QUEUE_SIZE);
-      tmp[tmp_count++] = cur;
-    }
-  }
+    queueHead = queueTail = 0;
+    for (int i = 0; i < tmp_count; i++)
+        enqueueEventRaw(&tmp[i]);
 
-  queueHead = queueTail = 0;
-  for (int i = 0; i < tmp_count; i++) enqueueEventRaw(&tmp[i]);
-
-  return matched;
+    return matched;
 }
 
-uint8_t* SDL_GetKeyState(int *numkeys) 
+uint8_t *SDL_GetKeyState(int *numkeys)
 {
-  pumpInputEvents();
+    pumpInputEvents();
 
-  // Return size of our array
-  if (numkeys) 
-  {
-    *numkeys = KEANAME_COUNT;
-  }
+    // Return size of our array
+    if (numkeys)
+    {
+        *numkeys = KEANAME_COUNT;
+    }
 
-  // Caller must NOT free this pointer.
-  return keyStates;
+    // Caller must NOT free this pointer.
+    return keyStates;
 }
 
 uint8_t SDL_GetMouseState(int *x, int *y)
 {
-  pumpInputEvents();
+    pumpInputEvents();
 
-  if (x) *x = mouseX;
-  if (y) *y = mouseY;
-  return mouseButtons;
+    if (x)
+        *x = mouseX;
+    if (y)
+        *y = mouseY;
+    return mouseButtons;
 }

@@ -23,40 +23,44 @@
 static uint8 regs[8];
 
 static SFORMAT StateRegs[] =
+    {
+        {regs, 8, "REGS"},
+        {0}};
+
+static void Sync(void)
 {
-	{ regs, 8, "REGS" },
-	{ 0 }
-};
-
-static void Sync(void) {
-	for (int i=0; i < 8; ++i)
-	{
-		setprg4(0x8000 + (0x1000 * i), regs[i]);
-	}
+    for (int i = 0; i < 8; ++i)
+    {
+        setprg4(0x8000 + (0x1000 * i), regs[i]);
+    }
 }
 
-static DECLFW(M31Write) {
-	if (A >= 0x5000 && A <= 0x5FFF)
-	{
-		regs[A&7] = V;
-		Sync();
-	}
+static DECLFW(M31Write)
+{
+    if (A >= 0x5000 && A <= 0x5FFF)
+    {
+        regs[A & 7] = V;
+        Sync();
+    }
 }
 
-static void M31Power(void) {
-	setchr8(0);
-	regs[7] = 0xFF;
-	Sync();
-	SetReadHandler(0x8000, 0xffff, CartBR);
-	SetWriteHandler(0x5000, 0x5fff, M31Write);
+static void M31Power(void)
+{
+    setchr8(0);
+    regs[7] = 0xFF;
+    Sync();
+    SetReadHandler(0x8000, 0xffff, CartBR);
+    SetWriteHandler(0x5000, 0x5fff, M31Write);
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void Mapper31_Init(CartInfo *info) {
-	info->Power = M31Power;
-	GameStateRestore = StateRestore;
-	AddExState(&StateRegs, ~0, 0, 0);
+void Mapper31_Init(CartInfo *info)
+{
+    info->Power = M31Power;
+    GameStateRestore = StateRestore;
+    AddExState(&StateRegs, ~0, 0, 0);
 }

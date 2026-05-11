@@ -4,7 +4,7 @@
 #include <common.h>
 
 // Watch point
-void addWp(char* exprs);
+void addWp(char *exprs);
 
 void delWp(const int n);
 

@@ -17,14 +17,14 @@ EEMBC
 El Dorado Hills, CA, 95762
 */
 /* Topic: Description
-	This file contains  declarations of the various benchmark functions.
+    This file contains  declarations of the various benchmark functions.
 */
 
 /* Configuration: TOTAL_DATA_SIZE
-	Define total size for data algorithms will operate on
+    Define total size for data algorithms will operate on
 */
 #ifndef TOTAL_DATA_SIZE
-#define TOTAL_DATA_SIZE 2*1000
+#define TOTAL_DATA_SIZE 2 * 1000
 #endif
 
 #define SEED_ARG 0
@@ -48,8 +48,8 @@ El Dorado Hills, CA, 95762
 void *iterate(void *pres);
 
 /* Typedef: secs_ret
-	For machines that have floating point support, get number of seconds as a double.
-	Otherwise an unsigned int.
+    For machines that have floating point support, get number of seconds as a double.
+    Otherwise an unsigned int.
 */
 #if HAS_FLOAT
 typedef double secs_ret;
@@ -81,23 +81,24 @@ void portable_free(void *p);
 ee_s32 parseval(char *valstring);
 
 /* Algorithm IDS */
-#define ID_LIST 	(1<<0)
-#define ID_MATRIX 	(1<<1)
-#define ID_STATE 	(1<<2)
-#define ALL_ALGORITHMS_MASK (ID_LIST|ID_MATRIX|ID_STATE)
+#define ID_LIST (1 << 0)
+#define ID_MATRIX (1 << 1)
+#define ID_STATE (1 << 2)
+#define ALL_ALGORITHMS_MASK (ID_LIST | ID_MATRIX | ID_STATE)
 #define NUM_ALGORITHMS 3
 
 /* list data structures */
-typedef struct list_data_s {
-	ee_s16 data16;
-	ee_s16 idx;
+typedef struct list_data_s
+{
+    ee_s16 data16;
+    ee_s16 idx;
 } list_data;
 
-typedef struct list_head_s {
-	struct list_head_s *next;
-	struct list_data_s *info;
+typedef struct list_head_s
+{
+    struct list_head_s *next;
+    struct list_data_s *info;
 } list_head;
-
 
 /*matrix benchmark related stuff */
 #define MATDAT_INT 1
@@ -109,52 +110,54 @@ typedef ee_f16 MATDAT;
 typedef ee_f32 MATRES;
 #endif
 
-typedef struct MAT_PARAMS_S {
-	int N;
-	MATDAT *A;
-	MATDAT *B;
-	MATRES *C;
+typedef struct MAT_PARAMS_S
+{
+    int N;
+    MATDAT *A;
+    MATDAT *B;
+    MATRES *C;
 } mat_params;
 
 /* state machine related stuff */
 /* List of all the possible states for the FSM */
-typedef enum CORE_STATE {
-	CORE_START=0,
-	CORE_INVALID,
-	CORE_S1,
-	CORE_S2,
-	CORE_INT,
-	CORE_FLOAT,
-	CORE_EXPONENT,
-	CORE_SCIENTIFIC,
-	NUM_CORE_STATES
-} core_state_e ;
-
+typedef enum CORE_STATE
+{
+    CORE_START = 0,
+    CORE_INVALID,
+    CORE_S1,
+    CORE_S2,
+    CORE_INT,
+    CORE_FLOAT,
+    CORE_EXPONENT,
+    CORE_SCIENTIFIC,
+    NUM_CORE_STATES
+} core_state_e;
 
 /* Helper structure to hold results */
-typedef struct RESULTS_S {
-	/* inputs */
-	ee_s16	seed1;		/* Initializing seed */
-	ee_s16	seed2;		/* Initializing seed */
-	ee_s16	seed3;		/* Initializing seed */
-	void	*memblock[4];	/* Pointer to safe memory location */
-	ee_u32	size;		/* Size of the data */
-	ee_u32 iterations;		/* Number of iterations to execute */
-	ee_u32	execs;		/* Bitmask of operations to execute */
-	struct list_head_s *list;
-	mat_params mat;
-	/* outputs */
-	ee_u16	crc;
-	ee_u16	crclist;
-	ee_u16	crcmatrix;
-	ee_u16	crcstate;
-	ee_s16	err;
-	/* ultithread specific */
-	core_portable port;
+typedef struct RESULTS_S
+{
+    /* inputs */
+    ee_s16 seed1;      /* Initializing seed */
+    ee_s16 seed2;      /* Initializing seed */
+    ee_s16 seed3;      /* Initializing seed */
+    void *memblock[4]; /* Pointer to safe memory location */
+    ee_u32 size;       /* Size of the data */
+    ee_u32 iterations; /* Number of iterations to execute */
+    ee_u32 execs;      /* Bitmask of operations to execute */
+    struct list_head_s *list;
+    mat_params mat;
+    /* outputs */
+    ee_u16 crc;
+    ee_u16 crclist;
+    ee_u16 crcmatrix;
+    ee_u16 crcstate;
+    ee_s16 err;
+    /* ultithread specific */
+    core_portable port;
 } core_results;
 
 /* Multicore execution handling */
-#if (MULTITHREAD>1)
+#if (MULTITHREAD > 1)
 ee_u8 core_start_parallel(core_results *res);
 ee_u8 core_stop_parallel(core_results *res);
 #endif
@@ -166,9 +169,8 @@ ee_u16 core_bench_list(core_results *res, ee_s16 finder_idx);
 /* state benchmark functions */
 void core_init_state(ee_u32 size, ee_s16 seed, ee_u8 *p);
 ee_u16 core_bench_state(ee_u32 blksize, ee_u8 *memblock,
-		ee_s16 seed1, ee_s16 seed2, ee_s16 step, ee_u16 crc);
+                        ee_s16 seed1, ee_s16 seed2, ee_s16 step, ee_u16 crc);
 
 /* matrix benchmark functions */
 ee_u32 core_init_matrix(ee_u32 blksize, void *memblk, ee_s32 seed, mat_params *p);
 ee_u16 core_bench_matrix(mat_params *p, ee_s16 seed, ee_u16 crc);
-

@@ -15,17 +15,19 @@
 #include <debug.h>
 #include <inttypes.h>
 
-typedef	long time_t;
+typedef long time_t;
 typedef long suseconds_t;
 
-struct timeval {
-	time_t		tv_sec;		/* seconds */
-	suseconds_t	tv_usec;	/* and microseconds */
+struct timeval
+{
+    time_t tv_sec;       /* seconds */
+    suseconds_t tv_usec; /* and microseconds */
 };
 
-struct timezone {
-	int	tz_minuteswest;	/* minutes west of Greenwich */
-	int	tz_dsttime;	/* type of dst correction */
+struct timezone
+{
+    int tz_minuteswest; /* minutes west of Greenwich */
+    int tz_dsttime;     /* type of dst correction */
 };
 
 #endif

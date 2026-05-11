@@ -72,41 +72,41 @@ typedef uint32_t uint32;
 #endif
 
 #ifdef __GNUC__
- typedef unsigned long long uint64;
- typedef uint64 u64;
- typedef long long int64;
- #define INLINE inline
- #define GINLINE inline
+typedef unsigned long long uint64;
+typedef uint64 u64;
+typedef long long int64;
+#define INLINE inline
+#define GINLINE inline
 #elif MSVC
- typedef __int64 int64;
- typedef unsigned __int64 uint64;
- #define __restrict__
- #define INLINE __inline
- #define GINLINE			/* Can't declare a function INLINE
-					   and global in MSVC.  Bummer.
-					*/
- #define PSS_STYLE 2			/* Does MSVC compile for anything
-					   other than Windows/DOS targets?
-					*/
+typedef __int64 int64;
+typedef unsigned __int64 uint64;
+#define __restrict__
+#define INLINE __inline
+#define GINLINE     /* Can't declare a function INLINE
+                       and global in MSVC.  Bummer.
+                    */
+#define PSS_STYLE 2 /* Does MSVC compile for anything
+                       other than Windows/DOS targets?
+                    */
 
 #endif
 
-#if PSS_STYLE==2
+#if PSS_STYLE == 2
 
 #define PSS "\\"
 #define PS '\\'
 
-#elif PSS_STYLE==1
+#elif PSS_STYLE == 1
 
 #define PSS "/"
 #define PS '/'
 
-#elif PSS_STYLE==3
+#elif PSS_STYLE == 3
 
 #define PSS "\\"
 #define PS '\\'
 
-#elif PSS_STYLE==4
+#elif PSS_STYLE == 4
 
 #define PSS ":"
 #define PS ':'
@@ -117,12 +117,15 @@ typedef uint32_t uint32;
 
 #endif
 
-
 typedef void (*writefunc)(uint32 A, uint8 V);
 typedef uint8 (*readfunc)(uint32 A);
 
 #ifndef CTASSERT
-#define CTASSERT(x)  struct __assert ## y { char a[(x) ? 1 : -1];};
+#define CTASSERT(x) \
+    struct __assert##y \
+    { \
+        char a[(x) ? 1 : -1]; \
+    };
 #endif
 
 typedef uint8 u8;

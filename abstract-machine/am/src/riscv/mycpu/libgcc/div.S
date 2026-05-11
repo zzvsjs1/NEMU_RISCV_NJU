@@ -2,16 +2,16 @@
 #define FUNC_SIZE(X)	.size X,.-X
 
 #define FUNC_BEGIN(X)		\
-	.globl X;		\
-	FUNC_TYPE (X);		\
+    .globl X;		\
+    FUNC_TYPE (X);		\
 X:
 
 #define FUNC_END(X)		\
-	FUNC_SIZE(X)
+    FUNC_SIZE(X)
 
 #define FUNC_ALIAS(X,Y)		\
-	.globl X;		\
-	X = Y
+    .globl X;		\
+    X = Y
 
 #ifndef __riscv_xlen
 #define __riscv_xlen 64

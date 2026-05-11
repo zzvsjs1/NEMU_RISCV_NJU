@@ -3,9 +3,9 @@
 
 #include <common.h>
 
-typedef struct 
+typedef struct
 {
-    struct 
+    struct
     {
         rtlreg_t _32;
     } gpr[32];
@@ -16,15 +16,15 @@ typedef struct
     {
         // 0x180, Supervisor Address Translation and Protection
         rtlreg_t satp;
-        
+
         // Machine status register.
         // 0x300
         rtlreg_t mstatus;
-    
+
         // Machine trap-handler base address.
         // 0x305
         rtlreg_t mtvec;
-    
+
         // Machine scratch register.
         // 0x340
         rtlreg_t mscratch;
@@ -32,7 +32,7 @@ typedef struct
         // Machine exception program counter.
         // 0x341
         rtlreg_t mepc;
-    
+
         // Machine trap cause
         // 0x342
         rtlreg_t mcause;
@@ -43,9 +43,9 @@ typedef struct
 } riscv32_CPU_state;
 
 // decode
-typedef struct 
+typedef struct
 {
-    union 
+    union
     {
 
         // Refer to Volume I: RISC-V Unprivileged ISA V20191213.
@@ -61,7 +61,7 @@ typedef struct
          * bit stay in fixed positions, while the lowest bit in S format (inst[7]) 
          * encodes a high-order bit in B format.
         */
-        
+
         // Sign extension always uses inst[31].
 
         // R-type
@@ -69,33 +69,33 @@ typedef struct
         {
             uint32_t opcode1_0 : 2;
             uint32_t opcode6_2 : 5;
-            uint32_t rd        : 5;
-            uint32_t funct3    : 3;
-            uint32_t rs1       : 5;
-            uint32_t rs2       : 5;
-            uint32_t funct7    : 7;
+            uint32_t rd : 5;
+            uint32_t funct3 : 3;
+            uint32_t rs1 : 5;
+            uint32_t rs2 : 5;
+            uint32_t funct7 : 7;
         } r;
-        
+
         // I-type
-        struct 
+        struct
         {
-            uint32_t opcode    : 7;
-            uint32_t rd        : 5;
-            uint32_t funct3    : 3;
-            uint32_t rs1       : 5;
-            int32_t  simm11_0  :12;
+            uint32_t opcode : 7;
+            uint32_t rd : 5;
+            uint32_t funct3 : 3;
+            uint32_t rs1 : 5;
+            int32_t simm11_0 : 12;
         } i;
 
         // S-type
-        struct 
+        struct
         {
             uint32_t opcode1_0 : 2;
             uint32_t opcode6_2 : 5;
-            uint32_t imm4_0    : 5;
-            uint32_t funct3    : 3;
-            uint32_t rs1       : 5;
-            uint32_t rs2       : 5;
-            int32_t  simm11_5  : 7;
+            uint32_t imm4_0 : 5;
+            uint32_t funct3 : 3;
+            uint32_t rs1 : 5;
+            uint32_t rs2 : 5;
+            int32_t simm11_5 : 7;
         } s;
 
         // B-type
@@ -103,21 +103,21 @@ typedef struct
         {
             uint32_t opcode1_0 : 2;
             uint32_t opcode6_2 : 5;
-            uint32_t imm11     : 1;
-            uint32_t imm4_1    : 4;
-            uint32_t funct3    : 3;
-            uint32_t rs1       : 5;
-            uint32_t rs2       : 5;
-            uint32_t imm10_5   : 6;
-            int32_t  simm12    : 1;
+            uint32_t imm11 : 1;
+            uint32_t imm4_1 : 4;
+            uint32_t funct3 : 3;
+            uint32_t rs1 : 5;
+            uint32_t rs2 : 5;
+            uint32_t imm10_5 : 6;
+            int32_t simm12 : 1;
         } b;
-        
+
         // U-type
-        struct 
+        struct
         {
-            uint32_t opcode    : 7;
-            uint32_t rd        : 5;
-            uint32_t imm31_12  :20;
+            uint32_t opcode : 7;
+            uint32_t rd : 5;
+            uint32_t imm31_12 : 20;
         } u;
 
         // J-type
@@ -125,23 +125,22 @@ typedef struct
         {
             uint32_t opcode1_0 : 2;
             uint32_t opcode6_2 : 5;
-            uint32_t rd        : 5;
-            uint32_t imm19_12  : 8;
-            uint32_t imm11     : 1;
-            uint32_t imm10_1   : 10;
-            uint32_t imm20     : 1;
+            uint32_t rd : 5;
+            uint32_t imm19_12 : 8;
+            uint32_t imm11 : 1;
+            uint32_t imm10_1 : 10;
+            uint32_t imm20 : 1;
         } j;
 
         struct
         {
-            uint32_t opcode    : 7;
-            uint32_t rd        : 5;
-            uint32_t funct3    : 3;
-            uint32_t rs1       : 5;
-            uint32_t csr       : 12;
+            uint32_t opcode : 7;
+            uint32_t rd : 5;
+            uint32_t funct3 : 3;
+            uint32_t rs1 : 5;
+            uint32_t csr : 12;
         } CSR;
-        
-      
+
         uint32_t val;
     } instr;
 } riscv32_ISADecodeInfo;

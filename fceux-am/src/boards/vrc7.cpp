@@ -33,193 +33,247 @@ static OPLL *VRC7Sound = NULL;
 static OPLL **VRC7Sound_saveptr = &VRC7Sound;
 
 static SFORMAT StateRegs[] =
-{
-	{ &vrc7idx, 1, "VRCI" },
-	{ preg, 3, "PREG" },
-	{ creg, 8, "CREG" },
-	{ &mirr, 1, "MIRR" },
-	{ &IRQa, 1, "IRQA" },
-	{ &IRQd, 1, "IRQD" },
-	{ &IRQLatch, 1, "IRQL" },
-	{ &IRQCount, 4, "IRQC" },
-	{ &CycleCount, 4, "CYCC" },
-	{ (void**)VRC7Sound_saveptr, sizeof(*VRC7Sound) | FCEUSTATE_INDIRECT, "VRC7"  },
-	{ &IRQMode, 1, "IRQM" },
-	{0}
-};
+    {
+        {&vrc7idx, 1, "VRCI"},
+        {preg, 3, "PREG"},
+        {creg, 8, "CREG"},
+        {&mirr, 1, "MIRR"},
+        {&IRQa, 1, "IRQA"},
+        {&IRQd, 1, "IRQD"},
+        {&IRQLatch, 1, "IRQL"},
+        {&IRQCount, 4, "IRQC"},
+        {&CycleCount, 4, "CYCC"},
+        {(void **)VRC7Sound_saveptr, sizeof(*VRC7Sound) | FCEUSTATE_INDIRECT, "VRC7"},
+        {&IRQMode, 1, "IRQM"},
+        {0}};
 
 // VRC7 Sound
 
 #if 0
 void DoVRC7Sound(void) {
-	int32 z, a;
-	if (FSettings.soundq >= 1)
-		return;
-	z = ((SOUNDTS << 16) / soundtsinc) >> 4;
-	a = z - dwave;
-	OPLL_fillbuf(VRC7Sound, &Wave[dwave], a, 1);
-	dwave += a;
+    int32 z, a;
+    if (FSettings.soundq >= 1)
+        return;
+    z = ((SOUNDTS << 16) / soundtsinc) >> 4;
+    a = z - dwave;
+    OPLL_fillbuf(VRC7Sound, &Wave[dwave], a, 1);
+    dwave += a;
 }
 #endif
 
-void UpdateOPLNEO(int32 *Wave, int Count) {
+void UpdateOPLNEO(int32 *Wave, int Count)
+{
 #if SOUND_CONFIG != SOUND_NONE
-	OPLL_fillbuf(VRC7Sound, Wave, Count, 4);
+    OPLL_fillbuf(VRC7Sound, Wave, Count, 4);
 #endif
 }
 
-void UpdateOPL(int Count) {
+void UpdateOPL(int Count)
+{
 #if SOUND_CONFIG != SOUND_NONE
-	int32 z, a;
-	z = ((SOUNDTS << 16) / soundtsinc) >> 4;
-	a = z - dwave;
-	if (VRC7Sound && a)
-		OPLL_fillbuf(VRC7Sound, &Wave[dwave], a, 1);
+    int32 z, a;
+    z = ((SOUNDTS << 16) / soundtsinc) >> 4;
+    a = z - dwave;
+    if (VRC7Sound && a)
+        OPLL_fillbuf(VRC7Sound, &Wave[dwave], a, 1);
 #endif
-	dwave = 0;
+    dwave = 0;
 }
 
-static void VRC7SC(void) {
-	if (VRC7Sound)
-		OPLL_set_rate(VRC7Sound, FSettings.SndRate);
+static void VRC7SC(void)
+{
+    if (VRC7Sound)
+        OPLL_set_rate(VRC7Sound, FSettings.SndRate);
 }
 
-static void VRC7SKill(void) {
-	if (VRC7Sound)
-		OPLL_delete(VRC7Sound);
-	VRC7Sound = NULL;
+static void VRC7SKill(void)
+{
+    if (VRC7Sound)
+        OPLL_delete(VRC7Sound);
+    VRC7Sound = NULL;
 }
 
-static void VRC7_ESI(void) {
-	GameExpSound.RChange = VRC7SC;
-	GameExpSound.Kill = VRC7SKill;
-	VRC7Sound = OPLL_new(3579545, FSettings.SndRate ? FSettings.SndRate : 48000);
-	OPLL_reset(VRC7Sound);
-	OPLL_reset(VRC7Sound);
+static void VRC7_ESI(void)
+{
+    GameExpSound.RChange = VRC7SC;
+    GameExpSound.Kill = VRC7SKill;
+    VRC7Sound = OPLL_new(3579545, FSettings.SndRate ? FSettings.SndRate : 48000);
+    OPLL_reset(VRC7Sound);
+    OPLL_reset(VRC7Sound);
 }
 
 // VRC7 Sound
 
-static void Sync(void) {
-	uint8 i;
-	setprg8r(0x10, 0x6000, 0);
-	setprg8(0x8000, preg[0]);
-	setprg8(0xA000, preg[1]);
-	setprg8(0xC000, preg[2]);
-	setprg8(0xE000, ~0);
-	for (i = 0; i < 8; i++)
-		setchr1(i << 10, creg[i]);
-	switch (mirr & 3) {
-	case 0: setmirror(MI_V); break;
-	case 1: setmirror(MI_H); break;
-	case 2: setmirror(MI_0); break;
-	case 3: setmirror(MI_1); break;
-	}
+static void Sync(void)
+{
+    uint8 i;
+    setprg8r(0x10, 0x6000, 0);
+    setprg8(0x8000, preg[0]);
+    setprg8(0xA000, preg[1]);
+    setprg8(0xC000, preg[2]);
+    setprg8(0xE000, ~0);
+    for (i = 0; i < 8; i++)
+        setchr1(i << 10, creg[i]);
+    switch (mirr & 3)
+    {
+    case 0:
+        setmirror(MI_V);
+        break;
+    case 1:
+        setmirror(MI_H);
+        break;
+    case 2:
+        setmirror(MI_0);
+        break;
+    case 3:
+        setmirror(MI_1);
+        break;
+    }
 }
 
-static DECLFW(VRC7SW) {
-	if (FSettings.SndRate) {
-		OPLL_writeReg(VRC7Sound, vrc7idx, V);
-		GameExpSound.Fill = UpdateOPL;
-		GameExpSound.NeoFill = UpdateOPLNEO;
-	}
+static DECLFW(VRC7SW)
+{
+    if (FSettings.SndRate)
+    {
+        OPLL_writeReg(VRC7Sound, vrc7idx, V);
+        GameExpSound.Fill = UpdateOPL;
+        GameExpSound.NeoFill = UpdateOPLNEO;
+    }
 }
 
-static DECLFW(VRC7Write) {
-	A |= (A & 8) << 1;  // another two-in-oooone
-	if (A >= 0xA000 && A <= 0xDFFF) {
-		A &= 0xF010;
-		creg[((A >> 4) & 1) | ((A - 0xA000) >> 11)] = V;
-		Sync();
-	} else if (A == 0x9030) {
-		VRC7SW(A, V);
-	} else switch (A & 0xF010) {
-		case 0x8000: preg[0] = V; Sync(); break;
-		case 0x8010: preg[1] = V; Sync(); break;
-		case 0x9000: preg[2] = V; Sync(); break;
-		case 0x9010: vrc7idx = V; break;
-		case 0xE000: mirr = V & 3; Sync(); break;
-		case 0xE010: IRQLatch = V; X6502_IRQEnd(FCEU_IQEXT); break;
-		case 0xF000:
-			IRQMode = V & 4;
-			IRQa = V & 2;
-			IRQd = V & 1;
-			if (V & 2)
-				IRQCount = IRQLatch;
-			CycleCount = 0;
-			X6502_IRQEnd(FCEU_IQEXT);
-			break;
-		case 0xF010:
-			IRQa = IRQd;
-			X6502_IRQEnd(FCEU_IQEXT);
-			break;
-		}
+static DECLFW(VRC7Write)
+{
+    A |= (A & 8) << 1; // another two-in-oooone
+    if (A >= 0xA000 && A <= 0xDFFF)
+    {
+        A &= 0xF010;
+        creg[((A >> 4) & 1) | ((A - 0xA000) >> 11)] = V;
+        Sync();
+    }
+    else if (A == 0x9030)
+    {
+        VRC7SW(A, V);
+    }
+    else
+        switch (A & 0xF010)
+        {
+        case 0x8000:
+            preg[0] = V;
+            Sync();
+            break;
+        case 0x8010:
+            preg[1] = V;
+            Sync();
+            break;
+        case 0x9000:
+            preg[2] = V;
+            Sync();
+            break;
+        case 0x9010:
+            vrc7idx = V;
+            break;
+        case 0xE000:
+            mirr = V & 3;
+            Sync();
+            break;
+        case 0xE010:
+            IRQLatch = V;
+            X6502_IRQEnd(FCEU_IQEXT);
+            break;
+        case 0xF000:
+            IRQMode = V & 4;
+            IRQa = V & 2;
+            IRQd = V & 1;
+            if (V & 2)
+                IRQCount = IRQLatch;
+            CycleCount = 0;
+            X6502_IRQEnd(FCEU_IQEXT);
+            break;
+        case 0xF010:
+            IRQa = IRQd;
+            X6502_IRQEnd(FCEU_IQEXT);
+            break;
+        }
 }
 
-static void VRC7Power(void) {
-	Sync();
-	SetWriteHandler(0x6000, 0x7FFF, CartBW);
-	SetReadHandler(0x6000, 0xFFFF, CartBR);
-	SetWriteHandler(0x8000, 0xFFFF, VRC7Write);
-	FCEU_CheatAddRAM(WRAMSIZE >> 10, 0x6000, WRAM);
+static void VRC7Power(void)
+{
+    Sync();
+    SetWriteHandler(0x6000, 0x7FFF, CartBW);
+    SetReadHandler(0x6000, 0xFFFF, CartBR);
+    SetWriteHandler(0x8000, 0xFFFF, VRC7Write);
+    FCEU_CheatAddRAM(WRAMSIZE >> 10, 0x6000, WRAM);
 }
 
 static void VRC7Close(void)
 {
-	if (WRAM)
-		FCEU_gfree(WRAM);
-	WRAM = NULL;
+    if (WRAM)
+        FCEU_gfree(WRAM);
+    WRAM = NULL;
 }
 
-static void VRC7IRQHook(int a) {
-	if (IRQa) {
-		if (IRQMode) {
-			CycleCount += a;
-			while (CycleCount > 0) {
-				CycleCount--;
-				IRQCount++;
-				if (IRQCount & 0x100) {
-					X6502_IRQBegin(FCEU_IQEXT);
-					IRQCount = IRQLatch;
-				}
-			}
-		} else {
-			CycleCount += a * 3;
-			while(CycleCount >= 341) {
-				CycleCount -= 341;
-				IRQCount++;
-				if (IRQCount == 0x100) {
-					IRQCount = IRQLatch;
-					X6502_IRQBegin(FCEU_IQEXT);
-				}
-			}
-		}
-	}
+static void VRC7IRQHook(int a)
+{
+    if (IRQa)
+    {
+        if (IRQMode)
+        {
+            CycleCount += a;
+            while (CycleCount > 0)
+            {
+                CycleCount--;
+                IRQCount++;
+                if (IRQCount & 0x100)
+                {
+                    X6502_IRQBegin(FCEU_IQEXT);
+                    IRQCount = IRQLatch;
+                }
+            }
+        }
+        else
+        {
+            CycleCount += a * 3;
+            while (CycleCount >= 341)
+            {
+                CycleCount -= 341;
+                IRQCount++;
+                if (IRQCount == 0x100)
+                {
+                    IRQCount = IRQLatch;
+                    X6502_IRQBegin(FCEU_IQEXT);
+                }
+            }
+        }
+    }
 }
 
-static void StateRestore(int version) {
-	Sync();
+static void StateRestore(int version)
+{
+    Sync();
 }
 
-void Mapper85_Init(CartInfo *info) {
-	info->Power = VRC7Power;
-	info->Close = VRC7Close;
-	MapIRQHook = VRC7IRQHook;
-	WRAMSIZE = 8192;
-	WRAM = (uint8*)FCEU_gmalloc(WRAMSIZE);
-	SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
-	AddExState(WRAM, WRAMSIZE, 0, "WRAM");
-	if (info->battery) {
-		info->SaveGame[0] = WRAM;
-		info->SaveGameLen[0] = WRAMSIZE;
-	}
-	GameStateRestore = StateRestore;
-	VRC7_ESI();
-	AddExState(&StateRegs, ~0, 0, 0);
+void Mapper85_Init(CartInfo *info)
+{
+    info->Power = VRC7Power;
+    info->Close = VRC7Close;
+    MapIRQHook = VRC7IRQHook;
+    WRAMSIZE = 8192;
+    WRAM = (uint8 *)FCEU_gmalloc(WRAMSIZE);
+    SetupCartPRGMapping(0x10, WRAM, WRAMSIZE, 1);
+    AddExState(WRAM, WRAMSIZE, 0, "WRAM");
+    if (info->battery)
+    {
+        info->SaveGame[0] = WRAM;
+        info->SaveGameLen[0] = WRAMSIZE;
+    }
+    GameStateRestore = StateRestore;
+    VRC7_ESI();
+    AddExState(&StateRegs, ~0, 0, 0);
 }
 
-void NSFVRC7_Init(void) {
-	SetWriteHandler(0x9010, 0x901F, VRC7Write);
-	SetWriteHandler(0x9030, 0x903F, VRC7Write);
-	VRC7_ESI();
+void NSFVRC7_Init(void)
+{
+    SetWriteHandler(0x9010, 0x901F, VRC7Write);
+    SetWriteHandler(0x9030, 0x903F, VRC7Write);
+    VRC7_ESI();
 }

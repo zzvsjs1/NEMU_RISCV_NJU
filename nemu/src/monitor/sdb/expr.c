@@ -7,7 +7,7 @@
 
 typedef enum
 {
-    TK_NOTYPE, 
+    TK_NOTYPE,
     TK_EQ,
     TK_NE,
     TK_ADD,
@@ -40,30 +40,30 @@ static struct rule
     int token_type;
     const char *t;
 } rules[] =
-{
-    {"==", TK_EQ, "=="},
-    {"!=", TK_NE, "!="},
-    {"\\+", TK_ADD, "+"},
-    {"-", TK_MINUS, "-"},
-    {"\\*", TK_MUL, "\\"},
-    {"/", TK_DIV, "/"},
-    {"\\(", TK_L_BRACKET, "("},
-    {"\\)", TK_R_BRACKET, ")"},
-    // Numeric literals with optional unsigned suffix 'u' or 'U'.
-    {"0x[0-9a-fA-F]+[uU]?", TK_HEX_NUM, ""},
-    {"0b[01]+[uU]?", TK_B_NUM, ""},
-    {"[[:digit:]]+[uU]?", TK_DEC_NUM, ""},
-    {"&&", TK_LOGIC_AND, "&&"}, // Must before bitwise and
-    {"\\|\\|", TK_LOGIC_OR, "||"},
-    {"&", TK_BITWISE_AND, "&"},
-    {"\\|", TK_BITWISE_OR, "|"},
-    {"\\^", TK_XOR, "^"},
-    {"<=", TK_LE, "<="},
-    {">=", TK_GE, ">="},
-    {"<", TK_LESS, "<"},
-    {">", TK_GREATER, ">"},
-    {"%", TK_MOD, "%"},
-    {"\\$[a-zA-Z0-9]+", TK_REGS, "$"},
+    {
+        {"==", TK_EQ, "=="},
+        {"!=", TK_NE, "!="},
+        {"\\+", TK_ADD, "+"},
+        {"-", TK_MINUS, "-"},
+        {"\\*", TK_MUL, "\\"},
+        {"/", TK_DIV, "/"},
+        {"\\(", TK_L_BRACKET, "("},
+        {"\\)", TK_R_BRACKET, ")"},
+        // Numeric literals with optional unsigned suffix 'u' or 'U'.
+        {"0x[0-9a-fA-F]+[uU]?", TK_HEX_NUM, ""},
+        {"0b[01]+[uU]?", TK_B_NUM, ""},
+        {"[[:digit:]]+[uU]?", TK_DEC_NUM, ""},
+        {"&&", TK_LOGIC_AND, "&&"}, // Must before bitwise and
+        {"\\|\\|", TK_LOGIC_OR, "||"},
+        {"&", TK_BITWISE_AND, "&"},
+        {"\\|", TK_BITWISE_OR, "|"},
+        {"\\^", TK_XOR, "^"},
+        {"<=", TK_LE, "<="},
+        {">=", TK_GE, ">="},
+        {"<", TK_LESS, "<"},
+        {">", TK_GREATER, ">"},
+        {"%", TK_MOD, "%"},
+        {"\\$[a-zA-Z0-9]+", TK_REGS, "$"},
 };
 
 #define NR_REGEX ARRLEN(rules)
@@ -107,32 +107,15 @@ static int numOfTokens = 0;
 
 static bool isBiOperator(const TokenType tk)
 {
-    return tk == TK_ADD 
-        || tk == TK_MINUS
-        || tk == TK_EQ
-        || tk == TK_NE
-        || tk == TK_MUL
-        || tk == TK_DIV
-        || tk == TK_LOGIC_AND
-        || tk == TK_LOGIC_OR
-        || tk == TK_BITWISE_AND
-        || tk == TK_BITWISE_OR
-        || tk == TK_XOR
-        || tk == TK_LE
-        || tk == TK_GE
-        || tk == TK_LESS
-        || tk == TK_GREATER
-        || tk == TK_MOD;
+    return tk == TK_ADD || tk == TK_MINUS || tk == TK_EQ || tk == TK_NE || tk == TK_MUL || tk == TK_DIV || tk == TK_LOGIC_AND || tk == TK_LOGIC_OR || tk == TK_BITWISE_AND || tk == TK_BITWISE_OR || tk == TK_XOR || tk == TK_LE || tk == TK_GE || tk == TK_LESS || tk == TK_GREATER || tk == TK_MOD;
 }
 
 static bool isUnaryOperator(const TokenType tk)
 {
-    return tk == TK_DEFER
-        || tk == TK_NEGATIVE;
+    return tk == TK_DEFER || tk == TK_NEGATIVE;
 }
 
-__attribute__((__used__))
-static bool isParentheses(const TokenType tk)
+__attribute__((__used__)) static bool isParentheses(const TokenType tk)
 {
     return tk == TK_L_BRACKET || tk == TK_R_BRACKET;
 }
@@ -144,22 +127,22 @@ static bool isNumType(const TokenType type)
 
 static bool isOperand(const TokenType t)
 {
-  // An operand can be a number, a register, or a closed parenthesised expression.
-  // This is used to decide whether '-' and '*' are unary or binary.
-  return isNumType(t) || t == TK_REGS || t == TK_R_BRACKET;
+    // An operand can be a number, a register, or a closed parenthesised expression.
+    // This is used to decide whether '-' and '*' are unary or binary.
+    return isNumType(t) || t == TK_REGS || t == TK_R_BRACKET;
 }
 
 static word_t chToWordT(const char ch)
 {
     assert(isalpha(ch) || isdigit(ch));
 
-    if (isalpha((unsigned) ch))
+    if (isalpha((unsigned)ch))
     {
-        const char newCh = toupper((unsigned) ch);
+        const char newCh = toupper((unsigned)ch);
         return newCh - 'A' + 10;
     }
-    
-    if (isdigit((unsigned) ch))
+
+    if (isdigit((unsigned)ch))
     {
         return ch - '0';
     }
@@ -167,7 +150,7 @@ static word_t chToWordT(const char ch)
     assert(0);
 }
 
-static word_t strToWordT(const char* str, const size_t strLen, const word_t base, bool* success)
+static word_t strToWordT(const char *str, const size_t strLen, const word_t base, bool *success)
 {
     // Convert a literal string to word_t.
     // Supports:
@@ -232,8 +215,7 @@ static word_t strToWordT(const char* str, const size_t strLen, const word_t base
     return negative ? (word_t)(-ret) : ret;
 }
 
-
-static void copySubStrToTokens(char* src, const int destIndex, const int length)
+static void copySubStrToTokens(char *src, const int destIndex, const int length)
 {
     strncpy(tokens[destIndex].str, src, length);
     tokens[destIndex].str[length] = '\0';
@@ -255,7 +237,7 @@ static bool make_token(char *e)
     while (e[position] != '\0')
     {
         int i = 0;
-        
+
         /* Try all rules one by one. */
         for (; i < NR_REGEX; ++i)
         {
@@ -274,8 +256,7 @@ static bool make_token(char *e)
                 {
                     PRI_ERR("Since buffer size is only %d. The length for string %d is too long.\n",
                             MAXIMUM_STRING_SIZE,
-                            substr_len
-                    );
+                            substr_len);
 
                     return false;
                 }
@@ -297,7 +278,7 @@ static bool make_token(char *e)
                 break;
             }
         }
-    
+
         if (i == NR_REGEX)
         {
             PRI_ERR("no match at position %d\n%s\n%*.s^\n", position, e, position, "");
@@ -345,7 +326,7 @@ static int getOpPrecedence(const TokenType tk)
     }
 }
 
-static word_t biOperations(const word_t left, const TokenType op, const word_t right, bool* success)
+static word_t biOperations(const word_t left, const TokenType op, const word_t right, bool *success)
 {
     switch (op)
     {
@@ -360,15 +341,15 @@ static word_t biOperations(const word_t left, const TokenType op, const word_t r
     case TK_MUL:
         return left * right;
     case TK_DIV:
+    {
+        if (right == 0)
         {
-            if (right == 0)
-            {
-                PRI_ERR_E("Divide by 0\n");
-                goto error;
-            }
-            
-            return left / right;
+            PRI_ERR_E("Divide by 0\n");
+            goto error;
         }
+
+        return left / right;
+    }
     case TK_LOGIC_AND:
         return left && right;
     case TK_LOGIC_OR:
@@ -388,15 +369,15 @@ static word_t biOperations(const word_t left, const TokenType op, const word_t r
     case TK_GREATER:
         return left > right;
     case TK_MOD:
+    {
+        if (right == 0)
         {
-            if (right == 0)
-            {
-                PRI_ERR_E("Mod by 0\n");
-                goto error;
-            }
-            
-            return left % right;
+            PRI_ERR_E("Mod by 0\n");
+            goto error;
         }
+
+        return left % right;
+    }
     default:
         assert(0);
     }
@@ -406,20 +387,22 @@ error:
     return -1;
 }
 
-static word_t unaryOperation(const TokenType op, const word_t val, bool* success)
+static word_t unaryOperation(const TokenType op, const word_t val, bool *success)
 {
-    (void) success;
+    (void)success;
 
     switch (op)
     {
-        case TK_NEGATIVE: return -val;
-        case TK_DEFER: return vaddr_read(val, sizeof(word_t));
-        default: assert(0);
+    case TK_NEGATIVE:
+        return -val;
+    case TK_DEFER:
+        return vaddr_read(val, sizeof(word_t));
+    default:
+        assert(0);
     }
-}	
+}
 
-
-static int getMainBiOp(int start, int end, bool* success)
+static int getMainBiOp(int start, int end, bool *success)
 {
     /*
      * Lower C precedence is represented by a larger number in getOpPrecedence().
@@ -516,8 +499,7 @@ static bool isAllParenthesesMatch(int start, int end)
     return count == 0;
 }
 
-__attribute__((__used__))
-static int getNextMatchParenthesesFromLeft(int start, int end)
+__attribute__((__used__)) static int getNextMatchParenthesesFromLeft(int start, int end)
 {
     assert(start <= end);
 
@@ -534,7 +516,7 @@ static int getNextMatchParenthesesFromLeft(int start, int end)
         }
 
         if (tokens[end].type == TK_L_BRACKET)
-        {	
+        {
             --numOfRP;
 
             if (numOfRP == 0)
@@ -552,7 +534,7 @@ static int getNextMatchParenthesesFromRight(int start, int end)
     assert(start <= end);
 
     ++start;
-    
+
     int numOfLP = 1;
 
     for (; start <= end; ++start)
@@ -590,7 +572,7 @@ static int getNextUnaryOperation(int start, const int end)
     return -1;
 }
 
-static word_t eval(int start, int end, bool* success)
+static word_t eval(int start, int end, bool *success)
 {
     /*
      * eval() works on an inclusive token range.  Each recursion either removes
@@ -606,7 +588,6 @@ static word_t eval(int start, int end, bool* success)
         return -1;
     }
 
-    
     if (start == end)
     {
         if (isNumType(tokens[start].type))
@@ -614,23 +595,27 @@ static word_t eval(int start, int end, bool* success)
             int base;
             switch (tokens[start].type)
             {
-                case TK_DEC_NUM:
-                    base = 10;
-                    break;
-                case TK_HEX_NUM:
-                    base = 16;
-                    break;
-                case TK_B_NUM:
-                    base = 2;
-                    break;
-                default:
-                    *success = false;
-                    return -1;
+            case TK_DEC_NUM:
+                base = 10;
+                break;
+            case TK_HEX_NUM:
+                base = 16;
+                break;
+            case TK_B_NUM:
+                base = 2;
+                break;
+            default:
+                *success = false;
+                return -1;
             }
-            
+
             bool ok = true;
             word_t v = strToWordT(tokens[start].str, strlen(tokens[start].str), base, &ok);
-            if (!ok) { *success = false; return -1; }
+            if (!ok)
+            {
+                *success = false;
+                return -1;
+            }
             return v;
         }
         else if (tokens[start].type == TK_REGS)
@@ -642,19 +627,19 @@ static word_t eval(int start, int end, bool* success)
             assert(0);
         }
     }
-    
+
     if (tokens[start].type == TK_L_BRACKET)
     {
         if (getNextMatchParenthesesFromRight(start, end) == end)
         {
-            return eval(start + 1, end - 1, success);	
+            return eval(start + 1, end - 1, success);
         }
-        
+
         // Else do normal operation.
     }
 
     const int mainOpIndex = getMainBiOp(start, end, success);
-    
+
     // Cannot found next main Bi op, so, do unary operator.
     if (!*success)
     {
@@ -712,7 +697,7 @@ static word_t eval(int start, int end, bool* success)
 // 		const TokenType type = tokens[i].type;
 
 // 		if (type == TK_MINUS)
-// 		{	
+// 		{
 // 			if (IS_FIRST(i))
 // 			{
 // 				tokens[i].type = TK_NEGATIVE;
@@ -728,7 +713,7 @@ static word_t eval(int start, int end, bool* success)
 // 					{
 // 						break;
 // 					}
-                    
+
 // 					if (isBiOperator(tkt) || isUnaryOperator(tkt))
 // 					{
 // 						tokens[i].type = TK_NEGATIVE;
@@ -759,7 +744,7 @@ static word_t eval(int start, int end, bool* success)
 // 					{
 // 						break;
 // 					}
-                    
+
 // 					if (isBiOperator(tkt) || isUnaryOperator(tkt))
 // 					{
 // 						tokens[i].type = TK_DEFER;
@@ -778,43 +763,42 @@ static word_t eval(int start, int end, bool* success)
 
 static void preProcess()
 {
-  /*
+    /*
    * Unary '-' and dereference '*' share tokens with binary operators.  The
    * previous token decides the role: after an operand they remain binary,
    * otherwise they become prefix unary operators.
    */
-  for (size_t i = 0; i < numOfTokens; i++)
-  {
-    const TokenType type = tokens[i].type;
-
-    // Decide whether '-' is unary negative or binary minus.
-    if (type == TK_MINUS)
+    for (size_t i = 0; i < numOfTokens; i++)
     {
-      // Unary if it is the first token, or if the previous token is not an operand.
-      if (i == 0 || !isOperand(tokens[i - 1].type))
-      {
-        tokens[i].type = TK_NEGATIVE;
-      }
+        const TokenType type = tokens[i].type;
 
-      continue;
+        // Decide whether '-' is unary negative or binary minus.
+        if (type == TK_MINUS)
+        {
+            // Unary if it is the first token, or if the previous token is not an operand.
+            if (i == 0 || !isOperand(tokens[i - 1].type))
+            {
+                tokens[i].type = TK_NEGATIVE;
+            }
+
+            continue;
+        }
+
+        // Decide whether '*' is dereference or binary multiply.
+        if (type == TK_MUL)
+        {
+            // Unary dereference if it is the first token, or if the previous token is not an operand.
+            if (i == 0 || !isOperand(tokens[i - 1].type))
+            {
+                tokens[i].type = TK_DEFER;
+            }
+
+            continue;
+        }
     }
-
-    // Decide whether '*' is dereference or binary multiply.
-    if (type == TK_MUL)
-    {
-      // Unary dereference if it is the first token, or if the previous token is not an operand.
-      if (i == 0 || !isOperand(tokens[i - 1].type))
-      {
-        tokens[i].type = TK_DEFER;
-      }
-
-      continue;
-    }
-  }
 }
 
-
-static word_t calculate(bool* success)
+static word_t calculate(bool *success)
 {
     assert(numOfTokens != 0);
 
@@ -826,24 +810,39 @@ static word_t calculate(bool* success)
         {
         case TK_REGS:
             return isa_reg_str2val(REMOVE_PERCENT(tokens[0].str), success);
-        case TK_HEX_NUM: {
+        case TK_HEX_NUM:
+        {
             bool ok = true;
             word_t v = strToWordT(tokens[0].str, strlen(tokens[0].str), 16, &ok);
-            if (!ok) { *success = false; return 0; }
+            if (!ok)
+            {
+                *success = false;
+                return 0;
+            }
             return v;
         }
-        case TK_DEC_NUM:{
+        case TK_DEC_NUM:
+        {
             bool ok = true;
             word_t v = strToWordT(tokens[0].str, strlen(tokens[0].str), 10, &ok);
-            if (!ok) { *success = false; return 0; }
+            if (!ok)
+            {
+                *success = false;
+                return 0;
+            }
             return v;
         }
-        case TK_B_NUM:{
+        case TK_B_NUM:
+        {
             bool ok = true;
             word_t v = strToWordT(tokens[0].str, strlen(tokens[0].str), 2, &ok);
-            if (!ok) { *success = false; return 0; }
+            if (!ok)
+            {
+                *success = false;
+                return 0;
+            }
             return v;
-        }		
+        }
         default:
             PRI_ERR_E("Unknown expression when only one token.\n");
             *success = false;
@@ -866,15 +865,17 @@ static word_t calculate(bool* success)
     return eval(0, numOfTokens - 1, success);
 }
 
-static bool removeBlank(char* string)
+static bool removeBlank(char *string)
 {
     // Remove whitespace characters in-place.
     // Do NOT delete 'u' or any other meaningful character globally.
     // If we need to support numeric suffixes (e.g. 10u), handle that in token rules and parsing.
-    if (!string) return false;
+    if (!string)
+        return false;
 
     size_t len = strlen(string);
-    if (len == 0) return true;
+    if (len == 0)
+        return true;
 
     size_t j = 0;
     for (size_t i = 0; i < len; i++)
@@ -904,7 +905,7 @@ word_t expr(char *e, bool *success)
         *success = false;
         return 0;
     }
-    
+
     *success = true;
     return calculate(success);
 }

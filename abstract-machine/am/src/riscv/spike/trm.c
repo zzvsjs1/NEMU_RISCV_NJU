@@ -16,22 +16,23 @@ Area heap = RANGE(&_heap_start, PMEM_END);
 #endif
 static const char mainargs[] = MAINARGS;
 
-void putch(char ch) 
+void putch(char ch)
 {
-	htif_console_putchar(ch);
+    htif_console_putchar(ch);
 }
 
-void halt(int code) 
+void halt(int code)
 {
-	printf("Exit with code = %d\n", code);
-	htif_poweroff();
+    printf("Exit with code = %d\n", code);
+    htif_poweroff();
 
-	// should not reach here
-	while (1);
+    // should not reach here
+    while (1)
+        ;
 }
 
-void _trm_init() 
+void _trm_init()
 {
-	int ret = main(mainargs);
-	halt(ret);
+    int ret = main(mainargs);
+    halt(ret);
 }

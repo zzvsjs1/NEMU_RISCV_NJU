@@ -23,16 +23,16 @@ case 0x00:  /* BRK */
             PUSH(_PC>>8);
             PUSH(_PC);
             PUSH(_P|U_FLAG|B_FLAG);
-	    _P|=I_FLAG;
-	    _PI|=I_FLAG;
+        _P|=I_FLAG;
+        _PI|=I_FLAG;
             _PC=RdMem(0xFFFE);
             _PC|=RdMem(0xFFFF)<<8;
             break;
 
 case 0x40:  /* RTI */
             _P=POP();
-	    /* _PI=_P; This is probably incorrect, so it's commented out. */
-	    _PI = _P;
+        /* _PI=_P; This is probably incorrect, so it's commented out. */
+        _PI = _P;
             _PC=POP();
             _PC|=POP()<<8;
             break;
@@ -57,34 +57,34 @@ case 0x28: /* PLP */
            _P=POP();
            break;
 case 0x4C:
-	  {
-	   uint16 ptmp=_PC;
-	   unsigned int npc;
+      {
+       uint16 ptmp=_PC;
+       unsigned int npc;
 
-	   npc=RdMem(ptmp);
-	   ptmp++;
-	   npc|=RdMem(ptmp)<<8;
-	   _PC=npc;
-	  }
-	  break; /* JMP ABSOLUTE */
+       npc=RdMem(ptmp);
+       ptmp++;
+       npc|=RdMem(ptmp)<<8;
+       _PC=npc;
+      }
+      break; /* JMP ABSOLUTE */
 case 0x6C:
-	   {
-	    uint32 tmp;
-	    GetAB(tmp);
-	    _PC=RdMem(tmp);
-	    _PC|=RdMem( ((tmp+1)&0x00FF) | (tmp&0xFF00))<<8;
-	   }
-	   break;
+       {
+        uint32 tmp;
+        GetAB(tmp);
+        _PC=RdMem(tmp);
+        _PC|=RdMem( ((tmp+1)&0x00FF) | (tmp&0xFF00))<<8;
+       }
+       break;
 case 0x20: /* JSR */
-	   {
-	    uint8 npc;
-	    npc=RdMem(_PC);
-	    _PC++;
+       {
+        uint8 npc;
+        npc=RdMem(_PC);
+        _PC++;
             PUSH(_PC>>8);
             PUSH(_PC);
             _PC=RdMem(_PC)<<8;
-	    _PC|=npc;
-	   }
+        _PC|=npc;
+       }
            break;
 
 case 0xAA: /* TAX */
@@ -337,9 +337,9 @@ case 0x83: ST_IX(_A&_X);
 
 /* ARR - ARGH, MATEY! */
 case 0x6B: {
-	     uint8 arrtmp;
-	     LD_IM(AND;_P&=~V_FLAG;_P|=(_A^(_A>>1))&0x40;arrtmp=_A>>7;_A>>=1;_A|=(_P&C_FLAG)<<7;_P&=~C_FLAG;_P|=arrtmp;X_ZN(_A));
-	   }
+         uint8 arrtmp;
+         LD_IM(AND;_P&=~V_FLAG;_P|=(_A^(_A>>1))&0x40;arrtmp=_A>>7;_A>>=1;_A|=(_P&C_FLAG)<<7;_P&=~C_FLAG;_P|=arrtmp;X_ZN(_A));
+       }
 /* ASR */
 case 0x4B: LD_IM(AND;LSRA);
 
@@ -401,8 +401,8 @@ case 0xB2:
 case 0xD2:
 case 0xF2:ADDCYC(0xFF);
           _jammed=1;
-	  _PC--;
-	  break;
+      _PC--;
+      break;
 
 /* LAR */
 case 0xBB: RMW_ABY(_S&=x;_A=_X=_S;X_ZN(_X));

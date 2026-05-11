@@ -8,17 +8,18 @@
 #include <memory/paddr.h>
 #include <utils.h>
 
-enum {
-  reg_freq,       // Audio frequency (Hz)
-  reg_channels,   // Number of channels (e.g., 1 for mono, 2 for stereo)
-  reg_samples,    // Number of samples per callback
-  reg_sbuf_size,  // Total size of the stream buffer
-  reg_init,       // Write to initialise audio
-  reg_count,      // Read used bytes; write the number of newly appended bytes
-  reg_bulk_src,   // Guest pointer for bulk stream-buffer append
-  reg_bulk_len,   // Number of bytes to append from reg_bulk_src
-  reg_bulk_cmd,   // Write AUDIO_BULK_CMD_APPEND to commit the append
-  nr_reg
+enum
+{
+    reg_freq,      // Audio frequency (Hz)
+    reg_channels,  // Number of channels (e.g., 1 for mono, 2 for stereo)
+    reg_samples,   // Number of samples per callback
+    reg_sbuf_size, // Total size of the stream buffer
+    reg_init,      // Write to initialise audio
+    reg_count,     // Read used bytes; write the number of newly appended bytes
+    reg_bulk_src,  // Guest pointer for bulk stream-buffer append
+    reg_bulk_len,  // Number of bytes to append from reg_bulk_src
+    reg_bulk_cmd,  // Write AUDIO_BULK_CMD_APPEND to commit the append
+    nr_reg
 };
 
 #define MIN(a, b) (((a) > (b)) ? (b) : (a))
@@ -172,7 +173,7 @@ static void reset_audio_stream(void)
 // This is the callback function that SDL calls to get more audio samples.
 // It reads data from sbuf (the ring buffer) and copies it into the stream
 // buffer. If data runs out, the rest of the output is filled with silence's value.
-static void sdlAudioCallback(void *userdata, Uint8 *stream, int len) 
+static void sdlAudioCallback(void *userdata, Uint8 *stream, int len)
 {
     // Fill the stream buffer with silence.
     SDL_memset(stream, spec.silence, len);
@@ -216,7 +217,7 @@ static void sdlAudioCallback(void *userdata, Uint8 *stream, int len)
 #endif
 
 static bool audio_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
-        size_t *len)
+                                   size_t *len)
 {
     if (wanted == 0)
     {
@@ -273,8 +274,8 @@ static void append_audio_bytes(vaddr_t src, uint32_t len)
 
 #ifdef CONFIG_AUDIO_DUMMY
     Assert(len <= CONFIG_SB_SIZE,
-            "Dummy audio append is larger than the stream buffer: append=%u size=%u",
-            len, CONFIG_SB_SIZE);
+           "Dummy audio append is larger than the stream buffer: append=%u size=%u",
+           len, CONFIG_SB_SIZE);
     audio_stats_appends++;
     audio_stats_append_bytes += len;
     audio_count = 0;
@@ -289,11 +290,11 @@ static void append_audio_bytes(vaddr_t src, uint32_t len)
      */
     lock_audio_counter();
     Assert(audio_count <= CONFIG_SB_SIZE,
-            "Audio stream buffer count is invalid: count=%u size=%u",
-            audio_count, CONFIG_SB_SIZE);
+           "Audio stream buffer count is invalid: count=%u size=%u",
+           audio_count, CONFIG_SB_SIZE);
     Assert(len <= CONFIG_SB_SIZE - audio_count,
-            "Audio stream buffer overflow: count=%u append=%u size=%u",
-            audio_count, len, CONFIG_SB_SIZE);
+           "Audio stream buffer overflow: count=%u append=%u size=%u",
+           audio_count, len, CONFIG_SB_SIZE);
 
     uint32_t writeIndex = (sbufReadIndex + audio_count) % CONFIG_SB_SIZE;
     size_t done = 0;
@@ -302,9 +303,9 @@ static void append_audio_bytes(vaddr_t src, uint32_t len)
         uint8_t *host = NULL;
         size_t src_chunk = 0;
         Assert(audio_guest_read_chunk(src + (vaddr_t)done, (size_t)len - done,
-                    &host, &src_chunk),
-                "audio: cannot translate bulk source vaddr=0x%08x",
-                src + (vaddr_t)done);
+                                      &host, &src_chunk),
+               "audio: cannot translate bulk source vaddr=0x%08x",
+               src + (vaddr_t)done);
 
         size_t dst_chunk = CONFIG_SB_SIZE - writeIndex;
         if (dst_chunk > src_chunk)
@@ -327,105 +328,112 @@ static void append_audio_bytes(vaddr_t src, uint32_t len)
     audio_stats_maybe_print();
 }
 
-static void audio_io_handler(uint32_t offset, int len, bool is_write) 
+static void audio_io_handler(uint32_t offset, int len, bool is_write)
 {
     const int reg = offset / sizeof(uint32_t);
     Assert(reg >= reg_freq && reg < nr_reg,
-            "The audio register is out size the bound. It should be %" PRIu32
-            " and %" PRIu32 ", but the value is %" PRIu32 ".\n",
-            reg_freq, nr_reg, reg);
+           "The audio register is out size the bound. It should be %" PRIu32
+           " and %" PRIu32 ", but the value is %" PRIu32 ".\n",
+           reg_freq, nr_reg, reg);
 
-    if (is_write) 
+    if (is_write)
     {
         // The value has already been written into the mapped memory.
         const uint32_t val = audio_base[reg];
 
-        switch (reg) 
+        switch (reg)
         {
-            case reg_freq: {
-                break;
-            }
+        case reg_freq:
+        {
+            break;
+        }
 
-            case reg_channels: {
-                break;
-            }
+        case reg_channels:
+        {
+            break;
+        }
 
-            case reg_samples: {
-                break;
-            }
+        case reg_samples:
+        {
+            break;
+        }
 
-            case reg_bulk_src:
-            case reg_bulk_len: {
-                break;
-            }
+        case reg_bulk_src:
+        case reg_bulk_len:
+        {
+            break;
+        }
 
-            case reg_count: {
+        case reg_count:
+        {
 #ifdef CONFIG_AUDIO_DUMMY
-                /*
+            /*
                  * The dummy backend accepts the guest's MMIO protocol but has
                  * no SDL callback thread to consume samples later.  Treat each
                  * commit as immediately drained; otherwise a headless run would
                  * fill the emulated stream buffer and block forever.
                  */
-                Assert(val <= CONFIG_SB_SIZE,
-                        "Dummy audio append is larger than the stream buffer: append=%u size=%u",
-                        val, CONFIG_SB_SIZE);
-                audio_count = 0;
-                publish_audio_count();
+            Assert(val <= CONFIG_SB_SIZE,
+                   "Dummy audio append is larger than the stream buffer: append=%u size=%u",
+                   val, CONFIG_SB_SIZE);
+            audio_count = 0;
+            publish_audio_count();
 #else
-                /*
+            /*
                  * AM writes a delta: the number of bytes just copied into the
                  * stream buffer.  Keeping the real occupancy in audio_count
                  * avoids a race where the SDL callback drains bytes between a
                  * guest count read and a later guest count write.  The mapped
                  * register cell is only the public view returned to reads.
                  */
-                lock_audio_counter();
-                Assert(audio_count <= CONFIG_SB_SIZE,
-                        "Audio stream buffer count is invalid: count=%u size=%u",
-                        audio_count, CONFIG_SB_SIZE);
-                Assert(val <= CONFIG_SB_SIZE - audio_count,
-                        "Audio stream buffer overflow: count=%u append=%u size=%u",
-                        audio_count, val, CONFIG_SB_SIZE);
-                audio_count += val;
-                publish_audio_count();
-                unlock_audio_counter();
+            lock_audio_counter();
+            Assert(audio_count <= CONFIG_SB_SIZE,
+                   "Audio stream buffer count is invalid: count=%u size=%u",
+                   audio_count, CONFIG_SB_SIZE);
+            Assert(val <= CONFIG_SB_SIZE - audio_count,
+                   "Audio stream buffer overflow: count=%u append=%u size=%u",
+                   audio_count, val, CONFIG_SB_SIZE);
+            audio_count += val;
+            publish_audio_count();
+            unlock_audio_counter();
 #endif
-                break;
-            }
+            break;
+        }
 
-            case reg_bulk_cmd: {
-                /*
+        case reg_bulk_cmd:
+        {
+            /*
                  * Bulk append keeps the stream-buffer protocol but avoids the
                  * historical byte-at-a-time MMIO path.  Large PAL/ONScripter
                  * callbacks can otherwise spend so long crossing MMIO that the
                  * host audio callback drains the queue faster than the guest can
                  * refill it.
                  */
-                Assert(val == AUDIO_BULK_CMD_APPEND,
-                        "Unsupported audio bulk command: %u", val);
-                append_audio_bytes((vaddr_t)audio_base[reg_bulk_src],
-                        audio_base[reg_bulk_len]);
-                audio_base[reg_bulk_cmd] = 0;
-                break;
-            }
+            Assert(val == AUDIO_BULK_CMD_APPEND,
+                   "Unsupported audio bulk command: %u", val);
+            append_audio_bytes((vaddr_t)audio_base[reg_bulk_src],
+                               audio_base[reg_bulk_len]);
+            audio_base[reg_bulk_cmd] = 0;
+            break;
+        }
 
-            // Do init and ignore write value.
-            case reg_init: {
-                Assert(val == 1, "The write value is not 1 in audio init, please check Abstract Machine.");
+        // Do init and ignore write value.
+        case reg_init:
+        {
+            Assert(val == 1, "The write value is not 1 in audio init, please check Abstract Machine.");
 
-                close_audio_if_open();
-                reset_audio_stream();
+            close_audio_if_open();
+            reset_audio_stream();
 
 #ifndef CONFIG_AUDIO_DUMMY
-                spec.freq = audio_base[reg_freq];
-                spec.format = AUDIO_S16SYS;
-                spec.channels = audio_base[reg_channels];
-                spec.samples = audio_base[reg_samples];
-                spec.callback = sdlAudioCallback;
-                spec.userdata = NULL;
+            spec.freq = audio_base[reg_freq];
+            spec.format = AUDIO_S16SYS;
+            spec.channels = audio_base[reg_channels];
+            spec.samples = audio_base[reg_samples];
+            spec.callback = sdlAudioCallback;
+            spec.userdata = NULL;
 
-                /*
+            /*
                  * NEMU stores guest PCM bytes exactly as they were written to
                  * /dev/sb.  There is no conversion layer between the guest ring
                  * buffer and this callback, so the callback stream must stay in
@@ -437,84 +445,88 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
                  * format as requested and converts to the real hardware format
                  * internally when needed.
                  */
-                if (SDL_OpenAudio(&spec, NULL) < 0) 
-                {
-                    printf("SDL_OpenAudio error: %s\n", SDL_GetError());
-                    exit(1);
-                }
+            if (SDL_OpenAudio(&spec, NULL) < 0)
+            {
+                printf("SDL_OpenAudio error: %s\n", SDL_GetError());
+                exit(1);
+            }
 
-                // Unpause and start audio playback.
-                audio_opened = true;
-                SDL_PauseAudio(0);
+            // Unpause and start audio playback.
+            audio_opened = true;
+            SDL_PauseAudio(0);
 #endif
 
-                break;
-            }
+            break;
+        }
 
-            default: {
-                Assert(false, "Write to a wrong audio register, the value is %" PRIu32 ".\n", offset);
-                break;
-            }
+        default:
+        {
+            Assert(false, "Write to a wrong audio register, the value is %" PRIu32 ".\n", offset);
+            break;
+        }
         }
 
         return;
     }
 
     // Read operations for registers.
-    switch (reg) 
+    switch (reg)
     {
-        case reg_sbuf_size: {
-            break;
-        }
+    case reg_sbuf_size:
+    {
+        break;
+    }
 
-        case reg_count: {
-            lock_audio_counter();
-            publish_audio_count();
-            unlock_audio_counter();
-            break;
-        }
+    case reg_count:
+    {
+        lock_audio_counter();
+        publish_audio_count();
+        unlock_audio_counter();
+        break;
+    }
 
-        default: {
-            break;
-        }
+    default:
+    {
+        break;
+    }
     }
 }
 
-void init_audio() 
+void init_audio()
 {
-  audio_stats_enabled = audio_env_flag_enabled("NEMU_AUDIO_STATS");
-  audio_stats_last_us = get_time();
-  if (audio_stats_enabled)
-  {
-      Log("audio: host stats enabled, print interval = %" PRIu64 " us",
-          (uint64_t)AUDIO_STATS_INTERVAL_US);
-  }
+    audio_stats_enabled = audio_env_flag_enabled("NEMU_AUDIO_STATS");
+    audio_stats_last_us = get_time();
+    if (audio_stats_enabled)
+    {
+        Log("audio: host stats enabled, print interval = %" PRIu64 " us",
+            (uint64_t)AUDIO_STATS_INTERVAL_US);
+    }
 
-  uint32_t space_size = sizeof(uint32_t) * nr_reg;
-  audio_base = (uint32_t *)new_space(space_size);
+    uint32_t space_size = sizeof(uint32_t) * nr_reg;
+    audio_base = (uint32_t *)new_space(space_size);
 
 #ifdef CONFIG_HAS_PORT_IO
-  add_pio_map("audio", CONFIG_AUDIO_CTL_PORT, audio_base, space_size,
-              audio_io_handler);
+    add_pio_map("audio", CONFIG_AUDIO_CTL_PORT, audio_base, space_size,
+                audio_io_handler);
 #else
-  add_mmio_map("audio", CONFIG_AUDIO_CTL_MMIO, audio_base, space_size,
-               audio_io_handler);
+    add_mmio_map("audio", CONFIG_AUDIO_CTL_MMIO, audio_base, space_size,
+                 audio_io_handler);
 #endif
 
-  sbuf = (uint8_t *)new_space(CONFIG_SB_SIZE);
-  add_mmio_map("audio-sbuf", CONFIG_SB_ADDR, sbuf, CONFIG_SB_SIZE, NULL);
+    sbuf = (uint8_t *)new_space(CONFIG_SB_SIZE);
+    add_mmio_map("audio-sbuf", CONFIG_SB_ADDR, sbuf, CONFIG_SB_SIZE, NULL);
 
-  // Write out the stream buffer size to the register.
-  // In AM, it will run as: init -> config -> ctrl.
-  audio_base[reg_sbuf_size] = CONFIG_SB_SIZE;
-  reset_audio_stream();
+    // Write out the stream buffer size to the register.
+    // In AM, it will run as: init -> config -> ctrl.
+    audio_base[reg_sbuf_size] = CONFIG_SB_SIZE;
+    reset_audio_stream();
 
 #ifndef CONFIG_AUDIO_DUMMY
-  // Init subsystem in here before open device.
-  if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) 
-  {
-      printf("SDL_InitSubSystem error: %s\n", SDL_GetError());
-      exit(1);
-  }
+    // Init subsystem in here before open device.
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
+    {
+        printf("SDL_InitSubSystem error: %s\n", SDL_GetError());
+        exit(1);
+    }
 #endif
 }
