@@ -4,8 +4,14 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <time.h>
 #include <fcntl.h>
 #include <assert.h>
+
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_MONOTONIC ((clockid_t)4)
+int clock_gettime(clockid_t clock_id, struct timespec *tp);
+#endif
 
 static int evtdev = -1;
 static int fbdev = -1;
@@ -45,19 +51,21 @@ static void clear_full_framebuffer(int width, int height)
 /* initTick holds the millisecond timestamp taken at NDL_Init() */
 static uint32_t initTick = 0;
 
+static uint32_t monotonic_ms(void)
+{
+    struct timespec ts;
+
+    assert(clock_gettime(CLOCK_MONOTONIC, &ts) == 0);
+    return (uint32_t)((uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull);
+}
+
 static int sbFd = -1;
 static int sbctlFd = -1;
 
 uint32_t NDL_GetTicks()
 {
-    struct timeval tv;
-    assert(gettimeofday(&tv, NULL) == 0);
-
-    // NowMs is milliseconds since the Unix epoch.
-    const uint32_t nowMs = (uint32_t)(tv.tv_sec * 1000UL + tv.tv_usec / 1000UL);
-
-    // Subtract the base time recorded in initTick.
-    return nowMs - initTick;
+    // Keep SDL/NDL frame pacing on monotonic uptime, not wall-clock RTC time.
+    return monotonic_ms() - initTick;
 }
 
 int NDL_PollEvent(char *buf, int len)
@@ -331,10 +339,8 @@ int NDL_Init(uint32_t flags)
         evtdev = 3;
     }
 
-    // Record the “zero” point in milliseconds.
-    struct timeval tv;
-    assert(gettimeofday(&tv, NULL) == 0);
-    initTick = (uint32_t)(tv.tv_sec * 1000UL + tv.tv_usec / 1000UL);
+    // Record the zero point in monotonic milliseconds.
+    initTick = monotonic_ms();
 
     return 0;
 }

@@ -7,7 +7,14 @@ static Context *(*user_handler)(Event, Context *) = NULL;
 enum
 {
     NP_KERNEL = 0,
-    NP_USER = 1
+    NP_USER = 1,
+    /*
+     * NEMU's RISC-V ecall helper stores the guest a7 value in mcause, so the AM
+     * layer sees syscall numbers rather than the architectural environment-call
+     * cause.  Nanos-lite added SYS_clock_gettime after the original 0..19 range;
+     * keep a little ABI headroom so new syscall IDs do not become EVENT_ERROR.
+     */
+    NEMU_SYSCALL_CAUSE_MAX = 63
 };
 
 // NEMU raises the machine timer interrupt with the standard RISC-V interrupt
@@ -59,11 +66,11 @@ Context *__am_irq_handle(Context *c)
 
         // Is system call?
 
-        if (c->mcause >= 0 && c->mcause <= 19)
+        if (c->mcause <= NEMU_SYSCALL_CAUSE_MAX)
         {
-            // In this teaching target, all synchronous exception codes in this range
-            // are presented to the upper layer as syscalls. The specific cause value
-            // remains available in the saved Context if a kernel wants to inspect it.
+            // In this teaching target, NEMU presents ecall a7 values in mcause.
+            // Treat the reserved syscall-number range as syscalls; the specific
+            // value remains available in the saved Context for the kernel.
             ev.event = EVENT_SYSCALL;
             c->mepc += sizeof(uint32_t);
         }

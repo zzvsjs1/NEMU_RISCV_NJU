@@ -15,7 +15,14 @@
 #include <debug.h>
 #include <inttypes.h>
 
-typedef int64_t time_t;
+/*
+ * These time types are part of the Nanos-to-Navy syscall ABI.  Navy newlib in
+ * this tree defines _USE_LONG_TIME_T, so RISC-V32 user programs lay out
+ * timeval/timespec as two long-sized fields.  Keep the kernel definitions in
+ * lock-step with that ABI; otherwise tv_usec/tv_nsec lands at the wrong offset
+ * and user-space timers degrade to whole-second precision.
+ */
+typedef long time_t;
 typedef long suseconds_t;
 typedef long clockid_t;
 
