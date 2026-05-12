@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #define TRACE(msg) \
     do \
@@ -227,6 +228,50 @@ static void check_image_rwops(void)
     free(buf);
 }
 
+static void check_savebmp_rwops(void)
+{
+    /*
+     * ONScripter's savescreenshot2 command writes a BMP through SDL_RWops.
+     * This verifies that miniSDL serialises a 32-bit surface to a normal BMP
+     * file and closes the stream when requested, matching SDL_SaveBMP_RW(..., 1).
+     */
+    const char *path = "ons-sdl-savebmp-test.bmp";
+    SDL_Surface *surface = SDL_CreateRGBSurface(0, 2, 2, 32,
+                                                DEFAULT_RMASK, DEFAULT_GMASK,
+                                                DEFAULT_BMASK, DEFAULT_AMASK);
+    assert(surface != NULL);
+
+    uint32_t *pixels = (uint32_t *)surface->pixels;
+    pixels[0] = SDL_MapRGBA(surface->format, 0x11, 0x22, 0x33, 0xff);
+    pixels[1] = SDL_MapRGBA(surface->format, 0x44, 0x55, 0x66, 0xff);
+    pixels[2] = SDL_MapRGBA(surface->format, 0x77, 0x88, 0x99, 0xff);
+    pixels[3] = SDL_MapRGBA(surface->format, 0xaa, 0xbb, 0xcc, 0xff);
+
+    SDL_RWops *rw = SDL_RWFromFile(path, "wb");
+    assert(rw != NULL);
+    assert(SDL_SaveBMP_RW(surface, rw, 1) == 0);
+
+    FILE *fp = fopen(path, "rb");
+    assert(fp != NULL);
+    unsigned char header[54];
+    unsigned char pixels_on_disk[16];
+    assert(fread(header, 1, sizeof(header), fp) == sizeof(header));
+    assert(fread(pixels_on_disk, 1, sizeof(pixels_on_disk), fp) == sizeof(pixels_on_disk));
+    assert(header[0] == 'B' && header[1] == 'M');
+    assert(header[10] == 54);
+    assert(header[18] == 2 && header[22] == 2);
+    assert(header[28] == 24);
+    assert(pixels_on_disk[0] == 0x99 && pixels_on_disk[1] == 0x88 && pixels_on_disk[2] == 0x77);
+    assert(pixels_on_disk[3] == 0xcc && pixels_on_disk[4] == 0xbb && pixels_on_disk[5] == 0xaa);
+    assert(pixels_on_disk[6] == 0x00 && pixels_on_disk[7] == 0x00);
+    assert(pixels_on_disk[8] == 0x33 && pixels_on_disk[9] == 0x22 && pixels_on_disk[10] == 0x11);
+    assert(pixels_on_disk[11] == 0x66 && pixels_on_disk[12] == 0x55 && pixels_on_disk[13] == 0x44);
+    assert(pixels_on_disk[14] == 0x00 && pixels_on_disk[15] == 0x00);
+    fclose(fp);
+    unlink(path);
+    SDL_FreeSurface(surface);
+}
+
 int main(void)
 {
     setbuf(stdout, NULL);
@@ -246,6 +291,8 @@ int main(void)
     check_timer();
     TRACE("image");
     check_image_rwops();
+    TRACE("savebmp");
+    check_savebmp_rwops();
     TRACE("quit");
     SDL_Quit();
     printf("ons-sdl-test PASS\n");

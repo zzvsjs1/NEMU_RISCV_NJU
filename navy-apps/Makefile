@@ -217,6 +217,10 @@ ons-game-data:
 		echo "       Directory checked: $(ONS_GAME_SRC)" >&2; \
 		exit 1; \
 	fi
+	@# ONScripter writes save thumbnails and optional backup saves below these
+	@# directories.  The FAT32 layer creates files, not missing parent paths, so
+	@# put the parents into the generated disk image before the game link is used.
+	@mkdir -p "$(ONS_GAME_SRC)/savedata" "$(ONS_GAME_SRC)/sav"
 	@if [ -e "$(ONS_GAME_DST)" ] && [ ! -L "$(ONS_GAME_DST)" ]; then \
 		echo "error: $(ONS_GAME_DST) is a real directory, but it should be a symlink." >&2; \
 		echo "       Remove the generated copy, then rerun make update." >&2; \

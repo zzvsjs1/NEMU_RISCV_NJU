@@ -59,6 +59,8 @@ typedef struct
     uint8_t *pixels;
 } SDL_Surface;
 
+struct SDL_RWops;
+
 SDL_Surface *SDL_CreateRGBSurfaceFrom(void *pixels, int width, int height, int depth,
                                       int pitch, uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask);
 SDL_Surface *SDL_CreateRGBSurface(uint32_t flags, int width, int height, int depth,
@@ -75,5 +77,6 @@ SDL_Surface *SDL_ConvertSurface(SDL_Surface *src, SDL_PixelFormat *fmt, uint32_t
 uint32_t SDL_MapRGBA(SDL_PixelFormat *fmt, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 int SDL_LockSurface(SDL_Surface *s);
 void SDL_UnlockSurface(SDL_Surface *s);
+int SDL_SaveBMP_RW(SDL_Surface *surface, struct SDL_RWops *rw, int freerw);
 
 #endif

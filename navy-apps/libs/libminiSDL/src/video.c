@@ -1,5 +1,6 @@
 #include <NDL.h>
 #include <sdl-video.h>
+#include <sdl-file.h>
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
@@ -924,4 +925,122 @@ int SDL_LockSurface(SDL_Surface *s)
 
 void SDL_UnlockSurface(SDL_Surface *s)
 {
+}
+
+static int rw_write_exact(SDL_RWops *rw, const void *buf, size_t len)
+{
+    return SDL_RWwrite(rw, buf, 1, len) == len ? 0 : -1;
+}
+
+static void put_u16_le(uint8_t out[2], uint16_t value)
+{
+    out[0] = (uint8_t)value;
+    out[1] = (uint8_t)(value >> 8);
+}
+
+static void put_u32_le(uint8_t out[4], uint32_t value)
+{
+    out[0] = (uint8_t)value;
+    out[1] = (uint8_t)(value >> 8);
+    out[2] = (uint8_t)(value >> 16);
+    out[3] = (uint8_t)(value >> 24);
+}
+
+static uint8_t pixel_channel(uint32_t pixel, uint32_t mask, uint8_t shift)
+{
+    return mask == 0 ? 0 : (uint8_t)((pixel & mask) >> shift);
+}
+
+int SDL_SaveBMP_RW(SDL_Surface *surface, SDL_RWops *rw, int freerw)
+{
+    int ret = -1;
+
+    if (surface == NULL || surface->format == NULL || surface->pixels == NULL ||
+        rw == NULL || surface->w <= 0 || surface->h <= 0 ||
+        surface->format->BytesPerPixel != 4)
+    {
+        if (freerw && rw != NULL)
+            SDL_RWclose(rw);
+        return -1;
+    }
+
+    const uint32_t width = (uint32_t)surface->w;
+    const uint32_t height = (uint32_t)surface->h;
+    if (width > (UINT32_MAX - 3u) / 3u)
+    {
+        if (freerw)
+            SDL_RWclose(rw);
+        return -1;
+    }
+
+    const uint32_t row_bytes = width * 3u;
+    const uint32_t padded_row_bytes = (row_bytes + 3u) & ~3u;
+    if (height > (UINT32_MAX - 54u) / padded_row_bytes)
+    {
+        if (freerw)
+            SDL_RWclose(rw);
+        return -1;
+    }
+
+    const uint32_t image_bytes = padded_row_bytes * height;
+    const uint32_t file_bytes = 54u + image_bytes;
+    uint8_t header[54];
+
+    memset(header, 0, sizeof(header));
+    header[0] = 'B';
+    header[1] = 'M';
+    put_u32_le(&header[2], file_bytes);
+    put_u32_le(&header[10], 54u);
+    put_u32_le(&header[14], 40u);
+    put_u32_le(&header[18], (uint32_t)surface->w);
+    put_u32_le(&header[22], (uint32_t)surface->h);
+    put_u16_le(&header[26], 1u);
+    put_u16_le(&header[28], 24u);
+    put_u32_le(&header[34], image_bytes);
+
+    if (rw_write_exact(rw, header, sizeof(header)) != 0)
+        goto out;
+
+    const uint8_t pad[3] = {0, 0, 0};
+    const size_t pad_len = (size_t)(padded_row_bytes - row_bytes);
+    const int bpp = surface->format->BytesPerPixel;
+
+    /*
+     * BMP stores rows bottom-up and pixels as BGR.  ONScripter screenshots are
+     * 32-bit software surfaces, so read each source pixel through its masks
+     * instead of assuming one fixed host byte order.
+     */
+    for (int y = surface->h - 1; y >= 0; y--)
+    {
+        const uint8_t *row = surface->pixels + (size_t)y * surface->pitch;
+
+        for (int x = 0; x < surface->w; x++)
+        {
+            uint32_t pixel;
+            uint8_t bgr[3];
+
+            memcpy(&pixel, row + (size_t)x * bpp, sizeof(pixel));
+            bgr[0] = pixel_channel(pixel, surface->format->Bmask, surface->format->Bshift);
+            bgr[1] = pixel_channel(pixel, surface->format->Gmask, surface->format->Gshift);
+            bgr[2] = pixel_channel(pixel, surface->format->Rmask, surface->format->Rshift);
+
+            if (rw_write_exact(rw, bgr, sizeof(bgr)) != 0)
+                goto out;
+        }
+
+        if (pad_len != 0 && rw_write_exact(rw, pad, pad_len) != 0)
+            goto out;
+    }
+
+    ret = 0;
+
+out:
+    if (freerw)
+    {
+        const int close_ret = SDL_RWclose(rw);
+        if (close_ret != 0)
+            ret = -1;
+    }
+
+    return ret;
 }

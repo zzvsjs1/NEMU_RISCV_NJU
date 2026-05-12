@@ -1,7 +1,7 @@
 REPO_PATH = repo
 PATCH_FILE = $(abspath patch/mouse.diff)
 ifeq ($(wildcard $(REPO_PATH)/include/ONScripter.h),)
-  $(shell git clone --depth=1 git@github.com:NJU-ProjectN/onscripter-navy.git $(REPO_PATH))
+  $(shell git clone --depth=1 git@github.com:zzvsjs1/onscripter-navy.git $(REPO_PATH))
 endif
 
 # The upstream ONScripter checkout is treated as generated source for this

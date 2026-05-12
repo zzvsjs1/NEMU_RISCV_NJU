@@ -191,3 +191,91 @@ diff --git a/src/system/ONScripter_event.cpp b/src/system/ONScripter_event.cpp
            case SDL_ACTIVEEVENT:
              if ( !event.active.gain ){
                  // the mouse cursor leaves the window
+diff --git a/src/system/ONScripter_command.cpp b/src/system/ONScripter_command.cpp
+--- a/src/system/ONScripter_command.cpp
++++ b/src/system/ONScripter_command.cpp
+@@ -947,3 +947,22 @@ int ONScripter::savescreenshotCommand()
+     const char *buf = script_h.readStr();
+-#ifndef __NAVY__
++    const char *save_path = buf;
++#ifdef __NAVY__
++    char *navy_save_path = NULL;
++    const bool absolute_path = buf[0] == '/' || buf[0] == '\\';
++    const bool has_directory = strchr(buf, '/') != NULL || strchr(buf, '\\') != NULL;
++    /*
++     * If the script already gives a directory, keep it under archive_path.
++     * That avoids savedata/savedata/saveN.bmp if savedir is enabled later,
++     * while bare screenshot names still honour save_dir like save files do.
++     */
++    const char *base_path = absolute_path ? "" : ((!has_directory && save_dir) ? save_dir : archive_path);
++
++    navy_save_path = new char[strlen(base_path) + strlen(buf) + 1];
++    sprintf(navy_save_path, "%s%s", base_path, buf);
++    for (unsigned int i = 0; i < strlen(navy_save_path); i++)
++        if (navy_save_path[i] == '/' || navy_save_path[i] == '\\')
++            navy_save_path[i] = DELIMITER;
++    save_path = navy_save_path;
++#endif
++
+     SDL_Surface *surface = AnimationInfo::alloc32bitSurface( screenshot_w, screenshot_h, texture_format );
+@@ -952,3 +971,8 @@ int ONScripter::savescreenshotCommand()
+-    SDL_RWops *rwops = SDL_RWFromFile(buf, "wb");
+-    if (rwops == nullptr || SDL_SaveBMP_RW(text_info.image_surface, rwops, 1) != 0)
++    /*
++     * The script passes paths such as savedata\save2.bmp.  On Navy these must
++     * be rooted at the game archive directory because there is no host working
++     * directory matching the game data path.
++     */
++    SDL_RWops *rwops = SDL_RWFromFile(save_path, "wb");
++    if (rwops == nullptr || SDL_SaveBMP_RW(surface, rwops, 1) != 0)
+         utils::printError("Save screenshot failed: %s\n", SDL_GetError());
+@@ -955,2 +979,4 @@ int ONScripter::savescreenshotCommand()
+     SDL_FreeSurface(surface);
++#ifdef __NAVY__
++    delete[] navy_save_path;
+ #endif
+diff --git a/src/image/ONScripter_image.cpp b/src/image/ONScripter_image.cpp
+--- a/src/image/ONScripter_image.cpp
++++ b/src/image/ONScripter_image.cpp
+@@ -29 +64,36 @@
++#ifdef __NAVY__
++static bool isNavyOptionalMissingImage(const char *filename)
++{
++    const char *base = filename;
++    const char *slash = strrchr(filename, '/');
++    const char *backslash = strrchr(filename, '\\');
++
++    if (slash && slash + 1 > base)
++        base = slash + 1;
++    if (backslash && backslash + 1 > base)
++        base = backslash + 1;
++
++    if (!strcmp(base, "uoncur.bmp") || !strcmp(base, "uoffcur.bmp") ||
++        !strcmp(base, "doncur.bmp") || !strcmp(base, "doffcur.bmp") ||
++        !strcmp(base, "cursor0.bmp") || !strcmp(base, "cursor1.bmp"))
++    {
++        return true;
++    }
++
++    /*
++     * Old save files can pre-date Navy screenshot support.  In that case the
++     * DAT is still loadable, but the slot thumbnail is missing until the slot
++     * is saved again.
++     */
++    if ((!strncmp(filename, "savedata/", 9) || !strncmp(filename, "savedata\\", 9)) &&
++        !strncmp(base, "save", 4))
++    {
++        const char *ext = strrchr(base, '.');
++        return ext != NULL && !strcmp(ext, ".bmp");
++    }
++
++    return false;
++}
++#endif
++
+ SDL_Surface *ONScripter::loadImage(char *filename, bool *has_alpha, int *location, unsigned char *alpha)
+@@ -131 +166,4 @@ SDL_Surface *ONScripter::createSurfaceFromFile(char *filename, bool *has_alpha,
++#ifdef __NAVY__
++        if (!isNavyOptionalMissingImage(filename))
++#endif
+         utils::printError(" *** can't find file [%s] ***\n", filename);

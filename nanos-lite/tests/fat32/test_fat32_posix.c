@@ -227,7 +227,9 @@ static void test_large_image_keeps_runtime_save_space(void)
     uint8_t buf[512];
     uint8_t out[sizeof(buf)];
 
-    assert(system("rm -rf fat32-posix-work && mkdir -p fat32-posix-work/fsimg/share/games/ons") == 0);
+    assert(system("rm -rf fat32-posix-work && mkdir -p "
+                  "fat32-posix-work/fsimg/share/games/ons/savedata "
+                  "fat32-posix-work/fsimg/share/games/ons/sav") == 0);
     write_sparse_file("fat32-posix-work/fsimg/share/games/ons/arc.nsa", LARGE_IMAGE_FILLER_SIZE);
     write_text_file("fat32-posix-work/fsimg/share/games/ons/save1.dat", "existing");
     assert(system("python3 ../../../navy-apps/scripts/mkfat32.py fat32-posix-work/fsimg " POSIX_IMAGE) == 0);
@@ -242,6 +244,18 @@ static void test_large_image_keeps_runtime_save_space(void)
     assert(fat32_backend_write(&file, 0, buf, sizeof(buf)) == sizeof(buf));
     assert(fat32_backend_close(&file) == 0);
     assert(fat32_lookup_path(fat32_backend_volume(), "/share/games/ons/save2.dat", &entry) == 0);
+    assert(entry.size == sizeof(buf));
+
+    assert(fat32_backend_create("/share/games/ons/savedata/save2.bmp", &file) == 0);
+    assert(fat32_backend_write(&file, 0, buf, sizeof(buf)) == sizeof(buf));
+    assert(fat32_backend_close(&file) == 0);
+    assert(fat32_lookup_path(fat32_backend_volume(), "/share/games/ons/savedata/save2.bmp", &entry) == 0);
+    assert(entry.size == sizeof(buf));
+
+    assert(fat32_backend_create("/share/games/ons/sav/save2.dat", &file) == 0);
+    assert(fat32_backend_write(&file, 0, buf, sizeof(buf)) == sizeof(buf));
+    assert(fat32_backend_close(&file) == 0);
+    assert(fat32_lookup_path(fat32_backend_volume(), "/share/games/ons/sav/save2.dat", &entry) == 0);
     assert(entry.size == sizeof(buf));
 
     assert(fat32_backend_open("/share/games/ons/save2.dat", &file) == 0);
