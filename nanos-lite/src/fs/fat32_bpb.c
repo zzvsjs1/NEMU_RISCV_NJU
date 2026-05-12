@@ -63,10 +63,10 @@ int fat32_parse_bpb(const uint8_t sector[512], uint32_t disk_block_size, Fat32Vo
     }
 
     /*
-   * These offsets are the FAT32 BPB layout from the spec.  Keep the field names
-   * in comments close to the reads so it is clear why FAT12/FAT16-only fields
-   * such as BPB_RootEntCnt and BPB_FATSz16 must be zero on a FAT32 image.
-   */
+     * These offsets are the FAT32 BPB layout from the spec.  Keep the field names
+     * in comments close to the reads so it is clear why FAT12/FAT16-only fields
+     * such as BPB_RootEntCnt and BPB_FATSz16 must be zero on a FAT32 image.
+     */
     const uint16_t bytes_per_sector = get_le16(&sector[11]);      /* BPB_BytsPerSec */
     const uint8_t sectors_per_cluster = sector[13];               /* BPB_SecPerClus */
     const uint16_t reserved_sector_count = get_le16(&sector[14]); /* BPB_RsvdSecCnt */

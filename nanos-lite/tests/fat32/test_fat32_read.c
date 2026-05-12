@@ -39,9 +39,9 @@ static void write_big_file(void)
     assert(file != 0);
 
     /*
-   * The file is larger than one 512-byte cluster, so the generated FAT image
-   * must contain a two-cluster chain for BIG.BIN.
-   */
+     * The file is larger than one 512-byte cluster, so the generated FAT image
+     * must contain a two-cluster chain for BIG.BIN.
+     */
     for (int i = 0; i < 900; i++)
     {
         assert(fputc((uint8_t)(i & 0xff), file) != EOF);
@@ -53,10 +53,10 @@ static void write_big_file(void)
     assert(file != 0);
 
     /*
-   * This file is large enough to expose per-cluster overhead.  The local
-   * mkfat32 builder allocates clusters sequentially, while the reader still has
-   * to validate the FAT chain before batching those on-disk sectors.
-   */
+     * This file is large enough to expose per-cluster overhead.  The local
+     * mkfat32 builder allocates clusters sequentially, while the reader still has
+     * to validate the FAT chain before batching those on-disk sectors.
+     */
     for (size_t i = 0; i < 128u * 1024u; i++)
     {
         assert(fputc((uint8_t)(i & 0xffu), file) != EOF);
@@ -312,11 +312,11 @@ static void test_backend_batches_contiguous_large_reads(void)
     expect_pattern(buf, 0, sizeof(buf));
 
     /*
-   * A 128 KiB read spans 256 one-sector clusters.  The performance contract is
-   * that the FAT reader verifies the chain in FAT-sector-sized groups and hands
-   * contiguous data runs to disk_read(), instead of issuing one disk_read() per
-   * 512-byte data sector.
-   */
+     * A 128 KiB read spans 256 one-sector clusters.  The performance contract is
+     * that the FAT reader verifies the chain in FAT-sector-sized groups and hands
+     * contiguous data runs to disk_read(), instead of issuing one disk_read() per
+     * 512-byte data sector.
+     */
     assert(fat32_test_disk_read_calls() <= 4);
     assert(fat32_test_disk_read_bytes() < sizeof(buf) + 4u * 512u);
 
@@ -342,10 +342,10 @@ static void test_backend_uses_contiguous_cache_for_random_large_reads(void)
     expect_pattern(buf, offset, sizeof(buf));
 
     /*
-   * ONScripter repeatedly seeks inside large archive files and reads one member.
-   * For the local FAT32 image, the opened file's verified contiguous chain
-   * should make that lookup direct rather than scanning from the first cluster.
-   */
+     * ONScripter repeatedly seeks inside large archive files and reads one member.
+     * For the local FAT32 image, the opened file's verified contiguous chain
+     * should make that lookup direct rather than scanning from the first cluster.
+     */
     assert(fat32_test_disk_read_calls() == 1);
     assert(fat32_test_disk_read_bytes() == sizeof(buf));
 

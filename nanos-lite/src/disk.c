@@ -48,9 +48,9 @@ static void check_disk_range(size_t offset, size_t len)
     const size_t size = disk_size();
 
     /* The public disk_* API accepts byte ranges even though the AM device only
-   * transfers whole blocks.  Validate before block arithmetic so the partial
-   * first/last-block paths never wrap past the emulated image.
-   */
+     * transfers whole blocks.  Validate before block arithmetic so the partial
+     * first/last-block paths never wrap past the emulated image.
+     */
     assert(offset <= size);
     assert(len <= size - offset);
 }
@@ -61,10 +61,10 @@ static void disk_transfer_blocks(bool write, size_t blkno, size_t blkcnt)
     assert(blkcnt * (size_t)disk_cfg.blksz <= DISK_BLOCK_BUF_SIZE);
 
     /*
-   * NEMU receives this pointer as a guest physical address and translates it
-   * directly into host PMEM.  Keep it as a kernel static buffer: syscall
-   * buffers may be userspace virtual addresses, which the device cannot walk.
-   */
+     * NEMU receives this pointer as a guest physical address and translates it
+     * directly into host PMEM.  Keep it as a kernel static buffer: syscall
+     * buffers may be userspace virtual addresses, which the device cannot walk.
+     */
     io_write(AM_DISK_BLKIO,
              .write = write,
              .buf = disk_block_buf,
@@ -77,8 +77,8 @@ size_t disk_read(void *buf, size_t offset, size_t len)
     if (!disk_present)
     {
         /* Keep old ramdisk-only images working when NEMU has no external disk
-     * device.  The filesystem layer does not need to know which backend won.
-     */
+         * device.  The filesystem layer does not need to know which backend won.
+         */
         return ramdisk_read(buf, offset, len);
     }
 
@@ -97,10 +97,10 @@ size_t disk_read(void *buf, size_t offset, size_t len)
         if (blkoff == 0)
         {
             /*
-       * Read as many consecutive whole blocks as the bounce buffer can hold.
-       * The AM/NEMU disk interface already supports multi-block transfers, so
-       * this cuts MMIO traffic and host fseek/fread calls for large assets.
-       */
+             * Read as many consecutive whole blocks as the bounce buffer can hold.
+             * The AM/NEMU disk interface already supports multi-block transfers, so
+             * this cuts MMIO traffic and host fseek/fread calls for large assets.
+             */
             const size_t max_blocks = DISK_BLOCK_BUF_SIZE / blksz;
             const size_t needed_blocks = (len - done + blksz - 1) / blksz;
             const size_t disk_blocks_left = (size_t)disk_cfg.blkcnt - blkno;
@@ -114,10 +114,10 @@ size_t disk_read(void *buf, size_t offset, size_t len)
         }
 
         /*
-     * The first unaligned piece must still read a whole disk block into the
-     * bounce buffer, then copy only the requested tail.  This keeps the public
-     * byte-addressed filesystem API while the AM/NEMU device remains block-based.
-     */
+         * The first unaligned piece must still read a whole disk block into the
+         * bounce buffer, then copy only the requested tail.  This keeps the public
+         * byte-addressed filesystem API while the AM/NEMU device remains block-based.
+         */
         const size_t chunk = min_size(len - done, blksz - blkoff);
 
         disk_transfer_blocks(false, blkno, 1);
@@ -134,8 +134,8 @@ size_t disk_write(const void *buf, size_t offset, size_t len)
     if (!disk_present)
     {
         /* Writes follow the same fallback as reads so tests using the embedded
-     * ramdisk still observe a coherent storage backend.
-     */
+         * ramdisk still observe a coherent storage backend.
+         */
         return ramdisk_write(buf, offset, len);
     }
 
@@ -155,10 +155,10 @@ size_t disk_write(const void *buf, size_t offset, size_t len)
         if (blkoff != 0 || chunk != blksz)
         {
             /*
-       * Preserve the bytes in this block that are outside the caller's range.
-       * Full aligned block writes can skip the read because the whole buffer
-       * is overwritten before the write command.
-       */
+             * Preserve the bytes in this block that are outside the caller's range.
+             * Full aligned block writes can skip the read because the whole buffer
+             * is overwritten before the write command.
+             */
             disk_transfer_blocks(false, blkno, 1);
         }
 
@@ -185,10 +185,10 @@ void init_disk(void)
 
     assert(disk_cfg.blksz <= DISK_BLOCK_BUF_SIZE);
     /*
-   * The buffer-size assertion is also a performance contract: if a future device
-   * uses larger blocks than the bounce buffer, batching would silently collapse
-   * back to one partial command or fail to preserve surrounding bytes on writes.
-   */
+     * The buffer-size assertion is also a performance contract: if a future device
+     * uses larger blocks than the bounce buffer, batching would silently collapse
+     * back to one partial command or fail to preserve surrounding bytes on writes.
+     */
     Log("disk info: block size = %d bytes, blocks = %d, size = %zu bytes",
         disk_cfg.blksz, disk_cfg.blkcnt, disk_size());
 }

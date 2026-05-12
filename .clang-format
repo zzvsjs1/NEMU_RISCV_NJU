@@ -6,4 +6,8 @@ BreakBeforeBraces: Allman
 AlignEscapedNewlines: DontAlign
 ColumnLimit: 0
 SortIncludes: Never
-ReflowComments: false
+ReflowComments: true
+SeparateDefinitionBlocks: Always
+SpacesInLineCommentPrefix:
+  Minimum: 0
+  Maximum: -1

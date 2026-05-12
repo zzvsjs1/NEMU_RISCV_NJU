@@ -11,6 +11,7 @@
 #undef NEMU_PLATFORM_CONSTANTS_ONLY
 #define NEMU_LAZY_FB_CAPTURE 1
 #define VGACTL_REG_ADDR(reg) (VGACTL_ADDR + (reg) * sizeof(uint32_t))
+
 static inline void fb_mmio_outl(uintptr_t addr, uint32_t data)
 {
     *(volatile uint32_t *)addr = data;
@@ -114,11 +115,10 @@ static bool valid_foreground_index(int owner)
 static void update_fb_backing(int owner, const void *buf, size_t offset, size_t len)
 {
     /*
-   * Copy the exact byte range that userspace wrote, rather than reconstructing
-   * rows from width/height. Multi-row writes and one-row writes then share the
-   * same private-backing semantics, independent of how the app grouped pixels.
-   */
-
+     * Copy the exact byte range that userspace wrote, rather than reconstructing
+     * rows from width/height. Multi-row writes and one-row writes then share the
+     * same private-backing semantics, independent of how the app grouped pixels.
+     */
     if (!fb_backing_ready || !valid_foreground_index(owner) || buf == NULL || len == 0)
     {
         return;
@@ -150,25 +150,25 @@ static void fb_capture_slot_if_stale(int owner)
 
 #if NEMU_LAZY_FB_CAPTURE
     /*
-   * The visible NEMU framebuffer is the authoritative copy for the foreground
-   * app while it is running. Capturing here materialises that hot physical
-   * state into the app's private backing store exactly once per switch-away,
-   * instead of paying for a full guest memcpy on every foreground frame.
-   *
-   * These registers are intentionally platform-private: they are used only by
-   * the kernel/device layer to preserve foreground ownership semantics, not as
-   * a public Navy or application ABI.
-   */
+     * The visible NEMU framebuffer is the authoritative copy for the foreground
+     * app while it is running. Capturing here materialises that hot physical
+     * state into the app's private backing store exactly once per switch-away,
+     * instead of paying for a full guest memcpy on every foreground frame.
+     *
+     * These registers are intentionally platform-private: they are used only by
+     * the kernel/device layer to preserve foreground ownership semantics, not as
+     * a public Navy or application ABI.
+     */
     fb_mmio_outl(VGACTL_REG_ADDR(NEMU_VGACTL_CAPTURE_DST), (uintptr_t)fb_backing[owner]);
     fb_mmio_outl(VGACTL_REG_ADDR(NEMU_VGACTL_CAPTURE_CMD), NEMU_VGACTL_CAPTURE_CMD_COPY);
     fb_backing_stale[owner] = false;
 #else
     /*
-   * Non-NEMU platforms do not have the hidden capture command. They keep eager
-   * backing semantics on foreground writes, so a stale backing should not be
-   * created there; clearing it here prevents an impossible capture from leaving
-   * the process permanently unrestorable if a future platform path marks it.
-   */
+     * Non-NEMU platforms do not have the hidden capture command. They keep eager
+     * backing semantics on foreground writes, so a stale backing should not be
+     * created there; clearing it here prevents an impossible capture from leaving
+     * the process permanently unrestorable if a future platform path marks it.
+     */
     fb_backing_stale[owner] = false;
 #endif
 }
@@ -204,10 +204,10 @@ static void audio_program(uint32_t freq, uint32_t channels, uint32_t samples)
 static void audio_remember_current(uint32_t freq, uint32_t channels, uint32_t samples)
 {
     /*
-   * Userspace SDL state survives a foreground switch, but the single physical
-   * NEMU audio backend does not.  Remember only the hardware format here; queued
-   * sample bytes are intentionally discarded when a foreground owner is restored.
-   */
+     * Userspace SDL state survives a foreground switch, but the single physical
+     * NEMU audio backend does not.  Remember only the hardware format here; queued
+     * sample bytes are intentionally discarded when a foreground owner is restored.
+     */
     const int owner = current_pcb_index();
 
     if (owner < 0 || owner >= NR_FOREGROUND_PROC)
@@ -240,12 +240,12 @@ static void audio_restore_foreground(void)
     }
 
     /*
-   * Reprogramming AM_AUDIO_CTRL resets both the AM stream-buffer write pointer
-   * and NEMU's host SDL audio stream. Do it when the selected app is about to
-   * run, not inside the old app's key-event syscall, because miniSDL calls its
-   * audio callback once after polling events. Restoring here prevents the old
-   * app from writing one last callback through the new app's audio format.
-   */
+     * Reprogramming AM_AUDIO_CTRL resets both the AM stream-buffer write pointer
+     * and NEMU's host SDL audio stream. Do it when the selected app is about to
+     * run, not inside the old app's key-event syscall, because miniSDL calls its
+     * audio callback once after polling events. Restoring here prevents the old
+     * app from writing one last callback through the new app's audio format.
+     */
     audio_program(state->freq, state->channels, state->samples);
 }
 
@@ -268,9 +268,9 @@ void device_restore_foreground_on_schedule(void)
 static bool handle_foreground_hotkey(AM_INPUT_KEYBRD_T *keyboard)
 {
     /* F1-F3 are kernel-owned hotkeys.  They switch the visible foreground app and
-   * are not forwarded to userspace, which prevents games from treating a window
-   * switch as normal input.
-   */
+     * are not forwarded to userspace, which prevents games from treating a window
+     * switch as normal input.
+     */
     switch (keyboard->keycode)
     {
     case AM_KEY_F1:
@@ -362,8 +362,8 @@ static size_t format_mouse_event(char *event, size_t event_size, AM_INPUT_MOUSE_
 static size_t copy_event_record(void *buf, size_t len, const char *event, size_t event_len)
 {
     /* /dev/events is a byte stream in navy apps.  A short userspace buffer may
-   * receive a truncated record; the caller decides when to poll again.
-   */
+     * receive a truncated record; the caller decides when to poll again.
+     */
     const size_t write_len = event_len > len ? len : event_len;
     memcpy(buf, event, write_len);
     return write_len;
@@ -434,10 +434,10 @@ size_t events_read(void *buf, size_t offset, size_t len)
     (void)offset;
 
     /*
-   * Keyboard hotkeys and mouse movement share one text device.  Alternating the
-   * first source is a small fairness rule: rapid mouse motion should not delay
-   * F1/F2/F3 foreground switches, and a held key should not hide cursor updates.
-   */
+     * Keyboard hotkeys and mouse movement share one text device.  Alternating the
+     * first source is a small fairness rule: rapid mouse motion should not delay
+     * F1/F2/F3 foreground switches, and a held key should not hide cursor updates.
+     */
     size_t n = 0;
 
     if (prefer_mouse)
@@ -462,9 +462,9 @@ size_t events_read(void *buf, size_t offset, size_t len)
 size_t dispinfo_read(void *buf, size_t offset, size_t len)
 {
     /* /proc/dispinfo is regenerated on every read from the current AM GPU
-   * config, so it stays correct even if the display size is supplied by NEMU.
-   * The existing simple procfs model ignores offset for this synthetic file.
-   */
+     * config, so it stays correct even if the display size is supplied by NEMU.
+     * The existing simple procfs model ignores offset for this synthetic file.
+     */
     const AM_GPU_CONFIG_T gpuConfig = io_read(AM_GPU_CONFIG);
     assert(gpuConfig.present);
 
@@ -513,7 +513,6 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
     int col = (int)(pixelOffset % screenW); // remainder → column
 
     size_t pixelCount = len / sizeof(uint32_t); // len is bytes → divide to get pixel count
-
     if (pixelCount == 0)
     {
         return len;
@@ -522,11 +521,10 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
     // printf("offset=%d row=%d col=%d wPixels=%d\n", (int)offset, row, col, wPixels);
 
     /*
-   * Full-width writes are common when an app repaints a whole image.  Send
-   * those as one multi-row draw so the VGA sync flag is raised once instead of
-   * once per row.  Other linear spans keep the old one-span behaviour.
-   */
-
+     * Full-width writes are common when an app repaints a whole image.  Send
+     * those as one multi-row draw so the VGA sync flag is raised once instead of
+     * once per row.  Other linear spans keep the old one-span behaviour.
+     */
     if (col == 0 && pixelCount >= (size_t)screenW && pixelCount % (size_t)screenW == 0)
     {
         const int hPixels = (int)(pixelCount / (size_t)screenW);
@@ -535,29 +533,28 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
     else
     {
         /* Userspace framebuffer writes are expected to describe one linear span.
-     * Non-full-width spans cannot wrap across rows here, so preserving the old
-     * one-row draw keeps MiniSDL's simple /dev/fb contract intact.
-     */
+         * Non-full-width spans cannot wrap across rows here, so preserving the old
+         * one-row draw keeps MiniSDL's simple /dev/fb contract intact.
+         */
         assert(pixelCount <= (size_t)INT32_MAX);
         io_write(AM_GPU_FBDRAW, col, row, (void *)buf, (int)pixelCount, 1, true);
     }
 
 #if NEMU_LAZY_FB_CAPTURE
     /*
-   * Do not copy foreground frames into the private backing store on NEMU. The
-   * AM_GPU_FBDRAW path has already presented the frame to the physical display,
-   * which remains the hot backing until this app is switched away and captured.
-   */
-
+     * Do not copy foreground frames into the private backing store on NEMU. The
+     * AM_GPU_FBDRAW path has already presented the frame to the physical display,
+     * which remains the hot backing until this app is switched away and captured.
+     */
     if (valid_foreground_index(owner))
     {
         fb_backing_stale[owner] = true;
     }
 #else
     /*
-   * Conservative fallback: without the NEMU capture register, keep the old
-   * eager backing behaviour so a later restore still has current pixels.
-   */
+     * Conservative fallback: without the NEMU capture register, keep the old
+     * eager backing behaviour so a later restore still has current pixels.
+     */
     update_fb_backing(owner, buf, offset, len);
 #endif
 
@@ -621,10 +618,9 @@ size_t sb_write(const void *buf, size_t offset, size_t len)
 size_t sbctl_write(const void *buf, size_t offset, size_t len)
 {
     /* MiniSDL writes exactly freq/channels/samples as three 32-bit words.  Any
-   * other length is rejected because a partial audio format would leave NEMU's
-   * host stream in a state no app can reason about.
-   */
-
+     * other length is rejected because a partial audio format would leave NEMU's
+     * host stream in a state no app can reason about.
+     */
     if (len != 3 * sizeof(uint32_t))
     {
         // Not supported
@@ -645,8 +641,8 @@ size_t sbctl_write(const void *buf, size_t offset, size_t len)
 size_t sbctl_read(void *buf, size_t offset, size_t len)
 {
     /* /dev/sbctl exposes writable space, not used space, matching MiniSDL's
-   * expectation that a positive value means another /dev/sb write can proceed.
-   */
+     * expectation that a positive value means another /dev/sb write can proceed.
+     */
     AM_AUDIO_STATUS_T st = io_read(AM_AUDIO_STATUS);
     AM_AUDIO_CONFIG_T cfg = io_read(AM_AUDIO_CONFIG);
     int32_t free_bytes = (int32_t)cfg.bufsize - (int32_t)st.count;

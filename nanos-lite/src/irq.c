@@ -22,10 +22,10 @@ static Context *do_event(Event e, Context *c)
         do_syscall(c);
 
         /*
-       * execve() is special: it replaces the current PCB's saved Context on
-       * the same kernel stack. Returning the old syscall frame would resume
-       * memory that now belongs to the new image's initial context.
-       */
+         * execve() is special: it replaces the current PCB's saved Context on
+         * the same kernel stack. Returning the old syscall frame would resume
+         * memory that now belongs to the new image's initial context.
+         */
         Context *replacement = syscall_replacement_context_and_clear();
 
         if (replacement != NULL)
@@ -34,7 +34,6 @@ static Context *do_event(Event e, Context *c)
         }
 
         // Perform scheduling once if the syscall requested it.
-
         if (syscall_need_resched_and_clear())
         {
             return schedule(c);

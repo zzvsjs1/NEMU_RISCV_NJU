@@ -16,11 +16,12 @@ enum
 typedef union
 {
     /*
-   * The union gives each PCB one page-aligned kernel stack and lets the process
-   * metadata occupy the same storage at the low end. Context objects are placed
-   * at the high end, so they stay kernel-accessible across VME satp switches.
-   */
+     * The union gives each PCB one page-aligned kernel stack and lets the process
+     * metadata occupy the same storage at the low end. Context objects are placed
+     * at the high end, so they stay kernel-accessible across VME satp switches.
+     */
     uint8_t stack[STACK_SIZE] PG_ALIGN;
+
     struct
     {
         Context *cp;

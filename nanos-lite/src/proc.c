@@ -54,10 +54,10 @@ int foreground_pcb_index(void)
 bool switch_fg_pcb(int index)
 {
     /*
-   * Foreground switching is a policy decision, not a new address-space
-   * primitive. The selected PCB will become active on the next schedule()
-   * return, and the trap return path will then load that PCB's saved satp.
-   */
+     * Foreground switching is a policy decision, not a new address-space
+     * primitive. The selected PCB will become active on the next schedule()
+     * return, and the trap return path will then load that PCB's saved satp.
+     */
     assert(index >= 0 && index < NR_FOREGROUND_PROC);
 
     PCB *next = &pcb[index];
@@ -66,15 +66,15 @@ bool switch_fg_pcb(int index)
     if (fg_pcb != next)
     {
         /*
-     * Snapshot the old foreground display before changing fg_pcb.  The device
-     * layer identifies the old owner through foreground_pcb_index(), so this
-     * ordering is what lets lazy framebuffer backing preserve the outgoing
-     * app's last physical frame.
-     *
-     * Reset the budget and defer audio restoration until the selected process
-     * is actually scheduled.  The old foreground process may still be inside a
-     * syscall while handling the hotkey.
-     */
+         * Snapshot the old foreground display before changing fg_pcb.  The device
+         * layer identifies the old owner through foreground_pcb_index(), so this
+         * ordering is what lets lazy framebuffer backing preserve the outgoing
+         * app's last physical frame.
+         *
+         * Reset the budget and defer audio restoration until the selected process
+         * is actually scheduled.  The old foreground process may still be inside a
+         * syscall while handling the hotkey.
+         */
         device_capture_foreground_before_switch();
         fg_pcb = next;
         foreground_budget = FOREGROUND_QUANTA;
@@ -105,12 +105,12 @@ void context_kload(PCB *pcb, void (*entry)(void *), void *arg)
 void hello_fun(void *arg)
 {
     // Interpret arg as a C string, because pointer may have 32/64 bit issue in some cases.
-    //const char *name = (const char *)arg;
-    //int j = 1;
+    // const char *name = (const char *)arg;
+    // int j = 1;
     while (1)
     {
-        //Log("Hello World from Nanos-lite, arg '%s', iteration %d!", name, j);
-        //j++;
+        // Log("Hello World from Nanos-lite, arg '%s', iteration %d!", name, j);
+        // j++;
         yield();
     }
 }
@@ -137,14 +137,13 @@ void init_proc()
     // so the first schedule() call switches to pcb[0].
     switch_boot_pcb();
 
-    //void naive_uload(PCB *pcb, const char *filename);
-    //naive_uload(NULL, "/bin/pal");
+    // void naive_uload(PCB *pcb, const char *filename);
+    // naive_uload(NULL, "/bin/pal");
 }
 
 Context *schedule(Context *prev)
 {
     // Save the context of the currently running PCB.
-
     if (current != NULL)
     {
         current->cp = prev;
@@ -152,7 +151,6 @@ Context *schedule(Context *prev)
 
     // Pick the next runnable PCB.
     // First switch: from boot PCB to the selected foreground process.
-
     if (current == &pcb_boot)
     {
         // First entry into user space: keep boot as a fake previous owner so the
@@ -162,10 +160,9 @@ Context *schedule(Context *prev)
     else if (current == fg_pcb)
     {
         /* Only the optional background slot is time-shared here.  Other foreground
-     * apps remain dormant until selected, so their framebuffer/audio state can
-     * be restored as a simple foreground switch instead of a true compositor.
-     */
-
+         * apps remain dormant until selected, so their framebuffer/audio state can
+         * be restored as a simple foreground switch instead of a true compositor.
+         */
         if (pcb_runnable(&pcb[HELLO_PROC]) && foreground_budget-- <= 0)
         {
             foreground_budget = FOREGROUND_QUANTA;

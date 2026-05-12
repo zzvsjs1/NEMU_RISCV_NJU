@@ -22,11 +22,10 @@ uint8_t fat32_lfn_checksum(const uint8_t short_name[11])
 static int copy_ascii_unit(uint16_t unit, char *out, size_t out_size, size_t *pos)
 {
     /*
-   * FAT LFN text is UTF-16LE.  Nanos-lite currently keeps pathname matching in
-   * a small ASCII subset, so reject non-printable and non-ASCII units instead
-   * of returning a lossy name.
-   */
-
+     * FAT LFN text is UTF-16LE.  Nanos-lite currently keeps pathname matching in
+     * a small ASCII subset, so reject non-printable and non-ASCII units instead
+     * of returning a lossy name.
+     */
     if (unit == 0x0000)
     {
         return 0;
@@ -50,7 +49,6 @@ static int copy_ascii_unit(uint16_t unit, char *out, size_t out_size, size_t *po
 static uint16_t lfn_unit_at(const Fat32LfnEntry *entry, int index)
 {
     /* Read packed fields directly, avoiding unaligned pointers to UTF-16 units. */
-
     if (index < 5)
     {
         return entry->name1[index];
@@ -67,10 +65,10 @@ static uint16_t lfn_unit_at(const Fat32LfnEntry *entry, int index)
 static bool lfn_has_only_padding_after(const Fat32LfnEntry *entry, int index)
 {
     /*
-   * After the first UTF-16 zero terminator in an LFN fragment, the FAT spec
-   * pads remaining code units with 0xffff.  Any other value means the long-name
-   * slot is malformed.
-   */
+     * After the first UTF-16 zero terminator in an LFN fragment, the FAT spec
+     * pads remaining code units with 0xffff.  Any other value means the long-name
+     * slot is malformed.
+     */
     for (int i = index + 1; i < 13; i++)
     {
         if (lfn_unit_at(entry, i) != 0xffff)

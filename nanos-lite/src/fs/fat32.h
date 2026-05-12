@@ -24,10 +24,10 @@
 typedef struct __attribute__((packed))
 {
     /*
-   * Sequence number in the low five bits.  Bit 6 marks the last logical piece,
-   * which appears first on disk because FAT stores long-name pieces in reverse
-   * order before the short entry.
-   */
+     * Sequence number in the low five bits.  Bit 6 marks the last logical piece,
+     * which appears first on disk because FAT stores long-name pieces in reverse
+     * order before the short entry.
+     */
     uint8_t order;
     /* First five UTF-16LE code units from this 13-character LFN fragment. */
     uint16_t name1[5];
@@ -36,9 +36,9 @@ typedef struct __attribute__((packed))
     /* Must be zero for normal FAT long-name entries. */
     uint8_t type;
     /*
-   * Checksum of the following short 8.3 name.  It binds the LFN pieces to the
-   * short entry so a stale or reordered long-name chain is ignored.
-   */
+     * Checksum of the following short 8.3 name.  It binds the LFN pieces to the
+     * short entry so a stale or reordered long-name chain is ignored.
+     */
     uint8_t checksum;
     /* Middle six UTF-16LE code units from this LFN fragment. */
     uint16_t name2[6];
@@ -57,73 +57,73 @@ typedef struct __attribute__((packed))
 typedef struct
 {
     /*
-   * BPB_BytsPerSec.  The FAT spec allows 512, 1024, 2048, or 4096, but this
-   * driver accepts only 512 so disk offsets and test images stay simple.
-   */
+     * BPB_BytsPerSec.  The FAT spec allows 512, 1024, 2048, or 4096, but this
+     * driver accepts only 512 so disk offsets and test images stay simple.
+     */
     uint16_t bytes_per_sector;
     /*
-   * BPB_SecPerClus.  A cluster is the allocation unit named by FAT entries; the
-   * spec requires this to be a non-zero power of two.
-   */
+     * BPB_SecPerClus.  A cluster is the allocation unit named by FAT entries; the
+     * spec requires this to be a non-zero power of two.
+     */
     uint8_t sectors_per_cluster;
     /*
-   * BPB_RsvdSecCnt.  Sectors before the first FAT, including the boot sector,
-   * FSInfo sector, and backup boot/FSInfo sectors.
-   */
+     * BPB_RsvdSecCnt.  Sectors before the first FAT, including the boot sector,
+     * FSInfo sector, and backup boot/FSInfo sectors.
+     */
     uint16_t reserved_sector_count;
     /*
-   * BPB_NumFATs.  Usually 2.  When mirroring is enabled, writes update every
-   * FAT copy; otherwise active_fat selects the only copy to use.
-   */
+     * BPB_NumFATs.  Usually 2.  When mirroring is enabled, writes update every
+     * FAT copy; otherwise active_fat selects the only copy to use.
+     */
     uint8_t fat_count;
     /* BPB_TotSec32.  Total sectors in the whole FAT32 image. */
     uint32_t total_sectors;
     /* BPB_FATSz32.  Sector count occupied by one FAT copy. */
     uint32_t fat_size_sectors;
     /*
-   * BPB_ExtFlags.  Bit 7 controls FAT mirroring; low four bits select the
-   * active FAT when mirroring is disabled.
-   */
+     * BPB_ExtFlags.  Bit 7 controls FAT mirroring; low four bits select the
+     * active FAT when mirroring is disabled.
+     */
     uint16_t ext_flags;
     /* True when all FAT copies should be kept in sync. */
     uint8_t mirror_fats;
     /* Active FAT index from BPB_ExtFlags when mirroring is disabled, else 0. */
     uint8_t active_fat;
     /*
-   * BPB_RootClus.  First cluster of the FAT32 root directory.  Unlike FAT12/16,
-   * FAT32 has no fixed root directory region.
-   */
+     * BPB_RootClus.  First cluster of the FAT32 root directory.  Unlike FAT12/16,
+     * FAT32 has no fixed root directory region.
+     */
     uint32_t root_cluster;
     /* BPB_FSInfo.  Reserved-sector index of the primary FSInfo structure. */
     uint16_t fsinfo_sector;
     /*
-   * BPB_BkBootSec.  Sector containing the backup boot record; the backup FSInfo
-   * copy is found at backup_boot_sector + fsinfo_sector.
-   */
+     * BPB_BkBootSec.  Sector containing the backup boot record; the backup FSInfo
+     * copy is found at backup_boot_sector + fsinfo_sector.
+     */
     uint16_t backup_boot_sector;
     /*
-   * Computed first data-sector number:
-   * reserved_sector_count + fat_count * fat_size_sectors.
-   */
+     * Computed first data-sector number:
+     * reserved_sector_count + fat_count * fat_size_sectors.
+     */
     uint32_t first_data_sector;
     /* Number of sectors in the cluster-addressable data area. */
     uint32_t data_sectors;
     /*
-   * CountOfClusters from the FAT spec.  This decides FAT type at mount time;
-   * FAT32 requires at least 65525 clusters.
-   */
+     * CountOfClusters from the FAT spec.  This decides FAT type at mount time;
+     * FAT32 requires at least 65525 clusters.
+     */
     uint32_t cluster_count;
     /* True only after FSInfo signatures have been validated. */
     uint8_t fsinfo_valid;
     /*
-   * FSI_Free_Count.  Advisory free-cluster count; 0xffffffff means unknown, so
-   * allocation still validates actual FAT entries before using a cluster.
-   */
+     * FSI_Free_Count.  Advisory free-cluster count; 0xffffffff means unknown, so
+     * allocation still validates actual FAT entries before using a cluster.
+     */
     uint32_t free_cluster_count;
     /*
-   * FSI_Nxt_Free.  Advisory starting point for allocation scans.  It is useful
-   * for speed but cannot be trusted without checking the FAT entry itself.
-   */
+     * FSI_Nxt_Free.  Advisory starting point for allocation scans.  It is useful
+     * for speed but cannot be trusted without checking the FAT entry itself.
+     */
     uint32_t next_free_cluster;
     /* True when fat_sector_cache contains a valid FAT sector. */
     uint8_t fat_sector_cache_valid;
@@ -132,9 +132,9 @@ typedef struct
     /* Absolute byte offset in the disk image for the cached FAT sector. */
     uint64_t fat_sector_cache_offset;
     /*
-   * One 512-byte FAT sector cache.  FAT32 entries are four bytes and never span
-   * a sector boundary, so this holds up to 128 adjacent FAT entries.
-   */
+     * One 512-byte FAT sector cache.  FAT32 entries are four bytes and never span
+     * a sector boundary, so this holds up to 128 adjacent FAT entries.
+     */
     uint8_t fat_sector_cache[512];
 } Fat32Volume;
 
@@ -151,9 +151,9 @@ typedef struct
     /* DIR_FileSize in bytes.  For directories the FAT spec requires this to be 0. */
     uint32_t size;
     /*
-   * Absolute byte offset of the short entry.  Write support needs this so size
-   * and first-cluster fields can be written back after allocation changes.
-   */
+     * Absolute byte offset of the short entry.  Write support needs this so size
+     * and first-cluster fields can be written back after allocation changes.
+     */
     uint64_t dir_entry_offset;
 } Fat32DirEntry;
 
@@ -176,9 +176,9 @@ typedef struct
     /* FAT cluster number at cached_cluster_index. */
     uint32_t cached_cluster;
     /*
-   * Verified contiguous prefix length from first_cluster.  This never assumes
-   * contiguity from the builder; it grows only after FAT links have been read.
-   */
+     * Verified contiguous prefix length from first_cluster.  This never assumes
+     * contiguity from the builder; it grows only after FAT links have been read.
+     */
     uint32_t contiguous_cluster_count;
 } Fat32File;
 

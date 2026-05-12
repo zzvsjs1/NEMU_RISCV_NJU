@@ -53,11 +53,10 @@ static int is_data_cluster(const Fat32Volume *vol, uint32_t cluster)
 static int is_valid_file_data_cluster(const Fat32Volume *vol, uint32_t cluster)
 {
     /*
-   * Non-empty files must start at a real data cluster.  FAT values in the
-   * reserved, bad, or end-of-chain ranges are not usable cluster numbers even
-   * if a malformed BPB claims a very large cluster count.
-   */
-
+     * Non-empty files must start at a real data cluster.  FAT values in the
+     * reserved, bad, or end-of-chain ranges are not usable cluster numbers even
+     * if a malformed BPB claims a very large cluster count.
+     */
     if (!is_data_cluster(vol, cluster))
     {
         return 0;
@@ -154,12 +153,11 @@ static void remember_contiguous_cluster(Fat32File *file, uint32_t cluster_index,
     }
 
     /*
-   * This cache records only the verified prefix starting at first_cluster.
-   * FAT32 permits fragmented chains, so never infer contiguity from arithmetic
-   * alone; callers reach this helper only after either reading the FAT link or
-   * using an already verified prefix.
-   */
-
+     * This cache records only the verified prefix starting at first_cluster.
+     * FAT32 permits fragmented chains, so never infer contiguity from arithmetic
+     * alone; callers reach this helper only after either reading the FAT link or
+     * using an already verified prefix.
+     */
     if (file->contiguous_cluster_count == cluster_index && (uint64_t)cluster == (uint64_t)file->first_cluster + cluster_index)
     {
         file->contiguous_cluster_count = cluster_index + 1u;
@@ -228,10 +226,9 @@ static int seek_cluster(Fat32File *file, uint32_t cluster_index, uint32_t *out_c
     }
 
     /*
-   * Reads commonly advance forwards.  Reusing the cached point keeps repeated
-   * small reads from restarting at the first cluster every time.
-   */
-
+     * Reads commonly advance forwards.  Reusing the cached point keeps repeated
+     * small reads from restarting at the first cluster every time.
+     */
     if (file->cached_cluster != 0 && file->cached_cluster_index <= cluster_index && file->cached_cluster_index > index && is_data_cluster(&mounted_volume, file->cached_cluster))
     {
         cluster = file->cached_cluster;
@@ -1028,12 +1025,11 @@ size_t fat32_backend_read(Fat32File *file, size_t offset, void *buf, size_t len)
         }
 
         /*
-     * The sectors inside a FAT32 cluster, and inside a verified run of
-     * consecutive clusters, are contiguous on disk.  Reading the whole byte run
-     * lets disk.c use its larger DMA bounce buffer, matching the old flat
-     * filesystem's large-asset behaviour while still honouring the FAT chain.
-     */
-
+         * The sectors inside a FAT32 cluster, and inside a verified run of
+         * consecutive clusters, are contiguous on disk.  Reading the whole byte run
+         * lets disk.c use its larger DMA bounce buffer, matching the old flat
+         * filesystem's large-asset behaviour while still honouring the FAT chain.
+         */
         if (disk_read(&dst[copied], byte_offset, run_len) != run_len)
         {
             return copied;

@@ -46,14 +46,12 @@ void free_page(void *p)
 int mm_brk(uintptr_t brk)
 {
     // Some libc implementations may call brk(0) as a no-op in our program.
-
     if (brk == 0)
     {
         return 0;
     }
 
     // Only grow mappings, we do not reclaim pages when brk shrinks.
-
     if (brk <= current->max_brk)
     {
         return 0;

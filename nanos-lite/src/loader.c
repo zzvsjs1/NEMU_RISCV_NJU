@@ -168,7 +168,6 @@ static uintptr_t loader(PCB *pcb, const char *filename)
         uintptr_t mem_va_end = seg_va + phdr.p_memsz;
 
         // Track the maximum end address of all loadable segments.
-
         if (mem_va_end > max_end)
         {
             max_end = mem_va_end;
@@ -321,6 +320,7 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
     {
         USTACK_PAGES = 8
     };
+
     uintptr_t ustack_va_end = (uintptr_t)pcb->as.area.end;
     uintptr_t ustack_va_base = ustack_va_end - (uintptr_t)USTACK_PAGES * PGSIZE;
 

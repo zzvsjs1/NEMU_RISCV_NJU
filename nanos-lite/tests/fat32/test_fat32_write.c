@@ -19,14 +19,14 @@ size_t disk_write(const void *buf, size_t offset, size_t len);
 typedef struct
 {
     /*
-   * FSI_Free_Count copied from the FSInfo sector.  The spec treats this as
-   * advisory, but the writer updates it so tests can detect allocation leaks.
-   */
+     * FSI_Free_Count copied from the FSInfo sector.  The spec treats this as
+     * advisory, but the writer updates it so tests can detect allocation leaks.
+     */
     uint32_t free_count;
     /*
-   * FSI_Nxt_Free copied from the FSInfo sector.  The allocator uses it only as
-   * a starting hint, then validates candidate clusters through the FAT.
-   */
+     * FSI_Nxt_Free copied from the FSInfo sector.  The allocator uses it only as
+     * a starting hint, then validates candidate clusters through the FAT.
+     */
     uint32_t next_free;
 } FsInfoSnapshot;
 
@@ -333,10 +333,10 @@ static void test_alloc_cluster_rolls_back_fat_when_zeroing_fails(void)
     assert(expected_cluster >= 2);
 
     /*
-   * Corrupt only the in-memory data-region position.  FAT reads/writes still
-   * address the real FAT, but zeroing the chosen cluster must fail before the
-   * cluster is exposed as allocated.
-   */
+     * Corrupt only the in-memory data-region position.  FAT reads/writes still
+     * address the real FAT, but zeroing the chosen cluster must fail before the
+     * cluster is exposed as allocated.
+     */
     vol.first_data_sector = UINT32_MAX;
     assert(fat32_alloc_cluster(&vol, 0, &allocated) == -1);
     fat32_test_disk_close();

@@ -16,21 +16,21 @@ size_t disk_write(const void *buf, size_t offset, size_t len);
 typedef struct
 {
     /*
-   * Absolute Navy pathname generated from the fsimg tree, for example
-   * /share/games/ons/arc.nsa.  The generator sorts entries, allowing flat_open()
-   * to use binary search instead of a linear scan.
-   */
+     * Absolute Navy pathname generated from the fsimg tree, for example
+     * /share/games/ons/arc.nsa.  The generator sorts entries, allowing flat_open()
+     * to use binary search instead of a linear scan.
+     */
     const char *name;
     /*
-   * Exact byte length of the packed file.  The flat backend is read-mostly and
-   * has no allocation table, so writes are clipped to this fixed size.
-   */
+     * Exact byte length of the packed file.  The flat backend is read-mostly and
+     * has no allocation table, so writes are clipped to this fixed size.
+     */
     size_t size;
     /*
-   * Absolute byte offset inside ramdisk.img where the file's first byte starts.
-   * Files are packed one after another, so the whole file is one contiguous
-   * disk extent.
-   */
+     * Absolute byte offset inside ramdisk.img where the file's first byte starts.
+     * Files are packed one after another, so the whole file is one contiguous
+     * disk extent.
+     */
     size_t disk_offset;
 } FlatEntry;
 
@@ -66,12 +66,12 @@ static int flat_init(void)
 static int flat_open(const char *path, FsFile *out)
 {
     /*
-   * navy-apps/Makefile writes files.h from `find ... | sort`, so every normal
-   * ramdisk pathname is lexicographically ordered.  ONScripter opens many
-   * PNG/archive paths while changing scenes; binary search cuts that path
-   * lookup from about 1,600 string comparisons to about 11 in the current large
-   * game image.
-   */
+     * navy-apps/Makefile writes files.h from `find ... | sort`, so every normal
+     * ramdisk pathname is lexicographically ordered.  ONScripter opens many
+     * PNG/archive paths while changing scenes; binary search cuts that path
+     * lookup from about 1,600 string comparisons to about 11 in the current large
+     * game image.
+     */
     int left = 0;
     int right = NR_FLAT_ENTRIES;
 

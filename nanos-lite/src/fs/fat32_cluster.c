@@ -51,10 +51,9 @@ static int checked_fat_entry_location(const Fat32Volume *vol, uint32_t cluster,
     }
 
     /*
-   * Data clusters start at 2.  A validated volume has cluster_count usable
-   * data clusters, so the highest legal data cluster number is count + 1.
-   */
-
+     * Data clusters start at 2.  A validated volume has cluster_count usable
+     * data clusters, so the highest legal data cluster number is count + 1.
+     */
     if (cluster < 2 || (uint64_t)cluster > (uint64_t)vol->cluster_count + 1u)
     {
         return -1;
@@ -183,10 +182,10 @@ int fat32_read_fat_entry(const Fat32Volume *vol, uint32_t cluster, uint32_t *nex
     }
 
     /*
-   * Sequential FAT walks touch many entries from the same 512-byte FAT sector.
-   * Keep that sector in the mounted volume so reading a large contiguous file
-   * costs one disk command per 128 FAT32 entries instead of one per entry.
-   */
+     * Sequential FAT walks touch many entries from the same 512-byte FAT sector.
+     * Keep that sector in the mounted volume so reading a large contiguous file
+     * costs one disk command per 128 FAT32 entries instead of one per entry.
+     */
     Fat32Volume *cache = (Fat32Volume *)vol;
 
     if (!cache->fat_sector_cache_valid || cache->fat_sector_cache_fat_index != vol->active_fat || cache->fat_sector_cache_offset != (uint64_t)byte_offset)
@@ -232,10 +231,10 @@ int fat32_write_fat_entry(const Fat32Volume *vol, uint32_t cluster, uint32_t val
         }
 
         /*
-     * FAT32 stores reserved flags in the high nibble.  Preserve the high bits
-     * from each FAT copy separately, because mirrored copies are allowed to
-     * carry different reserved-bit values.
-     */
+         * FAT32 stores reserved flags in the high nibble.  Preserve the high bits
+         * from each FAT copy separately, because mirrored copies are allowed to
+         * carry different reserved-bit values.
+         */
         const uint32_t old_value = get_le32(&sector[entry_offset]);
         const uint32_t new_value = (old_value & 0xf0000000u) | (value & FAT32_ENTRY_MASK);
         put_le32(&sector[entry_offset], new_value);
