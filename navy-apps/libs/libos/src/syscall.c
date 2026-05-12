@@ -1,11 +1,20 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/times.h>
 #include <assert.h>
 #include <time.h>
 #include <errno.h>
 #include "syscall.h"
 #include "nanos_abi.h"
+
+#ifndef CLOCK_REALTIME
+#define CLOCK_REALTIME ((clockid_t)1)
+#endif
+
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_MONOTONIC ((clockid_t)4)
+#endif
 
 // helper macros
 #define _concat(x, y) x##y
@@ -138,6 +147,65 @@ off_t _lseek(int fd, off_t offset, int whence)
 int _gettimeofday(struct timeval *tv, struct timezone *tz)
 {
     return _syscall_(SYS_gettimeofday, (intptr_t)tv, (intptr_t)tz, (intptr_t)0);
+}
+
+time_t _time(time_t *t)
+{
+    struct timeval tv;
+
+    if (_gettimeofday(&tv, NULL) < 0)
+    {
+        return (time_t)-1;
+    }
+
+    if (t)
+    {
+        *t = tv.tv_sec;
+    }
+
+    return tv.tv_sec;
+}
+
+int clock_gettime(clockid_t clock_id, struct timespec *tp)
+{
+    int ret;
+
+    if (tp == NULL)
+    {
+        errno = EFAULT;
+        return -1;
+    }
+
+    ret = _syscall_(SYS_clock_gettime, (intptr_t)clock_id, (intptr_t)tp, 0);
+
+    if (ret < 0)
+    {
+        errno = -ret;
+        return -1;
+    }
+
+    return ret;
+}
+
+int clock_getres(clockid_t clock_id, struct timespec *res)
+{
+    if (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (res)
+    {
+        /*
+         * Both Nanos-lite clocks are delivered in whole microseconds.  Report the
+         * same resolution for realtime and monotonic clocks.
+         */
+        res->tv_sec = 0;
+        res->tv_nsec = 1000;
+    }
+
+    return 0;
 }
 
 int _execve(const char *fname, char *const argv[], char *const envp[])
@@ -337,10 +405,17 @@ pid_t _wait(int *status)
     return -1;
 }
 
-clock_t _times(void *buf)
+clock_t _times(struct tms *buf)
 {
-    assert(0);
-    return 0;
+    int ret = _syscall_(SYS_times, (intptr_t)buf, 0, 0);
+
+    if (ret < 0)
+    {
+        errno = EFAULT;
+        return (clock_t)-1;
+    }
+
+    return (clock_t)ret;
 }
 
 int pipe(int pipefd[2])

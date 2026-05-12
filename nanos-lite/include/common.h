@@ -15,8 +15,9 @@
 #include <debug.h>
 #include <inttypes.h>
 
-typedef long time_t;
+typedef int64_t time_t;
 typedef long suseconds_t;
+typedef long clockid_t;
 
 struct timeval
 {
@@ -29,5 +30,14 @@ struct timezone
     int tz_minuteswest; /* minutes west of Greenwich */
     int tz_dsttime;     /* type of dst correction */
 };
+
+struct timespec
+{
+    time_t tv_sec; /* seconds */
+    long tv_nsec;  /* nanoseconds */
+};
+
+#define CLOCK_REALTIME ((clockid_t)1)
+#define CLOCK_MONOTONIC ((clockid_t)4)
 
 #endif

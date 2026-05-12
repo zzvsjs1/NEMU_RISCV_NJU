@@ -38,6 +38,7 @@ AM_DEVREG(22, NET_STATUS, RD, int rx_len, tx_len);
 AM_DEVREG(23, NET_TX, WR, Area buf);
 AM_DEVREG(24, NET_RX, WR, Area buf);
 AM_DEVREG(25, INPUT_MOUSE, RD, int type; int x, y; int button; int buttons; int wheel_x, wheel_y);
+AM_DEVREG(26, TIMER_REALTIME, RD, uint64_t us);
 
 // Input
 

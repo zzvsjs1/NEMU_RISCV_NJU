@@ -11,6 +11,32 @@ extern PCB *current;
 static volatile int need_resched = 0;
 static volatile int context_replaced = 0;
 
+enum
+{
+    NANOS_EFAULT = 14,
+    NANOS_EINVAL = 22,
+};
+
+typedef unsigned long NanosClockTick;
+
+typedef struct
+{
+    NanosClockTick tms_utime;
+    NanosClockTick tms_stime;
+    NanosClockTick tms_cutime;
+    NanosClockTick tms_cstime;
+} NanosTms;
+
+static uint64_t realtime_us(void)
+{
+    return io_read(AM_TIMER_REALTIME).us;
+}
+
+static uint64_t monotonic_us(void)
+{
+    return io_read(AM_TIMER_UPTIME).us;
+}
+
 // Called by do_event() to test and clear the reschedule request.
 int syscall_need_resched_and_clear(void)
 {
@@ -85,6 +111,8 @@ static const char *syscall_name(uintptr_t num)
         return "truncate";
     case SYS_ftruncate:
         return "ftruncate";
+    case SYS_clock_gettime:
+        return "clock_gettime";
     default:
         return "unknown";
     }
@@ -146,6 +174,9 @@ static void strace_log(uintptr_t num, uintptr_t arg1, uintptr_t arg2, uintptr_t 
         break;
     case SYS_ftruncate:
         Log("strace: ftruncate(%d, %zu) = %d", (int)arg1, (size_t)arg2, (int)ret);
+        break;
+    case SYS_clock_gettime:
+        Log("strace: clock_gettime(%d, 0x%08" PRIxPTR ") = %d", (int)arg1, arg2, (int)ret);
         break;
     case SYS_yield:
         Log("strace: yield() = %d", (int)ret);
@@ -301,28 +332,97 @@ void do_syscall(Context *c)
         break;
     }
 
+    case SYS_time:
+    {
+        time_t *out = (time_t *)arg1;
+        const time_t seconds = (time_t)(realtime_us() / 1000000);
+
+        if (out)
+        {
+            *out = seconds;
+        }
+
+        /*
+         * RV32 has only one normal syscall return register in this small ABI.
+         * Newlib's time() uses gettimeofday(), so the pointer result above is
+         * the 64-bit path; GPRx keeps a legacy low-word return for old callers.
+         */
+        c->GPRx = (uintptr_t)seconds;
+        break;
+    }
+
+    case SYS_times:
+    {
+        NanosTms *tms = (NanosTms *)arg1;
+        const uint64_t uptimeUs = monotonic_us();
+
+        if (tms)
+        {
+            /*
+             * RISC-V newlib sets CLOCKS_PER_SEC to 1000000, so one clock tick is
+             * one microsecond.  Nanos-lite does not account per-process CPU time;
+             * exposing monotonic guest time is enough for libc clock().
+             */
+            tms->tms_utime = (NanosClockTick)uptimeUs;
+            tms->tms_stime = 0;
+            tms->tms_cutime = 0;
+            tms->tms_cstime = 0;
+        }
+
+        c->GPRx = (uintptr_t)(NanosClockTick)uptimeUs;
+        break;
+    }
+
     case SYS_gettimeofday:
     {
         struct timeval *tv = (struct timeval *)arg1;
         struct timezone *tz = (struct timezone *)arg2;
-        // read uptime (microseconds) from the abstract machine
-        const uint64_t uptimeUs = io_read(AM_TIMER_UPTIME).us;
+        const uint64_t nowUs = realtime_us();
 
-        // If tv is non-NULL, fill in time since Epoch (here: time since boot)
         if (tv)
         {
-            tv->tv_sec = uptimeUs / 1000000;
-            tv->tv_usec = uptimeUs % 1000000;
+            tv->tv_sec = (time_t)(nowUs / 1000000);
+            tv->tv_usec = (suseconds_t)(nowUs % 1000000);
         }
 
-        // If tz is non-NULL, zero it out (timezone support is obsolete)
         if (tz)
         {
             tz->tz_minuteswest = 0;
             tz->tz_dsttime = 0;
         }
 
-        // success
+        c->GPRx = 0;
+        break;
+    }
+
+    case SYS_clock_gettime:
+    {
+        const clockid_t clockId = (clockid_t)arg1;
+        struct timespec *tp = (struct timespec *)arg2;
+        uint64_t us;
+
+        if (tp == NULL)
+        {
+            c->GPRx = (uintptr_t)-NANOS_EFAULT;
+            break;
+        }
+
+        if (clockId == CLOCK_REALTIME)
+        {
+            us = realtime_us();
+        }
+        else if (clockId == CLOCK_MONOTONIC)
+        {
+            us = monotonic_us();
+        }
+        else
+        {
+            c->GPRx = (uintptr_t)-NANOS_EINVAL;
+            break;
+        }
+
+        tp->tv_sec = (time_t)(us / 1000000);
+        tp->tv_nsec = (long)((us % 1000000) * 1000);
         c->GPRx = 0;
         break;
     }

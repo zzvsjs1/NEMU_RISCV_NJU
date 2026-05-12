@@ -102,11 +102,18 @@ without a separate UART window.
 
 ### Timer and RTC
 
-The RTC device exposes a 64-bit microsecond counter as two 32-bit registers.
-AM records the boot counter value and reports `AM_TIMER_UPTIME` as the elapsed
-microseconds since boot. `AM_TIMER_RTC` is stubbed to a fixed date in the NEMU
-platform path, because the project mainly needs monotonic time for scheduling,
-SDL timers, and benchmark timing.
+The RTC device keeps the existing high-performance 64-bit microsecond uptime
+counter as two 32-bit registers. AM records the boot counter value and reports
+`AM_TIMER_UPTIME` as the elapsed microseconds since boot, so scheduling, SDL
+timers, and benchmark timing keep using the monotonic fast path.
+
+The same RTC MMIO block also exposes 64-bit UTC Unix epoch seconds and 64-bit
+UTC Unix epoch microseconds. AM uses those realtime registers to implement
+`AM_TIMER_RTC` with year, month, day, hour, minute, and second fields. Nanos-lite
+uses the epoch-microsecond value for POSIX time syscalls such as
+`gettimeofday()`, `time()`, and `clock_gettime(CLOCK_REALTIME)`, while
+`clock_gettime(CLOCK_MONOTONIC)` still uses uptime. Guest timezone handling is
+UTC-only.
 
 NEMU also installs an alarm callback for device interrupts when running in
 system mode. The CPU loop batches device update checks for performance, but the

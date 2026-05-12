@@ -37,6 +37,17 @@
 #define RTC_ADDR (DEVICE_BASE + 0x0000048)
 #define VGACTL_ADDR (DEVICE_BASE + 0x0000100)
 
+enum
+{
+    NEMU_RTC_UPTIME_US_LO = 0x00u,
+    NEMU_RTC_UPTIME_US_HI = 0x04u,
+    NEMU_RTC_EPOCH_SEC_LO = 0x08u,
+    NEMU_RTC_EPOCH_SEC_HI = 0x0cu,
+    NEMU_RTC_EPOCH_US_LO = 0x10u,
+    NEMU_RTC_EPOCH_US_HI = 0x14u,
+    NEMU_RTC_MMIO_SIZE = 0x18u,
+};
+
 /*
  * The registers below are NEMU-private extensions in the VGA control page.
  * They are shared between the NEMU platform implementation in AM and the NEMU

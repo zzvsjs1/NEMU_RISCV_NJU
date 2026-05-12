@@ -29,7 +29,8 @@ enum
     SYS_rmdir,
     SYS_rename,
     SYS_truncate,
-    SYS_ftruncate
+    SYS_ftruncate,
+    SYS_clock_gettime
 };
 
 #endif

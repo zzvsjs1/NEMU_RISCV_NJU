@@ -55,6 +55,26 @@ uint64_t get_time()
     return now - boot_time;
 }
 
+uint64_t get_real_time_us()
+{
+#if defined(CONFIG_TARGET_AM)
+    /*
+     * NEMU-on-AM has no POSIX host clock.  Keep this fallback simple so the
+     * target still builds; normal RISC-V32 system runs use the native host path
+     * below and expose Unix epoch time.
+     */
+    return io_read(AM_TIMER_UPTIME).us;
+#elif defined(CONFIG_TIMER_GETTIMEOFDAY)
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    return (uint64_t)now.tv_sec * 1000000 + now.tv_usec;
+#else
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    return (uint64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
+#endif
+}
+
 // void init_rand() {
 //   srand(get_time_internal());
 // }
