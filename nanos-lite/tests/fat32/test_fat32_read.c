@@ -96,6 +96,29 @@ static void build_test_image(void)
                   "fat32-read-work/fsimg fat32-read-work/ramdisk.img") == 0);
 }
 
+static void build_huge_test_image(void)
+{
+    FILE *file;
+
+    assert(system("rm -rf fat32-read-work && mkdir -p fat32-read-work/fsimg") == 0);
+    file = fopen("fat32-read-work/fsimg/huge.bin", "wb");
+    assert(file != 0);
+
+    /*
+     * The real PAL and ONScripter images contain hundreds-of-megabytes archives.
+     * A smaller 8 MiB file is enough to catch a regression where opening the file
+     * reads every FAT sector separately before the first useful data read.
+     */
+    for (size_t i = 0; i < 8u * 1024u * 1024u; i++)
+    {
+        assert(fputc((uint8_t)(i & 0xffu), file) != EOF);
+    }
+
+    assert(fclose(file) == 0);
+    assert(system("python3 ../../../navy-apps/scripts/mkfat32.py "
+                  "fat32-read-work/fsimg fat32-read-work/ramdisk.img") == 0);
+}
+
 static uint32_t find_big_bin_first_cluster(const uint8_t sector[512])
 {
     for (size_t offset = 0; offset < 512; offset += 32)
@@ -353,6 +376,29 @@ static void test_backend_uses_contiguous_cache_for_random_large_reads(void)
     fat32_test_disk_close();
 }
 
+static void test_backend_open_batches_fat_chain_discovery(void)
+{
+    Fat32File file;
+
+    build_huge_test_image();
+    fat32_test_disk_open("fat32-read-work/ramdisk.img");
+    fat32_test_reset_backend();
+    assert(fat32_backend_init() == 0);
+
+    fat32_test_disk_reset_stats();
+    assert(fat32_backend_open("/huge.bin", &file) == 0);
+
+    /*
+     * Opening a large contiguous file may verify its FAT chain, but it must batch
+     * that scan.  One disk read per 512-byte FAT sector is too slow on NEMU
+     * because every read becomes an emulated disk command.
+     */
+    assert(fat32_test_disk_read_calls() <= 16);
+
+    assert(fat32_backend_close(&file) == 0);
+    fat32_test_disk_close();
+}
+
 static void test_backend_handles_empty_files_and_rejects_directories(void)
 {
     Fat32File file;
@@ -466,6 +512,7 @@ int main(void)
     test_backend_reads_partial_range_and_eof();
     test_backend_batches_contiguous_large_reads();
     test_backend_uses_contiguous_cache_for_random_large_reads();
+    test_backend_open_batches_fat_chain_discovery();
     test_backend_handles_empty_files_and_rejects_directories();
     test_backend_returns_partial_read_when_chain_ends_early();
     test_backend_rejects_non_empty_files_with_invalid_first_cluster();

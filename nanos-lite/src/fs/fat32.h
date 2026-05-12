@@ -12,6 +12,7 @@
 #define FAT32_ATTR_ARCHIVE 0x20u
 #define FAT32_ATTR_LONG_NAME (FAT32_ATTR_READ_ONLY | FAT32_ATTR_HIDDEN | FAT32_ATTR_SYSTEM | FAT32_ATTR_VOLUME_ID)
 #define FAT32_MAX_NAME 260u
+#define FAT32_FAT_CACHE_SIZE (128u * 1024u)
 
 /*
  * One 32-byte FAT long-file-name slot, stored immediately before the matching
@@ -125,17 +126,21 @@ typedef struct
      * for speed but cannot be trusted without checking the FAT entry itself.
      */
     uint32_t next_free_cluster;
-    /* True when fat_sector_cache contains a valid FAT sector. */
+    /* True when fat_sector_cache contains a valid FAT byte range. */
     uint8_t fat_sector_cache_valid;
     /* FAT copy index represented by fat_sector_cache. */
     uint8_t fat_sector_cache_fat_index;
-    /* Absolute byte offset in the disk image for the cached FAT sector. */
+    /* Absolute byte offset in the disk image for the start of the cached range. */
     uint64_t fat_sector_cache_offset;
+    /* Number of valid bytes in fat_sector_cache. */
+    size_t fat_sector_cache_size;
     /*
-     * One 512-byte FAT sector cache.  FAT32 entries are four bytes and never span
-     * a sector boundary, so this holds up to 128 adjacent FAT entries.
+     * FAT-entry cache sized to Nanos-lite's disk bounce buffer.  Large game
+     * archives can have hundreds of thousands of 512-byte clusters; batching the
+     * FAT scan keeps open() from becoming one emulated disk command per FAT
+     * sector while still validating the chain before treating data as contiguous.
      */
-    uint8_t fat_sector_cache[512];
+    uint8_t fat_sector_cache[FAT32_FAT_CACHE_SIZE];
 } Fat32Volume;
 
 /*

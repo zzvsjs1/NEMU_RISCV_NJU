@@ -41,6 +41,45 @@ static void put_le32(uint8_t *p, uint32_t value)
     p[3] = (uint8_t)(value >> 24);
 }
 
+static size_t min_size(size_t a, size_t b)
+{
+    return a < b ? a : b;
+}
+
+static int checked_fat_copy_end_offset(const Fat32Volume *vol, unsigned fat_index, size_t *out)
+{
+    if (vol == 0 || out == 0 || fat_index >= vol->fat_count)
+    {
+        return -1;
+    }
+
+    const uint64_t fat_end_sector =
+        (uint64_t)vol->reserved_sector_count + (uint64_t)(fat_index + 1u) * (uint64_t)vol->fat_size_sectors;
+
+    if (fat_end_sector > SIZE_MAX / FAT32_SECTOR_SIZE)
+    {
+        return -1;
+    }
+
+    *out = (size_t)fat_end_sector * FAT32_SECTOR_SIZE;
+    return 0;
+}
+
+static int fat_cache_contains(const Fat32Volume *vol, unsigned fat_index,
+                              size_t sector_offset, size_t entry_offset)
+{
+    if (vol == 0 || !vol->fat_sector_cache_valid || vol->fat_sector_cache_fat_index != fat_index)
+    {
+        return 0;
+    }
+
+    const uint64_t entry_start = (uint64_t)sector_offset + (uint64_t)entry_offset;
+    const uint64_t cache_start = vol->fat_sector_cache_offset;
+    const uint64_t cache_end = cache_start + (uint64_t)vol->fat_sector_cache_size;
+
+    return entry_start >= cache_start && entry_start + FAT32_ENTRY_SIZE <= cache_end;
+}
+
 static int checked_fat_entry_location(const Fat32Volume *vol, uint32_t cluster,
                                       unsigned fat_index, size_t *byte_offset,
                                       size_t *entry_offset)
@@ -170,6 +209,7 @@ int fat32_read_fat_entry(const Fat32Volume *vol, uint32_t cluster, uint32_t *nex
 {
     size_t byte_offset;
     size_t entry_offset;
+    size_t cache_offset;
 
     if (vol == 0 || next_cluster == 0)
     {
@@ -182,15 +222,26 @@ int fat32_read_fat_entry(const Fat32Volume *vol, uint32_t cluster, uint32_t *nex
     }
 
     /*
-     * Sequential FAT walks touch many entries from the same 512-byte FAT sector.
-     * Keep that sector in the mounted volume so reading a large contiguous file
-     * costs one disk command per 128 FAT32 entries instead of one per entry.
+     * Sequential FAT walks touch adjacent FAT sectors.  Cache the same amount
+     * that disk.c can move in one bounce-buffer transfer, so validating a large
+     * archive's cluster chain costs one emulated disk command per 128 KiB FAT
+     * range instead of one command per 512-byte FAT sector.
      */
     Fat32Volume *cache = (Fat32Volume *)vol;
 
-    if (!cache->fat_sector_cache_valid || cache->fat_sector_cache_fat_index != vol->active_fat || cache->fat_sector_cache_offset != (uint64_t)byte_offset)
+    if (!fat_cache_contains(cache, vol->active_fat, byte_offset, entry_offset))
     {
-        if (disk_read(cache->fat_sector_cache, byte_offset, sizeof(cache->fat_sector_cache)) != sizeof(cache->fat_sector_cache))
+        size_t fat_end_offset;
+        size_t cache_read_size;
+
+        if (checked_fat_copy_end_offset(vol, vol->active_fat, &fat_end_offset) != 0 || byte_offset >= fat_end_offset)
+        {
+            return -1;
+        }
+
+        cache_read_size = min_size((size_t)FAT32_FAT_CACHE_SIZE, fat_end_offset - byte_offset);
+
+        if (disk_read(cache->fat_sector_cache, byte_offset, cache_read_size) != cache_read_size)
         {
             return -1;
         }
@@ -198,9 +249,11 @@ int fat32_read_fat_entry(const Fat32Volume *vol, uint32_t cluster, uint32_t *nex
         cache->fat_sector_cache_valid = 1;
         cache->fat_sector_cache_fat_index = vol->active_fat;
         cache->fat_sector_cache_offset = (uint64_t)byte_offset;
+        cache->fat_sector_cache_size = cache_read_size;
     }
 
-    *next_cluster = get_le32(&cache->fat_sector_cache[entry_offset]) & FAT32_ENTRY_MASK;
+    cache_offset = (size_t)(((uint64_t)byte_offset + (uint64_t)entry_offset) - cache->fat_sector_cache_offset);
+    *next_cluster = get_le32(&cache->fat_sector_cache[cache_offset]) & FAT32_ENTRY_MASK;
     return 0;
 }
 
@@ -246,9 +299,11 @@ int fat32_write_fat_entry(const Fat32Volume *vol, uint32_t cluster, uint32_t val
 
         Fat32Volume *cache = (Fat32Volume *)vol;
 
-        if (cache->fat_sector_cache_valid && cache->fat_sector_cache_fat_index == fat_index && cache->fat_sector_cache_offset == (uint64_t)byte_offset)
+        if (fat_cache_contains(cache, fat_index, byte_offset, entry_offset))
         {
-            memcpy(cache->fat_sector_cache, sector, sizeof(cache->fat_sector_cache));
+            const size_t cache_offset = (size_t)(((uint64_t)byte_offset + (uint64_t)entry_offset) - cache->fat_sector_cache_offset);
+
+            put_le32(&cache->fat_sector_cache[cache_offset], new_value);
         }
     }
 
