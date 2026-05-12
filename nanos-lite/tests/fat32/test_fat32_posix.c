@@ -14,6 +14,7 @@ size_t disk_read(void *buf, size_t offset, size_t len);
 #define POSIX_IMAGE "fat32-posix-work/ramdisk.img"
 #define FAT32_SECTOR_SIZE 512u
 #define FAT32_ENTRY_MASK 0x0fffffffu
+#define LARGE_IMAGE_FILLER_SIZE (70000u * FAT32_SECTOR_SIZE)
 
 /*
  * Decode a little-endian 32-bit value from raw on-disk FAT or FSInfo bytes.
@@ -47,6 +48,24 @@ static void write_pattern_file(const char *path, size_t size)
     for (size_t i = 0; i < size; i++)
     {
         assert(fputc((int)(i & 0xffu), file) != EOF);
+    }
+    assert(fclose(file) == 0);
+}
+
+/*
+ * Create a large sparse host file.  The generated FAT32 image still contains
+ * the full zero-filled data stream, but preparing the source tree stays quick
+ * enough for a regression test.
+ */
+static void write_sparse_file(const char *path, size_t size)
+{
+    FILE *file = fopen(path, "wb");
+
+    assert(file != 0);
+    if (size > 0)
+    {
+        assert(fseek(file, (long)(size - 1u), SEEK_SET) == 0);
+        assert(fputc(0, file) != EOF);
     }
     assert(fclose(file) == 0);
 }
@@ -197,6 +216,43 @@ static void test_create_file_with_lfn_then_write_and_read(void)
 }
 
 /*
+ * Test the real ONScripter failure mode: a large fsimg can consume more than
+ * the historical minimum FAT32 data area, so mkfat32.py must still leave free
+ * clusters for runtime save files such as /share/games/ons/save2.dat.
+ */
+static void test_large_image_keeps_runtime_save_space(void)
+{
+    Fat32File file;
+    Fat32DirEntry entry;
+    uint8_t buf[512];
+    uint8_t out[sizeof(buf)];
+
+    assert(system("rm -rf fat32-posix-work && mkdir -p fat32-posix-work/fsimg/share/games/ons") == 0);
+    write_sparse_file("fat32-posix-work/fsimg/share/games/ons/arc.nsa", LARGE_IMAGE_FILLER_SIZE);
+    write_text_file("fat32-posix-work/fsimg/share/games/ons/save1.dat", "existing");
+    assert(system("python3 ../../../navy-apps/scripts/mkfat32.py fat32-posix-work/fsimg " POSIX_IMAGE) == 0);
+    reopen_backend_image();
+
+    for (size_t i = 0; i < sizeof(buf); i++)
+    {
+        buf[i] = (uint8_t)(i & 0xffu);
+    }
+
+    assert(fat32_backend_create("/share/games/ons/save2.dat", &file) == 0);
+    assert(fat32_backend_write(&file, 0, buf, sizeof(buf)) == sizeof(buf));
+    assert(fat32_backend_close(&file) == 0);
+    assert(fat32_lookup_path(fat32_backend_volume(), "/share/games/ons/save2.dat", &entry) == 0);
+    assert(entry.size == sizeof(buf));
+
+    assert(fat32_backend_open("/share/games/ons/save2.dat", &file) == 0);
+    memset(out, 0, sizeof(out));
+    assert(fat32_backend_read(&file, 0, out, sizeof(out)) == sizeof(out));
+    assert(memcmp(out, buf, sizeof(buf)) == 0);
+    assert(fat32_backend_close(&file) == 0);
+    fat32_test_disk_close();
+}
+
+/*
  * Test mkdir/rmdir rules: a new directory has dot entries, non-empty removal
  * fails, and empty removal deletes the path.
  */
@@ -338,6 +394,7 @@ int main(void)
 {
     test_readdir_returns_short_and_long_names();
     test_create_file_with_lfn_then_write_and_read();
+    test_large_image_keeps_runtime_save_space();
     test_mkdir_and_rmdir_follow_directory_rules();
     test_unlink_regular_file_frees_clusters();
     test_truncate_shrinks_and_extends_with_zero_fill();

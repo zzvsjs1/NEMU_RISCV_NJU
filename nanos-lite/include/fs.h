@@ -2,8 +2,7 @@
 #define __FS_H__
 
 #include <common.h>
-
-struct stat;
+#include <nanos_syscall_abi.h>
 
 #ifndef SEEK_SET
 enum
@@ -37,13 +36,13 @@ size_t fs_lseek(int fd, size_t offset, int whence);
 /* Release a regular descriptor slot.  Special descriptors are stable and no-op. */
 int fs_close(int fd);
 
-/* Fill POSIX metadata for a pathname. */
-int fs_stat(const char *pathname, struct stat *buf);
+/* Fill project-owned syscall metadata for a pathname. */
+int fs_stat(const char *pathname, NanosStat *buf);
 
-/* Fill POSIX metadata for an open descriptor. */
-int fs_fstat(int fd, struct stat *buf);
+/* Fill project-owned syscall metadata for an open descriptor. */
+int fs_fstat(int fd, NanosStat *buf);
 
-/* Return packed BSD/newlib dirent records for an open directory descriptor. */
+/* Return fixed-size NanosDirent syscall records for an open directory. */
 int fs_getdents(int fd, void *buf, int len);
 
 /* Resize an open regular file. */

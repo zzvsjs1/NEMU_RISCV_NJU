@@ -105,8 +105,10 @@ typedef struct
 } FsMetadata;
 
 /*
- * Backend-neutral directory entry returned to fs.c before it is packed into
- * newlib's struct dirent layout.
+ * Backend-neutral directory entry returned to fs.c before it is copied into the
+ * project-owned NanosDirent syscall record.  libc-specific dirent packing is
+ * intentionally left to libos, so storage backends and the kernel descriptor
+ * table do not depend on newlib's current directory-entry layout.
  */
 typedef struct
 {

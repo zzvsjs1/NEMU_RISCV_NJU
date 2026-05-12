@@ -3,51 +3,6 @@
 
 #include <stddef.h>
 
-#define FS_S_IFREG 0100000
-#define FS_S_IFDIR 0040000
-#define FS_S_IFCHR 0020000
-
-struct fs_abi_timespec
-{
-    long tv_sec;
-    long tv_nsec;
-};
-
-/*
- * Local copy of newlib's RV32 struct stat layout.  Including <sys/stat.h> in
- * the kernel conflicts with common.h's small timeval definition, so fs.c writes
- * the ABI-compatible layout directly.
- */
-struct stat
-{
-    int16_t st_dev;
-    uint16_t st_ino;
-    uint32_t st_mode;
-    uint16_t st_nlink;
-    uint16_t st_uid;
-    uint16_t st_gid;
-    int16_t st_rdev;
-    long st_size;
-    struct fs_abi_timespec st_atim;
-    struct fs_abi_timespec st_mtim;
-    struct fs_abi_timespec st_ctim;
-    long st_blksize;
-    long st_blocks;
-    long st_spare4[2];
-};
-
-/*
- * Local copy of newlib's BSD dirent record.  readdir() consumes records in this
- * exact layout through getdents().
- */
-struct dirent
-{
-    long d_ino;
-    long d_off;
-    unsigned short d_reclen;
-    char d_name[1];
-};
-
 /*
  * Device-file read callback.  The offset is the descriptor's current special
  * file offset, not a backend regular-file offset.  Poll-like devices can ignore
@@ -169,18 +124,6 @@ enum
 
 static size_t special_offsets[NR_SPECIAL_FILES];
 static OpenFile open_files[MAX_REGULAR_OPEN_FILES];
-
-/*
- * Align a packed dirent record length to the natural long boundary expected by
- * the BSD/newlib directory reader.
- */
-static size_t align_dirent_len(size_t len)
-{
-    const size_t align = sizeof(long);
-
-    return (len + align - 1u) & ~(align - 1u);
-}
-
 /*
  * Find a special device or proc file by exact pathname.
  */
@@ -256,34 +199,34 @@ static FsMetadata metadata_from_file(const FsFile *file)
 }
 
 /*
- * Fill a POSIX stat structure from backend-neutral metadata.
+ * Fill a project-owned syscall stat record from backend-neutral metadata.
+ * Nanos-lite deliberately writes NanosStat instead of newlib's struct stat:
+ * libos performs the libc-specific translation after the syscall returns, which
+ * keeps the kernel filesystem independent from newlib's current RV32 layout.
  */
-static void fill_stat_from_metadata(struct stat *buf, const FsMetadata *metadata)
+static void fill_stat_from_metadata(NanosStat *buf, const FsMetadata *metadata)
 {
     memset(buf, 0, sizeof(*buf));
-    buf->st_ino = (uint16_t)metadata->inode;
-    buf->st_mode = (metadata->is_dir ? FS_S_IFDIR : FS_S_IFREG) | (metadata->is_dir ? 0755 : 0644);
-    buf->st_nlink = metadata->is_dir ? 2 : 1;
-    buf->st_size = (long)metadata->size;
-    buf->st_blksize = 512;
-    buf->st_blocks = (long)((metadata->size + 511u) / 512u);
-    buf->st_atim.tv_sec = 0;
-    buf->st_mtim.tv_sec = 0;
-    buf->st_ctim.tv_sec = 0;
+    buf->ino = metadata->inode;
+    buf->mode = (metadata->is_dir ? NANOS_S_IFDIR : NANOS_S_IFREG) | (metadata->is_dir ? 0755u : 0644u);
+    buf->nlink = metadata->is_dir ? 2u : 1u;
+    buf->size = (int64_t)metadata->size;
+    buf->blksize = 512;
+    buf->blocks = (int64_t)((metadata->size + 511u) / 512u);
 }
 
 /*
- * Fill a POSIX stat structure for a special file descriptor.
+ * Fill a project-owned syscall stat record for a special file descriptor.
  */
-static void fill_stat_from_special(struct stat *buf, int fd)
+static void fill_stat_from_special(NanosStat *buf, int fd)
 {
     memset(buf, 0, sizeof(*buf));
-    buf->st_ino = (uint16_t)(fd + 1);
-    buf->st_mode = FS_S_IFCHR | 0666;
-    buf->st_nlink = 1;
-    buf->st_size = (long)special_files[fd].size;
-    buf->st_blksize = 512;
-    buf->st_blocks = (long)((special_files[fd].size + 511u) / 512u);
+    buf->ino = (uint64_t)(fd + 1);
+    buf->mode = NANOS_S_IFCHR | 0666u;
+    buf->nlink = 1;
+    buf->size = (int64_t)special_files[fd].size;
+    buf->blksize = 512;
+    buf->blocks = (int64_t)((special_files[fd].size + 511u) / 512u);
 }
 
 /*
@@ -571,7 +514,7 @@ int fs_close(int fd)
 /*
  * Fill metadata for a path.
  */
-int fs_stat(const char *pathname, struct stat *buf)
+int fs_stat(const char *pathname, NanosStat *buf)
 {
     int fd;
     FsMetadata metadata;
@@ -601,7 +544,7 @@ int fs_stat(const char *pathname, struct stat *buf)
 /*
  * Fill metadata for an open descriptor.
  */
-int fs_fstat(int fd, struct stat *buf)
+int fs_fstat(int fd, NanosStat *buf)
 {
     if (fd < 0 || fd >= MAX_OPEN_FILES || buf == 0)
     {
@@ -628,38 +571,38 @@ int fs_fstat(int fd, struct stat *buf)
 }
 
 /*
- * Pack one backend-neutral directory entry into newlib's BSD dirent layout.
+ * Copy one backend-neutral directory entry into the fixed Nanos syscall record.
+ * The record is larger than most names need, but it avoids embedding a libc
+ * variable-length dirent layout in the kernel.  libos later packs this record
+ * into whatever struct dirent shape newlib currently uses.
  */
-static int pack_dirent(uint8_t *buf, size_t len, const FsDirent *entry, long next_offset, size_t *out_len)
+static int fill_nanos_dirent(NanosDirent *dent, const FsDirent *entry, int64_t next_offset)
 {
     const size_t name_len = strlen(entry->name);
-    const size_t raw_len = offsetof(struct dirent, d_name) + name_len + 1u;
-    const size_t record_len = align_dirent_len(raw_len);
 
-    if (record_len > len)
+    if (name_len > NANOS_NAME_MAX)
     {
         return -1;
     }
 
-    struct dirent *dent = (struct dirent *)buf;
-    memset(buf, 0, record_len);
-    dent->d_ino = (long)entry->metadata.inode;
-    dent->d_off = next_offset;
-    dent->d_reclen = (unsigned short)record_len;
-    memcpy(dent->d_name, entry->name, name_len + 1u);
-    *out_len = record_len;
+    memset(dent, 0, sizeof(*dent));
+    dent->ino = entry->metadata.inode;
+    dent->off = next_offset;
+    dent->type = entry->metadata.is_dir ? NANOS_DT_DIR : NANOS_DT_REG;
+    memcpy(dent->name, entry->name, name_len + 1u);
     return 0;
 }
 
 /*
- * Return packed BSD/newlib dirent records for an open directory descriptor.
+ * Return fixed-size NanosDirent records for an open directory descriptor.
  */
 int fs_getdents(int fd, void *buf, int len)
 {
-    uint8_t *dst = (uint8_t *)buf;
+    NanosDirent *dst = (NanosDirent *)buf;
     size_t used = 0;
+    const size_t record_len = sizeof(NanosDirent);
 
-    if (fd < FIRST_REGULAR_FD || fd >= MAX_OPEN_FILES || buf == 0 || len <= 0)
+    if (fd < FIRST_REGULAR_FD || fd >= MAX_OPEN_FILES || buf == 0 || len <= 0 || (size_t)len < record_len)
     {
         return -1;
     }
@@ -671,13 +614,12 @@ int fs_getdents(int fd, void *buf, int len)
         return -1;
     }
 
-    while (used < (size_t)len)
+    while (used + record_len <= (size_t)len)
     {
         FsDir saved_dir = open->dir;
         FsDirent entry;
-        size_t record_len;
         const int ret = regular_fs_backend.readdir(&open->dir, &entry);
-        const long next_offset = (long)open->dir.u.fat32.next_entry_index;
+        const int64_t next_offset = (int64_t)open->dir.u.fat32.next_entry_index;
 
         if (ret < 0)
         {
@@ -689,7 +631,7 @@ int fs_getdents(int fd, void *buf, int len)
             break;
         }
 
-        if (pack_dirent(&dst[used], (size_t)len - used, &entry, next_offset, &record_len) != 0)
+        if (fill_nanos_dirent(&dst[used / record_len], &entry, next_offset) != 0)
         {
             open->dir = saved_dir;
 

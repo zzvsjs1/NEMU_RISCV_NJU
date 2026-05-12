@@ -5,6 +5,6 @@ build/native.so: src/native.cpp
 
 else
 NAME = libos
-SRCS = src/syscall.c src/crt0/crt0.c src/crt0/start.S
+SRCS = src/syscall.c src/nanos_abi.c src/crt0/crt0.c src/crt0/start.S
 include $(NAVY_HOME)/Makefile
 endif

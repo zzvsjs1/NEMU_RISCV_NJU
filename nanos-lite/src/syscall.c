@@ -249,7 +249,7 @@ void do_syscall(Context *c)
 
     case SYS_fstat:
     {
-        c->GPRx = fs_fstat((int)arg1, (struct stat *)arg2);
+        c->GPRx = fs_fstat((int)arg1, (NanosStat *)arg2);
         break;
     }
 
@@ -261,7 +261,7 @@ void do_syscall(Context *c)
 
     case SYS_stat:
     {
-        c->GPRx = fs_stat((const char *)arg1, (struct stat *)arg2);
+        c->GPRx = fs_stat((const char *)arg1, (NanosStat *)arg2);
         break;
     }
 

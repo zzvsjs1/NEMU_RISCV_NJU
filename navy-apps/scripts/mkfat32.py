@@ -19,6 +19,7 @@ RESERVED_SECTORS = 32
 FAT_COUNT = 2
 ROOT_CLUSTER = 2
 MIN_FAT32_CLUSTERS = 65525
+RUNTIME_FREE_BYTES = 64 * 1024 * 1024
 EOC = 0x0FFFFFFF
 
 
@@ -356,7 +357,11 @@ def write_cluster_chain(image, first_data_sector: int, clusters: list[int], data
 def write_image(root: Node, output: Path) -> None:
     next_free = allocate_clusters(root)
     used_clusters = next_free - ROOT_CLUSTER
-    data_clusters = max(MIN_FAT32_CLUSTERS, used_clusters)
+    # Keep writable space for runtime state.  Large ONScripter images can be
+    # bigger than the FAT32 minimum data area; without this reserve the image is
+    # valid but completely full, so save2.dat cannot allocate its first cluster.
+    runtime_free_clusters = math.ceil(RUNTIME_FREE_BYTES / CLUSTER_SIZE)
+    data_clusters = max(MIN_FAT32_CLUSTERS, used_clusters + runtime_free_clusters)
     # Keep the advertised data area and FAT length self-consistent: Task 2's
     # parser requires at least cluster_count + 2 FAT entries.
     fat_size_sectors = math.ceil((data_clusters + 2) * 4 / BYTES_PER_SECTOR)

@@ -5,6 +5,7 @@
 #include <time.h>
 #include <errno.h>
 #include "syscall.h"
+#include "nanos_abi.h"
 
 // helper macros
 #define _concat(x, y) x##y
@@ -157,7 +158,30 @@ int _execve(const char *fname, char *const argv[], char *const envp[])
  */
 int _fstat(int fd, struct stat *buf)
 {
-    return syscall_ret_errno(_syscall_(SYS_fstat, (intptr_t)fd, (intptr_t)buf, 0), EBADF);
+    NanosStat nanos;
+    int ret;
+
+    if (buf == NULL)
+    {
+        errno = EFAULT;
+        return -1;
+    }
+
+    /*
+     * Pass a NanosStat scratch object to the kernel instead of the caller's
+     * struct stat.  This is the key libc/kernel split: Nanos-lite fills only the
+     * stable syscall ABI, and this wrapper adapts it to newlib after the trap
+     * returns.
+     */
+    ret = syscall_ret_errno(_syscall_(SYS_fstat, (intptr_t)fd, (intptr_t)&nanos, 0), EBADF);
+
+    if (ret < 0)
+    {
+        return ret;
+    }
+
+    nanos_stat_to_newlib(buf, &nanos);
+    return 0;
 }
 
 /*
@@ -165,7 +189,29 @@ int _fstat(int fd, struct stat *buf)
  */
 int _stat(const char *fname, struct stat *buf)
 {
-    return syscall_ret_errno(_syscall_(SYS_stat, (intptr_t)fname, (intptr_t)buf, 0), ENOENT);
+    NanosStat nanos;
+    int ret;
+
+    if (buf == NULL)
+    {
+        errno = EFAULT;
+        return -1;
+    }
+
+    /*
+     * Keep pathname lookup in the kernel, but keep newlib's struct stat layout
+     * in user space.  If newlib changes field sizes later, this translation
+     * layer is the only place that should need to change.
+     */
+    ret = syscall_ret_errno(_syscall_(SYS_stat, (intptr_t)fname, (intptr_t)&nanos, 0), ENOENT);
+
+    if (ret < 0)
+    {
+        return ret;
+    }
+
+    nanos_stat_to_newlib(buf, &nanos);
+    return 0;
 }
 
 /*
@@ -251,7 +297,38 @@ int ftruncate(int fd, off_t length)
  */
 int getdents(int fd, void *buf, int count)
 {
-    return syscall_ret_errno(_syscall_(SYS_getdents, (intptr_t)fd, (intptr_t)buf, (intptr_t)count), EBADF);
+    NanosDirent nanos;
+    int ret;
+    int packed;
+
+    if (buf == NULL || count <= 0)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    /*
+     * Request one kernel ABI record at a time.  This avoids losing directory
+     * entries when a future libc dirent layout is larger than expected: Nanos-lite
+     * advances its directory iterator only for the single record that libos is
+     * about to repack into the caller's buffer.
+     */
+    ret = syscall_ret_errno(_syscall_(SYS_getdents, (intptr_t)fd, (intptr_t)&nanos, (intptr_t)sizeof(nanos)), EBADF);
+
+    if (ret <= 0)
+    {
+        return ret;
+    }
+
+    packed = nanos_dirents_to_newlib(buf, count, &nanos, ret);
+
+    if (packed < 0)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    return packed;
 }
 
 pid_t _wait(int *status)

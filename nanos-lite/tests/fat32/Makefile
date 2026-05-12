@@ -7,10 +7,12 @@ READ_SRCS := test_fat32_read.c fat32_test_disk.c ../../src/fs/fat32.c ../../src/
 LOOKUP_SRCS := test_fat32_lookup.c fat32_test_disk.c ../../src/fs/fat32_dir.c ../../src/fs/fat32_lfn.c ../../src/fs/fat32_cluster.c ../../src/fs/fat32_bpb.c
 WRITE_SRCS := test_fat32_write.c fat32_test_disk.c ../../src/fs/fat32.c ../../src/fs/fat32_dir.c ../../src/fs/fat32_lfn.c ../../src/fs/fat32_cluster.c ../../src/fs/fat32_bpb.c
 POSIX_SRCS := test_fat32_posix.c fat32_test_disk.c ../../src/fs/fat32.c ../../src/fs/fat32_dir.c ../../src/fs/fat32_lfn.c ../../src/fs/fat32_cluster.c ../../src/fs/fat32_bpb.c
+ABI_SRCS := test_nanos_syscall_abi.c ../../../navy-apps/libs/libos/src/nanos_abi.c
+ABI_CFLAGS := $(CFLAGS) -I../../../navy-apps/libs/libc/include -I../../../navy-apps/libs/libos/src
 
 .PHONY: all test clean
 
-all: test_fat32_lfn test_fat32_bpb test_fat32_read test_fat32_lookup test_fat32_write test_fat32_posix
+all: test_fat32_lfn test_fat32_bpb test_fat32_read test_fat32_lookup test_fat32_write test_fat32_posix test_nanos_syscall_abi
 
 test: all
 	./test_fat32_lfn
@@ -19,6 +21,7 @@ test: all
 	./test_fat32_lookup
 	./test_fat32_write
 	./test_fat32_posix
+	./test_nanos_syscall_abi
 
 test_fat32_lfn: $(LFN_SRCS) ../../src/fs/fat32.h
 	$(CC) $(CFLAGS) -DFAT32_HOST_TEST -o $@ $(LFN_SRCS)
@@ -38,5 +41,8 @@ test_fat32_write: $(WRITE_SRCS) ../../src/fs/fat32.h
 test_fat32_posix: $(POSIX_SRCS) ../../src/fs/fat32.h
 	$(CC) $(CFLAGS) -DFAT32_HOST_TEST -o $@ $(POSIX_SRCS)
 
+test_nanos_syscall_abi: $(ABI_SRCS)
+	$(CC) $(ABI_CFLAGS) -o $@ $(ABI_SRCS)
+
 clean:
-	rm -rf test_fat32_lfn test_fat32_bpb test_fat32_read test_fat32_lookup test_fat32_write test_fat32_posix fat32-read-work fat32-lookup-work fat32-write-work fat32-posix-work
+	rm -rf test_fat32_lfn test_fat32_bpb test_fat32_read test_fat32_lookup test_fat32_write test_fat32_posix test_nanos_syscall_abi fat32-read-work fat32-lookup-work fat32-write-work fat32-posix-work
