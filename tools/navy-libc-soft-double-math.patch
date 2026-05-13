@@ -1,0 +1,882 @@
+Subject: [PATCH] Add Navy soft double math
+
+---
+ src/math/math.c | 847 ++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 824 insertions(+), 23 deletions(-)
+
+diff --git a/src/math/math.c b/src/math/math.c
+index a57f7de..0d7a730 100644
+--- a/src/math/math.c
++++ b/src/math/math.c
+@@ -1,44 +1,845 @@
+-#include <math.h>
+-#include <assert.h>
++#include <stdint.h>
+ 
+-// Navy does not support floating point
++/*
++ * Small standalone IEEE-754 binary64 math subset for Navy.
++ *
++ * Why this file exists:
++ *   Navy normally builds RISC-V32 applications with -march=rv32im_zicsr and
++ *   -mabi=ilp32.  That ABI is a soft-float ABI: float and double values are
++ *   passed through integer registers and memory as raw IEEE-754 bit patterns.
++ *   The compiler-rt archive provides primitive operations such as __muldf3 and
++ *   __divdf3, but it does not provide higher-level libm functions such as
++ *   sin(), cos(), tan(), sqrt(), floor(), or ceil().
++ *
++ * The previous implementation deliberately asserted for all of those
++ * functions.  ONScripter uses trigonometry and square root for script commands,
++ * affine sprites, quake effects, and plug-in-style visual effects, so the
++ * assertion path crashes real games.  This file provides enough libm behaviour
++ * for that environment without requiring RISC-V F/D floating-point registers.
++ *
++ * Accuracy and scope:
++ *   - fabs(), floor(), ceil(), and round() are exact for ordinary IEEE-754
++ *     binary64 inputs.
++ *   - sqrt() uses a digit-by-digit integer algorithm over the binary mantissa.
++ *     It is intentionally slower than a hardware instruction but avoids an FPU.
++ *   - sin(), cos(), tan(), log(), exp(), and pow() are compact approximations.
++ *     They are suitable for this embedded runtime and ONScripter's visual
++ *     effects, but they are not a formally correctly-rounded full libm.
++ *
++ * Implementation style:
++ *   The bit conversion helpers use a union.  GCC supports this style of
++ *   type-punning, and it avoids pulling memcpy() into low-level math routines.
++ *   The rest of the code uses ordinary integer and soft-double operations, so
++ *   the RV32 output must not contain flw/fsw/fadd/fmul/fdiv/fsqrt/fcvt/etc.
++ */
+ 
+-double fabs(double x) {
+-  assert(0);
++#define SM_SIGN_MASK UINT64_C(0x8000000000000000)
++#define SM_ABS_MASK  UINT64_C(0x7fffffffffffffff)
++#define SM_EXP_MASK  UINT64_C(0x7ff0000000000000)
++#define SM_FRAC_MASK UINT64_C(0x000fffffffffffff)
++#define SM_QNAN_BITS UINT64_C(0x7ff8000000000000)
++#define SM_PINF_BITS UINT64_C(0x7ff0000000000000)
++
++typedef union {
++  double f;
++  uint64_t u;
++} sm_f64_bits;
++
++static uint64_t sm_asuint64(double x)
++{
++  sm_f64_bits v;
++  v.f = x;
++  return v.u;
++}
++
++static double sm_asdouble(uint64_t u)
++{
++  sm_f64_bits v;
++  v.u = u;
++  return v.f;
++}
++
++static double sm_nan(void)
++{
++  return sm_asdouble(SM_QNAN_BITS);
++}
++
++static double sm_inf_with_sign(uint64_t sign)
++{
++  return sm_asdouble((sign & SM_SIGN_MASK) | SM_PINF_BITS);
++}
++
++static int sm_is_nan_bits(uint64_t u)
++{
++  return (u & SM_EXP_MASK) == SM_EXP_MASK && (u & SM_FRAC_MASK) != 0;
++}
++
++static int sm_is_inf_bits(uint64_t u)
++{
++  return (u & SM_ABS_MASK) == SM_PINF_BITS;
++}
++
++static double sm_make_signed_zero(uint64_t sign)
++{
++  return sm_asdouble(sign & SM_SIGN_MASK);
++}
++
++double fabs(double x)
++{
++  return sm_asdouble(sm_asuint64(x) & SM_ABS_MASK);
++}
++
++/* ------------------------------------------------------------------------- */
++/* floor / ceil / round                                                      */
++/* ------------------------------------------------------------------------- */
++
++double floor(double x)
++{
++  uint64_t u = sm_asuint64(x);
++  uint64_t sign = u & SM_SIGN_MASK;
++  int exp_bits = (int)((u >> 52) & 0x7ff);
++  int e = exp_bits - 1023;
++
++  if (exp_bits == 0x7ff)
++    return x + x;
++
++  if (e < 0) {
++    if ((u & SM_ABS_MASK) == 0)
++      return x;
++    return sign ? -1.0 : 0.0;
++  }
++
++  if (e >= 52)
++    return x;
++
++  /*
++   * The low 52-e mantissa bits are the fractional part.  Clearing them rounds
++   * toward zero.  For negative non-integral numbers, add one integer unit
++   * before clearing so the result moves toward negative infinity instead.
++   */
++  uint64_t mask = (UINT64_C(1) << (52 - e)) - 1;
++  if ((u & mask) == 0)
++    return x;
++
++  if (sign)
++    u += UINT64_C(1) << (52 - e);
++  u &= ~mask;
++  return sm_asdouble(u);
++}
++
++double ceil(double x)
++{
++  uint64_t u = sm_asuint64(x);
++  uint64_t sign = u & SM_SIGN_MASK;
++  int exp_bits = (int)((u >> 52) & 0x7ff);
++  int e = exp_bits - 1023;
++
++  if (exp_bits == 0x7ff)
++    return x + x;
++
++  if (e < 0) {
++    if ((u & SM_ABS_MASK) == 0)
++      return x;
++    return sign ? sm_make_signed_zero(SM_SIGN_MASK) : 1.0;
++  }
++
++  if (e >= 52)
++    return x;
++
++  /*
++   * ceil() is the mirror of floor(): positive non-integral values need one
++   * integer unit added before the fractional bits are removed, while negative
++   * values can simply be rounded toward zero.
++   */
++  uint64_t mask = (UINT64_C(1) << (52 - e)) - 1;
++  if ((u & mask) == 0)
++    return x;
++
++  if (!sign)
++    u += UINT64_C(1) << (52 - e);
++  u &= ~mask;
++  return sm_asdouble(u);
++}
++
++double round(double x)
++{
++  uint64_t u = sm_asuint64(x);
++  uint64_t sign = u & SM_SIGN_MASK;
++  int exp_bits = (int)((u >> 52) & 0x7ff);
++  int e = exp_bits - 1023;
++
++  if (exp_bits == 0x7ff)
++    return x + x;
++
++  if (e < 0) {
++    if ((u & SM_ABS_MASK) == 0)
++      return x;
++    if (e < -1)
++      return sm_make_signed_zero(sign);
++    return sign ? -1.0 : 1.0; /* |x| is in [0.5, 1). */
++  }
++
++  if (e >= 52)
++    return x;
++
++  uint64_t mask = (UINT64_C(1) << (52 - e)) - 1;
++  uint64_t frac = u & mask;
++  if (frac == 0)
++    return x;
++
++  uint64_t half = UINT64_C(1) << (51 - e);
++  u &= ~mask;
++  if (frac >= half)
++    u += UINT64_C(1) << (52 - e); /* C round() rounds halfway cases away from zero. */
++
++  return sm_asdouble(u);
++}
++
++/* ------------------------------------------------------------------------- */
++/* sqrt                                                                      */
++/* ------------------------------------------------------------------------- */
++
++double sqrt(double x)
++{
++  uint64_t u = sm_asuint64(x);
++  uint64_t ax = u & SM_ABS_MASK;
++  uint64_t ix, q, s, r, t;
++  int exp_bits, e, i;
++
++  if ((u & SM_EXP_MASK) == SM_EXP_MASK) {
++    if (u & SM_SIGN_MASK)
++      return sm_nan();
++    return x * x + x;          /* sqrt(+Inf)=+Inf; NaN stays NaN. */
++  }
++
++  if (u & SM_SIGN_MASK) {
++    if (ax == 0)
++      return x;                /* sqrt(-0) = -0. */
++    return sm_nan();
++  }
++
++  if (ax == 0)
++    return x;
++
++  exp_bits = (int)((u >> 52) & 0x7ff);
++  ix = u & SM_FRAC_MASK;
++
++  if (exp_bits == 0) {
++    /*
++     * Subnormal numbers do not have the hidden leading mantissa bit.  Shift
++     * left until that bit appears, and compensate by lowering the effective
++     * exponent.  This keeps the later square-root loop identical for normal
++     * and subnormal inputs.
++     */
++    for (i = 0; (ix & UINT64_C(0x0010000000000000)) == 0; i++)
++      ix <<= 1;
++    exp_bits = 1 - i;
++  } else {
++    ix |= UINT64_C(0x0010000000000000);
++  }
++
++  e = exp_bits - 1023;
++
++  /*
++   * sqrt(m * 2^e) = sqrt(m) * 2^(e/2).  If e is odd, double the mantissa first
++   * so that the final exponent division is exact.
++   */
++  if (e & 1)
++    ix <<= 1;
++  e >>= 1;
++  ix <<= 1;
++
++  /*
++   * Digit-by-digit square root in base 2.  q accumulates the root bits, s is
++   * the trial divisor, and r walks from the highest candidate bit down to zero.
++   * This is slower than Newton iteration, but it is deterministic, uses only
++   * integer operations on the mantissa, and avoids dependency on another sqrt.
++   */
++  q = 0;
++  s = 0;
++  r = UINT64_C(1) << 53;
++
++  while (r != 0) {
++    t = s + r;
++    if (t <= ix) {
++      s = t + r;
++      ix -= t;
++      q += r;
++    }
++    ix <<= 1;
++    r >>= 1;
++  }
++
++  if (ix != 0)
++    q += q & 1;                /* Round to nearest-even in the usual mode. */
++
++  return sm_asdouble((q >> 1) + ((uint64_t)(e + 1022) << 52));
++}
++
++/* ------------------------------------------------------------------------- */
++/* log / exp helper / pow                                                    */
++/* ------------------------------------------------------------------------- */
++
++static const double SM_LN2_HI = 6.93147180369123816490e-01;
++static const double SM_LN2_LO = 1.90821492927058770002e-10;
++static const double SM_INV_LN2 = 1.44269504088896340736e+00;
++static const double SM_LOG_DBL_MAX = 7.09782712893383996732e+02;
++static const double SM_LOG_DBL_TRUE_MIN_HALF = -7.45133219101941108420e+02;
++
++static double sm_pow2_int(int n)
++{
++  if (n > 1023)
++    return sm_inf_with_sign(0);
++  if (n >= -1022)
++    return sm_asdouble(((uint64_t)(n + 1023)) << 52);
++  if (n >= -1074)
++    return sm_asdouble(UINT64_C(1) << (n + 1074));
++  return 0.0;
++}
++
++static double sm_scalbn(double x, int n)
++{
++  if (x == 0.0)
++    return x;
++
++  while (n > 1023) {
++    x *= sm_pow2_int(1023);
++    n -= 1023;
++    if (sm_is_inf_bits(sm_asuint64(x)))
++      return x;
++  }
++  while (n < -1022) {
++    x *= sm_pow2_int(-1022);
++    n += 1022;
++    if (x == 0.0)
++      return x;
++  }
++  return x * sm_pow2_int(n);
++}
++
++static double sm_exp(double x)
++{
++  uint64_t ux = sm_asuint64(x);
++  if (sm_is_nan_bits(ux))
++    return x + x;
++  if (x > SM_LOG_DBL_MAX)
++    return sm_inf_with_sign(0);
++  if (x < SM_LOG_DBL_TRUE_MIN_HALF)
++    return 0.0;
++  if (sm_is_inf_bits(ux))
++    return (ux & SM_SIGN_MASK) ? 0.0 : sm_inf_with_sign(0);
++
++  int n = (int)(x * SM_INV_LN2 + (x >= 0.0 ? 0.5 : -0.5));
++  double dn = (double)n;
++  double r = (x - dn * SM_LN2_HI) - dn * SM_LN2_LO;
++
++  /*
++   * exp(x) = 2^n * exp(r), with r constrained to roughly [-ln(2)/2, ln(2)/2].
++   * The polynomial is a compact Taylor/Horner approximation for exp(r)-1 over
++   * that interval.  Splitting ln(2) keeps the reduction error small enough for
++   * this embedded libm subset.
++   */
++  double p = 1.56192069685862264622e-16;
++  p = 2.81145725434552076320e-15 + r * p;
++  p = 4.77947733238738529744e-14 + r * p;
++  p = 7.64716373181981647590e-13 + r * p;
++  p = 1.14707455977297247139e-11 + r * p;
++  p = 1.60590438368216145994e-10 + r * p;
++  p = 2.08767569878680989792e-09 + r * p;
++  p = 2.50521083854417187751e-08 + r * p;
++  p = 2.75573192239858906526e-07 + r * p;
++  p = 2.75573192239858906526e-06 + r * p;
++  p = 2.48015873015873015873e-05 + r * p;
++  p = 1.98412698412698412698e-04 + r * p;
++  p = 1.38888888888888888889e-03 + r * p;
++  p = 8.33333333333333333333e-03 + r * p;
++  p = 4.16666666666666666667e-02 + r * p;
++  p = 1.66666666666666666667e-01 + r * p;
++  p = 5.00000000000000000000e-01 + r * p;
++  p = 1.00000000000000000000e+00 + r * p;
++
++  return sm_scalbn(1.0 + r * p, n);
++}
++
++double log(double x)
++{
++  uint64_t ux = sm_asuint64(x);
++  uint64_t ax = ux & SM_ABS_MASK;
++
++  if (sm_is_nan_bits(ux))
++    return x + x;
++  if (ax == 0)
++    return -sm_inf_with_sign(0);
++  if (ux & SM_SIGN_MASK)
++    return sm_nan();
++  if (ax == SM_PINF_BITS)
++    return x;
++
++  int exp_bits = (int)((ux >> 52) & 0x7ff);
++  int k;
++  uint64_t frac;
++
++  if (exp_bits == 0) {
++    /* Scale subnormal values into the normal range before extracting mantissa. */
++    x *= sm_pow2_int(54);
++    ux = sm_asuint64(x);
++    exp_bits = (int)((ux >> 52) & 0x7ff);
++    k = exp_bits - 1023 - 54;
++    frac = ux & SM_FRAC_MASK;
++  } else {
++    k = exp_bits - 1023;
++    frac = ux & SM_FRAC_MASK;
++  }
++
++  double m = sm_asdouble(UINT64_C(0x3ff0000000000000) | frac);
++
++  /*
++   * Reduce m to [sqrt(1/2), sqrt(2)].  Then log(m) can be expressed through
++   * z=(m-1)/(m+1), where |z| is small and the atanh series converges quickly:
++   *   log(m) = 2*z*(1 + z^2/3 + z^4/5 + ...).
++   */
++  if (m > 1.41421356237309504880) {
++    m *= 0.5;
++    k++;
++  }
++
++  double z = (m - 1.0) / (m + 1.0);
++  double z2 = z * z;
++
++  double p = 1.0 / 39.0;
++  p = 1.0 / 37.0 + z2 * p;
++  p = 1.0 / 35.0 + z2 * p;
++  p = 1.0 / 33.0 + z2 * p;
++  p = 1.0 / 31.0 + z2 * p;
++  p = 1.0 / 29.0 + z2 * p;
++  p = 1.0 / 27.0 + z2 * p;
++  p = 1.0 / 25.0 + z2 * p;
++  p = 1.0 / 23.0 + z2 * p;
++  p = 1.0 / 21.0 + z2 * p;
++  p = 1.0 / 19.0 + z2 * p;
++  p = 1.0 / 17.0 + z2 * p;
++  p = 1.0 / 15.0 + z2 * p;
++  p = 1.0 / 13.0 + z2 * p;
++  p = 1.0 / 11.0 + z2 * p;
++  p = 1.0 / 9.0  + z2 * p;
++  p = 1.0 / 7.0  + z2 * p;
++  p = 1.0 / 5.0  + z2 * p;
++  p = 1.0 / 3.0  + z2 * p;
++
++  double lm = 2.0 * z * (1.0 + z2 * p);
++  return ((double)k * SM_LN2_HI + lm) + (double)k * SM_LN2_LO;
+ }
+ 
+-double sin(double x) {
+-  assert(0);
++static int sm_y_is_integer_class(double y)
++{
++  uint64_t uy = sm_asuint64(y) & SM_ABS_MASK;
++  int exp_bits = (int)((uy >> 52) & 0x7ff);
++  int e = exp_bits - 1023;
++
++  if (exp_bits == 0x7ff)
++    return 0;
++  if (e < 0)
++    return uy == 0 ? 2 : 0;
++  if (e > 52)
++    return 2; /* Spacing is at least 2, so representable integers are even. */
++
++  uint64_t mant = (uy & SM_FRAC_MASK) | UINT64_C(0x0010000000000000);
++  uint64_t frac_mask = (UINT64_C(1) << (52 - e)) - 1;
++  if ((mant & frac_mask) != 0)
++    return 0;
++
++  uint64_t int_lsb = (mant >> (52 - e)) & 1;
++  return int_lsb ? 1 : 2; /* 1 = odd integer, 2 = even integer. */
+ }
+ 
+-double cos(double x) {
+-  assert(0);
++static double sm_powi_abs(double x, int64_t n)
++{
++  uint64_t e;
++  if (n < 0)
++    e = (uint64_t)(-(n + 1)) + 1;
++  else
++    e = (uint64_t)n;
++
++  double r = 1.0;
++  double b = x;
++  while (e != 0) {
++    if (e & 1)
++      r *= b;
++    e >>= 1;
++    if (e != 0)
++      b *= b;
++  }
++
++  return n < 0 ? 1.0 / r : r;
+ }
+ 
+-double tan(double x) {
+-  assert(0);
++double pow(double x, double y)
++{
++  uint64_t ux = sm_asuint64(x);
++  uint64_t uy = sm_asuint64(y);
++  uint64_t ax = ux & SM_ABS_MASK;
++  uint64_t ay = uy & SM_ABS_MASK;
++  int yint = sm_y_is_integer_class(y);
++
++  if (y == 0.0)
++    return 1.0;
++  if (x == 1.0)
++    return 1.0;
++
++  if (sm_is_nan_bits(ux) || sm_is_nan_bits(uy))
++    return x + y;
++
++  if (sm_is_inf_bits(uy)) {
++    if (ax == UINT64_C(0x3ff0000000000000))
++      return 1.0;
++    if (fabs(x) > 1.0)
++      return (uy & SM_SIGN_MASK) ? 0.0 : sm_inf_with_sign(0);
++    return (uy & SM_SIGN_MASK) ? sm_inf_with_sign(0) : 0.0;
++  }
++
++  if (ax == 0) {
++    if (y > 0.0)
++      return ((ux & SM_SIGN_MASK) && yint == 1) ?
++             sm_make_signed_zero(SM_SIGN_MASK) : 0.0;
++    return ((ux & SM_SIGN_MASK) && yint == 1) ?
++           sm_inf_with_sign(SM_SIGN_MASK) : sm_inf_with_sign(0);
++  }
++
++  if (sm_is_inf_bits(ux)) {
++    if (y > 0.0)
++      return ((ux & SM_SIGN_MASK) && yint == 1) ?
++             sm_inf_with_sign(SM_SIGN_MASK) : sm_inf_with_sign(0);
++    return ((ux & SM_SIGN_MASK) && yint == 1) ?
++           sm_make_signed_zero(SM_SIGN_MASK) : 0.0;
++  }
++
++  /*
++   * Negative bases are valid only for integer exponents.  Small integer powers
++   * use exponentiation by squaring to avoid going through log(), which would be
++   * invalid for a negative input and less accurate for exact integer cases.
++   */
++  if (ux & SM_SIGN_MASK) {
++    if (yint == 0)
++      return sm_nan();
++
++    double axd = -x;
++    double mag;
++    if (ay <= UINT64_C(0x4050000000000000)) { /* |y| <= 64 */
++      mag = sm_powi_abs(axd, (int64_t)y);
++    } else {
++      mag = sm_exp(y * log(axd));
++    }
++    return yint == 1 ? -mag : mag;
++  }
++
++  if (yint != 0 && ay <= UINT64_C(0x4050000000000000))
++    return sm_powi_abs(x, (int64_t)y);
++
++  return sm_exp(y * log(x));
+ }
+ 
+-double sqrt(double x) {
+-  assert(0);
++/* ------------------------------------------------------------------------- */
++/* sin / cos / tan                                                           */
++/* ------------------------------------------------------------------------- */
++
++static const double SM_PIO4 = 7.85398163397448278999e-01;
++static const double SM_INV_PIO2 = 6.36619772367581382433e-01;
++static const double SM_PIO2 = 1.57079632679489661923e+00;
++
++/* Split pi/2 for the fast Cody-Waite reduction path. */
++static const double SM_PIO2_1  = 1.57079632673412561417e+00;
++static const double SM_PIO2_2  = 6.07710050630396597660e-11;
++static const double SM_PIO2_3  = 2.02226624871116645580e-21;
++static const double SM_PIO2_3T = 8.47842766036889956997e-32;
++
++#define SM_2OPI_WORDS 19
++#define SM_2OPI_BITS 1216
++
++/* floor((2/pi) * 2^1216), little-endian 64-bit limbs. */
++static const uint64_t sm_two_over_pi[SM_2OPI_WORDS] = {
++  UINT64_C(0x56033046fc7b6bab), UINT64_C(0x6bfb5fb11f8d5d08),
++  UINT64_C(0x3d0739f78a5292ea), UINT64_C(0x7527bac7ebe5f17b),
++  UINT64_C(0x4f463f669e5fea2d), UINT64_C(0x6d367ecf27cb09b7),
++  UINT64_C(0xef2f118b5a0a6d1f), UINT64_C(0x1ff897ffde05980f),
++  UINT64_C(0x9c845f8bbdf9283b), UINT64_C(0x3991d639835339f4),
++  UINT64_C(0xe99c7026b45f7e41), UINT64_C(0xe88235f52ebb4484),
++  UINT64_C(0xfe1deb1cb129a73e), UINT64_C(0x06492eea09d1921c),
++  UINT64_C(0xb7246e3a424dd2e0), UINT64_C(0xfe5163abdebbc561),
++  UINT64_C(0xdb6295993c439041), UINT64_C(0xfc2757d1f534ddc0),
++  UINT64_C(0xa2f9836e4e441529)
++};
++
++static uint64_t sm_get_bits_64(const uint64_t *a, int nwords, int start)
++{
++  if (start < 0)
++    return 0;
++  int w = start >> 6;
++  int b = start & 63;
++  uint64_t lo = (w < nwords) ? a[w] : 0;
++  if (b == 0)
++    return lo;
++  uint64_t hi = (w + 1 < nwords) ? a[w + 1] : 0;
++  return (lo >> b) | (hi << (64 - b));
+ }
+ 
+-double pow(double x, double y) {
+-  assert(0);
++static int sm_get_bit(const uint64_t *a, int nwords, int bit)
++{
++  if (bit < 0)
++    return 0;
++  int w = bit >> 6;
++  if (w >= nwords)
++    return 0;
++  return (int)((a[w] >> (bit & 63)) & 1);
+ }
+ 
+-double log(double x) {
+-  assert(0);
++static void sm_mask_low_bits(uint64_t *a, int nwords, int keep_bits)
++{
++  int full = keep_bits >> 6;
++  int rem = keep_bits & 63;
++
++  for (int i = full + (rem != 0); i < nwords; i++)
++    a[i] = 0;
++
++  if (full < nwords && rem != 0)
++    a[full] &= (UINT64_C(1) << rem) - 1;
++  else if (full < nwords && rem == 0)
++    a[full] = 0;
+ }
+ 
+-double round(double x) {
+-  assert(0);
++static void sm_twos_complement_low(uint64_t *a, int nwords, int bits)
++{
++  int full = bits >> 6;
++  int rem = bits & 63;
++
++  for (int i = 0; i < nwords; i++)
++    a[i] = ~a[i];
++
++  if (rem != 0 && full < nwords) {
++    a[full] &= (UINT64_C(1) << rem) - 1;
++    for (int i = full + 1; i < nwords; i++)
++      a[i] = 0;
++  } else {
++    for (int i = full; i < nwords; i++)
++      a[i] = 0;
++  }
++
++  uint64_t carry = 1;
++  for (int i = 0; i < nwords && carry; i++) {
++    uint64_t old = a[i];
++    a[i] = old + carry;
++    carry = (a[i] < old);
++  }
++
++  sm_mask_low_bits(a, nwords, bits);
+ }
+ 
+-double floor(double x) {
+-  assert(0);
++static void sm_rem_pio2_large(double ax, int *q_out, double *r_out)
++{
++  uint64_t ux = sm_asuint64(ax);
++  int exp_bits = (int)((ux >> 52) & 0x7ff);
++  uint64_t m = (ux & SM_FRAC_MASK) | UINT64_C(0x0010000000000000);
++  int e = exp_bits - 1023;
++  int shift = SM_2OPI_BITS + 52 - e;
++
++  uint64_t prod[SM_2OPI_WORDS + 1];
++  uint64_t carry = 0;
++
++  /*
++   * Payne-Hanek style reduction for large inputs.  The mantissa is multiplied
++   * by many bits of 2/pi, then the product is rounded to the nearest multiple
++   * of pi/2.  This preserves the quadrant for values too large for ordinary
++   * double multiplication by 2/pi to keep enough low bits.
++   */
++  for (int i = 0; i < SM_2OPI_WORDS; i++) {
++#if defined(__SIZEOF_INT128__)
++    __uint128_t t = (__uint128_t)sm_two_over_pi[i] * m + carry;
++    prod[i] = (uint64_t)t;
++    carry = (uint64_t)(t >> 64);
++#else
++    uint64_t a0 = sm_two_over_pi[i] & UINT64_C(0xffffffff);
++    uint64_t a1 = sm_two_over_pi[i] >> 32;
++    uint64_t b0 = m & UINT64_C(0xffffffff);
++    uint64_t b1 = m >> 32;
++    uint64_t p00 = a0 * b0;
++    uint64_t p01 = a0 * b1;
++    uint64_t p10 = a1 * b0;
++    uint64_t p11 = a1 * b1;
++    uint64_t lo = p00;
++    uint64_t hi = p11 + (p01 >> 32) + (p10 >> 32);
++    uint64_t add;
++
++    add = p01 << 32;
++    lo += add;
++    if (lo < add)
++      hi++;
++
++    add = p10 << 32;
++    lo += add;
++    if (lo < add)
++      hi++;
++
++    lo += carry;
++    if (lo < carry)
++      hi++;
++
++    prod[i] = lo;
++    carry = hi;
++#endif
++  }
++  prod[SM_2OPI_WORDS] = carry;
++
++  int nwords = SM_2OPI_WORDS + 1;
++  int q_floor_mod4 = sm_get_bit(prod, nwords, shift) |
++                    (sm_get_bit(prod, nwords, shift + 1) << 1);
++  int round_up = sm_get_bit(prod, nwords, shift - 1);
++  int q = (q_floor_mod4 + round_up) & 3;
++
++  uint64_t rem[SM_2OPI_WORDS + 1];
++  for (int i = 0; i < nwords; i++)
++    rem[i] = prod[i];
++  sm_mask_low_bits(rem, nwords, shift);
++
++  if (round_up)
++    sm_twos_complement_low(rem, nwords, shift);
++
++  uint64_t top0 = sm_get_bits_64(rem, nwords, shift - 64);
++  uint64_t top1 = sm_get_bits_64(rem, nwords, shift - 128);
++  uint64_t top2 = sm_get_bits_64(rem, nwords, shift - 192);
++  double frac = (double)top0 * 5.42101086242752217004e-20;  /* 2^-64 */
++  frac += (double)top1 * 2.93873587705571876992e-39;        /* 2^-128 */
++  frac += (double)top2 * 1.59309191113245227768e-58;        /* 2^-192 */
++  double r = frac * SM_PIO2;
++  if (round_up)
++    r = -r;
++
++  *q_out = q;
++  *r_out = r;
++}
++
++static void sm_rem_pio2(double x, int *q_out, double *r_out)
++{
++  double ax = fabs(x);
++
++  if (ax <= SM_PIO4) {
++    *q_out = 0;
++    *r_out = ax;
++    return;
++  }
++
++  if (ax < 1048576.0) {
++    int n = (int)(ax * SM_INV_PIO2 + 0.5);
++    double fn = (double)n;
++    double r = ax - fn * SM_PIO2_1;
++    r -= fn * SM_PIO2_2;
++    r -= fn * SM_PIO2_3;
++    r -= fn * SM_PIO2_3T;
++    *q_out = n & 3;
++    *r_out = r;
++    return;
++  }
++
++  sm_rem_pio2_large(ax, q_out, r_out);
++}
++
++static double sm_sin_kernel(double x)
++{
++  double z = x * x;
++  double p = 1.95729410633912612308e-20;
++  p = -8.22063524662432971696e-18 + z * p;
++  p = 2.81145725434552076320e-15 + z * p;
++  p = -7.64716373181981647590e-13 + z * p;
++  p = 1.60590438368216145994e-10 + z * p;
++  p = -2.50521083854417187751e-08 + z * p;
++  p = 2.75573192239858906526e-06 + z * p;
++  p = -1.98412698412698412698e-04 + z * p;
++  p = 8.33333333333333333333e-03 + z * p;
++  p = -1.66666666666666666667e-01 + z * p;
++  return x + x * z * p;
+ }
+ 
+-double ceil(double x) {
+-  assert(0);
++static double sm_cos_kernel(double x)
++{
++  double z = x * x;
++  double p = -8.89679139245057328675e-22;
++  p = 4.11031762331216485848e-19 + z * p;
++  p = -1.56192069685862264622e-16 + z * p;
++  p = 4.77947733238738529744e-14 + z * p;
++  p = -1.14707455977297247139e-11 + z * p;
++  p = 2.08767569878680989792e-09 + z * p;
++  p = -2.75573192239858906526e-07 + z * p;
++  p = 2.48015873015873015873e-05 + z * p;
++  p = -1.38888888888888888889e-03 + z * p;
++  p = 4.16666666666666666667e-02 + z * p;
++  p = -5.00000000000000000000e-01 + z * p;
++  return 1.0 + z * p;
++}
++
++static double sm_tan_kernel(double x)
++{
++  double s = sm_sin_kernel(x);
++  double c = sm_cos_kernel(x);
++  return s / c;
++}
++
++double sin(double x)
++{
++  uint64_t ux = sm_asuint64(x);
++  if ((ux & SM_EXP_MASK) == SM_EXP_MASK)
++    return sm_nan();
++
++  int q;
++  double r;
++  sm_rem_pio2(x, &q, &r);
++
++  double y;
++  switch (q & 3) {
++  case 0: y = sm_sin_kernel(r); break;
++  case 1: y = sm_cos_kernel(r); break;
++  case 2: y = -sm_sin_kernel(r); break;
++  default: y = -sm_cos_kernel(r); break;
++  }
++
++  return (ux & SM_SIGN_MASK) ? -y : y;
++}
++
++double cos(double x)
++{
++  uint64_t ux = sm_asuint64(x);
++  if ((ux & SM_EXP_MASK) == SM_EXP_MASK)
++    return sm_nan();
++
++  int q;
++  double r;
++  sm_rem_pio2(x, &q, &r);
++
++  switch (q & 3) {
++  case 0: return sm_cos_kernel(r);
++  case 1: return -sm_sin_kernel(r);
++  case 2: return -sm_cos_kernel(r);
++  default: return sm_sin_kernel(r);
++  }
++}
++
++double tan(double x)
++{
++  uint64_t ux = sm_asuint64(x);
++  if ((ux & SM_EXP_MASK) == SM_EXP_MASK)
++    return sm_nan();
++
++  int q;
++  double r;
++  sm_rem_pio2(x, &q, &r);
++  double t = sm_tan_kernel(r);
++
++  double y;
++  if ((q & 1) == 0) {
++    y = t;
++  } else {
++    if (t == 0.0)
++      y = sm_inf_with_sign(0);
++    else
++      y = -1.0 / t;
++  }
++
++  return (ux & SM_SIGN_MASK) ? -y : y;
+ }
+-- 
+2.43.0
+
