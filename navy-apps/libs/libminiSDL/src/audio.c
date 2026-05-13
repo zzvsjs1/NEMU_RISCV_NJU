@@ -1,21 +1,24 @@
 #include <NDL.h>
 #include <SDL.h>
-#include <stdio.h>
-#include <string.h>
-#include <assert.h>
 
-#include <fcntl.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0
+#endif
 
 static SDL_AudioSpec g_spec;
 static int g_paused = 1; // start paused per spec
-static uint32_t g_interval_ms = 0;
-static uint32_t g_last_cb_ms = 0;
 static int g_bytes_per_frame = 0; // channels * bytes_per_sample
+static int g_device_capacity = 0;
+static int g_target_queue_bytes = 0;
+static int g_audio_lock_depth = 0;
 
 // Reentrancy guard: non-zero while we are inside the audio callback path
 volatile int g_in_audio_cb = 0;
@@ -29,14 +32,16 @@ volatile int g_in_audio_cb = 0;
  * device before the host SDL callback wakes several times.
  *
  * With PAL's common 44.1 kHz, stereo, S16 format, one 1024-sample callback is
- * 1024 * 2 channels * 2 bytes = 4096 bytes.  Four bursts at a 10 Hz game pump
- * can only produce roughly 160 KiB/s, below the 172 KiB/s the host consumes.
- * Eight bursts gives enough headroom for slow frames while the 64 KiB device
- * buffer still bounds worst-case queued audio latency.
+ * 1024 * 2 channels * 2 bytes = 4096 bytes.  The pump keeps about eight such
+ * chunks queued.  That gives slow video frames headroom, but avoids filling the
+ * whole 64 KiB device buffer and adding hundreds of milliseconds of latency.
  */
-#define BURST_CALLBACKS 8
+#define TARGET_QUEUE_CALLBACKS 8
+#define MAX_CALLBACKS_PER_PUMP 8
 
 void CallbackHelper(void);
+
+static int readExact(int fd, void *buf, size_t n);
 
 // very small helper for clamp
 static inline int16_t clampS16(int x)
@@ -47,6 +52,49 @@ static inline int16_t clampS16(int x)
     if (x < -32768)
         return -32768;
     return (int16_t)x;
+}
+
+static int alignDownToFrame(int bytes)
+{
+    if (bytes <= 0 || g_bytes_per_frame <= 0)
+        return 0;
+    return (bytes / g_bytes_per_frame) * g_bytes_per_frame;
+}
+
+static uint16_t rdLE16(const uint8_t *p)
+{
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t rdLE32(const uint8_t *p)
+{
+    return (uint32_t)p[0] |
+           ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+static int readLE32(int fd, uint32_t *out)
+{
+    uint8_t b[4];
+
+    if (!readExact(fd, b, sizeof(b)))
+        return 0;
+
+    *out = rdLE32(b);
+    return 1;
+}
+
+static int readS16Native(const uint8_t *p)
+{
+    int16_t value;
+    memcpy(&value, p, sizeof(value));
+    return value;
+}
+
+static void writeS16Native(uint8_t *p, int16_t value)
+{
+    memcpy(p, &value, sizeof(value));
 }
 
 static int readExact(int fd, void *buf, size_t n)
@@ -86,7 +134,14 @@ static int skipBytes(int fd, uint32_t n)
         uint32_t chunk = left > sizeof(tmp) ? sizeof(tmp) : left;
         ssize_t r = read(fd, tmp, chunk);
 
-        if (r <= 0)
+        if (r < 0)
+        {
+            if (errno == EINTR)
+                continue;
+            return 0;
+        }
+
+        if (r == 0)
             return 0;
         left -= (uint32_t)r;
     }
@@ -109,9 +164,54 @@ static int bytesPerSampleFromFormat(uint16_t fmt)
     }
 }
 
+static void configureQueueWatermark(void)
+{
+    int capacity = NDL_QueryAudio();
+
+    if (capacity < 0)
+        capacity = 0;
+
+    g_device_capacity = alignDownToFrame(capacity);
+    g_target_queue_bytes = 0;
+
+    if (g_device_capacity <= 0 || g_bytes_per_frame <= 0)
+        return;
+
+    const int target_per_cb = alignDownToFrame((int)g_spec.size);
+    uint64_t target = (uint64_t)target_per_cb * TARGET_QUEUE_CALLBACKS;
+
+    if (target > (uint64_t)g_device_capacity)
+        target = (uint64_t)g_device_capacity;
+
+    g_target_queue_bytes = alignDownToFrame((int)target);
+
+    if (g_target_queue_bytes <= 0)
+        g_target_queue_bytes = g_bytes_per_frame;
+}
+
 int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained)
 {
-    assert(desired);
+    if (!desired)
+        return -1;
+
+    const int bytes_per_sample = bytesPerSampleFromFormat(desired->format);
+
+    if (bytes_per_sample == 0 ||
+        desired->freq <= 0 ||
+        desired->channels == 0 ||
+        desired->samples == 0)
+    {
+        return -1;
+    }
+
+    if ((int)desired->channels > INT_MAX / bytes_per_sample)
+        return -1;
+
+    const int bytes_per_frame = (int)desired->channels * bytes_per_sample;
+
+    if ((int)desired->samples > INT_MAX / bytes_per_frame)
+        return -1;
+
     /*
      * miniSDL accepts the caller's requested format as the obtained format.
      * The NDL sound device only receives frequency, channel count, and buffer
@@ -119,24 +219,21 @@ int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained)
      */
     memset(&g_spec, 0, sizeof(g_spec));
     g_spec = *desired;
+    g_spec.silence = (desired->format == AUDIO_U8) ? 0x80 : 0x00;
+    g_spec.padding = 0;
+    g_spec.size = (uint32_t)((int)desired->samples * bytes_per_frame);
 
-    int bytes_per_sample = bytesPerSampleFromFormat(desired->format);
-    assert(bytes_per_sample != 0 && "Unsupported audio format");
-    g_bytes_per_frame = desired->channels * bytes_per_sample; // interleaved frame size in bytes
-
-    // interval in ms between callbacks
-    // protect division by zero
-    assert(desired->freq > 0);
-    g_interval_ms = (uint32_t)((desired->samples * 1000u) / (uint32_t)desired->freq);
-
-    if (g_interval_ms == 0)
-        g_interval_ms = 1;
+    g_bytes_per_frame = bytes_per_frame; // interleaved frame size in bytes
+    g_device_capacity = 0;
+    g_target_queue_bytes = 0;
+    g_audio_lock_depth = 0;
+    g_in_audio_cb = 0;
 
     // init device
     NDL_OpenAudio(desired->freq, desired->channels, desired->samples);
+    configureQueueWatermark();
 
     g_paused = 1; // playback starts paused
-    g_last_cb_ms = NDL_GetTicks();
 
     if (obtained)
         *obtained = g_spec;
@@ -148,9 +245,11 @@ void SDL_CloseAudio()
     g_paused = 1;
     NDL_CloseAudio();
     memset(&g_spec, 0, sizeof(g_spec));
-    g_interval_ms = 0;
-    g_last_cb_ms = 0;
     g_bytes_per_frame = 0;
+    g_device_capacity = 0;
+    g_target_queue_bytes = 0;
+    g_audio_lock_depth = 0;
+    g_in_audio_cb = 0;
 }
 
 void SDL_PauseAudio(int pause_on)
@@ -159,32 +258,29 @@ void SDL_PauseAudio(int pause_on)
 
     if (!g_paused)
     {
-        g_last_cb_ms = 0;
         /*
          * Prefill synchronously on unpause.  There is no background audio thread
          * in miniSDL, so waiting for the next event/timer poll can leave NEMU's
-         * host callback with silence immediately after SDL_PauseAudio(0).
+         * host callback with silence immediately after SDL_PauseAudio(0).  The
+         * helper itself applies the queue watermark, so this cannot fill the
+         * whole emulated device buffer in one unpause call.
          */
-        for (int i = 0; i < BURST_CALLBACKS; ++i)
-        {
-            if (!g_in_audio_cb)
-                CallbackHelper();
-        }
+        CallbackHelper();
     }
 }
 
 // SDL_MixAudio (support S16 and U8)
-void SDL_MixAudio(uint8_t *dst, uint8_t *src, uint32_t len, int volume)
+void SDL_MixAudio(uint8_t *dst, const uint8_t *src, uint32_t len, int volume)
 {
-    if (volume <= 0 || len == 0)
+    if (!dst || !src || volume <= 0 || len == 0)
         return;
 
     if (volume > SDL_MIX_MAXVOLUME)
         volume = SDL_MIX_MAXVOLUME;
 
-    // Use the current output format, keep it simple for miniSDL
-
-    if (g_spec.format == AUDIO_U8)
+    switch (g_spec.format)
+    {
+    case AUDIO_U8:
     {
         // Unsigned 8-bit, 0..255 with midpoint at 128
         for (uint32_t i = 0; i < len; i++)
@@ -200,23 +296,26 @@ void SDL_MixAudio(uint8_t *dst, uint8_t *src, uint32_t len, int volume)
                 mixed = -128;
             dst[i] = (uint8_t)(mixed + 128);
         }
+        break;
     }
-    else
+
+    case AUDIO_S16SYS:
     {
-        // Default to 16-bit signed little-endian
+        // Native-endian S16SYS, using byte copies so unaligned buffers work.
         uint32_t samples = len / 2;
-        int16_t *d = (int16_t *)dst;
-        int16_t *s = (int16_t *)src;
         for (uint32_t i = 0; i < samples; i++)
         {
-            int mixed = (int)d[i] + ((int)s[i] * volume) / SDL_MIX_MAXVOLUME;
-
-            if (mixed > 32767)
-                mixed = 32767;
-            else if (mixed < -32768)
-                mixed = -32768;
-            d[i] = (int16_t)mixed;
+            uint8_t *d = dst + i * 2;
+            const uint8_t *s = src + i * 2;
+            int mixed = readS16Native(d) +
+                        (readS16Native(s) * volume) / SDL_MIX_MAXVOLUME;
+            writeS16Native(d, clampS16(mixed));
         }
+        break;
+    }
+
+    default:
+        break;
     }
 }
 
@@ -241,7 +340,7 @@ SDL_AudioSpec *SDL_LoadWAV(
     uint32_t riff_size;
 
     if (!readExact(fd, riff, 4) ||
-        !readExact(fd, &riff_size, 4) ||
+        !readLE32(fd, &riff_size) ||
         !readExact(fd, wave, 4) ||
         memcmp(riff, "RIFF", 4) != 0 ||
         memcmp(wave, "WAVE", 4) != 0)
@@ -249,13 +348,16 @@ SDL_AudioSpec *SDL_LoadWAV(
         close(fd);
         return NULL;
     }
+    (void)riff_size;
 
     // Parse chunks until we find "fmt " and "data"
     int have_fmt = 0, have_data = 0;
+    int parse_ok = 1;
 
     uint16_t audioFormat = 0;
     uint16_t numChannels = 0;
     uint32_t sampleRate = 0;
+    uint16_t blockAlign = 0;
     uint16_t bitsPerSample = 0;
 
     uint32_t data_size = 0;
@@ -271,20 +373,14 @@ SDL_AudioSpec *SDL_LoadWAV(
          * SDL applications do not care about.  Walk the chunk list instead of
          * assuming a fixed 44-byte header layout.
          */
-        ssize_t r = read(fd, id, 4);
+        if (!readExact(fd, id, 4))
+            break;
 
-        if (r == 0)
-            break; // EOF
-
-        if (r < 0)
+        if (!readLE32(fd, &sz))
         {
-            if (errno == EINTR)
-                continue;
+            parse_ok = 0;
             break;
         }
-
-        if (!readExact(fd, &sz, 4))
-            break;
 
         if (memcmp(id, "fmt ", 4) == 0)
         {
@@ -298,11 +394,13 @@ SDL_AudioSpec *SDL_LoadWAV(
 
                 if (!readExact(fd, fmtbuf, toread))
                 {
+                    parse_ok = 0;
                     break;
                 }
 
                 if (sz > toread && !skipBytes(fd, sz - toread))
                 {
+                    parse_ok = 0;
                     break;
                 }
             }
@@ -310,39 +408,73 @@ SDL_AudioSpec *SDL_LoadWAV(
             {
                 if (!readExact(fd, fmtbuf, sz))
                 {
+                    parse_ok = 0;
                     break;
                 }
             }
 
-            audioFormat = (uint16_t)(fmtbuf[0] | (fmtbuf[1] << 8));
-            numChannels = (uint16_t)(fmtbuf[2] | (fmtbuf[3] << 8));
-            sampleRate = (uint32_t)(fmtbuf[4] | (fmtbuf[5] << 8) | (fmtbuf[6] << 16) | (fmtbuf[7] << 24));
-            // byteRate at [8..11], blockAlign at [12..13]
-            bitsPerSample = (uint16_t)(fmtbuf[14] | (fmtbuf[15] << 8));
+            audioFormat = rdLE16(&fmtbuf[0]);
+            numChannels = rdLE16(&fmtbuf[2]);
+            sampleRate = rdLE32(&fmtbuf[4]);
+            // byteRate at [8..11]
+            blockAlign = rdLE16(&fmtbuf[12]);
+            bitsPerSample = rdLE16(&fmtbuf[14]);
 
             if (audioFormat != 1 /* PCM */)
             {
                 // compressed formats are not supported in PA
+                parse_ok = 0;
                 break;
             }
 
-            if (numChannels == 0 || sampleRate == 0 || (bitsPerSample != 8 && bitsPerSample != 16))
+            if (numChannels == 0 || numChannels > UINT8_MAX ||
+                sampleRate == 0 || sampleRate > INT_MAX ||
+                (bitsPerSample != 8 && bitsPerSample != 16))
             {
+                parse_ok = 0;
                 break;
             }
 
-            have_fmt = 1;
+            const uint32_t expectedAlign =
+                (uint32_t)numChannels * (uint32_t)(bitsPerSample / 8);
+
+            if (blockAlign == 0 || blockAlign != expectedAlign)
+            {
+                parse_ok = 0;
+                break;
+            }
 
             // If chunk size is odd, one padding byte follows
 
             if (sz & 1)
             {
                 if (!skipBytes(fd, 1))
+                {
+                    parse_ok = 0;
                     break;
+                }
             }
+
+            have_fmt = 1;
         }
         else if (memcmp(id, "data", 4) == 0)
         {
+            if (have_data)
+            {
+                if (!skipBytes(fd, sz))
+                {
+                    parse_ok = 0;
+                    break;
+                }
+
+                if ((sz & 1) && !skipBytes(fd, 1))
+                {
+                    parse_ok = 0;
+                    break;
+                }
+                continue;
+            }
+
             // Allocate and read the whole PCM payload
             data_size = sz;
             data_ptr = (uint8_t *)malloc(data_size ? data_size : 1);
@@ -354,17 +486,22 @@ SDL_AudioSpec *SDL_LoadWAV(
             {
                 free(data_ptr);
                 data_ptr = NULL;
+                parse_ok = 0;
                 break;
             }
-            have_data = 1;
 
             // Pad byte if needed
 
             if (sz & 1)
             {
                 if (!skipBytes(fd, 1))
+                {
+                    parse_ok = 0;
                     break;
+                }
             }
+
+            have_data = 1;
         }
         else
         {
@@ -372,13 +509,17 @@ SDL_AudioSpec *SDL_LoadWAV(
 
             if (!skipBytes(fd, sz))
             {
+                parse_ok = 0;
                 break;
             }
 
             if (sz & 1)
             {
                 if (!skipBytes(fd, 1))
+                {
+                    parse_ok = 0;
                     break;
+                }
             }
         }
 
@@ -388,20 +529,26 @@ SDL_AudioSpec *SDL_LoadWAV(
 
     close(fd);
 
-    if (!have_fmt || !have_data || !data_ptr)
+    if (!parse_ok || !have_fmt || !have_data || !data_ptr)
     {
         if (data_ptr)
             free(data_ptr);
         return NULL;
     }
 
+    if (blockAlign > 0)
+        data_size -= data_size % blockAlign;
+
     // Fill spec from fmt
     memset(spec, 0, sizeof(*spec));
     spec->freq = (int)sampleRate;
     spec->channels = (uint8_t)numChannels;
     spec->format = (bitsPerSample == 8) ? AUDIO_U8 : AUDIO_S16SYS;
+    spec->silence = (spec->format == AUDIO_U8) ? 0x80 : 0x00;
     // Choose a reasonable default buffer size for callback-driven playback
     spec->samples = 1024;
+    spec->size = (uint32_t)spec->samples * spec->channels *
+                 (uint32_t)(bitsPerSample / 8);
 
     *audio_buf = data_ptr;
     *audio_len = data_size;
@@ -416,20 +563,28 @@ void SDL_FreeWAV(uint8_t *audio_buf)
 
 void SDL_LockAudio()
 {
-
     /*
      * Navy currently pumps audio synchronously from SDL APIs instead of using
-     * a pre-emptive callback thread.  Locking is therefore a compatibility
-     * no-op: callbacks cannot run concurrently with normal application code.
+     * a pre-emptive callback thread.  The lock still matters for cooperative
+     * re-entry: code may update mixer state, call SDL_PollEvent() or
+     * SDL_Delay(), and only then finish the update.  Deferring the pump while
+     * locked keeps the callback from observing half-written state.
      */
+    if (g_audio_lock_depth < INT_MAX)
+        g_audio_lock_depth++;
 }
 
 void SDL_UnlockAudio()
 {
+    if (g_audio_lock_depth > 0)
+        g_audio_lock_depth--;
+
+    if (g_audio_lock_depth == 0 && !g_in_audio_cb)
+        CallbackHelper();
 }
 
 // Call this very frequently from event or delay APIs.
-// Also call it a few times right after unpausing for prefill.
+// SDL_PauseAudio(0) also calls it once for bounded prefill.
 void CallbackHelper(void)
 {
     // Fast exits for common conditions
@@ -442,6 +597,9 @@ void CallbackHelper(void)
 
     if (g_bytes_per_frame <= 0)
         return; // misconfigured format
+
+    if (g_audio_lock_depth > 0)
+        return;
 
     // Prevent recursive entry if callback calls APIs that also call CallbackHelper
 
@@ -460,20 +618,45 @@ void CallbackHelper(void)
     if (free_bytes <= 0)
         return;
 
-    uint32_t now = NDL_GetTicks();
+    free_bytes = alignDownToFrame(free_bytes);
 
-    // Respect the nominal schedule unless we can feed at least one frame
-
-    if ((now - g_last_cb_ms) < g_interval_ms && free_bytes < g_bytes_per_frame)
-    {
+    if (free_bytes <= 0)
         return;
+
+    if (g_device_capacity <= 0 || free_bytes > g_device_capacity)
+    {
+        g_device_capacity = alignDownToFrame(free_bytes);
+        configureQueueWatermark();
     }
 
-    const int target_per_cb = g_spec.samples * g_bytes_per_frame;
+    if (g_target_queue_bytes <= 0)
+        return;
+
+    int queued_bytes = g_device_capacity - free_bytes;
+
+    if (queued_bytes < 0)
+        queued_bytes = 0;
+
+    /*
+     * Hysteresis avoids tiny callback lengths.  Refill when the queue has
+     * dropped by at least one normal callback chunk, then top it back up to the
+     * target watermark.
+     */
+    const int target_per_cb = alignDownToFrame((int)g_spec.size);
+    const int low_watermark =
+        g_target_queue_bytes > target_per_cb ? g_target_queue_bytes - target_per_cb : 0;
+
+    if (queued_bytes > low_watermark)
+        return;
+
+    int fill_budget = g_target_queue_bytes - queued_bytes;
+
+    if (fill_budget <= 0)
+        return;
 
     static uint8_t buf[MAX_PUSH_BYTES];
     int bursts = 0;
-    int fed_any = 0;
+    int produced = 0;
 
     // Enter reentrancy-protected region
     /*
@@ -483,10 +666,18 @@ void CallbackHelper(void)
      */
     g_in_audio_cb = 1;
 
-    // Feed several chunks back to back, until space drops, or we hit limits
-    while (free_bytes >= g_bytes_per_frame && bursts < BURST_CALLBACKS)
+    // Feed several chunks back to back, until the watermark is restored.
+    while (free_bytes >= g_bytes_per_frame &&
+           produced < fill_budget &&
+           bursts < MAX_CALLBACKS_PER_PUMP)
     {
-        int chunk = (free_bytes < target_per_cb) ? free_bytes : target_per_cb;
+        int chunk = target_per_cb;
+
+        if (chunk > fill_budget - produced)
+            chunk = fill_budget - produced;
+
+        if (chunk > free_bytes)
+            chunk = free_bytes;
 
         if (chunk > MAX_PUSH_BYTES)
             chunk = MAX_PUSH_BYTES;
@@ -506,17 +697,25 @@ void CallbackHelper(void)
          * interleaved channel boundaries, so a partial refill cannot swap left
          * and right samples on the next callback.
          */
-        NDL_PlayAudio(buf, chunk);
+        int played = NDL_PlayAudio(buf, chunk);
 
-        fed_any = 1;
+        if (played <= 0)
+            break;
+
+        produced += alignDownToFrame(played);
         bursts += 1;
+
+        if (played != chunk)
+            break;
 
         // Re-query to minimize races with hardware consumption
         free_bytes = NDL_QueryAudio();
-    }
 
-    if (fed_any)
-        g_last_cb_ms = now;
+        if (free_bytes <= 0)
+            break;
+
+        free_bytes = alignDownToFrame(free_bytes);
+    }
 
     // Leave protected region
     g_in_audio_cb = 0;

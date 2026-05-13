@@ -6,7 +6,9 @@ typedef struct
     int freq;
     uint16_t format;
     uint8_t channels;
+    uint8_t silence;
     uint16_t samples;
+    uint16_t padding;
     /*
    * size is kept for SDL source compatibility.  SDL_OpenAudio() derives the
    * real transfer size from samples, channels, and format when pumping NDL.
@@ -22,6 +24,7 @@ typedef struct
 
 #define AUDIO_U8 8
 #define AUDIO_S16 16
+#define AUDIO_S16LSB AUDIO_S16
 #define AUDIO_S16SYS AUDIO_S16
 
 #define SDL_MIX_MAXVOLUME 128
@@ -31,7 +34,7 @@ void SDL_CloseAudio();
 void SDL_PauseAudio(int pause_on);
 SDL_AudioSpec *SDL_LoadWAV(const char *file, SDL_AudioSpec *spec, uint8_t **audio_buf, uint32_t *audio_len);
 void SDL_FreeWAV(uint8_t *audio_buf);
-void SDL_MixAudio(uint8_t *dst, uint8_t *src, uint32_t len, int volume);
+void SDL_MixAudio(uint8_t *dst, const uint8_t *src, uint32_t len, int volume);
 void SDL_PumpAudio();
 void SDL_LockAudio();
 void SDL_UnlockAudio();
