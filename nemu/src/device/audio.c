@@ -243,6 +243,7 @@ static bool audio_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
         {
             return false;
         }
+        
         paddr = (ret & ~(paddr_t)AUDIO_PAGE_MASK) | (paddr_t)(addr & AUDIO_PAGE_MASK);
     }
     else
@@ -352,153 +353,152 @@ static void audio_io_handler(uint32_t offset, int len, bool is_write)
 
         switch (reg)
         {
-        case reg_freq:
-        {
-            break;
+            case reg_freq:
+            {
+                break;
+            }
+
+            case reg_channels:
+            {
+                break;
+            }
+
+            case reg_samples:
+            {
+                break;
+            }
+
+            case reg_bulk_src:
+            case reg_bulk_len:
+            {
+                break;
+            }
+
+            case reg_count:
+            {
+    #ifdef CONFIG_AUDIO_DUMMY
+                /*
+                    * The dummy backend accepts the guest's MMIO protocol but has
+                    * no SDL callback thread to consume samples later.  Treat each
+                    * commit as immediately drained; otherwise a headless run would
+                    * fill the emulated stream buffer and block forever.
+                    */
+                Assert(val <= CONFIG_SB_SIZE,
+                    "Dummy audio append is larger than the stream buffer: append=%u size=%u",
+                    val, CONFIG_SB_SIZE);
+                audio_count = 0;
+                publish_audio_count();
+    #else
+                /*
+                    * AM writes a delta: the number of bytes just copied into the
+                    * stream buffer.  Keeping the real occupancy in audio_count
+                    * avoids a race where the SDL callback drains bytes between a
+                    * guest count read and a later guest count write.  The mapped
+                    * register cell is only the public view returned to reads.
+                    */
+                lock_audio_counter();
+                Assert(audio_count <= CONFIG_SB_SIZE,
+                    "Audio stream buffer count is invalid: count=%u size=%u",
+                    audio_count, CONFIG_SB_SIZE);
+                Assert(val <= CONFIG_SB_SIZE - audio_count,
+                    "Audio stream buffer overflow: count=%u append=%u size=%u",
+                    audio_count, val, CONFIG_SB_SIZE);
+                audio_count += val;
+                publish_audio_count();
+                unlock_audio_counter();
+    #endif
+                break;
+            }
+
+            case reg_bulk_cmd:
+            {
+                /*
+                    * Bulk append keeps the stream-buffer protocol but avoids the
+                    * historical byte-at-a-time MMIO path.  Large PAL/ONScripter
+                    * callbacks can otherwise spend so long crossing MMIO that the
+                    * host audio callback drains the queue faster than the guest can
+                    * refill it.
+                    */
+                Assert(val == AUDIO_BULK_CMD_APPEND,
+                    "Unsupported audio bulk command: %u", val);
+                append_audio_bytes((vaddr_t)audio_base[reg_bulk_src],
+                                audio_base[reg_bulk_len]);
+                audio_base[reg_bulk_cmd] = 0;
+                break;
+            }
+
+            // Do init and ignore write value.
+            case reg_init:
+            {
+                Assert(val == 1, "The write value is not 1 in audio init, please check Abstract Machine.");
+
+                close_audio_if_open();
+                reset_audio_stream();
+
+    #ifndef CONFIG_AUDIO_DUMMY
+                spec.freq = audio_base[reg_freq];
+                spec.format = AUDIO_S16SYS;
+                spec.channels = audio_base[reg_channels];
+                spec.samples = audio_base[reg_samples];
+                spec.callback = sdlAudioCallback;
+                spec.userdata = NULL;
+
+                /*
+                * NEMU stores guest PCM bytes exactly as they were written to
+                * /dev/sb.  There is no conversion layer between the guest ring
+                * buffer and this callback, so the callback stream must stay in
+                * the same S16SYS/frequency/channel layout requested by the
+                * guest.  Passing a non-NULL obtained spec lets SDL change the
+                * callback format on some hosts; copying guest S16 bytes into
+                * that changed format can make PAL audio sound warped or
+                * distorted.  With obtained == NULL, SDL keeps the callback
+                * format as requested and converts to the real hardware format
+                * internally when needed.
+                */
+                if (SDL_OpenAudio(&spec, NULL) < 0)
+                {
+                    printf("SDL_OpenAudio error: %s\n", SDL_GetError());
+                    exit(1);
+                }
+
+                // Unpause and start audio playback.
+                audio_opened = true;
+                SDL_PauseAudio(0);
+    #endif
+
+                break;
+            }
+
+            default:
+            {
+                Assert(false, "Write to a wrong audio register, the value is %" PRIu32 ".\n", offset);
+                break;
+            }
+            }
+
+            return;
         }
 
-        case reg_channels:
+        // Read operations for registers.
+        switch (reg)
         {
-            break;
-        }
-
-        case reg_samples:
-        {
-            break;
-        }
-
-        case reg_bulk_src:
-        case reg_bulk_len:
+        case reg_sbuf_size:
         {
             break;
         }
 
         case reg_count:
         {
-#ifdef CONFIG_AUDIO_DUMMY
-            /*
-                 * The dummy backend accepts the guest's MMIO protocol but has
-                 * no SDL callback thread to consume samples later.  Treat each
-                 * commit as immediately drained; otherwise a headless run would
-                 * fill the emulated stream buffer and block forever.
-                 */
-            Assert(val <= CONFIG_SB_SIZE,
-                   "Dummy audio append is larger than the stream buffer: append=%u size=%u",
-                   val, CONFIG_SB_SIZE);
-            audio_count = 0;
-            publish_audio_count();
-#else
-            /*
-                 * AM writes a delta: the number of bytes just copied into the
-                 * stream buffer.  Keeping the real occupancy in audio_count
-                 * avoids a race where the SDL callback drains bytes between a
-                 * guest count read and a later guest count write.  The mapped
-                 * register cell is only the public view returned to reads.
-                 */
             lock_audio_counter();
-            Assert(audio_count <= CONFIG_SB_SIZE,
-                   "Audio stream buffer count is invalid: count=%u size=%u",
-                   audio_count, CONFIG_SB_SIZE);
-            Assert(val <= CONFIG_SB_SIZE - audio_count,
-                   "Audio stream buffer overflow: count=%u append=%u size=%u",
-                   audio_count, val, CONFIG_SB_SIZE);
-            audio_count += val;
             publish_audio_count();
             unlock_audio_counter();
-#endif
-            break;
-        }
-
-        case reg_bulk_cmd:
-        {
-            /*
-                 * Bulk append keeps the stream-buffer protocol but avoids the
-                 * historical byte-at-a-time MMIO path.  Large PAL/ONScripter
-                 * callbacks can otherwise spend so long crossing MMIO that the
-                 * host audio callback drains the queue faster than the guest can
-                 * refill it.
-                 */
-            Assert(val == AUDIO_BULK_CMD_APPEND,
-                   "Unsupported audio bulk command: %u", val);
-            append_audio_bytes((vaddr_t)audio_base[reg_bulk_src],
-                               audio_base[reg_bulk_len]);
-            audio_base[reg_bulk_cmd] = 0;
-            break;
-        }
-
-        // Do init and ignore write value.
-        case reg_init:
-        {
-            Assert(val == 1, "The write value is not 1 in audio init, please check Abstract Machine.");
-
-            close_audio_if_open();
-            reset_audio_stream();
-
-#ifndef CONFIG_AUDIO_DUMMY
-            spec.freq = audio_base[reg_freq];
-            spec.format = AUDIO_S16SYS;
-            spec.channels = audio_base[reg_channels];
-            spec.samples = audio_base[reg_samples];
-            spec.callback = sdlAudioCallback;
-            spec.userdata = NULL;
-
-            /*
-                 * NEMU stores guest PCM bytes exactly as they were written to
-                 * /dev/sb.  There is no conversion layer between the guest ring
-                 * buffer and this callback, so the callback stream must stay in
-                 * the same S16SYS/frequency/channel layout requested by the
-                 * guest.  Passing a non-NULL obtained spec lets SDL change the
-                 * callback format on some hosts; copying guest S16 bytes into
-                 * that changed format can make PAL audio sound warped or
-                 * distorted.  With obtained == NULL, SDL keeps the callback
-                 * format as requested and converts to the real hardware format
-                 * internally when needed.
-                 */
-
-            if (SDL_OpenAudio(&spec, NULL) < 0)
-            {
-                printf("SDL_OpenAudio error: %s\n", SDL_GetError());
-                exit(1);
-            }
-
-            // Unpause and start audio playback.
-            audio_opened = true;
-            SDL_PauseAudio(0);
-#endif
-
             break;
         }
 
         default:
         {
-            Assert(false, "Write to a wrong audio register, the value is %" PRIu32 ".\n", offset);
             break;
         }
-        }
-
-        return;
-    }
-
-    // Read operations for registers.
-    switch (reg)
-    {
-    case reg_sbuf_size:
-    {
-        break;
-    }
-
-    case reg_count:
-    {
-        lock_audio_counter();
-        publish_audio_count();
-        unlock_audio_counter();
-        break;
-    }
-
-    default:
-    {
-        break;
-    }
     }
 }
 

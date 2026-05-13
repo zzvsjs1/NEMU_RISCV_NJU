@@ -250,9 +250,20 @@ static int refill_music(Mix_Music *music)
      * Keeping the encoded Ogg data alive lets stb_vorbis seek back to the start
      * for loops without holding a fully decoded song in memory.
      */
-        int frames = stb_vorbis_get_samples_short_interleaved(
-            music->vorbis, out_channels, music->decoded,
-            MUSIC_DECODE_FRAMES * out_channels);
+        int frames = 0;
+
+        if (out_channels == 1)
+        {
+            short *mono = (short *)music->decoded;
+            frames = stb_vorbis_get_samples_short(
+                music->vorbis, 1, &mono, MUSIC_DECODE_FRAMES);
+        }
+        else
+        {
+            frames = stb_vorbis_get_samples_short_interleaved(
+                music->vorbis, out_channels, music->decoded,
+                MUSIC_DECODE_FRAMES * out_channels);
+        }
 
         if (frames > 0)
         {
@@ -563,10 +574,19 @@ static uint8_t *read_rwops_data(SDL_RWops *src, int *out_len)
         int got = 0;
         while (got < wanted)
         {
-            size_t n = src->read(src, data + got, 1, (size_t)(wanted - got));
+            size_t request = (size_t)(wanted - got);
+            size_t n = src->read(src, data + got, 1, request);
 
             if (n == 0)
                 break;
+
+            if (n > request || n > (size_t)(INT_MAX - got))
+            {
+                free(data);
+                set_error("SDL_RWops stream is too large");
+                return NULL;
+            }
+
             got += (int)n;
         }
 
@@ -595,6 +615,13 @@ static uint8_t *read_rwops_data(SDL_RWops *src, int *out_len)
     {
         if (len == cap)
         {
+            if (cap > INT_MAX / 2)
+            {
+                free(data);
+                set_error("SDL_RWops stream is too large");
+                return NULL;
+            }
+
             int next_cap = cap * 2;
             uint8_t *next = (uint8_t *)realloc(data, (size_t)next_cap);
 
@@ -608,10 +635,19 @@ static uint8_t *read_rwops_data(SDL_RWops *src, int *out_len)
             cap = next_cap;
         }
 
-        size_t n = src->read(src, data + len, 1, (size_t)(cap - len));
+        size_t request = (size_t)(cap - len);
+        size_t n = src->read(src, data + len, 1, request);
 
         if (n == 0)
             break;
+
+        if (n > request || n > (size_t)(INT_MAX - len))
+        {
+            free(data);
+            set_error("SDL_RWops stream is too large");
+            return NULL;
+        }
+
         len += (int)n;
     }
 
@@ -664,6 +700,7 @@ static Mix_Chunk *load_wav_from_memory(const uint8_t *data, int len)
     uint16_t audio_format = 0;
     uint16_t channels = 0;
     uint32_t frequency = 0;
+    uint16_t block_align = 0;
     uint16_t bits = 0;
     const uint8_t *pcm = NULL;
     uint32_t pcm_len = 0;
@@ -697,6 +734,7 @@ static Mix_Chunk *load_wav_from_memory(const uint8_t *data, int len)
             audio_format = read_u16le(data + pos);
             channels = read_u16le(data + pos + 2);
             frequency = read_u32le(data + pos + 4);
+            block_align = read_u16le(data + pos + 12);
             bits = read_u16le(data + pos + 14);
             have_fmt = 1;
         }
@@ -728,6 +766,14 @@ static Mix_Chunk *load_wav_from_memory(const uint8_t *data, int len)
 
     uint16_t format = bits == 8 ? AUDIO_U8 : AUDIO_S16SYS;
     int frame_bytes = channels * bytes_per_sample(format);
+    uint16_t expected_align = (uint16_t)frame_bytes;
+
+    if (block_align == 0 || block_align != expected_align)
+    {
+        set_error("Invalid WAV block alignment");
+        return NULL;
+    }
+
     pcm_len = (pcm_len / (uint32_t)frame_bytes) * (uint32_t)frame_bytes;
 
     Mix_Chunk *chunk = (Mix_Chunk *)calloc(1, sizeof(*chunk));
@@ -973,12 +1019,13 @@ void Mix_FreeChunk(Mix_Chunk *chunk)
     {
         if (mix_channels[i].chunk == chunk)
         {
-            finish_channel(i, 0);
+            finish_channel(i, 1);
         }
     }
     SDL_UnlockAudio();
 
-    free(chunk->abuf);
+    if (chunk->allocated)
+        free(chunk->abuf);
     free(chunk);
 }
 
@@ -996,10 +1043,15 @@ int Mix_Volume(int channel, int volume)
 {
     volume = clamp_volume(volume);
 
+    SDL_LockAudio();
+
     if (channel == -1)
     {
         if (mix_channel_count == 0)
+        {
+            SDL_UnlockAudio();
             return 0;
+        }
 
         int total = 0;
         for (int i = 0; i < mix_channel_count; i++)
@@ -1016,16 +1068,21 @@ int Mix_Volume(int channel, int volume)
                 mix_channels[i].volume = volume;
             }
         }
+        SDL_UnlockAudio();
         return previous;
     }
 
     if (channel < 0 || channel >= mix_channel_count)
+    {
+        SDL_UnlockAudio();
         return -1;
+    }
 
     int previous = mix_channels[channel].volume;
 
     if (volume >= 0)
         mix_channels[channel].volume = volume;
+    SDL_UnlockAudio();
     return previous;
 }
 
@@ -1067,15 +1124,19 @@ int Mix_PlayChannel(int channel, Mix_Chunk *chunk, int loops)
     }
 
     MixerChannel *slot = &mix_channels[chosen];
+
+    if (slot->playing)
+    {
+        finish_channel(chosen, 1);
+    }
+
+    slot = &mix_channels[chosen];
     slot->chunk = chunk;
     slot->playing = 1;
     slot->paused = 0;
     slot->loops_left = loops;
     slot->frame_pos = 0;
     slot->rate_accum = 0;
-
-    if (slot->volume == 0)
-        slot->volume = MIX_MAX_VOLUME;
 
     SDL_UnlockAudio();
     return chosen;
@@ -1163,6 +1224,11 @@ int Mix_PlayMusic(Mix_Music *music, int loops)
         return -1;
     }
 
+    if (current_music != NULL && current_music != music)
+    {
+        finish_music(0);
+    }
+
     current_music = music;
     music->playing = 1;
     music->loops_left = loops;
@@ -1175,19 +1241,35 @@ int Mix_PlayMusic(Mix_Music *music, int loops)
 
 int Mix_SetMusicPosition(double position)
 {
-    if (current_music == NULL || current_music->vorbis == NULL || position < 0.0)
+    if (position < 0.0 || position != position)
     {
+        set_error("Invalid music seek position");
+        return -1;
+    }
+
+    SDL_LockAudio();
+
+    Mix_Music *music = current_music;
+    if (music == NULL || music->vorbis == NULL)
+    {
+        SDL_UnlockAudio();
         set_error("No active music to seek");
         return -1;
     }
 
-    unsigned int sample = (unsigned int)(position * current_music->frequency);
+    if (music->frequency <= 0 ||
+        position > (double)UINT_MAX / (double)music->frequency)
+    {
+        SDL_UnlockAudio();
+        set_error("Music seek position is too large");
+        return -1;
+    }
 
-    SDL_LockAudio();
-    int ok = stb_vorbis_seek(current_music->vorbis, sample);
-    current_music->decoded_frames = 0;
-    current_music->decoded_pos = 0;
-    current_music->rate_accum = 0;
+    unsigned int sample = (unsigned int)(position * music->frequency);
+    int ok = stb_vorbis_seek(music->vorbis, sample);
+    music->decoded_frames = 0;
+    music->decoded_pos = 0;
+    music->rate_accum = 0;
     SDL_UnlockAudio();
 
     if (!ok)
@@ -1201,11 +1283,13 @@ int Mix_SetMusicPosition(double position)
 
 int Mix_VolumeMusic(int volume)
 {
+    SDL_LockAudio();
     int previous = music_volume;
     volume = clamp_volume(volume);
 
     if (volume >= 0)
         music_volume = volume;
+    SDL_UnlockAudio();
     return previous;
 }
 

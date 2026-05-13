@@ -87,11 +87,11 @@ static uint32_t normalise_mouse_buttons(uint32_t buttons)
 static bool mouse_coalesce_motion(MouseEvent event)
 {
     /*
-   * Mouse motion is level-like: the newest position is normally what the app
-   * needs.  Search backwards so overflow pressure replaces the most recent
-   * queued motion, preserving older button/wheel ordering while avoiding a fatal
-   * queue overflow during fast host movement or slow guest polling.
-   */
+    * Mouse motion is level-like: the newest position is normally what the app
+    * needs.  Search backwards so overflow pressure replaces the most recent
+    * queued motion, preserving older button/wheel ordering while avoiding a fatal
+    * queue overflow during fast host movement or slow guest polling.
+    */
     int index = mouse_prev_index(mouse_r);
     for (int i = 0; i < mouse_count; i++)
     {
@@ -100,6 +100,7 @@ static bool mouse_coalesce_motion(MouseEvent event)
             mouse_queue[index] = event;
             return true;
         }
+
         index = mouse_prev_index(index);
     }
 
@@ -109,27 +110,27 @@ static bool mouse_coalesce_motion(MouseEvent event)
 static void mouse_enqueue(MouseEvent event)
 {
     /*
-   * Keep an explicit occupancy count so front == rear can represent both
-   * "empty" and "all 1024 slots are full" without sacrificing one slot.
-   */
+    * Keep an explicit occupancy count so front == rear can represent both
+    * "empty" and "all 1024 slots are full" without sacrificing one slot.
+    */
 
     if (mouse_count == MOUSE_QUEUE_LEN)
     {
         if (event.type == MOUSE_EVENT_MOVE)
         {
             /*
-       * Real host motion can arrive faster than the guest polls.  Keep the
-       * newest position by replacing the latest queued motion, or drop this
-       * motion if the full queue contains only button and wheel events.
-       */
+            * Real host motion can arrive faster than the guest polls.  Keep the
+            * newest position by replacing the latest queued motion, or drop this
+            * motion if the full queue contains only button and wheel events.
+            */
             mouse_coalesce_motion(event);
             return;
         }
 
         /*
-     * Button and wheel events are more useful than stale backlog entries, so
-     * make room by discarding the oldest queued event.
-     */
+        * Button and wheel events are more useful than stale backlog entries, so
+        * make room by discarding the oldest queued event.
+        */
         mouse_f = (mouse_f + 1) % MOUSE_QUEUE_LEN;
         mouse_count--;
     }
@@ -215,10 +216,10 @@ void send_mouse_button(uint8_t sdl_button, bool is_down, int x, int y)
 void send_mouse_wheel(int dx, int dy)
 {
     /*
-   * Keep wheel movement separate from the button-state bitmask.  miniSDL later
-   * converts wheel records to SDL 1.x pseudo-buttons, but the physical pressed
-   * buttons should still describe only left/middle/right state.
-   */
+    * Keep wheel movement separate from the button-state bitmask.  miniSDL later
+    * converts wheel records to SDL 1.x pseudo-buttons, but the physical pressed
+    * buttons should still describe only left/middle/right state.
+    */
     uint32_t button = MOUSE_BUTTON_NONE;
 
     if (dy > 0)
@@ -243,9 +244,9 @@ static void mouse_data_io_handler(uint32_t offset, int len, bool is_write)
     assert(len == 4);
 
     /*
-   * AM reads the type first and then six payload words.  Latching on the type
-   * read keeps those words from being mixed with a later SDL or scripted event.
-   */
+    * AM reads the type first and then six payload words.  Latching on the type
+    * read keeps those words from being mixed with a later SDL or scripted event.
+    */
 
     if (offset == 0)
     {

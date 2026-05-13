@@ -202,6 +202,10 @@ static bool jit_env_disable = false;
 static bool jit_runtime_options_ready = false;
 /* Cached value of the runtime `NEMU_JIT_STATS` environment switch. */
 static bool jit_stats_enabled = false;
+/* Current native-entry instruction budget, used by in-block chained loops. */
+static volatile uint32_t jit_entry_budget = 0;
+/* Extra instructions completed by chained loop laps before the final exit. */
+static volatile uint32_t jit_loop_extra = 0;
 
 #if RV32_JIT_STATS
 typedef struct
@@ -1138,6 +1142,24 @@ static bool emit_add_eax_imm(rv32_jit_writer_t *w, uint32_t value)
     return emit_u8(w, 0x05) && emit_u32(w, value);
 }
 
+/* Add an immediate to ECX, used by generated loop-budget checks. */
+static bool emit_add_ecx_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+    const int32_t signed_value = (int32_t)value;
+
+    if (signed_value == 0)
+    {
+        return true;
+    }
+
+    if (signed_value >= INT8_MIN && signed_value <= INT8_MAX)
+    {
+        return emit_u8(w, 0x83) && emit_u8(w, 0xc1) && emit_u8(w, (uint8_t)signed_value);
+    }
+
+    return emit_u8(w, 0x81) && emit_u8(w, 0xc1) && emit_u32(w, value);
+}
+
 /* Compare EAX with an immediate so a following setcc/jcc can consume the flags. */
 static bool emit_cmp_eax_imm(rv32_jit_writer_t *w, uint32_t value)
 {
@@ -1172,6 +1194,24 @@ static bool emit_test_eax_eax(rv32_jit_writer_t *w)
 static bool emit_mov_ecx_eax(rv32_jit_writer_t *w)
 {
     return emit_u8(w, 0x89) && emit_u8(w, 0xc1);
+}
+
+/* Load one 32-bit value through RDX into EAX. */
+static bool emit_mov_eax_m32_rdx(rv32_jit_writer_t *w)
+{
+    return emit_u8(w, 0x8b) && emit_u8(w, 0x02);
+}
+
+/* Store EAX through RDX. */
+static bool emit_mov_m32_rdx_eax(rv32_jit_writer_t *w)
+{
+    return emit_u8(w, 0x89) && emit_u8(w, 0x02);
+}
+
+/* Compare ECX against one 32-bit value loaded through RDX. */
+static bool emit_cmp_ecx_m32_rdx(rv32_jit_writer_t *w)
+{
+    return emit_u8(w, 0x3b) && emit_u8(w, 0x0a);
 }
 
 /* Restore a saved guest virtual address from ECX into EAX for helper fallback. */
@@ -2630,6 +2670,21 @@ static bool emit_epilogue_return_count(rv32_jit_writer_t *w, uint32_t count)
     return emit_u8(w, 0xb8) && emit_u32(w, count) && emit_pop_saved_hregs(w) && emit_u8(w, 0xc3);
 }
 
+/* Emit the common epilogue when EAX already holds the dynamic return count. */
+static bool emit_epilogue_return_eax(rv32_jit_writer_t *w)
+{
+    return emit_pop_saved_hregs(w) && emit_u8(w, 0xc3);
+}
+
+/* Return `jit_loop_extra + count` for exits from blocks with chained laps. */
+static bool emit_epilogue_return_loop_count(rv32_jit_writer_t *w, uint32_t count)
+{
+    return emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_loop_extra) &&
+           emit_mov_eax_m32_rdx(w) &&
+           emit_add_eax_imm(w, count) &&
+           emit_epilogue_return_eax(w);
+}
+
 /*
  * Translate one RV32 load instruction.
  *
@@ -2927,9 +2982,68 @@ static bool jit_instr_is_control_flow(uint32_t instr)
     return opcode == 0x63 || opcode == 0x6f || opcode == 0x67;
 }
 
+/* Return true for instructions that can stay inside a chained loop body. */
+static bool jit_instr_can_chain_body(uint32_t instr)
+{
+    const uint32_t opcode = instr & 0x7fu;
+
+    switch (opcode)
+    {
+    case 0x13: /* OP-IMM */
+    case 0x17: /* AUIPC */
+    case 0x33: /* OP */
+    case 0x37: /* LUI */
+    case 0x63: /* BRANCH */
+        return true;
+    default:
+        return false;
+    }
+}
+
 /* Translate one conditional branch, keeping fall-through in the same block. */
+static bool emit_branch_chain_backedge(rv32_jit_writer_t *w,
+                                       rv32_jit_reg_cache_t *regs,
+                                       vaddr_t target, uint32_t exit_count,
+                                       const uint8_t *target_native)
+{
+    uint8_t *over_budget_disp = NULL;
+    uint8_t *loop_disp = NULL;
+
+    /*
+     * The taken branch has already completed `exit_count` guest instructions from
+     * the native loop head. Chain only when another full lap fits the current
+     * cpu_exec() budget; otherwise return to the dispatcher at the branch target.
+     */
+    if (!emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_loop_extra) ||
+        !emit_mov_eax_m32_rdx(w) ||
+        !emit_add_eax_imm(w, exit_count) ||
+        !emit_mov_ecx_eax(w) ||
+        !emit_add_ecx_imm(w, exit_count) ||
+        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_entry_budget) ||
+        !emit_cmp_ecx_m32_rdx(w) ||
+        !emit_jcc_rel32_placeholder(w, 0x87, &over_budget_disp) ||
+        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_loop_extra) ||
+        !emit_mov_m32_rdx_eax(w) ||
+        !jit_reg_emit_flush_all_dirty(w, regs) ||
+        !emit_jmp_rel32_placeholder(w, &loop_disp))
+    {
+        return false;
+    }
+
+    patch_rel32(loop_disp, target_native);
+    patch_rel32(over_budget_disp, w->cur);
+
+    return jit_reg_emit_flush_all_dirty(w, regs) &&
+           emit_set_pc_imm(w, target) &&
+           emit_epilogue_return_eax(w);
+}
+
 static bool emit_branch_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
-                              uint32_t instr, vaddr_t pc, uint32_t exit_count)
+                              uint32_t instr, vaddr_t pc, vaddr_t block_start_pc,
+                              const uint8_t *block_start_native,
+                              bool loop_count_needed, bool chain_safe,
+                              bool *branch_chained,
+                              uint32_t exit_count)
 {
     const uint32_t funct3 = bits(instr, 14, 12);
     const uint32_t rs1 = bits(instr, 19, 15);
@@ -2964,19 +3078,34 @@ static bool emit_branch_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     const vaddr_t target = pc + imm_b(instr);
 
     /*
-   * Conditional branches are the first control-flow case that can keep useful
-   * cached registers alive. The untaken path stays in this native block, while
-   * the taken path materialises the same register state into cpu.gpr[] and
-   * returns to the dispatcher at the branch target.
-   */
+     * Conditional branches are the first control-flow case that can keep useful
+     * cached registers alive. The untaken path stays in this native block, while
+     * the taken path materialises the same register state into cpu.gpr[] and
+     * returns to the dispatcher at the branch target.
+     */
 
     if (!jit_reg_read_eax(w, regs, rs1) || !jit_reg_read_ecx(w, regs, rs2) ||
         !emit_cmp_eax_ecx(w) ||
         !emit_jcc_rel32_placeholder(w, (uint8_t)(jcc ^ 1u),
-                                    &fallthrough_disp) ||
-        !jit_reg_emit_flush_all_dirty(w, regs) ||
-        !emit_set_pc_imm(w, target) ||
-        !emit_epilogue_return_count(w, exit_count))
+                                    &fallthrough_disp))
+    {
+        return false;
+    }
+
+    if (chain_safe && target == block_start_pc)
+    {
+        if (!emit_branch_chain_backedge(w, regs, target, exit_count,
+                                        block_start_native))
+        {
+            return false;
+        }
+        *branch_chained = true;
+    }
+    else if (!jit_reg_emit_flush_all_dirty(w, regs) ||
+             !emit_set_pc_imm(w, target) ||
+             !(loop_count_needed
+                   ? emit_epilogue_return_loop_count(w, exit_count)
+                   : emit_epilogue_return_count(w, exit_count)))
     {
         return false;
     }
@@ -3662,6 +3791,50 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, uint32_t source_len)
     };
 }
 
+/* Cheaply pre-scan whether this block can use loop-aware branch exits. */
+static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
+                                             paddr_t first_paddr)
+{
+    vaddr_t cur_pc = pc;
+    uint32_t count = 0;
+    uint32_t source_len = 0;
+
+    while (count < max_insns && count < RV32_JIT_BLOCK_MAX_INSNS)
+    {
+        if (count != 0 && (cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) != 0 &&
+            ((cur_pc ^ pc) & ~(vaddr_t)PAGE_MASK) != 0)
+        {
+            return false;
+        }
+
+        paddr_t cur_paddr = 0;
+        if (!jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr) ||
+            cur_paddr != first_paddr + (paddr_t)source_len)
+        {
+            return false;
+        }
+
+        const uint32_t instr = vaddr_ifetch(cur_pc, 4);
+        const uint32_t opcode = instr & 0x7fu;
+
+        if (!jit_instr_can_chain_body(instr))
+        {
+            return false;
+        }
+
+        if (opcode == 0x63 && cur_pc + imm_b(instr) == pc)
+        {
+            return true;
+        }
+
+        cur_pc += 4;
+        source_len += 4;
+        count++;
+    }
+
+    return false;
+}
+
 /*
  * Compile a native block starting at `pc`.
  *
@@ -3705,10 +3878,15 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         return NULL;
     }
 
+    const bool loop_count_needed =
+        jit_block_has_chainable_backedge(pc, max_insns, first_paddr);
+    const uint8_t *block_start_native = w.cur;
     vaddr_t cur_pc = pc;
     uint32_t count = 0;
     uint32_t source_len = 0;
     bool block_sets_pc = false;
+    bool chain_safe = loop_count_needed;
+    bool chained_loop = false;
 
     while (count < max_insns && count < RV32_JIT_BLOCK_MAX_INSNS)
     {
@@ -3761,11 +3939,20 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
         if (opcode == 0x63)
         {
-            if (!emit_branch_instr(&w, &regs, instr, cur_pc, count + 1u))
+            bool branch_chained = false;
+
+            if (!emit_branch_instr(&w, &regs, instr, cur_pc, pc,
+                                   block_start_native, loop_count_needed, chain_safe,
+                                   &branch_chained, count + 1u))
             {
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
                 break;
+            }
+            if (branch_chained)
+            {
+                chained_loop = true;
+                end_block = true;
             }
         }
         else if (jit_instr_is_control_flow(instr))
@@ -3794,6 +3981,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
                 jit_reg_cache_restore(&regs, &regs_start);
                 break;
             }
+            chain_safe = false;
         }
 
         cur_pc += 4;
@@ -3814,7 +4002,8 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
     if ((!block_sets_pc && !jit_reg_flush_all_dirty(&w, &regs)) ||
         (!block_sets_pc && !emit_set_pc_imm(&w, cur_pc)) ||
-        !emit_epilogue_return_count(&w, count))
+        !(chained_loop ? emit_epilogue_return_loop_count(&w, count)
+                       : emit_epilogue_return_count(&w, count)))
     {
         return NULL;
     }
@@ -3892,7 +4081,8 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
      * dispatcher uses that count, rather than assuming a fixed block length, so
      * helper exits and control-flow terminators keep device timing bounded.
      */
-        uint32_t block_budget = batch_budget - total;
+        uint32_t remaining_budget = batch_budget - total;
+        uint32_t block_budget = remaining_budget;
 
         if (block_budget > RV32_JIT_BLOCK_MAX_INSNS)
         {
@@ -3930,8 +4120,10 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
             break;
         }
 
+        jit_entry_budget = remaining_budget;
+        jit_loop_extra = 0;
         const uint32_t ran = block->entry();
-        Assert(ran > 0 && ran <= block_budget,
+        Assert(ran > 0 && ran <= remaining_budget,
                "jit: invalid executed count %u", ran);
         JIT_STAT_INC(blocks_executed);
         JIT_STAT_ADD(executed_insns, ran);
