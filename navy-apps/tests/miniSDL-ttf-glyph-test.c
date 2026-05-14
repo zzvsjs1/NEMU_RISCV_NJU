@@ -21,6 +21,65 @@ void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
     (void)h;
 }
 
+int SDL_SetError(const char *fmt, ...)
+{
+    (void)fmt;
+    return -1;
+}
+
+static void test_invalid_font_stream_is_rejected(void)
+{
+    uint8_t bad_font[32] = {0};
+    SDL_RWops *rw = SDL_RWFromMem(bad_font, sizeof(bad_font));
+
+    assert(rw != NULL);
+    assert(TTF_OpenFontRW(rw, 1, 12) == NULL);
+}
+
+static void test_visible_glyph_surface_matches_metrics_box(TTF_Font *font)
+{
+    SDL_Color fg = {.r = 0xff, .g = 0xff, .b = 0xff, .a = 0xff};
+    SDL_Color bg = {.r = 0x00, .g = 0x00, .b = 0x00, .a = 0x00};
+    SDL_Surface *surface = TTF_RenderGlyph_Shaded(font, 'g', fg, bg);
+    int minx = 0;
+    int maxx = 0;
+    int miny = 0;
+    int maxy = 0;
+
+    assert(surface != NULL);
+    assert(TTF_GlyphMetrics(font, 'g', &minx, &maxx, &miny, &maxy, NULL) == 0);
+    /*
+     * ONScripter positions glyphs itself from SDL_ttf metrics.  The rendered
+     * surface therefore has to stay tight around the ink; adding ascent or
+     * baseline padding here applies the vertical offset twice.
+     */
+    assert(surface->w == maxx - minx);
+    assert(surface->h == maxy - miny);
+    SDL_FreeSurface(surface);
+}
+
+static void test_ascii_glyph_fits_half_width_cell(void)
+{
+    const int font_size = 21;
+    const int half_cell = (font_size + 1) / 2;
+    SDL_Color fg = {.r = 0xff, .g = 0xff, .b = 0xff, .a = 0xff};
+    SDL_Color bg = {.r = 0x00, .g = 0x00, .b = 0x00, .a = 0x00};
+    TTF_Font *font = TTF_OpenFont("navy-apps/apps/onscripter/game/default.ttf", font_size);
+    SDL_Surface *surface = NULL;
+
+    assert(font != NULL);
+    surface = TTF_RenderGlyph_Shaded(font, 'M', fg, bg);
+    assert(surface != NULL);
+    /*
+     * ONScripter advances single-byte characters by one hankaku cell, which is
+     * half of the configured full-width font cell.  If a Latin glyph is wider
+     * than that, words such as "Master" draw on top of themselves.
+     */
+    assert(surface->w <= half_cell);
+    SDL_FreeSurface(surface);
+    TTF_CloseFont(font);
+}
+
 int main(void)
 {
     TTF_Font *font = TTF_OpenFont("navy-apps/apps/onscripter/game/default.ttf", 24);
@@ -91,6 +150,11 @@ int main(void)
         }
         SDL_FreeSurface(surface);
     }
+
+    test_visible_glyph_surface_matches_metrics_box(font);
+    TTF_CloseFont(font);
+    test_invalid_font_stream_is_rejected();
+    test_ascii_glyph_fits_half_width_cell();
 
     return 0;
 }

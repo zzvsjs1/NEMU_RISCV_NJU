@@ -55,7 +55,7 @@ typedef struct
      * receives tightly packed rectangles, so SDL_UpdateRect() repacks dirty
      * areas whenever pitch would otherwise skip over pixels outside the rect.
      */
-    uint16_t pitch;
+    int pitch;
     uint8_t *pixels;
 } SDL_Surface;
 

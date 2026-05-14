@@ -2,12 +2,35 @@
 #include <sdl-video.h>
 #include <sdl-file.h>
 #include <assert.h>
+#include <limits.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 static uint32_t *update_argb_buf = NULL;
 static size_t update_argb_cap = 0;
+
+extern void SDL_PumpAudio(void) __attribute__((weak));
+
+static void pump_audio_near_video_update(void)
+{
+    /*
+     * miniSDL has no audio thread on Navy.  ONScripter can spend long stretches
+     * rendering and flushing frames after starting a voice clip, so video
+     * publishes are also safe points to refill the cooperative audio queue.
+     */
+    if (SDL_PumpAudio != NULL)
+    {
+        SDL_PumpAudio();
+    }
+}
+
+static void draw_rect_with_audio_pump(uint32_t *pixels, int x, int y, int w, int h)
+{
+    pump_audio_near_video_update();
+    NDL_DrawRect(pixels, x, y, w, h);
+    pump_audio_near_video_update();
+}
 
 static uint32_t *ensure_update_argb_buffer(size_t pixels)
 {
@@ -22,11 +45,39 @@ static uint32_t *ensure_update_argb_buffer(size_t pixels)
         return update_argb_buf;
     }
 
+    if (pixels > SIZE_MAX / sizeof(uint32_t))
+    {
+        return NULL;
+    }
+
     uint32_t *new_buf = realloc(update_argb_buf, pixels * sizeof(uint32_t));
-    assert(new_buf);
+    if (new_buf == NULL)
+    {
+        return NULL;
+    }
+
     update_argb_buf = new_buf;
     update_argb_cap = pixels;
     return update_argb_buf;
+}
+
+static int checked_argb_count(int w, int h, size_t *pixels)
+{
+    if (w <= 0 || h <= 0)
+    {
+        return 0;
+    }
+
+    const size_t sw = (size_t)w;
+    const size_t sh = (size_t)h;
+
+    if (sw > SIZE_MAX / sh)
+    {
+        return 0;
+    }
+
+    *pixels = sw * sh;
+    return *pixels <= SIZE_MAX / sizeof(uint32_t);
 }
 
 static void build_palette_argb_lut(const SDL_Palette *palette, uint32_t lut[256])
@@ -166,16 +217,33 @@ void SDL_BlitSurface(SDL_Surface *src, SDL_Rect *srcrect,
 
     /* 6) The actual memcpy loop */
     const uint8_t bpp = src->format->BytesPerPixel;
-    const uint16_t pitchS = src->pitch;
-    const uint16_t pitchD = dst->pitch;
+    const int pitchS = src->pitch;
+    const int pitchD = dst->pitch;
     uint8_t *pixelsS = (uint8_t *)src->pixels;
     uint8_t *pixelsD = (uint8_t *)dst->pixels;
 
-    for (int row = 0; row < h; row++)
+    int row_start = 0;
+    int row_end = h;
+    int row_step = 1;
+
+    if (src == dst)
+    {
+        uint8_t *first_src = pixelsS + src_y * pitchS + src_x * bpp;
+        uint8_t *first_dst = pixelsD + dst_y * pitchD + dst_x * bpp;
+
+        if (first_dst > first_src)
+        {
+            row_start = h - 1;
+            row_end = -1;
+            row_step = -1;
+        }
+    }
+
+    for (int row = row_start; row != row_end; row += row_step)
     {
         uint8_t *rowS = pixelsS + (src_y + row) * pitchS + src_x * bpp;
         uint8_t *rowD = pixelsD + (dst_y + row) * pitchD + dst_x * bpp;
-        memcpy(rowD, rowS, w * bpp);
+        memmove(rowD, rowS, (size_t)w * bpp);
     }
 }
 
@@ -269,7 +337,8 @@ void SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, uint32_t color)
             case 2:
             {
                 // 16-bit surface
-                *(uint16_t *)pixelp = (uint16_t)color;
+                uint16_t c16 = (uint16_t)color;
+                memcpy(pixelp, &c16, sizeof(c16));
                 break;
             }
 
@@ -283,7 +352,8 @@ void SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, uint32_t color)
             case 4:
             {
                 // 32-bit surface
-                *(uint32_t *)pixelp = color;
+                uint32_t c32 = color;
+                memcpy(pixelp, &c32, sizeof(c32));
                 break;
             }
 
@@ -298,9 +368,54 @@ void SDL_FillRect(SDL_Surface *dst, SDL_Rect *dstrect, uint32_t color)
     }
 }
 
+static int clip_surface_rect(SDL_Surface *s, int *x, int *y, int *w, int *h)
+{
+    if (*x == 0 && *y == 0 && *w == 0 && *h == 0)
+    {
+        *w = s->w;
+        *h = s->h;
+    }
+    else if (*w <= 0 || *h <= 0)
+    {
+        return 0;
+    }
+
+    if (*x < 0)
+    {
+        *w += *x;
+        *x = 0;
+    }
+
+    if (*y < 0)
+    {
+        *h += *y;
+        *y = 0;
+    }
+
+    if (*x >= s->w || *y >= s->h)
+    {
+        return 0;
+    }
+
+    if (*w > s->w - *x)
+    {
+        *w = s->w - *x;
+    }
+
+    if (*h > s->h - *y)
+    {
+        *h = s->h - *y;
+    }
+
+    return *w > 0 && *h > 0;
+}
+
 void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h)
 {
-    assert(s);
+    if (s == NULL || s->format == NULL || s->pixels == NULL)
+    {
+        return;
+    }
 
     /*
    * SDL_UpdateRect(surface, 0, 0, 0, 0) is the conventional full-surface
@@ -309,12 +424,7 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h)
    * framebuffer update.
    */
 
-    if (x == 0 && y == 0 && w == 0 && h == 0)
-    {
-        w = s->w;
-        h = s->h;
-    }
-    else if (w <= 0 || h <= 0)
+    if (!clip_surface_rect(s, &x, &y, &w, &h))
     {
         return;
     }
@@ -334,22 +444,30 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h)
         const int pitch = s->pitch;
         uint8_t *src = (uint8_t *)s->pixels + y * pitch + x * bpp;
 
-        if (x == 0 && w * bpp == pitch)
+        if (x == 0 && bpp > 0 && pitch == w * bpp)
         {
-            NDL_DrawRect((uint32_t *)src, x, y, w, h);
+            draw_rect_with_audio_pump((uint32_t *)src, x, y, w, h);
         }
         else
         {
-            uint32_t *buf = malloc(sizeof(uint32_t) * w * h);
-            assert(buf);
+            size_t pixels;
+            if (!checked_argb_count(w, h, &pixels))
+            {
+                return;
+            }
+
+            uint32_t *buf = ensure_update_argb_buffer(pixels);
+            if (buf == NULL)
+            {
+                return;
+            }
 
             for (int row = 0; row < h; row++)
             {
                 memcpy(buf + row * w, src + row * pitch, (size_t)w * bpp);
             }
 
-            NDL_DrawRect(buf, x, y, w, h);
-            free(buf);
+            draw_rect_with_audio_pump(buf, x, y, w, h);
         }
     }
     // For The Legend of Sword and Fairy.
@@ -358,8 +476,22 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h)
         // 8-bit palette path
         const int pitch = s->pitch;
         uint8_t *src = (uint8_t *)s->pixels + y * pitch + x;
-        const size_t pixels = (size_t)w * (size_t)h;
+        if (s->format->palette == NULL)
+        {
+            return;
+        }
+
+        size_t pixels;
+        if (!checked_argb_count(w, h, &pixels))
+        {
+            return;
+        }
+
         uint32_t *buf = ensure_update_argb_buffer(pixels);
+        if (buf == NULL)
+        {
+            return;
+        }
 
         uint32_t palette_argb[256];
         build_palette_argb_lut(s->format->palette, palette_argb);
@@ -382,7 +514,7 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h)
         }
 
         // Draw it.
-        NDL_DrawRect(buf, x, y, w, h);
+        draw_rect_with_audio_pump(buf, x, y, w, h);
     }
     else
     {
@@ -411,29 +543,66 @@ static inline int maskToShift(uint32_t mask)
     case 0xff000000:
         return 24;
     case 0x00000000:
-        return 24; // hack
+        return 0;
     default:
         assert(0);
+        return 0;
     }
 }
 
 SDL_Surface *SDL_CreateRGBSurface(uint32_t flags, int width, int height, int depth,
                                   uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask)
 {
-    assert(depth == 8 || depth == 32);
-    SDL_Surface *s = malloc(sizeof(SDL_Surface));
-    assert(s);
+    if ((depth != 8 && depth != 32) || width < 0 || height < 0)
+    {
+        return NULL;
+    }
+
+    const int bytes_per_pixel = depth / 8;
+    if (bytes_per_pixel <= 0 || width > INT_MAX / bytes_per_pixel)
+    {
+        return NULL;
+    }
+
+    const int pitch = width * bytes_per_pixel;
+    if (height != 0 && (size_t)pitch > SIZE_MAX / (size_t)height)
+    {
+        return NULL;
+    }
+
+    SDL_Surface *s = calloc(1, sizeof(SDL_Surface));
+    if (s == NULL)
+    {
+        return NULL;
+    }
+
     s->flags = flags;
-    s->format = malloc(sizeof(SDL_PixelFormat));
-    assert(s->format);
+    s->format = calloc(1, sizeof(SDL_PixelFormat));
+    if (s->format == NULL)
+    {
+        free(s);
+        return NULL;
+    }
 
     if (depth == 8)
     {
-        s->format->palette = malloc(sizeof(SDL_Palette));
-        assert(s->format->palette);
-        s->format->palette->colors = malloc(sizeof(SDL_Color) * 256);
-        assert(s->format->palette->colors);
-        memset(s->format->palette->colors, 0, sizeof(SDL_Color) * 256);
+        s->format->palette = calloc(1, sizeof(SDL_Palette));
+        if (s->format->palette == NULL)
+        {
+            free(s->format);
+            free(s);
+            return NULL;
+        }
+
+        s->format->palette->colors = calloc(256, sizeof(SDL_Color));
+        if (s->format->palette->colors == NULL)
+        {
+            free(s->format->palette);
+            free(s->format);
+            free(s);
+            return NULL;
+        }
+
         s->format->palette->ncolors = 256;
     }
     else
@@ -458,13 +627,17 @@ SDL_Surface *SDL_CreateRGBSurface(uint32_t flags, int width, int height, int dep
 
     s->w = width;
     s->h = height;
-    s->pitch = width * depth / 8;
-    assert(s->pitch == width * s->format->BytesPerPixel);
+    s->pitch = pitch;
 
     if (!(flags & SDL_PREALLOC))
     {
-        s->pixels = malloc(s->pitch * height);
-        assert(s->pixels);
+        const size_t bytes = (size_t)s->pitch * (size_t)height;
+        s->pixels = bytes == 0 ? NULL : malloc(bytes);
+        if (bytes != 0 && s->pixels == NULL)
+        {
+            SDL_FreeSurface(s);
+            return NULL;
+        }
         /*
      * SDL callers are allowed to update or palette-convert a newly-created
      * surface before they have painted every pixel. PAL does this during
@@ -474,7 +647,10 @@ SDL_Surface *SDL_CreateRGBSurface(uint32_t flags, int width, int height, int dep
      * index / pixel value 0 so those early updates show black instead of stale
      * allocator contents or pixels left by the previous Navy app.
      */
-        memset(s->pixels, 0, s->pitch * height);
+        if (bytes != 0)
+        {
+            memset(s->pixels, 0, bytes);
+        }
     }
 
     return s;
@@ -490,8 +666,20 @@ SDL_Surface *SDL_CreateRGBSurfaceFrom(void *pixels, int width, int height, int d
    */
     SDL_Surface *s = SDL_CreateRGBSurface(SDL_PREALLOC, width, height, depth,
                                           Rmask, Gmask, Bmask, Amask);
-    assert(pitch == s->pitch);
+    if (s == NULL)
+    {
+        return NULL;
+    }
+
+    const int min_pitch = width * (depth / 8);
+    if (pitch < min_pitch || (pixels == NULL && height > 0 && min_pitch > 0))
+    {
+        SDL_FreeSurface(s);
+        return NULL;
+    }
+
     s->pixels = pixels;
+    s->pitch = pitch;
     return s;
 }
 
@@ -540,8 +728,14 @@ SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, uint32_t flags)
 void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_Rect *dstrect)
 {
     assert(src && dst);
+    assert(src->format && dst->format);
     assert(dst->format->BitsPerPixel == src->format->BitsPerPixel);
-    assert(dst->format->BitsPerPixel == 8);
+
+    const int bpp = dst->format->BytesPerPixel;
+    if (bpp <= 0)
+    {
+        return;
+    }
 
     const int src_x = (srcrect == NULL ? 0 : srcrect->x);
     const int src_y = (srcrect == NULL ? 0 : srcrect->y);
@@ -638,8 +832,12 @@ void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_
 
     for (int dy = clip_y0; dy < clip_y1; dy++)
     {
-        const uint8_t *src_rowp = (const uint8_t *)src->pixels + (src_y + src_row) * src->pitch + src_x;
-        uint8_t *dst_rowp = (uint8_t *)dst->pixels + dy * dst->pitch + clip_x0;
+        const uint8_t *src_rowp = (const uint8_t *)src->pixels +
+                                  (src_y + src_row) * src->pitch +
+                                  src_x * bpp;
+        uint8_t *dst_rowp = (uint8_t *)dst->pixels +
+                            dy * dst->pitch +
+                            clip_x0 * bpp;
 
         int x_num = (clip_x0 - dst_x) * src_w;
         int src_col = x_num / dst_w;
@@ -647,7 +845,9 @@ void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_
 
         for (int dx = clip_x0; dx < clip_x1; dx++)
         {
-            dst_rowp[dx - clip_x0] = src_rowp[src_col];
+            memcpy(dst_rowp + (size_t)(dx - clip_x0) * (size_t)bpp,
+                   src_rowp + (size_t)src_col * (size_t)bpp,
+                   (size_t)bpp);
 
             x_err += src_w;
             while (x_err >= dst_w)
@@ -748,7 +948,18 @@ void SDL_SoftStretchUpdate(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst
 
     const int out_w = clip_x1 - clip_x0;
     const int out_h = clip_y1 - clip_y0;
-    uint32_t *argb = ensure_update_argb_buffer((size_t)out_w * (size_t)out_h);
+    size_t pixels;
+    if (!checked_argb_count(out_w, out_h, &pixels))
+    {
+        return;
+    }
+
+    uint32_t *argb = ensure_update_argb_buffer(pixels);
+    if (argb == NULL || dst->format->palette == NULL)
+    {
+        return;
+    }
+
     uint32_t palette_argb[256];
     build_palette_argb_lut(dst->format->palette, palette_argb);
 
@@ -808,18 +1019,34 @@ void SDL_SoftStretchUpdate(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst
         dstrect->h = (uint16_t)out_h;
     }
 
-    NDL_DrawRect(argb, clip_x0, clip_y0, out_w, out_h);
+    draw_rect_with_audio_pump(argb, clip_x0, clip_y0, out_w, out_h);
 }
 
 void SDL_SetPalette(SDL_Surface *s, int flags, SDL_Color *colors, int firstcolor, int ncolors)
 {
-    assert(s);
-    assert(s->format);
-    assert(s->format->palette);
-    assert(firstcolor == 0);
+    (void)flags;
 
-    s->format->palette->ncolors = ncolors;
-    memcpy(s->format->palette->colors, colors, sizeof(SDL_Color) * ncolors);
+    if (s == NULL || s->format == NULL || s->format->palette == NULL ||
+        s->format->palette->colors == NULL ||
+        firstcolor < 0 || firstcolor > 256 ||
+        ncolors < 0 || ncolors > 256 - firstcolor)
+    {
+        return;
+    }
+
+    if (ncolors == 0)
+    {
+        return;
+    }
+
+    if (colors == NULL)
+    {
+        return;
+    }
+
+    memcpy(&s->format->palette->colors[firstcolor], colors,
+           sizeof(SDL_Color) * (size_t)ncolors);
+    s->format->palette->ncolors = 256;
 
     if (s->flags & SDL_HWSURFACE)
     {
@@ -828,94 +1055,74 @@ void SDL_SetPalette(SDL_Surface *s, int flags, SDL_Color *colors, int firstcolor
      * a hardware-surface palette changes, every existing index can map to a
      * new colour, so the whole canvas must be republished through UpdateRect().
      */
-        assert(ncolors == 256);
-        for (int i = 0; i < ncolors; i++)
-        {
-            uint8_t r = colors[i].r;
-            uint8_t g = colors[i].g;
-            uint8_t b = colors[i].b;
-        }
-
         SDL_UpdateRect(s, 0, 0, 0, 0);
     }
 }
 
-static void ConvertPixelsARGB_ABGR(void *dst, void *src, int len)
+static uint8_t pixel_channel(uint32_t pixel, uint32_t mask, uint8_t shift)
 {
-    /*
-   * STB image output and Navy's default 32-bit surface masks differ only in red
-   * and blue byte positions.  The alpha and green bytes are copied unchanged,
-   * which is why this helper can be a channel swap rather than a full map.
-   */
-    int i;
-    uint8_t(*pdst)[4] = dst;
-    uint8_t(*psrc)[4] = src;
-    union
-    {
-        uint8_t val8[4];
-        uint32_t val32;
-    } tmp;
-    int first = len & ~0xf;
-    for (i = 0; i < first; i += 16)
-    {
-#define macro(i) \
-    tmp.val32 = *((uint32_t *)psrc[i]); \
-    *((uint32_t *)pdst[i]) = tmp.val32; \
-    pdst[i][0] = tmp.val8[2]; \
-    pdst[i][2] = tmp.val8[0];
-
-        macro(i + 0);
-        macro(i + 1);
-        macro(i + 2);
-        macro(i + 3);
-        macro(i + 4);
-        macro(i + 5);
-        macro(i + 6);
-        macro(i + 7);
-        macro(i + 8);
-        macro(i + 9);
-        macro(i + 10);
-        macro(i + 11);
-        macro(i + 12);
-        macro(i + 13);
-        macro(i + 14);
-        macro(i + 15);
-    }
-
-    for (; i < len; i++)
-    {
-        macro(i);
-    }
+    return mask == 0 ? 0 : (uint8_t)((pixel & mask) >> shift);
 }
 
 SDL_Surface *SDL_ConvertSurface(SDL_Surface *src, SDL_PixelFormat *fmt, uint32_t flags)
 {
-    assert(src->format->BitsPerPixel == 32);
-    assert(src->w * src->format->BytesPerPixel == src->pitch);
-    assert(src->format->BitsPerPixel == fmt->BitsPerPixel);
+    if (src == NULL || src->format == NULL || fmt == NULL ||
+        src->format->BitsPerPixel != 32 || fmt->BitsPerPixel != 32 ||
+        (src->pixels == NULL && src->w > 0 && src->h > 0))
+    {
+        return NULL;
+    }
 
-    SDL_Surface *ret = SDL_CreateRGBSurface(flags, src->w, src->h, fmt->BitsPerPixel,
+    SDL_Surface *ret = SDL_CreateRGBSurface(flags & ~SDL_PREALLOC,
+                                            src->w, src->h, fmt->BitsPerPixel,
                                             fmt->Rmask, fmt->Gmask, fmt->Bmask, fmt->Amask);
+    if (ret == NULL)
+    {
+        return NULL;
+    }
 
-    assert(fmt->Gmask == src->format->Gmask);
-    assert(fmt->Amask == 0 || src->format->Amask == 0 || (fmt->Amask == src->format->Amask));
-    ConvertPixelsARGB_ABGR(ret->pixels, src->pixels, src->w * src->h);
+    for (int y = 0; y < src->h; y++)
+    {
+        const uint8_t *src_row = (const uint8_t *)src->pixels + (size_t)y * src->pitch;
+        uint8_t *dst_row = (uint8_t *)ret->pixels + (size_t)y * ret->pitch;
+
+        for (int x = 0; x < src->w; x++)
+        {
+            uint32_t pixel;
+            memcpy(&pixel, src_row + (size_t)x * sizeof(pixel), sizeof(pixel));
+
+            const uint8_t r = pixel_channel(pixel, src->format->Rmask, src->format->Rshift);
+            const uint8_t g = pixel_channel(pixel, src->format->Gmask, src->format->Gshift);
+            const uint8_t b = pixel_channel(pixel, src->format->Bmask, src->format->Bshift);
+            const uint8_t a = src->format->Amask == 0
+                                  ? 0xff
+                                  : pixel_channel(pixel, src->format->Amask, src->format->Ashift);
+            const uint32_t mapped = SDL_MapRGBA(fmt, r, g, b, a);
+
+            memcpy(dst_row + (size_t)x * sizeof(mapped), &mapped, sizeof(mapped));
+        }
+    }
 
     return ret;
 }
 
 uint32_t SDL_MapRGBA(SDL_PixelFormat *fmt, uint8_t r, uint8_t g, uint8_t b, uint8_t a)
 {
+    assert(fmt);
     assert(fmt->BytesPerPixel == 4);
-    uint32_t p = (r << fmt->Rshift) | (g << fmt->Gshift) | (b << fmt->Bshift);
+    uint32_t p = ((uint32_t)r << fmt->Rshift) |
+                 ((uint32_t)g << fmt->Gshift) |
+                 ((uint32_t)b << fmt->Bshift);
 
     if (fmt->Amask)
-        p |= (a << fmt->Ashift);
+        p |= ((uint32_t)a << fmt->Ashift);
     return p;
 }
 
 int SDL_LockSurface(SDL_Surface *s)
 {
+    (void)s;
+
     /*
    * Surfaces are plain memory buffers in miniSDL.  There is no separate video
    * backend lock to acquire, so this only preserves the SDL API shape.
@@ -925,6 +1132,7 @@ int SDL_LockSurface(SDL_Surface *s)
 
 void SDL_UnlockSurface(SDL_Surface *s)
 {
+    (void)s;
 }
 
 static int rw_write_exact(SDL_RWops *rw, const void *buf, size_t len)
@@ -944,11 +1152,6 @@ static void put_u32_le(uint8_t out[4], uint32_t value)
     out[1] = (uint8_t)(value >> 8);
     out[2] = (uint8_t)(value >> 16);
     out[3] = (uint8_t)(value >> 24);
-}
-
-static uint8_t pixel_channel(uint32_t pixel, uint32_t mask, uint8_t shift)
-{
-    return mask == 0 ? 0 : (uint8_t)((pixel & mask) >> shift);
 }
 
 int SDL_SaveBMP_RW(SDL_Surface *surface, SDL_RWops *rw, int freerw)
