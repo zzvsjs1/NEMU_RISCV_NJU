@@ -342,7 +342,8 @@ static void vga_blit_from_guest(vaddr_t src, int x, int y, int w, int h)
             const vaddr_t cur = row_src + (vaddr_t)done;
             const size_t remain = row_bytes - done;
             Assert(vga_guest_read_chunk(cur, remain, &host, &chunk),
-                   "vga: cannot translate blit source vaddr=0x%08x", cur);
+                   "vga: cannot translate blit source vaddr=" FMT_WORD,
+                   (word_t)cur);
             memcpy(dst + done, host, chunk);
             done += chunk;
         }
@@ -372,7 +373,8 @@ static void vga_capture_to_guest(vaddr_t dst)
         const vaddr_t cur = dst + (vaddr_t)done;
         const size_t remain = bytes - done;
         Assert(vga_guest_write_chunk(cur, remain, &host, &chunk, &paddr),
-               "vga: cannot translate capture destination vaddr=0x%08x", cur);
+               "vga: cannot translate capture destination vaddr=" FMT_WORD,
+               (word_t)cur);
         memcpy(host, (const uint8_t *)vmem + done, chunk);
 #ifdef CONFIG_ISA_riscv32
         /*
@@ -464,10 +466,12 @@ static void mark_vmem_dirty_rect(int x0, int y0, int x1, int y1)
         dirty_y1 = y1;
 }
 
+#ifdef CONFIG_VGA_SHOW_SCREEN
 static void mark_vmem_dirty_full()
 {
     mark_vmem_dirty_rect(0, 0, (int)screen_width() - 1, (int)screen_height() - 1);
 }
+#endif
 
 static void vmem_io_handler(uint32_t offset, int len, bool is_write)
 {

@@ -1,5 +1,4 @@
 #include <am.h>
-#include <stdatomic.h>
 #include <klib-macros.h>
 
 bool mpe_init(void (*entry)())
@@ -25,7 +24,13 @@ int cpu_current()
 
 int atomic_xchg(int *addr, int newval)
 {
-    // Use the compiler atomic primitive so spin locks have real exchange
-    // semantics under both native testing and the RISC-V cross-compiled guest.
-    return atomic_exchange(addr, newval);
+    /*
+     * The NEMU AM target is uniprocessor.  A real atomic instruction would pull
+     * in the RISC-V A extension or a hosted libatomic helper, neither of which
+     * belongs in the current RV64IM bring-up.  A plain exchange preserves the AM
+     * contract for single-core kernels such as thread-os.
+     */
+    int old = *addr;
+    *addr = newval;
+    return old;
 }

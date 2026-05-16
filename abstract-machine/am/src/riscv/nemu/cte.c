@@ -11,9 +11,15 @@ enum
 };
 
 // NEMU raises the machine timer interrupt with the standard RISC-V interrupt
-// bit set in mcause. The portable AM layer should see EVENT_IRQ_TIMER instead
-// of depending on that raw encoded value.
-#define IRQ_TIMER (((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 1)) | (uintptr_t)7u)
+// bit set in mcause. Spell out the XLEN-specific encodings so RV64 cannot
+// accidentally compare against the low 32-bit cause value only.
+#if __riscv_xlen == 64
+#define IRQ_TIMER ((uintptr_t)0x8000000000000007ull)
+#elif __riscv_xlen == 32
+#define IRQ_TIMER ((uintptr_t)0x80000007u)
+#else
+#error "Unsupported RISC-V XLEN"
+#endif
 #define CAUSE_ECALL_U 8u
 #define CAUSE_ECALL_S 9u
 #define CAUSE_ECALL_M 11u
