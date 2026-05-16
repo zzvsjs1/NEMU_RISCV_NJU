@@ -1,6 +1,5 @@
 #include <am.h>
 #include <nemu.h>
-#include <stdio.h>
 
 static inline uintptr_t vgactl_reg_addr(uint32_t reg)
 {
