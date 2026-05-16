@@ -133,16 +133,20 @@ void paddr_write(paddr_t addr, int len, word_t data)
         pmem_write(addr, len, data);
 #ifdef CONFIG_ISA_riscv32
         /*
-     * PMEM writes are the common meeting point for interpreter stores and any
-     * device path that writes through paddr_write(). Tell the JIT about the
-     * physical byte range after the new value is visible, so a later fetch,
-     * block lookup, or JIT-local Sv32 translation cannot use stale PMEM state.
-     *
-     * Do not move this above pmem_write(): a translated block that is discarded
-     * because of self-modifying code must see the replacement instruction bytes
-     * if it is compiled again immediately afterwards.
-     */
-        isa_jit_invalidate_paddr(addr, len);
+         * PMEM writes are the common meeting point for interpreter stores and
+         * any device path that writes through paddr_write(). Tell the JIT about
+         * the physical byte range after the new value is visible, so a later
+         * fetch, block lookup, or JIT-local Sv32 translation cannot use stale
+         * PMEM state.
+         *
+         * Do not move this above pmem_write(): a translated block discarded
+         * because of self-modifying code must see the replacement instruction
+         * bytes if it is compiled again immediately afterwards.
+         */
+        if (unlikely(isa_jit_invalidation_active))
+        {
+            isa_jit_invalidate_paddr(addr, len);
+        }
 #endif
         return;
     }

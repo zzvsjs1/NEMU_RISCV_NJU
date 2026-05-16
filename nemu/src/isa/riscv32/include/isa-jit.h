@@ -21,6 +21,12 @@ bool isa_jit_available(void);
  * update budget. `executed` receives the number of guest instructions completed.
  */
 bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed);
+/*
+ * True after the native JIT has allocated state that PMEM writes may need to
+ * invalidate.  Fast PMEM writers use this as a cheap guard so JIT-disabled runs
+ * do not call the heavier invalidation hook on every ordinary store.
+ */
+extern bool isa_jit_invalidation_active;
 /* Drop every cached native block, used after broad address-space/state changes. */
 void isa_jit_flush_all(void);
 /* Notify the JIT that a physical PMEM byte range was written. */

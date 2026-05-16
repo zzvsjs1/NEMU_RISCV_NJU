@@ -286,27 +286,83 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_JIT_STATS=1 \
   make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
 ```
 
+## RISC-V Exception Model
+
+Older teaching-style NEMU + Nanos-lite paths often treated traps as an emulator
+or AM convention. In that model, `ecall`, `yield()`, syscall dispatch, and the
+private `nemu_trap` stop instruction could look like direct control transfers
+between the emulator, Abstract Machine, and Nanos-lite. That is practical for a
+small project, but it is not the same boundary as real RISC-V hardware: software
+does not necessarily observe architectural `mepc`, `mcause`, `mtval`,
+`mstatus`, `mtvec`, privilege checks, or `mret` ordering for every faulting
+instruction.
+
+The current RISC-V32 path uses real architectural trap delivery for normal
+exceptions. NEMU raises traps by writing the machine CSRs, updating privilege
+state, and jumping through `mtvec`. The AM RISC-V trap shim then saves a
+`Context`, calls the C trap handler, and returns through `mret`. Nanos-lite
+therefore receives syscalls, yields, timer interrupts, and user/kernel context
+switches through the same CSR-backed trap frame that guest software would expect
+from hardware. The syscall number still lives in the normal ABI register `a7`;
+`mcause` records the trap class, such as user ecall, machine ecall, illegal
+instruction, breakpoint, or misaligned address.
+
+This matters for correctness because the faulting instruction must not partially
+commit. For example, a misaligned load must raise a load-address-misaligned trap
+before writing its destination register, and a misaligned store must trap before
+changing memory. The fast executor and JIT now keep that ordering: hot native
+paths use guards first, and the cold side exits raise the same CSR-visible trap
+that the interpreter would raise.
+
+### Exception and JIT Limitations
+
+- The RISC-V support is focused on RV32IM system-mode work used by this tree.
+  It is not a complete privileged-platform model for every RISC-V extension.
+- Machine-mode trap handling is the main target. U-mode entry, U-mode ecall,
+  CSR privilege checks, `mret`, and Sv32 paths are implemented for the local
+  Nanos-lite workflow, but this is not a full supervisor-mode or hypervisor
+  implementation.
+- This EEI chooses visible traps for naturally misaligned scalar loads, stores,
+  branches, and jumps. Code that expects invisible host-style misaligned memory
+  emulation should not assume that behaviour here.
+- The private `nemu_trap` instruction remains as the AM/NEMU test-exit
+  convention. It is not a standard RISC-V exception.
+- The JIT is available only for supported x86-64 native ELF RISC-V32 builds with
+  tracing, watchpoints, memory/function tracing, and DiffTest disabled. Those
+  debugging features require per-instruction interpreter hooks.
+- The JIT fast path is intentionally conservative. MMIO, unsupported
+  instructions, unusual translation cases, source-code writes, page-table
+  writes, and trap-sensitive paths fall back to helpers or leave native code.
+- Device timing is bounded by instruction-count polling, but it is not a
+  cycle-accurate hardware timing model.
+
 ## Performance Measurements
 
 These are local reference numbers from the current JIT branch, measured in this
-checkout on 2026-05-09 with dummy SDL video/audio drivers. They are useful for
-checking trend direction, but you should re-measure on your own CPU because host
-frequency scaling, scheduler load, thermal limits, and laptop performance-core /
+checkout on 2026-05-16 with dummy SDL video/audio drivers. They are useful for
+checking trend direction, but re-measure on your own CPU because host frequency
+scaling, scheduler load, thermal limits, and laptop performance-core /
 efficiency-core placement can change the result.
 
 | Branch / mode | Benchmark | Result |
 |---------------|-----------|--------|
-| `master`, JIT enabled | MicroBench | `26820 Marks`, `2,687,376,608 instr/s` |
-| `master`, JIT enabled | JITBench | `ALU 10.715 ms`, `Memory 4.128 ms`, `3,722,716,802 instr/s` |
-| `master`, `NEMU_DISABLE_JIT=1` | MicroBench | `3497 Marks`, `286,984,091 instr/s` |
-| `master`, `NEMU_DISABLE_JIT=1` | JITBench | `ALU 174.062 ms`, `Memory 70.970 ms`, `289,684,365 instr/s` |
+| `master`, strict exceptions, JIT enabled | MicroBench | `27098 Marks`, `2,860,733,499 instr/s` |
+| `master`, strict exceptions, JIT enabled | JITBench | `ALU 8.436 ms`, `Memory 3.528 ms`, `4,049,658,568 instr/s` |
+| `master`, strict exceptions, `NEMU_DISABLE_JIT=1` | MicroBench | `3322 Marks`, `275,864,060 instr/s` |
+| `master`, strict exceptions, `NEMU_DISABLE_JIT=1` | JITBench | `ALU 157.041 ms`, `Memory 77.442 ms`, `302,722,837 instr/s` |
+| exported non-strict `6d946ee`, JIT enabled | MicroBench | `25041 Marks`, `2,480,000,000 instr/s` |
+| exported non-strict `6d946ee`, JIT enabled | JITBench | `ALU 7.304 ms`, `Memory 4.352 ms`, `4,520,000,000 instr/s` |
 | `performance_improve` | MicroBench | `3141 Marks`, `271,000,633 instr/s` |
 | `legacy/baseline-master` | MicroBench | `694 Marks`, `58,319,798 instr/s` |
 
-The current JIT MicroBench score is about `7.67x` the same branch with JIT
-disabled, `8.54x` the non-JIT performance branch, and `38.65x` the original
-baseline by Marks. By guest instruction throughput, the current JIT is about
-`46.08x` the original baseline.
+The current strict JIT MicroBench score is about `8.16x` the same branch with
+JIT disabled, `8.63x` the non-JIT performance branch, and `39.05x` the original
+baseline by Marks. By guest instruction throughput, the current strict JIT is
+about `49.05x` the original baseline. Compared with the exported non-strict
+`6d946ee` numbers above, strict MicroBench is now slightly ahead in this local
+run, while JITBench overall throughput remains a little lower; the memory loop
+is faster than the non-strict comparison because guarded native memory and loop
+chaining avoid the old helper fallback cost.
 
 ### Current JIT Performance Improvements
 
@@ -331,13 +387,20 @@ preserves the specified behaviour for divide-by-zero and signed overflow, but
 ordinary `mul`, `mulh`, `div`, `divu`, `rem`, and `remu` no longer need to exit
 to the generic complex-operation helper in the common case.
 
-The memory fast path is deliberately narrow. Direct PMEM access is used only
-when the address is ordinary guest RAM and the access cannot hit MMIO, device
-state, traps, or unusual translation cases. If a write can modify translated
-code, the invalidation logic discards the affected JIT blocks. This is why the
-same binary can still run bare-metal AM tests, Nanos-lite, Navy applications,
-and disk-loaded code while benefiting from the faster path for normal RAM-heavy
-loops.
+The memory fast path is deliberately guarded rather than disabled. Native loads
+and stores first check alignment and ordinary-PMEM conditions before the guest
+destination register or memory side effect can happen. If the access would hit
+MMIO, paging edge cases, source bytes, page-table pages, or another
+trap-sensitive condition, generated code takes a helper side exit. If a write
+can modify translated code, the invalidation logic discards the affected JIT
+blocks before stale code can run.
+
+Hot loops that contain normal loads and stores can now stay chained inside
+generated code. The accounting still includes previous chained laps when a cold
+trap or helper side exit occurs, so device polling and exception reporting stay
+bounded while memory-heavy loops avoid repeated dispatcher returns. Larger native
+blocks also reduce dispatch overhead for straight-line code without changing the
+strict trap-ordering rule.
 
 For the normal pass/fail performance check, run:
 

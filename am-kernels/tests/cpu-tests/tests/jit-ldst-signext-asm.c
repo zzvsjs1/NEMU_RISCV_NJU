@@ -104,18 +104,23 @@ int main(void)
     check(load_lbu(&bytes[2]) == 0x00000080u);
     check(load_lbu(&bytes[3]) == 0x000000ffu);
 
-    check(load_lh(&bytes[1]) == 0xffff807fu);
+    /*
+     * Strict RV32 execution in this NEMU chooses visible traps for naturally
+     * misaligned scalar halfword/word accesses.  Keep this JIT sign-extension
+     * test on naturally aligned addresses; unaligned trap behaviour is covered
+     * by unalign.c and riscv-priv.c.
+     */
+    check(load_lh(&bytes[2]) == 0xffffff80u);
     check(load_lh(&bytes[4]) == 0x00001234u);
-    check(load_lhu(&bytes[1]) == 0x0000807fu);
+    check(load_lhu(&bytes[2]) == 0x0000ff80u);
     check(load_lhu(&bytes[4]) == 0x00001234u);
     check(load_lw(&bytes[4]) == 0x56781234u);
-    check(load_lw(&bytes[5]) == 0xaa567812u);
 
     store_sb((volatile uint8_t *)&bytes[8], 0x123456ffu);
     check(bytes[8] == 0xffu);
-    store_sh((volatile uint8_t *)&bytes[9], 0xabcdef01u);
-    check(bytes[9] == 0x01u);
-    check(bytes[10] == 0xefu);
+    store_sh((volatile uint8_t *)&bytes[10], 0xabcdef01u);
+    check(bytes[10] == 0x01u);
+    check(bytes[11] == 0xefu);
     store_sw((volatile uint8_t *)&bytes[12], 0x78563412u);
     check(load_lw(&bytes[12]) == 0x78563412u);
 

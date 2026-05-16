@@ -298,17 +298,28 @@ void cpu_exec(uint64_t n)
 #ifdef CONFIG_ISA_riscv32
             if (fast_exec)
             {
-                fast_done = isa_fast_exec_once();
+                uint32_t fast_budget = DEVICE_UPDATE_CHECK_INTERVAL;
+
+#ifdef CONFIG_DEVICE
+                fast_budget = DEVICE_UPDATE_CHECK_INTERVAL - device_update_counter;
+#endif
+                if (n < fast_budget)
+                {
+                    fast_budget = (uint32_t)n;
+                }
+
+                executed = isa_fast_exec_batch(fast_budget);
+                fast_done = executed != 0;
             }
 #endif
             if (!fast_done)
             {
                 fetch_decode_exec_updatepc(&s);
+                executed = 1;
             }
 
-            n--;
-            executed = 1;
-            g_nr_guest_instr++;
+            n -= executed;
+            g_nr_guest_instr += executed;
 
             if (!fast_done)
             {

@@ -44,6 +44,8 @@
  */
 #define RV32_FAST_TLB_SIZE 64u
 
+#define RV32_FAST_INLINE static inline __attribute__((always_inline))
+
 typedef struct
 {
     /* satp is part of the tag so entries cannot leak between address spaces. */
@@ -65,9 +67,11 @@ typedef struct
 } rv32_fast_tlb_entry_t;
 
 static rv32_fast_tlb_entry_t rv32_fast_tlb[RV32_FAST_TLB_SIZE];
+/* Number of valid fast-TLB entries; lets Bare-mode stores skip an empty scan. */
+static uint32_t rv32_fast_tlb_valid_count = 0;
 
 /* Extract an inclusive bit range from an instruction or CSR value. */
-static inline uint32_t rv32_fast_bits(uint32_t value, int hi, int lo)
+RV32_FAST_INLINE uint32_t rv32_fast_bits(uint32_t value, int hi, int lo)
 {
     return (value >> lo) & ((1u << (hi - lo + 1)) - 1u);
 }
@@ -78,20 +82,20 @@ static inline uint32_t rv32_fast_bits(uint32_t value, int hi, int lo)
  * signed boundary, then subtracting the sign bit lands on the correct signed
  * result.
  */
-static inline sword_t rv32_fast_sext(uint32_t value, unsigned bits)
+RV32_FAST_INLINE sword_t rv32_fast_sext(uint32_t value, unsigned bits)
 {
     const uint32_t sign = 1u << (bits - 1u);
     return (sword_t)((value ^ sign) - sign);
 }
 
 /* I-type immediate: instr[31:20], sign-extended to XLEN. */
-static inline sword_t rv32_fast_imm_i(uint32_t instr)
+RV32_FAST_INLINE sword_t rv32_fast_imm_i(uint32_t instr)
 {
     return rv32_fast_sext(rv32_fast_bits(instr, 31, 20), 12);
 }
 
 /* S-type immediate: instr[31:25] forms the high bits, instr[11:7] the low bits. */
-static inline sword_t rv32_fast_imm_s(uint32_t instr)
+RV32_FAST_INLINE sword_t rv32_fast_imm_s(uint32_t instr)
 {
     const uint32_t imm = rv32_fast_bits(instr, 11, 7) | (rv32_fast_bits(instr, 31, 25) << 5);
     return rv32_fast_sext(imm, 12);
@@ -102,14 +106,14 @@ static inline sword_t rv32_fast_imm_s(uint32_t instr)
  * halfword-aligned, so bit 0 is implicitly zero. The fast path reconstructs the
  * byte offset before adding it to pc.
  */
-static inline sword_t rv32_fast_imm_b(uint32_t instr)
+RV32_FAST_INLINE sword_t rv32_fast_imm_b(uint32_t instr)
 {
     const uint32_t imm = (rv32_fast_bits(instr, 11, 8) << 1) | (rv32_fast_bits(instr, 30, 25) << 5) | (rv32_fast_bits(instr, 7, 7) << 11) | (rv32_fast_bits(instr, 31, 31) << 12);
     return rv32_fast_sext(imm, 13);
 }
 
 /* U-type immediate is already placed in bits [31:12]. */
-static inline word_t rv32_fast_imm_u(uint32_t instr)
+RV32_FAST_INLINE word_t rv32_fast_imm_u(uint32_t instr)
 {
     return instr & 0xfffff000u;
 }
@@ -119,14 +123,14 @@ static inline word_t rv32_fast_imm_u(uint32_t instr)
  * are shuffled, bit 0 is implicit, and the final value is a signed pc-relative
  * byte offset.
  */
-static inline sword_t rv32_fast_imm_j(uint32_t instr)
+RV32_FAST_INLINE sword_t rv32_fast_imm_j(uint32_t instr)
 {
     const uint32_t imm = (rv32_fast_bits(instr, 19, 12) << 12) | (rv32_fast_bits(instr, 20, 20) << 11) | (rv32_fast_bits(instr, 30, 21) << 1) | (rv32_fast_bits(instr, 31, 31) << 20);
     return rv32_fast_sext(imm, 21);
 }
 
 /* Preserve the RISC-V rule that writes to x0 are ignored. */
-static inline void rv32_fast_write_gpr(uint32_t rd, word_t value)
+RV32_FAST_INLINE void rv32_fast_write_gpr(uint32_t rd, word_t value)
 {
     if (rd != 0)
     {
@@ -134,18 +138,18 @@ static inline void rv32_fast_write_gpr(uint32_t rd, word_t value)
     }
 }
 
-static inline bool rv32_fast_is_naturally_aligned(vaddr_t addr, int len)
+RV32_FAST_INLINE bool rv32_fast_is_naturally_aligned(vaddr_t addr, int len)
 {
     return (addr & (vaddr_t)(len - 1)) == 0;
 }
 
-static inline void rv32_fast_raise_trap(word_t cause, vaddr_t pc, word_t tval)
+RV32_FAST_INLINE void rv32_fast_raise_trap(word_t cause, vaddr_t pc, word_t tval)
 {
     cpu.pc = isa_raise_intr_tval(cause, pc, tval);
     difftest_skip_ref();
 }
 
-static inline bool rv32_fast_csr_access_ok(word_t csr_addr, bool will_write)
+RV32_FAST_INLINE bool rv32_fast_csr_access_ok(word_t csr_addr, bool will_write)
 {
     const word_t required_priv = (csr_addr >> 8) & 0x3u;
     return isCSRImplemented(csr_addr) &&
@@ -158,7 +162,7 @@ static inline bool rv32_fast_csr_access_ok(word_t csr_addr, bool will_write)
  * walk is needed, so the fast path can treat a virtual address as a physical
  * address and only check whether it points inside PMEM before using host memory.
  */
-static inline bool rv32_fast_direct_mode()
+RV32_FAST_INLINE bool rv32_fast_direct_mode()
 {
     return likely((cpu.csr.satp & RV32_FAST_SATP_MODE_MASK) == 0);
 }
@@ -168,7 +172,7 @@ static inline bool rv32_fast_direct_mode()
  * Cross-page loads/stores are uncommon here and need two translations plus
  * careful exception/device handling, so they intentionally fall back.
  */
-static inline bool rv32_fast_cross_page(vaddr_t addr, int len)
+RV32_FAST_INLINE bool rv32_fast_cross_page(vaddr_t addr, int len)
 {
     const word_t off = (word_t)(addr & PAGE_MASK);
     return off + (word_t)len > PAGE_SIZE;
@@ -178,7 +182,7 @@ static inline bool rv32_fast_cross_page(vaddr_t addr, int len)
  * Verify that the whole physical byte range is backed by PMEM. Checking both
  * start and end also rejects wrap-around, because end must stay >= addr.
  */
-static inline bool rv32_fast_pmem_range(paddr_t addr, int len)
+RV32_FAST_INLINE bool rv32_fast_pmem_range(paddr_t addr, int len)
 {
     const paddr_t end = addr + (paddr_t)len - 1u;
     return len > 0 && end >= addr && likely(in_pmem(addr) && in_pmem(end));
@@ -189,7 +193,7 @@ static inline bool rv32_fast_pmem_range(paddr_t addr, int len)
  * on a leaf PTE. If a caller passes an unknown type, requiring no bit forces a
  * later conservative fallback rather than inventing new behaviour.
  */
-static inline uint32_t rv32_fast_required_perm(int type)
+RV32_FAST_INLINE uint32_t rv32_fast_required_perm(int type)
 {
     switch (type)
     {
@@ -209,9 +213,10 @@ static inline uint32_t rv32_fast_required_perm(int type)
  * invalidations. satp writes and suspected page-table stores are rare compared
  * with normal instruction/data accesses.
  */
-static inline void rv32_fast_tlb_flush()
+RV32_FAST_INLINE void rv32_fast_tlb_flush()
 {
     memset(rv32_fast_tlb, 0, sizeof(rv32_fast_tlb));
+    rv32_fast_tlb_valid_count = 0;
 }
 
 /*
@@ -226,7 +231,7 @@ static inline void rv32_fast_tlb_flush()
  * cross-page accesses, returns false so the existing NEMU memory path handles it
  * with the complete checks and side effects.
  */
-static inline bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t *paddr)
+RV32_FAST_INLINE bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t *paddr)
 {
     const uint32_t satp = cpu.csr.satp;
 
@@ -313,6 +318,11 @@ static inline bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t 
    * offset with bitwise OR.
    */
     const paddr_t pg_paddr = ((paddr_t)(pte0 >> 10)) << PAGE_SHIFT;
+    if (!entry->valid)
+    {
+        rv32_fast_tlb_valid_count++;
+    }
+
     *entry = (rv32_fast_tlb_entry_t){
         .satp = satp,
         .vpn = vpn,
@@ -332,8 +342,13 @@ static inline bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr_t 
  * cost a full TLB flush, while false negatives could execute with stale address
  * translations.
  */
-static inline bool rv32_fast_store_may_touch_page_table(paddr_t paddr)
+RV32_FAST_INLINE bool rv32_fast_store_may_touch_page_table(paddr_t paddr)
 {
+    if (likely(rv32_fast_tlb_valid_count == 0))
+    {
+        return false;
+    }
+
     const paddr_t page = paddr & ~(paddr_t)PAGE_MASK;
 
     /*
@@ -369,7 +384,7 @@ static inline bool rv32_fast_store_may_touch_page_table(paddr_t paddr)
  * result tells the caller to use the normal vaddr/paddr path, which is required
  * for MMIO and other device side effects.
  */
-static inline bool rv32_fast_read_pmem_u8(paddr_t paddr, word_t *data)
+RV32_FAST_INLINE bool rv32_fast_read_pmem_u8(paddr_t paddr, word_t *data)
 {
     /*
    * Byte loads cannot cross a PMEM boundary by width, so checking the starting
@@ -385,7 +400,7 @@ static inline bool rv32_fast_read_pmem_u8(paddr_t paddr, word_t *data)
     return true;
 }
 
-static inline bool rv32_fast_read_pmem_u16(paddr_t paddr, word_t *data)
+RV32_FAST_INLINE bool rv32_fast_read_pmem_u16(paddr_t paddr, word_t *data)
 {
     /*
    * Halfword loads are used for LH/LHU. The cast deliberately lets the host do
@@ -401,7 +416,7 @@ static inline bool rv32_fast_read_pmem_u16(paddr_t paddr, word_t *data)
     return true;
 }
 
-static inline bool rv32_fast_read_pmem_u32(paddr_t paddr, word_t *data)
+RV32_FAST_INLINE bool rv32_fast_read_pmem_u32(paddr_t paddr, word_t *data)
 {
     /*
    * Word loads and instruction fetches are the most common hot-path memory
@@ -422,7 +437,7 @@ static inline bool rv32_fast_read_pmem_u32(paddr_t paddr, word_t *data)
  * physical range that stays fully inside PMEM. If either check fails, fallback
  * keeps the complete NEMU memory behaviour, including MMIO callbacks.
  */
-static inline bool rv32_fast_translate_pmem(vaddr_t addr, int len, int type, paddr_t *paddr)
+RV32_FAST_INLINE bool rv32_fast_translate_pmem(vaddr_t addr, int len, int type, paddr_t *paddr)
 {
     /*
    * rv32_fast_translate() may succeed for direct mode or translated mode. The
@@ -437,7 +452,7 @@ static inline bool rv32_fast_translate_pmem(vaddr_t addr, int len, int type, pad
  * Width-specific virtual readers keep direct-mode accesses short while still
  * supporting translated Nanos-lite addresses through the fast TLB.
  */
-static inline bool rv32_fast_read_u8(vaddr_t addr, int type, word_t *data)
+RV32_FAST_INLINE bool rv32_fast_read_u8(vaddr_t addr, int type, word_t *data)
 {
     /*
    * Bare mode is expected for AM benchmarks. In that case the virtual address is
@@ -454,7 +469,7 @@ static inline bool rv32_fast_read_u8(vaddr_t addr, int type, word_t *data)
            rv32_fast_read_pmem_u8(paddr, data);
 }
 
-static inline bool rv32_fast_read_u16(vaddr_t addr, int type, word_t *data)
+RV32_FAST_INLINE bool rv32_fast_read_u16(vaddr_t addr, int type, word_t *data)
 {
     /* Same split as byte reads, specialised for the LH/LHU access width. */
 
@@ -468,7 +483,7 @@ static inline bool rv32_fast_read_u16(vaddr_t addr, int type, word_t *data)
            rv32_fast_read_pmem_u16(paddr, data);
 }
 
-static inline bool rv32_fast_read_u32(vaddr_t addr, int type, word_t *data)
+RV32_FAST_INLINE bool rv32_fast_read_u32(vaddr_t addr, int type, word_t *data)
 {
     /*
    * This serves both LW and normal 32-bit RISC-V instruction fetches. Keeping it
@@ -489,7 +504,7 @@ static inline bool rv32_fast_read_u32(vaddr_t addr, int type, word_t *data)
  * Width-specific PMEM writers mirror the readers: direct host stores for normal
  * RAM, false for anything outside PMEM so device writes are not swallowed.
  */
-static inline bool rv32_fast_write_pmem_u8(paddr_t paddr, word_t data)
+RV32_FAST_INLINE bool rv32_fast_write_pmem_u8(paddr_t paddr, word_t data)
 {
     /*
    * Store helpers truncate naturally through the target pointer type, matching
@@ -503,7 +518,10 @@ static inline bool rv32_fast_write_pmem_u8(paddr_t paddr, word_t data)
 
     const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
     *(uint8_t *)guest_to_host(paddr) = data;
-    isa_jit_invalidate_paddr(paddr, 1);
+    if (unlikely(isa_jit_invalidation_active))
+    {
+        isa_jit_invalidate_paddr(paddr, 1);
+    }
 
     if (unlikely(flush_tlb))
     {
@@ -512,7 +530,7 @@ static inline bool rv32_fast_write_pmem_u8(paddr_t paddr, word_t data)
     return true;
 }
 
-static inline bool rv32_fast_write_pmem_u16(paddr_t paddr, word_t data)
+RV32_FAST_INLINE bool rv32_fast_write_pmem_u16(paddr_t paddr, word_t data)
 {
     /* Halfword store for SH; falls back before dereference if the address is MMIO. */
 
@@ -523,7 +541,10 @@ static inline bool rv32_fast_write_pmem_u16(paddr_t paddr, word_t data)
 
     const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
     *(uint16_t *)guest_to_host(paddr) = data;
-    isa_jit_invalidate_paddr(paddr, 2);
+    if (unlikely(isa_jit_invalidation_active))
+    {
+        isa_jit_invalidate_paddr(paddr, 2);
+    }
 
     if (unlikely(flush_tlb))
     {
@@ -532,7 +553,7 @@ static inline bool rv32_fast_write_pmem_u16(paddr_t paddr, word_t data)
     return true;
 }
 
-static inline bool rv32_fast_write_pmem_u32(paddr_t paddr, word_t data)
+RV32_FAST_INLINE bool rv32_fast_write_pmem_u32(paddr_t paddr, word_t data)
 {
     /* Word store for SW, the dominant benchmark store width. */
 
@@ -543,7 +564,10 @@ static inline bool rv32_fast_write_pmem_u32(paddr_t paddr, word_t data)
 
     const bool flush_tlb = rv32_fast_store_may_touch_page_table(paddr);
     *(uint32_t *)guest_to_host(paddr) = data;
-    isa_jit_invalidate_paddr(paddr, 4);
+    if (unlikely(isa_jit_invalidation_active))
+    {
+        isa_jit_invalidate_paddr(paddr, 4);
+    }
 
     if (unlikely(flush_tlb))
     {
@@ -557,7 +581,7 @@ static inline bool rv32_fast_write_pmem_u32(paddr_t paddr, word_t data)
  * final PMEM writer owns JIT source invalidation and fast-TLB page-table checks,
  * so Bare and translated callers share the same post-write safety rules.
  */
-static inline bool rv32_fast_write_u8(vaddr_t addr, word_t data)
+RV32_FAST_INLINE bool rv32_fast_write_u8(vaddr_t addr, word_t data)
 {
     /*
    * In Bare mode this is just SB to PMEM plus the same JIT/fast-TLB write
@@ -579,7 +603,7 @@ static inline bool rv32_fast_write_u8(vaddr_t addr, word_t data)
     return rv32_fast_write_pmem_u8(paddr, data);
 }
 
-static inline bool rv32_fast_write_u16(vaddr_t addr, word_t data)
+RV32_FAST_INLINE bool rv32_fast_write_u16(vaddr_t addr, word_t data)
 {
     /* SH version of rv32_fast_write_u8(), with the same fallback and TLB rules. */
 
@@ -598,7 +622,7 @@ static inline bool rv32_fast_write_u16(vaddr_t addr, word_t data)
     return rv32_fast_write_pmem_u16(paddr, data);
 }
 
-static inline bool rv32_fast_write_u32(vaddr_t addr, word_t data)
+RV32_FAST_INLINE bool rv32_fast_write_u32(vaddr_t addr, word_t data)
 {
     /*
    * SW is important for stack traffic and structure copies. Page-table writes
@@ -626,7 +650,7 @@ static inline bool rv32_fast_write_u32(vaddr_t addr, word_t data)
  * path and falls back to vaddr_ifetch/vaddr_read when the access is MMIO,
  * cross-page, unsupported by the minimal page walk, or otherwise unsafe.
  */
-static inline word_t rv32_fast_read_or_fallback(vaddr_t addr, int len, int type)
+RV32_FAST_INLINE word_t rv32_fast_read_or_fallback(vaddr_t addr, int len, int type)
 {
     word_t data = 0;
 
@@ -661,7 +685,7 @@ static inline word_t rv32_fast_read_or_fallback(vaddr_t addr, int len, int type)
  * normal NEMU behaviour for MMIO, device callbacks, and edge cases that this
  * fast PMEM-only path deliberately rejects.
  */
-static inline void rv32_fast_write_or_fallback(vaddr_t addr, int len, word_t data)
+RV32_FAST_INLINE void rv32_fast_write_or_fallback(vaddr_t addr, int len, word_t data)
 {
     bool ok = false;
 
@@ -705,7 +729,7 @@ static inline void rv32_fast_write_or_fallback(vaddr_t addr, int len, word_t dat
  * reuse, so a normal context switch does not need to throw away the native-code
  * arena.
  */
-static inline void rv32_fast_tlb_flush_if_satp(word_t csr_addr)
+RV32_FAST_INLINE void rv32_fast_tlb_flush_if_satp(word_t csr_addr)
 {
     if (unlikely(csr_addr == 0x180u))
     {
@@ -718,7 +742,7 @@ static inline void rv32_fast_tlb_flush_if_satp(word_t csr_addr)
  * opcode. The fast path mirrors the slow helper: report the halt pc, return
  * value in a0, and advance pc past the trap instruction.
  */
-static inline void rv32_fast_nemu_trap(vaddr_t pc)
+RV32_FAST_INLINE void rv32_fast_nemu_trap(vaddr_t pc)
 {
     nemu_state.state = NEMU_END;
     nemu_state.halt_pc = pc;
@@ -731,7 +755,7 @@ static inline void rv32_fast_nemu_trap(vaddr_t pc)
  * privilege level from mstatus.MPP, moves MPIE back to MIE, sets MPIE, and then
  * resumes at mepc, matching the behaviour needed by the bare-metal runtime.
  */
-static inline void rv32_fast_mret(vaddr_t pc)
+RV32_FAST_INLINE void rv32_fast_mret(vaddr_t pc)
 {
     if (cpu.prvi != RISCV32_PRIV_M)
     {
@@ -763,7 +787,7 @@ static inline void rv32_fast_mret(vaddr_t pc)
  * fast PMEM access or the normal fallback, then the case arm applies the correct
  * sign or zero extension for LB/LH/LW/LBU/LHU.
  */
-static inline bool rv32_fast_exec_load(uint32_t instr, vaddr_t pc)
+RV32_FAST_INLINE bool rv32_fast_exec_load(uint32_t instr, vaddr_t pc)
 {
     const uint32_t rd = rv32_fast_bits(instr, 11, 7);
     const uint32_t funct3 = rv32_fast_bits(instr, 14, 12);
@@ -815,7 +839,7 @@ static inline bool rv32_fast_exec_load(uint32_t instr, vaddr_t pc)
  * instruction word, so rv32_fast_imm_s() rebuilds the signed offset before the
  * store width selects SB/SH/SW.
  */
-static inline bool rv32_fast_exec_store(uint32_t instr, vaddr_t pc)
+RV32_FAST_INLINE bool rv32_fast_exec_store(uint32_t instr, vaddr_t pc)
 {
     const uint32_t funct3 = rv32_fast_bits(instr, 14, 12);
     const uint32_t rs1 = rv32_fast_bits(instr, 19, 15);
@@ -856,7 +880,7 @@ static inline bool rv32_fast_exec_store(uint32_t instr, vaddr_t pc)
  * effects, so executing them directly avoids the table-driven decoder while
  * keeping unsupported encodings on the slow path by returning false.
  */
-static inline bool rv32_fast_exec_op_imm(uint32_t instr, vaddr_t pc)
+RV32_FAST_INLINE bool rv32_fast_exec_op_imm(uint32_t instr, vaddr_t pc)
 {
     const uint32_t rd = rv32_fast_bits(instr, 11, 7);
     const uint32_t funct3 = rv32_fast_bits(instr, 14, 12);
@@ -925,7 +949,7 @@ static inline bool rv32_fast_exec_op_imm(uint32_t instr, vaddr_t pc)
  * MULHSU returns the high 32 bits of signed(lhs) * unsigned(rhs). The casts make
  * the two operand interpretations explicit before the 64-bit multiply.
  */
-static inline word_t rv32_fast_mulhsu(word_t lhs, word_t rhs)
+RV32_FAST_INLINE word_t rv32_fast_mulhsu(word_t lhs, word_t rhs)
 {
     return (uint64_t)((int64_t)(sword_t)lhs * (uint64_t)rhs) >> 32;
 }
@@ -936,7 +960,7 @@ static inline word_t rv32_fast_mulhsu(word_t lhs, word_t rhs)
  * funct7 and funct3 so the switch can distinguish ADD/SUB, SRL/SRA, and the M
  * extension operations without nested decoding.
  */
-static inline bool rv32_fast_exec_op(uint32_t instr, vaddr_t pc)
+RV32_FAST_INLINE bool rv32_fast_exec_op(uint32_t instr, vaddr_t pc)
 {
     const uint32_t rd = rv32_fast_bits(instr, 11, 7);
     const uint32_t funct3 = rv32_fast_bits(instr, 14, 12);
@@ -1026,7 +1050,7 @@ static inline bool rv32_fast_exec_op(uint32_t instr, vaddr_t pc)
  * sign-extended B-immediate is added to the current pc; otherwise execution
  * continues with the next 4-byte instruction.
  */
-static inline bool rv32_fast_exec_branch(uint32_t instr, vaddr_t pc)
+RV32_FAST_INLINE bool rv32_fast_exec_branch(uint32_t instr, vaddr_t pc)
 {
     const uint32_t funct3 = rv32_fast_bits(instr, 14, 12);
     const uint32_t rs1 = rv32_fast_bits(instr, 19, 15);
@@ -1076,7 +1100,7 @@ static inline bool rv32_fast_exec_branch(uint32_t instr, vaddr_t pc)
  * and the standard CSR read/write/set/clear forms. Unsupported SYSTEM encodings
  * return false so the normal interpreter can perform complete handling.
  */
-static inline bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
+RV32_FAST_INLINE bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
 {
     const uint32_t rd = rv32_fast_bits(instr, 11, 7);
     const uint32_t funct3 = rv32_fast_bits(instr, 14, 12);
@@ -1212,7 +1236,7 @@ static inline bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
  * false hands control back to the normal interpreter for rare or unsupported
  * instructions, preserving correctness while keeping the hot path compact.
  */
-static inline bool isa_fast_exec_once()
+RV32_FAST_INLINE bool isa_fast_exec_once()
 {
     const vaddr_t pc = cpu.pc;
     const uint32_t instr = rv32_fast_read_or_fallback(pc, 4, MEM_TYPE_IFETCH);
@@ -1274,6 +1298,36 @@ static inline bool isa_fast_exec_once()
     default:
         return false;
     }
+}
+
+/*
+ * Execute a bounded run of fast-path instructions before returning to the outer
+ * CPU loop for device and interrupt accounting.  Each iteration still calls the
+ * strict single-instruction executor, so traps, CSR checks, and alignment checks
+ * happen at the same architectural point.  The batch stops as soon as an
+ * unsupported instruction needs the interpreter, NEMU leaves RUNNING state, or
+ * an interrupt has been latched.
+ */
+RV32_FAST_INLINE uint32_t isa_fast_exec_batch(uint32_t budget)
+{
+    uint32_t done = 0;
+
+    while (done < budget)
+    {
+        if (!isa_fast_exec_once())
+        {
+            break;
+        }
+
+        done++;
+
+        if (unlikely(nemu_state.state != NEMU_RUNNING || cpu.INTR))
+        {
+            break;
+        }
+    }
+
+    return done;
 }
 
 #endif

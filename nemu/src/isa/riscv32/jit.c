@@ -1,5 +1,6 @@
 #include <isa-jit.h>
 #include <isa.h>
+#include <cpu/difftest.h>
 #include <memory/host.h>
 #include <memory/paddr.h>
 #include <memory/vaddr.h>
@@ -62,8 +63,9 @@
  * ISA/EEI policy note:
  * The JIT must stay behind the same architectural boundary as the interpreter.
  * Instructions whose trap behaviour depends on runtime addresses, such as
- * scalar memory accesses and JALR, deliberately fall back to the strict fast or
- * interpreter path unless the native emitter can prove the same trap ordering.
+ * scalar memory accesses and JALR, either emit guarded native side exits or fall
+ * back to the strict fast/interpreter path when the native emitter cannot prove
+ * the same trap ordering.
  */
 
 #if defined(__x86_64__) && defined(CONFIG_RV32_JIT) && \
@@ -77,7 +79,7 @@
 #define RV32_JIT_ENABLED 0
 #endif
 
-#define RV32_JIT_BLOCK_MAX_INSNS 32u
+#define RV32_JIT_BLOCK_MAX_INSNS 64u
 /*
  * Match the CPU device polling interval so one isa_jit_exec() call can consume
  * many short cached blocks before returning.  The cap is still bounded and
@@ -88,6 +90,12 @@
 #define RV32_JIT_CACHE_SIZE 262144u
 #define RV32_JIT_CODE_SIZE (256u * 1024u * 1024u)
 #define RV32_JIT_CODE_ALIGN 16u
+/*
+ * Keep enough spare arena space for one worst-case block before compiling.  A
+ * 64-instruction block can contain guarded memory operations with cold helper
+ * exits, so the old 4 KiB margin was too tight near the end of the arena.
+ */
+#define RV32_JIT_BLOCK_CODE_HEADROOM (32u * 1024u)
 /*
  * Store continuation needs to know whether a write can touch translated source
  * bytes.  A whole 4 KiB page is too coarse for small AM images, where .text,
@@ -204,6 +212,8 @@ static bool jit_stats_enabled = false;
 static volatile uint32_t jit_entry_budget = 0;
 /* Extra instructions completed by chained loop laps before the final exit. */
 static volatile uint32_t jit_loop_extra = 0;
+/* Public guard used by fast PMEM stores before calling invalidation hooks. */
+bool isa_jit_invalidation_active = false;
 
 #if RV32_JIT_STATS
 typedef struct
@@ -744,6 +754,22 @@ static uint32_t jit_store_u32_continue(vaddr_t addr, uint32_t data)
 }
 
 /*
+ * Deliver a strict RISC-V trap from generated code.
+ *
+ * The native block calls this only after it has flushed earlier dirty guest
+ * registers and before it performs the trapping instruction's destination
+ * register write or memory write.  That preserves the same ordering as the
+ * interpreter helpers: previous instructions are visible, the faulting memory
+ * operation has no side effect, and mepc/mtval identify the instruction and
+ * effective address that caused the trap.
+ */
+static void jit_raise_trap_tval(uint32_t cause, vaddr_t pc, vaddr_t tval)
+{
+    cpu.pc = isa_raise_intr_tval((word_t)cause, pc, (word_t)tval);
+    difftest_skip_ref();
+}
+
+/*
  * Execute RV32M operations that are uncommon or awkward to emit inline.
  *
  * The helper decodes the already-fetched OP instruction, reads the architectural
@@ -1019,6 +1045,7 @@ static bool jit_code_init(void)
 
     jit_code = mem;
     jit_code_used = 0;
+    isa_jit_invalidation_active = true;
     jit_cache_clear();
     Log("jit: RISC-V32 x86-64 code cache enabled, size = %u bytes",
         RV32_JIT_CODE_SIZE);
@@ -1107,6 +1134,15 @@ static bool emit_set_pc_imm(rv32_jit_writer_t *w, vaddr_t pc)
     return emit_u8(w, 0x41) && emit_u8(w, 0xc7) && emit_u8(w, 0x83) && emit_u32(w, off) && emit_u32(w, pc);
 }
 
+/* Store EAX into `cpu.pc`, used after generated code computes a jump target. */
+static bool emit_store_pc_eax(rv32_jit_writer_t *w)
+{
+    const uint32_t off = (uint32_t)offsetof(CPU_state, pc);
+
+    /* mov dword ptr [r11 + pc_off], eax */
+    return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0x83) && emit_u32(w, off);
+}
+
 /* Put a 32-bit immediate result into EAX, the normal temporary result register. */
 static bool emit_mov_eax_imm(rv32_jit_writer_t *w, uint32_t value)
 {
@@ -1180,6 +1216,13 @@ static bool emit_test_eax_eax(rv32_jit_writer_t *w)
     return emit_u8(w, 0x85) && emit_u8(w, 0xc0);
 }
 
+/* Test selected low address bits without modifying EAX. */
+static bool emit_test_eax_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+    /* test eax, imm32 */
+    return emit_u8(w, 0xa9) && emit_u32(w, value);
+}
+
 /* Save a guest virtual address from EAX into ECX before inline guards clobber it. */
 static bool emit_mov_ecx_eax(rv32_jit_writer_t *w)
 {
@@ -1214,6 +1257,18 @@ static bool emit_mov_eax_ecx(rv32_jit_writer_t *w)
 static bool emit_mov_edi_eax(rv32_jit_writer_t *w)
 {
     return emit_u8(w, 0x89) && emit_u8(w, 0xc7);
+}
+
+/* Load an immediate into EDI, the first System V integer argument register. */
+static bool emit_mov_edi_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+    return emit_u8(w, 0xbf) && emit_u32(w, value);
+}
+
+/* Load an immediate into ESI, the second System V integer argument register. */
+static bool emit_mov_esi_imm(rv32_jit_writer_t *w, uint32_t value)
+{
+    return emit_u8(w, 0xbe) && emit_u32(w, value);
 }
 
 /* Copy EAX into EDX for address arithmetic. */
@@ -2676,6 +2731,63 @@ static bool emit_epilogue_return_loop_count(rv32_jit_writer_t *w, uint32_t count
 }
 
 /*
+ * Emit a native side exit for a strict trap whose mtval is already in EAX.
+ * Earlier dirty guest-register cache slots are flushed before the helper call,
+ * but the trapping instruction's own destination write is emitted only on the
+ * normal path after its guard has succeeded.
+ */
+static bool emit_trap_side_exit_from_eax(rv32_jit_writer_t *w,
+                                         rv32_jit_reg_cache_t *regs,
+                                         uint32_t cause, vaddr_t cur_pc,
+                                         uint32_t exit_count,
+                                         bool loop_count_needed)
+{
+    return jit_reg_emit_flush_all_dirty(w, regs) &&
+           emit_mov_edx_eax(w) &&
+           emit_mov_edi_imm(w, cause) &&
+           emit_mov_esi_imm(w, cur_pc) &&
+           emit_call_abs(w, (uintptr_t)jit_raise_trap_tval) &&
+           (loop_count_needed
+                ? emit_epilogue_return_loop_count(w, exit_count)
+                : emit_epilogue_return_count(w, exit_count));
+}
+
+/*
+ * Emit the strict alignment check shared by native JIT loads and stores.
+ *
+ * EAX contains the guest effective address.  Byte accesses are always naturally
+ * aligned, so they need no guard.  Halfword and word accesses branch over an
+ * out-of-line trap side exit when the low address bits are zero.  The side exit
+ * flushes guest-register cache state produced by earlier instructions in this
+ * block, passes the original effective address as mtval, and returns to
+ * cpu_exec() after reporting that the trapping instruction retired.
+ */
+static bool emit_memory_alignment_guard(rv32_jit_writer_t *w,
+                                        rv32_jit_reg_cache_t *regs,
+                                        uint32_t len, uint32_t cause,
+                                        vaddr_t cur_pc, uint32_t exit_count,
+                                        bool loop_count_needed)
+{
+    if (len <= 1)
+    {
+        return true;
+    }
+
+    uint8_t *aligned_disp = NULL;
+
+    if (!emit_test_eax_imm(w, len - 1u) ||
+        !emit_jcc_rel32_placeholder(w, 0x84, &aligned_disp) ||
+        !emit_trap_side_exit_from_eax(w, regs, cause, cur_pc, exit_count,
+                                      loop_count_needed))
+    {
+        return false;
+    }
+
+    patch_rel32(aligned_disp, w->cur);
+    return true;
+}
+
+/*
  * Translate one RV32 load instruction.
  *
  * The fast path performs direct PMEM loads inside the native block when Bare
@@ -2683,9 +2795,9 @@ static bool emit_epilogue_return_loop_count(rv32_jit_writer_t *w, uint32_t count
  * path flushes dirty registers, sets cpu.pc to the load instruction, calls the
  * typed load helper, and reloads base registers that helper calls may clobber.
  */
-static bool __attribute__((unused)) emit_load_instr(rv32_jit_writer_t *w,
-                                                    rv32_jit_reg_cache_t *regs,
-                                                    uint32_t instr, vaddr_t cur_pc)
+static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
+                            uint32_t instr, vaddr_t cur_pc,
+                            uint32_t exit_count, bool loop_count_needed)
 {
     const uint32_t rd = bits(instr, 11, 7);
     const uint32_t funct3 = bits(instr, 14, 12);
@@ -2726,6 +2838,10 @@ static bool __attribute__((unused)) emit_load_instr(rv32_jit_writer_t *w,
 
         if (!jit_reg_read_eax(w, regs, rs1) ||
             !emit_add_eax_imm(w, (uint32_t)imm_i(instr)) ||
+            !emit_memory_alignment_guard(w, regs, len,
+                                         RISCV32_CAUSE_LOAD_ADDR_MISALIGNED,
+                                         cur_pc, exit_count,
+                                         loop_count_needed) ||
             !emit_paged_tlb_load_eax(w, funct3, len, &tlb_guard) ||
             !emit_jmp_rel32_placeholder(w, &done_disp))
         {
@@ -2761,6 +2877,10 @@ static bool __attribute__((unused)) emit_load_instr(rv32_jit_writer_t *w,
 
     if (!jit_reg_read_eax(w, regs, rs1) ||
         !emit_add_eax_imm(w, (uint32_t)imm_i(instr)) ||
+        !emit_memory_alignment_guard(w, regs, len,
+                                     RISCV32_CAUSE_LOAD_ADDR_MISALIGNED,
+                                     cur_pc, exit_count,
+                                     loop_count_needed) ||
         !emit_direct_pmem_guard(w, len, &guard) ||
         !emit_direct_pmem_load_eax(w, funct3) ||
         !emit_jmp_rel32_placeholder(w, &done_disp))
@@ -2798,10 +2918,10 @@ static bool __attribute__((unused)) emit_load_instr(rv32_jit_writer_t *w,
  * MMIO, source bytes, or page-table pages call the store helper and then leave
  * the block, so the dispatcher observes any invalidation before the next block.
  */
-static bool __attribute__((unused)) emit_store_instr(rv32_jit_writer_t *w,
-                                                     rv32_jit_reg_cache_t *regs,
-                                                     uint32_t instr, vaddr_t cur_pc,
-                                                     vaddr_t next_pc, uint32_t exit_count)
+static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
+                             uint32_t instr, vaddr_t cur_pc,
+                             vaddr_t next_pc, uint32_t exit_count,
+                             bool loop_count_needed)
 {
     const uint32_t funct3 = bits(instr, 14, 12);
     const uint32_t rs1 = bits(instr, 19, 15);
@@ -2849,6 +2969,10 @@ static bool __attribute__((unused)) emit_store_instr(rv32_jit_writer_t *w,
 
         if (!jit_reg_read_eax(w, regs, rs1) ||
             !emit_add_eax_imm(w, (uint32_t)imm_s(instr)) ||
+            !emit_memory_alignment_guard(w, regs, len,
+                                         RISCV32_CAUSE_STORE_ADDR_MISALIGNED,
+                                         cur_pc, exit_count,
+                                         loop_count_needed) ||
             !jit_reg_read_ecx(w, regs, rs2) ||
             !emit_paged_tlb_store_offset_edx(w, len, &tlb_guard) ||
             !emit_store_source_chunk_guard(w, regs, len, &cross_chunk_disp,
@@ -2883,7 +3007,9 @@ static bool __attribute__((unused)) emit_store_instr(rv32_jit_writer_t *w,
         patch_rel32(exit_disp, w->cur);
 
         if (!emit_set_pc_imm(w, next_pc) ||
-            !emit_epilogue_return_count(w, exit_count))
+            !(loop_count_needed
+                  ? emit_epilogue_return_loop_count(w, exit_count)
+                  : emit_epilogue_return_count(w, exit_count)))
         {
             return false;
         }
@@ -2907,6 +3033,10 @@ static bool __attribute__((unused)) emit_store_instr(rv32_jit_writer_t *w,
 
     if (!jit_reg_read_eax(w, regs, rs1) ||
         !emit_add_eax_imm(w, (uint32_t)imm_s(instr)) ||
+        !emit_memory_alignment_guard(w, regs, len,
+                                     RISCV32_CAUSE_STORE_ADDR_MISALIGNED,
+                                     cur_pc, exit_count,
+                                     loop_count_needed) ||
         !jit_reg_read_ecx(w, regs, rs2) ||
         !emit_direct_pmem_guard(w, len, &guard) ||
         !emit_store_source_chunk_guard(w, regs, len, &cross_chunk_disp,
@@ -2939,7 +3069,9 @@ static bool __attribute__((unused)) emit_store_instr(rv32_jit_writer_t *w,
         !emit_call_abs(w, helper) ||
         !emit_load_cpu_base(w) ||
         !emit_set_pc_imm(w, next_pc) ||
-        !emit_epilogue_return_count(w, exit_count))
+        !(loop_count_needed
+              ? emit_epilogue_return_loop_count(w, exit_count)
+              : emit_epilogue_return_count(w, exit_count)))
     {
         return false;
     }
@@ -2951,21 +3083,23 @@ static bool __attribute__((unused)) emit_store_instr(rv32_jit_writer_t *w,
 /* Dispatch a decoded LOAD or STORE opcode to its specialised emitter. */
 static bool emit_load_store_instr(rv32_jit_writer_t *w,
                                   rv32_jit_reg_cache_t *regs, uint32_t instr, vaddr_t cur_pc,
-                                  uint32_t exit_count)
+                                  uint32_t exit_count,
+                                  bool loop_count_needed)
 {
-    (void)w;
-    (void)regs;
-    (void)instr;
-    (void)cur_pc;
-    (void)exit_count;
+    const uint32_t opcode = instr & 0x7fu;
 
-    /*
-     * Strict RISC-V visible traps require load/store alignment and page-fault
-     * decisions before any destination register or memory side effect.  The
-     * existing native memory emitters predate that policy and include direct
-     * PMEM paths, so keep memory instructions on the strict non-JIT path until
-     * those emitters grow equivalent runtime guards.
-     */
+    if (opcode == 0x03)
+    {
+        return emit_load_instr(w, regs, instr, cur_pc, exit_count,
+                               loop_count_needed);
+    }
+
+    if (opcode == 0x23)
+    {
+        return emit_store_instr(w, regs, instr, cur_pc, cur_pc + 4u,
+                                exit_count, loop_count_needed);
+    }
+
     return false;
 }
 
@@ -2984,6 +3118,8 @@ static bool jit_instr_can_chain_body(uint32_t instr)
     switch (opcode)
     {
     case 0x13: /* OP-IMM */
+    case 0x03: /* LOAD */
+    case 0x23: /* STORE */
     case 0x17: /* AUIPC */
     case 0x33: /* OP */
     case 0x37: /* LUI */
@@ -3115,11 +3251,13 @@ static bool emit_branch_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
 
 /* Translate JAL and JALR control flow instructions that always end the block. */
 static bool emit_control_flow_instr(rv32_jit_writer_t *w,
-                                    rv32_jit_reg_cache_t *regs, uint32_t instr, vaddr_t pc)
+                                    rv32_jit_reg_cache_t *regs, uint32_t instr,
+                                    vaddr_t pc, uint32_t exit_count)
 {
     const uint32_t opcode = instr & 0x7fu;
     const uint32_t rd = bits(instr, 11, 7);
     const uint32_t funct3 = bits(instr, 14, 12);
+    const uint32_t rs1 = bits(instr, 19, 15);
 
     if (opcode == 0x63)
     {
@@ -3141,11 +3279,31 @@ static bool emit_control_flow_instr(rv32_jit_writer_t *w,
     if (opcode == 0x67 && funct3 == 0)
     {
         /*
-         * JALR's misaligned-target trap is data-dependent. Falling back keeps
-         * the required "trap before link write" ordering without inlining a
-         * second trap path into native code.
+         * JALR computes and aligns the target before writing the link register.
+         * The misaligned-target side exit must therefore run before rd is
+         * changed, otherwise rd == rs1 cases would observe a link write that
+         * should not happen for the trapping instruction.
          */
-        return false;
+        uint8_t *aligned_disp = NULL;
+
+        if (!jit_reg_read_eax(w, regs, rs1) ||
+            !emit_add_eax_imm(w, (uint32_t)imm_i(instr)) ||
+            !emit_and_eax_imm(w, 0xfffffffeu) ||
+            !emit_test_eax_imm(w, 0x3u) ||
+            !emit_jcc_rel32_placeholder(w, 0x84, &aligned_disp) ||
+            !emit_trap_side_exit_from_eax(w, regs,
+                                          RISCV32_CAUSE_INST_ADDR_MISALIGNED,
+                                          pc, exit_count, false))
+        {
+            return false;
+        }
+
+        patch_rel32(aligned_disp, w->cur);
+
+        return emit_store_pc_eax(w) &&
+               emit_mov_eax_imm(w, pc + 4u) &&
+               jit_reg_write_eax(w, regs, rd) &&
+               jit_reg_emit_flush_all_dirty(w, regs);
     }
 
     return false;
@@ -3647,17 +3805,17 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
     JIT_STAT_INC(invalidation_requests);
 
     /*
-   * Physical writes are the common point shared by interpreter stores, JIT helper
-   * stores, fast-exec stores, and devices.  Two independent JIT caches can become
-   * stale here:
-   *
-   *   1. native blocks translated from overwritten instruction bytes;
-   *   2. local Sv32 translations whose root or level-0 PTE page was modified.
-   *
-   * The source-code check below uses the half-open interval [addr, addr + len).
-   */
+     * Physical writes are the common point shared by interpreter stores, JIT
+     * helper stores, fast-exec stores, and devices.  Two independent JIT caches
+     * can become stale here:
+     *
+     *   1. native blocks translated from overwritten instruction bytes;
+     *   2. local Sv32 translations whose root or level-0 PTE page was modified.
+     *
+     * The source-code check below uses the half-open interval [addr, addr + len).
+     */
 
-    if (len <= 0)
+    if (len <= 0 || jit_code == NULL)
     {
         return;
     }
@@ -3857,7 +4015,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         return NULL;
     }
 
-    if (jit_code_used + 4096u > RV32_JIT_CODE_SIZE)
+    if (jit_code_used + RV32_JIT_BLOCK_CODE_HEADROOM > RV32_JIT_CODE_SIZE)
     {
         jit_arena_reset();
     }
@@ -3962,7 +4120,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         }
         else if (jit_instr_is_control_flow(instr))
         {
-            if (!emit_control_flow_instr(&w, &regs, instr, cur_pc))
+            if (!emit_control_flow_instr(&w, &regs, instr, cur_pc, count + 1u))
             {
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
@@ -3976,7 +4134,8 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
             w.cur = instr_start;
             jit_reg_cache_restore(&regs, &regs_start);
 
-            if (!emit_load_store_instr(&w, &regs, instr, cur_pc, count + 1u))
+            if (!emit_load_store_instr(&w, &regs, instr, cur_pc, count + 1u,
+                                       loop_count_needed))
             {
                 /*
          * Emitters may fail after writing a prefix of an x86 instruction. Roll
@@ -3986,7 +4145,6 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
                 jit_reg_cache_restore(&regs, &regs_start);
                 break;
             }
-            chain_safe = false;
         }
 
         cur_pc += 4;
