@@ -1,7 +1,6 @@
 #include <amtest.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <stdio.h>
 
 #define SIZE 4096
 #define RAW_PCM_RATE 44100

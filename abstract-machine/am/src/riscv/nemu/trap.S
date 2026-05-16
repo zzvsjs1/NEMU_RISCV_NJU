@@ -78,8 +78,19 @@ __am_asm_trap:
   STORE t1, OFFSET_STATUS(sp)
   STORE t2, OFFSET_EPC(sp)
 
-  # set mstatus.MPRV to pass difftest
-  li a0, (1 << 17)
+  // The Nanos-lite syscall path passes user pointers directly into C helpers.
+  // While the trap handler still executes in machine mode, make its data
+  // accesses use the active page table with supervisor permissions:
+  // - kernel mappings are U=0, so supervisor data accesses can touch stacks,
+  //   globals, and MMIO;
+  // - user mappings are U=1, and SUM lets syscalls copy user buffers.
+  //
+  // The original mstatus value was already saved in Context above and is
+  // restored before mret, so this only affects handler-side loads/stores.
+  li a0, (3 << 11)
+  not a0, a0
+  and t1, t1, a0
+  li a0, ((1 << 17) | (1 << 18) | (1 << 11))
   or t1, t1, a0
   csrw mstatus, t1
 
