@@ -4,7 +4,6 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 
 #if !defined(__ISA_NATIVE__) || defined(__NATIVE_USE_KLIB__)
 

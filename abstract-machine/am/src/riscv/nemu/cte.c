@@ -13,13 +13,13 @@ enum
 // NEMU raises the machine timer interrupt with the standard RISC-V interrupt
 // bit set in mcause. The portable AM layer should see EVENT_IRQ_TIMER instead
 // of depending on that raw encoded value.
-#define IRQ_TIMER ((uintptr_t)0x80000007u)
+#define IRQ_TIMER (((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 1)) | (uintptr_t)7u)
 #define CAUSE_ECALL_U 8u
 #define CAUSE_ECALL_S 9u
 #define CAUSE_ECALL_M 11u
-#define MSTATUS_MIE (1u << 3)
-#define MSTATUS_MPIE (1u << 7)
-#define MSTATUS_MPP_M (3u << 11)
+#define MSTATUS_MIE ((uintptr_t)1u << 3)
+#define MSTATUS_MPIE ((uintptr_t)1u << 7)
+#define MSTATUS_MPP_M ((uintptr_t)3u << 11)
 
 Context *__am_irq_handle(Context *c)
 {

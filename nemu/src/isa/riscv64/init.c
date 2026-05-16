@@ -18,6 +18,18 @@ static void restart()
 
     /* The zero register is always 0. */
     cpu.gpr[0]._64 = 0;
+
+    cpu.csr.satp = 0;
+    cpu.csr.mstatus = riscv64_mstatus_normalise(0);
+    cpu.csr.mtvec = 0;
+    cpu.csr.mscratch = 0;
+    cpu.csr.mepc = 0;
+    cpu.csr.mcause = 0;
+    cpu.csr.mtval = 0;
+
+    /* NEMU starts RV64 bare-metal code in machine mode. */
+    cpu.prvi = RISCV64_PRIV_M;
+    cpu.INTR = false;
 }
 
 void init_isa()

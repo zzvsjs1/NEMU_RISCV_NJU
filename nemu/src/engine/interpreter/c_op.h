@@ -25,17 +25,55 @@
 
 #define c_mulu_lo(a, b) ((a) * (b))
 #ifdef CONFIG_ISA64
+static inline word_t c_mulsu_hi_impl(word_t lhs, word_t rhs)
+{
+    /*
+     * Compute the upper half of signed(lhs) * unsigned(rhs).
+     *
+     * A direct signed-by-unsigned __int128 expression is easy to get wrong in C:
+     * the usual arithmetic conversions may first reinterpret a negative lhs as a
+     * large unsigned value.  Start with the unsigned high half, then subtract rhs
+     * when lhs is negative.  This follows from:
+     *
+     *   signed_lhs = unsigned_lhs - 2^64
+     *   high(signed_lhs * rhs) = high(unsigned_lhs * rhs) - rhs
+     */
+    const __uint128_t product = (__uint128_t)lhs * (__uint128_t)rhs;
+    word_t high = (word_t)(product >> 64);
+    if ((sword_t)lhs < 0)
+    {
+        high -= rhs;
+    }
+    return high;
+}
+
 #define c_mulu_hi(a, b) (((__uint128_t)(a) * (__uint128_t)(b)) >> 64)
 #define c_muls_hi(a, b) (((__int128_t)(sword_t)(a) * (__int128_t)(sword_t)(b)) >> 64)
+#define c_mulsu_hi(a, b) c_mulsu_hi_impl((word_t)(a), (word_t)(b))
 #define c_mulw(a, b) c_sext32to64((a) * (b))
 #define c_divw(a, b) c_sext32to64((int32_t)(a) / (int32_t)(b))
 #define c_divuw(a, b) c_sext32to64((uint32_t)(a) / (uint32_t)(b))
 #define c_remw(a, b) c_sext32to64((int32_t)(a) % (int32_t)(b))
 #define c_remuw(a, b) c_sext32to64((uint32_t)(a) % (uint32_t)(b))
 #else
+static inline word_t c_mulsu_hi_impl(word_t lhs, word_t rhs)
+{
+    /*
+     * Same rule as the RV64 helper, but the product is 64 bits wide and the high
+     * half starts at bit 32.
+     */
+    const uint64_t product = (uint64_t)lhs * (uint64_t)rhs;
+    word_t high = (word_t)(product >> 32);
+    if ((sword_t)lhs < 0)
+    {
+        high -= rhs;
+    }
+    return high;
+}
+
 #define c_mulu_hi(a, b) (((uint64_t)(a) * (uint64_t)(b)) >> 32)
 #define c_muls_hi(a, b) (((int64_t)(sword_t)(a) * (int64_t)(sword_t)(b)) >> 32)
-#define c_mulsu_hi(a, b) ((uint64_t)((int64_t)(sword_t)(a) * (uint64_t)(b)) >> 32)
+#define c_mulsu_hi(a, b) c_mulsu_hi_impl((word_t)(a), (word_t)(b))
 #endif
 
 #define c_divu_q(a, b) ((a) / (b))
