@@ -60,12 +60,10 @@
  * because off-by-one or wrong-origin mistakes in a JIT are difficult to debug.
  *
  * ISA/EEI policy note:
- * This JIT mirrors the current interpreter rather than adding stricter RISC-V
- * behaviour on its own.  The interpreter fetches fixed 32-bit instructions,
- * allows the host memory helpers to perform unaligned PMEM loads/stores on this
- * platform, and does not currently raise instruction-address-misaligned traps
- * for branch/JAL/JALR targets.  If those policies are tightened later, the JIT
- * should change at the same boundary so JIT-on and JIT-off execution still match.
+ * The JIT must stay behind the same architectural boundary as the interpreter.
+ * Instructions whose trap behaviour depends on runtime addresses, such as
+ * scalar memory accesses and JALR, deliberately fall back to the strict fast or
+ * interpreter path unless the native emitter can prove the same trap ordering.
  */
 
 #if defined(__x86_64__) && defined(CONFIG_RV32_JIT) && \
@@ -1098,14 +1096,6 @@ static bool emit_load_cpu_base(rv32_jit_writer_t *w)
    * reload r11 before continuing to access guest state.
    */
     return emit_movabs_r11(w, (uint64_t)(uintptr_t)&cpu);
-}
-
-/* Store EAX into `cpu.pc`, used after generated code computes a jump target. */
-static bool emit_store_pc_eax(rv32_jit_writer_t *w)
-{
-    const uint32_t off = (uint32_t)offsetof(CPU_state, pc);
-
-    return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0x83) && emit_u32(w, off);
 }
 
 /* Store a known immediate guest PC into `cpu.pc`. */
@@ -2693,8 +2683,9 @@ static bool emit_epilogue_return_loop_count(rv32_jit_writer_t *w, uint32_t count
  * path flushes dirty registers, sets cpu.pc to the load instruction, calls the
  * typed load helper, and reloads base registers that helper calls may clobber.
  */
-static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
-                            uint32_t instr, vaddr_t cur_pc)
+static bool __attribute__((unused)) emit_load_instr(rv32_jit_writer_t *w,
+                                                    rv32_jit_reg_cache_t *regs,
+                                                    uint32_t instr, vaddr_t cur_pc)
 {
     const uint32_t rd = bits(instr, 11, 7);
     const uint32_t funct3 = bits(instr, 14, 12);
@@ -2807,8 +2798,10 @@ static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
  * MMIO, source bytes, or page-table pages call the store helper and then leave
  * the block, so the dispatcher observes any invalidation before the next block.
  */
-static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
-                             uint32_t instr, vaddr_t cur_pc, vaddr_t next_pc, uint32_t exit_count)
+static bool __attribute__((unused)) emit_store_instr(rv32_jit_writer_t *w,
+                                                     rv32_jit_reg_cache_t *regs,
+                                                     uint32_t instr, vaddr_t cur_pc,
+                                                     vaddr_t next_pc, uint32_t exit_count)
 {
     const uint32_t funct3 = bits(instr, 14, 12);
     const uint32_t rs1 = bits(instr, 19, 15);
@@ -2960,18 +2953,19 @@ static bool emit_load_store_instr(rv32_jit_writer_t *w,
                                   rv32_jit_reg_cache_t *regs, uint32_t instr, vaddr_t cur_pc,
                                   uint32_t exit_count)
 {
-    const uint32_t opcode = instr & 0x7fu;
+    (void)w;
+    (void)regs;
+    (void)instr;
+    (void)cur_pc;
+    (void)exit_count;
 
-    if (opcode == 0x03)
-    {
-        return emit_load_instr(w, regs, instr, cur_pc);
-    }
-
-    if (opcode == 0x23)
-    {
-        return emit_store_instr(w, regs, instr, cur_pc, cur_pc + 4u, exit_count);
-    }
-
+    /*
+     * Strict RISC-V visible traps require load/store alignment and page-fault
+     * decisions before any destination register or memory side effect.  The
+     * existing native memory emitters predate that policy and include direct
+     * PMEM paths, so keep memory instructions on the strict non-JIT path until
+     * those emitters grow equivalent runtime guards.
+     */
     return false;
 }
 
@@ -3077,6 +3071,11 @@ static bool emit_branch_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     uint8_t *fallthrough_disp = NULL;
     const vaddr_t target = pc + imm_b(instr);
 
+    if ((target & 0x3u) != 0)
+    {
+        return false;
+    }
+
     /*
      * Conditional branches are the first control-flow case that can keep useful
      * cached registers alive. The untaken path stays in this native block, while
@@ -3121,7 +3120,6 @@ static bool emit_control_flow_instr(rv32_jit_writer_t *w,
     const uint32_t opcode = instr & 0x7fu;
     const uint32_t rd = bits(instr, 11, 7);
     const uint32_t funct3 = bits(instr, 14, 12);
-    const uint32_t rs1 = bits(instr, 19, 15);
 
     if (opcode == 0x63)
     {
@@ -3130,16 +3128,24 @@ static bool emit_control_flow_instr(rv32_jit_writer_t *w,
 
     if (opcode == 0x6f)
     {
-        return emit_mov_eax_imm(w, pc + 4u) && jit_reg_write_eax(w, regs, rd) && jit_reg_emit_flush_all_dirty(w, regs) && emit_set_pc_imm(w, pc + imm_j(instr));
+        const vaddr_t target = pc + imm_j(instr);
+
+        if ((target & 0x3u) != 0)
+        {
+            return false;
+        }
+
+        return emit_mov_eax_imm(w, pc + 4u) && jit_reg_write_eax(w, regs, rd) && jit_reg_emit_flush_all_dirty(w, regs) && emit_set_pc_imm(w, target);
     }
 
     if (opcode == 0x67 && funct3 == 0)
     {
         /*
-     * JALR computes the target from the old rs1 value, then writes the link
-     * register. Storing cpu.pc before rd preserves rd == rs1 behaviour.
-     */
-        return jit_reg_read_eax(w, regs, rs1) && emit_add_eax_imm(w, (uint32_t)imm_i(instr)) && emit_u8(w, 0x25) && emit_u32(w, 0xfffffffeu) && emit_store_pc_eax(w) && emit_mov_eax_imm(w, pc + 4u) && jit_reg_write_eax(w, regs, rd) && jit_reg_emit_flush_all_dirty(w, regs);
+         * JALR's misaligned-target trap is data-dependent. Falling back keeps
+         * the required "trap before link write" ordering without inlining a
+         * second trap path into native code.
+         */
+        return false;
     }
 
     return false;
@@ -3616,8 +3622,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
 /* Public hook: report whether native RISC-V32 JIT execution can be attempted. */
 bool isa_jit_available(void)
 {
-    return !jit_runtime_disabled() && RV32_JIT_ENABLED && !jit_disabled &&
-           jit_code_init();
+    return RV32_JIT_ENABLED && !jit_runtime_disabled();
 }
 
 /* Public hook: discard all native blocks after broad CPU or address-space change. */

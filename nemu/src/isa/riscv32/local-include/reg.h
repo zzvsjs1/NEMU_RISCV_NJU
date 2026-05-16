@@ -20,6 +20,8 @@ word_t getCSRValue(const word_t address);
 
 rtlreg_t *getCSRAddress(const word_t address);
 
+bool isCSRImplemented(const word_t address);
+
 bool isCSRWriteable(const word_t address);
 
 static inline const char *reg_name(int idx, int width)

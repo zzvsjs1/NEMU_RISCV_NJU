@@ -12,7 +12,7 @@ const char *regs[] = {
     "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 
 const char *csrs[] = {
-    "mstatus", "mtvec", "mepc", "mcause"};
+    "mstatus", "mtvec", "mepc", "mcause", "mtval"};
 
 /* Use an explicit CSR list for display to avoid struct-layout scanning and OOB bugs. */
 typedef struct
@@ -28,6 +28,7 @@ static const csr_disp_t csr_list[] = {
     {0x340, "mscratch"},
     {0x341, "mepc"},
     {0x342, "mcause"},
+    {0x343, "mtval"},
 };
 
 static size_t csr_list_len(void)
@@ -56,10 +57,25 @@ rtlreg_t *getCSRAddress(const word_t address)
         return &cpu.csr.mepc;
     case 0x342:
         return &cpu.csr.mcause;
+    case 0x343:
+        return &cpu.csr.mtval;
     default:
         Assert(false, "Invalid csr address: " FMT_WORD "\n", address);
         return NULL; /* keep compiler happy */
     }
+}
+
+bool isCSRImplemented(const word_t address)
+{
+    for (size_t i = 0; i < csr_list_len(); i++)
+    {
+        if (csr_list[i].addr == address)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool isCSRWriteable(const word_t csrAddr)

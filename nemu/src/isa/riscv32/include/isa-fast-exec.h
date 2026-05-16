@@ -3,6 +3,7 @@
 
 #include <isa-jit.h>
 #include <isa.h>
+#include <cpu/difftest.h>
 #include <memory/host.h>
 #include <memory/paddr.h>
 #include <memory/vaddr.h>
@@ -131,6 +132,25 @@ static inline void rv32_fast_write_gpr(uint32_t rd, word_t value)
     {
         gpr(rd) = value;
     }
+}
+
+static inline bool rv32_fast_is_naturally_aligned(vaddr_t addr, int len)
+{
+    return (addr & (vaddr_t)(len - 1)) == 0;
+}
+
+static inline void rv32_fast_raise_trap(word_t cause, vaddr_t pc, word_t tval)
+{
+    cpu.pc = isa_raise_intr_tval(cause, pc, tval);
+    difftest_skip_ref();
+}
+
+static inline bool rv32_fast_csr_access_ok(word_t csr_addr, bool will_write)
+{
+    const word_t required_priv = (csr_addr >> 8) & 0x3u;
+    return isCSRImplemented(csr_addr) &&
+           cpu.prvi >= required_priv &&
+           (!will_write || isCSRWriteable(csr_addr));
 }
 
 /*
@@ -711,8 +731,14 @@ static inline void rv32_fast_nemu_trap(vaddr_t pc)
  * privilege level from mstatus.MPP, moves MPIE back to MIE, sets MPIE, and then
  * resumes at mepc, matching the behaviour needed by the bare-metal runtime.
  */
-static inline void rv32_fast_mret()
+static inline void rv32_fast_mret(vaddr_t pc)
 {
+    if (cpu.prvi != RISCV32_PRIV_M)
+    {
+        rv32_fast_raise_trap(RISCV32_CAUSE_ILLEGAL_INST, pc, 0);
+        return;
+    }
+
     word_t mstatus = cpu.csr.mstatus;
     word_t mpp = (mstatus >> 11) & 0x3u;
     word_t mpie = (mstatus >> 7) & 0x1u;
@@ -750,15 +776,30 @@ static inline bool rv32_fast_exec_load(uint32_t instr, vaddr_t pc)
         rv32_fast_write_gpr(rd, (sword_t)(int8_t)rv32_fast_read_or_fallback(addr, 1, MEM_TYPE_READ));
         break;
     case 0x1:
+        if (!rv32_fast_is_naturally_aligned(addr, 2))
+        {
+            rv32_fast_raise_trap(RISCV32_CAUSE_LOAD_ADDR_MISALIGNED, pc, addr);
+            return true;
+        }
         rv32_fast_write_gpr(rd, (sword_t)(int16_t)rv32_fast_read_or_fallback(addr, 2, MEM_TYPE_READ));
         break;
     case 0x2:
+        if (!rv32_fast_is_naturally_aligned(addr, 4))
+        {
+            rv32_fast_raise_trap(RISCV32_CAUSE_LOAD_ADDR_MISALIGNED, pc, addr);
+            return true;
+        }
         rv32_fast_write_gpr(rd, rv32_fast_read_or_fallback(addr, 4, MEM_TYPE_READ));
         break;
     case 0x4:
         rv32_fast_write_gpr(rd, rv32_fast_read_or_fallback(addr, 1, MEM_TYPE_READ));
         break;
     case 0x5:
+        if (!rv32_fast_is_naturally_aligned(addr, 2))
+        {
+            rv32_fast_raise_trap(RISCV32_CAUSE_LOAD_ADDR_MISALIGNED, pc, addr);
+            return true;
+        }
         rv32_fast_write_gpr(rd, rv32_fast_read_or_fallback(addr, 2, MEM_TYPE_READ));
         break;
     default:
@@ -787,9 +828,19 @@ static inline bool rv32_fast_exec_store(uint32_t instr, vaddr_t pc)
         rv32_fast_write_or_fallback(addr, 1, gpr(rs2));
         break;
     case 0x1:
+        if (!rv32_fast_is_naturally_aligned(addr, 2))
+        {
+            rv32_fast_raise_trap(RISCV32_CAUSE_STORE_ADDR_MISALIGNED, pc, addr);
+            return true;
+        }
         rv32_fast_write_or_fallback(addr, 2, gpr(rs2));
         break;
     case 0x2:
+        if (!rv32_fast_is_naturally_aligned(addr, 4))
+        {
+            rv32_fast_raise_trap(RISCV32_CAUSE_STORE_ADDR_MISALIGNED, pc, addr);
+            return true;
+        }
         rv32_fast_write_or_fallback(addr, 4, gpr(rs2));
         break;
     default:
@@ -1008,7 +1059,15 @@ static inline bool rv32_fast_exec_branch(uint32_t instr, vaddr_t pc)
         return false;
     }
 
-    cpu.pc = taken ? pc + rv32_fast_imm_b(instr) : pc + 4;
+    const vaddr_t target = pc + rv32_fast_imm_b(instr);
+
+    if (taken && ((target & 0x3u) != 0))
+    {
+        rv32_fast_raise_trap(RISCV32_CAUSE_INST_ADDR_MISALIGNED, pc, target);
+        return true;
+    }
+
+    cpu.pc = taken ? target : pc + 4;
     return true;
 }
 
@@ -1026,17 +1085,24 @@ static inline bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
     const word_t csr_addr = rv32_fast_bits(instr, 31, 20);
     rtlreg_t *csr = NULL;
     word_t old = 0;
+    bool will_write = false;
 
     if (funct3 == 0)
     {
         switch (instr)
         {
         case 0x00000073u:
-            /* ECALL raises the configured trap and lets the slow interrupt helper choose the target pc. */
-            cpu.pc = isa_raise_intr(gpr(17), pc);
+            /*
+             * The syscall ABI may use a7 as a payload register, but the
+             * architectural trap cause comes from the current privilege mode.
+             */
+            rv32_fast_raise_trap(riscv32_ecall_cause_from_priv(cpu.prvi), pc, 0);
+            return true;
+        case 0x00100073u:
+            rv32_fast_raise_trap(RISCV32_CAUSE_BREAKPOINT, pc, 0);
             return true;
         case 0x30200073u:
-            rv32_fast_mret();
+            rv32_fast_mret(pc);
             return true;
         default:
             return false;
@@ -1049,22 +1115,41 @@ static inline bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
         return false;
     }
 
+    will_write = funct3 == 0x1 || funct3 == 0x5 ||
+                 ((funct3 == 0x2 || funct3 == 0x3 ||
+                   funct3 == 0x6 || funct3 == 0x7) &&
+                  rs1 != 0);
+
+    if (!rv32_fast_csr_access_ok(csr_addr, will_write))
+    {
+        rv32_fast_raise_trap(RISCV32_CAUSE_ILLEGAL_INST, pc, 0);
+        return true;
+    }
+
     csr = getCSRAddress(csr_addr);
-    old = *csr;
 
     switch (funct3)
     {
     case 0x1:
-        /* CSRRW always writes the CSR and returns the old CSR value to rd. */
-        rv32_fast_write_gpr(rd, old);
+        /*
+         * CSRRW with rd=x0 still writes but suppresses the architectural CSR
+         * read side effects. The implemented CSRs are side-effect-free today,
+         * but preserving the rule keeps this path aligned with the ISA.
+         */
+        if (rd != 0)
+        {
+            old = *csr;
+            rv32_fast_write_gpr(rd, old);
+        }
         *csr = rs1_value;
         rv32_fast_tlb_flush_if_satp(csr_addr);
         break;
     case 0x2:
         /* CSRRS writes only when rs1 is not x0; reads still return the old value. */
+        old = *csr;
         rv32_fast_write_gpr(rd, old);
 
-        if (isCSRWriteable(csr_addr) && rs1 != 0)
+        if (rs1 != 0)
         {
             *csr = old | rs1_value;
             rv32_fast_tlb_flush_if_satp(csr_addr);
@@ -1072,9 +1157,10 @@ static inline bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
         break;
     case 0x3:
         /* CSRRC clears only the bits present in rs1, again only when rs1 is not x0. */
+        old = *csr;
         rv32_fast_write_gpr(rd, old);
 
-        if (isCSRWriteable(csr_addr) && rs1 != 0)
+        if (rs1 != 0)
         {
             *csr = old & ~rs1_value;
             rv32_fast_tlb_flush_if_satp(csr_addr);
@@ -1082,15 +1168,20 @@ static inline bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
         break;
     case 0x5:
         /* Immediate CSR form: zimm is encoded in the rs1 field. */
-        rv32_fast_write_gpr(rd, old);
+        if (rd != 0)
+        {
+            old = *csr;
+            rv32_fast_write_gpr(rd, old);
+        }
         *csr = rs1;
         rv32_fast_tlb_flush_if_satp(csr_addr);
         break;
     case 0x6:
         /* CSRRSI sets bits from the immediate value when zimm is non-zero. */
+        old = *csr;
         rv32_fast_write_gpr(rd, old);
 
-        if (isCSRWriteable(csr_addr) && rs1 != 0)
+        if (rs1 != 0)
         {
             *csr = old | rs1;
             rv32_fast_tlb_flush_if_satp(csr_addr);
@@ -1098,9 +1189,10 @@ static inline bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
         break;
     case 0x7:
         /* CSRRCI clears bits from the immediate value when zimm is non-zero. */
+        old = *csr;
         rv32_fast_write_gpr(rd, old);
 
-        if (isCSRWriteable(csr_addr) && rs1 != 0)
+        if (rs1 != 0)
         {
             *csr = old & ~(word_t)rs1;
             rv32_fast_tlb_flush_if_satp(csr_addr);
@@ -1153,14 +1245,27 @@ static inline bool isa_fast_exec_once()
             return false;
         {
             const vaddr_t target = (gpr(rs1) + rv32_fast_imm_i(instr)) & ~(vaddr_t)1u;
+            if ((target & 0x3u) != 0)
+            {
+                rv32_fast_raise_trap(RISCV32_CAUSE_INST_ADDR_MISALIGNED, pc, target);
+                return true;
+            }
             rv32_fast_write_gpr(rd, pc + 4);
             cpu.pc = target;
         }
         return true;
     case 0x6f:
+    {
+        const vaddr_t target = pc + rv32_fast_imm_j(instr);
+        if ((target & 0x3u) != 0)
+        {
+            rv32_fast_raise_trap(RISCV32_CAUSE_INST_ADDR_MISALIGNED, pc, target);
+            return true;
+        }
         rv32_fast_write_gpr(rd, pc + 4);
-        cpu.pc = pc + rv32_fast_imm_j(instr);
+        cpu.pc = target;
         return true;
+    }
     case 0x73:
         return rv32_fast_exec_system(instr, pc);
     case 0x6b:

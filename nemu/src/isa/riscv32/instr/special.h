@@ -1,11 +1,11 @@
 def_EHelper(inv)
 {
     /*
-     * Invalid instructions leave architectural state changes to the hostcall
-     * handler.  Keeping the helper tiny avoids accidentally advancing control
-     * flow differently from other decode failures.
+     * A reserved or unsupported encoding is an illegal-instruction exception.
+     * mtval may legally be zero on this implementation; the handler can still
+     * inspect mepc if it needs the original instruction bits.
      */
-    rtl_hostcall(s, HOSTCALL_INV, NULL, NULL, NULL, 0);
+    riscv32_raise_trap(s, RISCV32_CAUSE_ILLEGAL_INST, 0);
 }
 
 def_EHelper(nemu_trap)

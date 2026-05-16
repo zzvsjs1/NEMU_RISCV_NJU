@@ -4,17 +4,23 @@
 // jump instruction to form the jump target address
 def_EHelper(jal)
 {
-    // Save next instuctions address to rd, and set new insturction address to pc.
-
-    // Store next inst to ddest.
-    rtl_addi(s, ddest, &s->pc, 4);
-
     // Sign Extend.
     rtl_li(s, s0, id_src1->imm);
     rtl_sign_ext_pos(s, s0, s0, 20);
 
     // Compute the inst address jump to.
     rtl_add(s, s0, &s->pc, s0);
+
+    if ((*s0 & 0x3u) != 0)
+    {
+        riscv32_raise_trap(s, RISCV32_CAUSE_INST_ADDR_MISALIGNED, *s0);
+        return;
+    }
+
+    // Save next instuctions address to rd, and set new insturction address to pc.
+
+    // Store next inst to ddest.
+    rtl_addi(s, ddest, &s->pc, 4);
 
     // RISC-V ABI uses x1(ra) and x5(t0) as link registers for calls.
     /*
@@ -55,6 +61,12 @@ def_EHelper(jalr)
     // setting the least-significant bit of the result to zero
     rtl_andi(s, s0, s0, ~1);
 
+    if ((*s0 & 0x3u) != 0)
+    {
+        riscv32_raise_trap(s, RISCV32_CAUSE_INST_ADDR_MISALIGNED, *s0);
+        return;
+    }
+
     /*
      * ret is encoded as jalr x0, 0(x1/x5); jalr to x1/x5 records a call.
      * The tests below must use the original instruction fields because the RTL
@@ -90,6 +102,12 @@ def_EHelper(jalr)
 // register.
 def_EHelper(mret)
 {
+    if (cpu.prvi != RISCV32_PRIV_M)
+    {
+        riscv32_raise_trap(s, RISCV32_CAUSE_ILLEGAL_INST, 0);
+        return;
+    }
+
     // The MRET instruction is used to return from a trap taken into M-mode. MRET first determines what
     // the new privilege mode will be according to the values of MPP and MPV in mstatus or mstatush, as
     // encoded in Table 35. MRET then in mstatus/mstatush sets MPV=0, MPP=0, MIE=MPIE, and MPIE=1.

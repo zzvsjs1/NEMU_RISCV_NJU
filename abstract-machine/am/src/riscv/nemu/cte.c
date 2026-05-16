@@ -8,19 +8,15 @@ enum
 {
     NP_KERNEL = 0,
     NP_USER = 1,
-    /*
-     * NEMU's RISC-V ecall helper stores the guest a7 value in mcause, so the AM
-     * layer sees syscall numbers rather than the architectural environment-call
-     * cause.  Nanos-lite added SYS_clock_gettime after the original 0..19 range;
-     * keep a little ABI headroom so new syscall IDs do not become EVENT_ERROR.
-     */
-    NEMU_SYSCALL_CAUSE_MAX = 63
 };
 
 // NEMU raises the machine timer interrupt with the standard RISC-V interrupt
 // bit set in mcause. The portable AM layer should see EVENT_IRQ_TIMER instead
 // of depending on that raw encoded value.
 #define IRQ_TIMER ((uintptr_t)0x80000007u)
+#define CAUSE_ECALL_U 8u
+#define CAUSE_ECALL_S 9u
+#define CAUSE_ECALL_M 11u
 #define MSTATUS_MIE (1u << 3)
 #define MSTATUS_MPIE (1u << 7)
 #define MSTATUS_MPP_M (3u << 11)
@@ -40,17 +36,6 @@ Context *__am_irq_handle(Context *c)
         Event ev = {0};
         switch (c->mcause)
         {
-        case -1:
-        {
-            ev.event = EVENT_YIELD;
-            // Add pc, this must be done by software.
-            // ecall leaves mepc pointing at the trapping instruction. Advancing by
-            // one fixed 32-bit instruction prevents yield() from re-entering the
-            // same software interrupt forever after mret.
-            c->mepc += sizeof(uint32_t);
-            break;
-        }
-
         case IRQ_TIMER:
         {
             ev.event = EVENT_IRQ_TIMER;
@@ -64,14 +49,16 @@ Context *__am_irq_handle(Context *c)
         }
         }
 
-        // Is system call?
-
-        if (c->mcause <= NEMU_SYSCALL_CAUSE_MAX)
+        if (c->mcause == CAUSE_ECALL_U ||
+            c->mcause == CAUSE_ECALL_S ||
+            c->mcause == CAUSE_ECALL_M)
         {
-            // In this teaching target, NEMU presents ecall a7 values in mcause.
-            // Treat the reserved syscall-number range as syscalls; the specific
-            // value remains available in the saved Context for the kernel.
-            ev.event = EVENT_SYSCALL;
+            /*
+             * RISC-V keeps the ecall reason in mcause and the ABI payload in
+             * normal registers.  AM uses a7 == -1 as its private yield request;
+             * Nanos-lite syscalls keep using saved a7 as the syscall number.
+             */
+            ev.event = (c->GPR1 == (uintptr_t)-1) ? EVENT_YIELD : EVENT_SYSCALL;
             c->mepc += sizeof(uint32_t);
         }
 
@@ -144,8 +131,7 @@ Context *kcontext(Area kstack, void (*entry)(void *), void *arg)
 void yield()
 {
     // The a7 value is an AM-private convention recognised by __am_irq_handle().
-    // Hardware only sees an ecall; the handler converts mcause plus a7 into
-    // EVENT_YIELD for the portable kernel layer.
+    // Hardware only sees an architectural ecall cause in mcause.
     asm volatile("li a7, -1; ecall");
 }
 

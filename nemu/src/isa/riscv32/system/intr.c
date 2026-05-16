@@ -124,7 +124,7 @@ static void updateMstatus()
     cpu.prvi = 0x3;
 }
 
-word_t isa_raise_intr(word_t NO, vaddr_t epc)
+word_t isa_raise_intr_tval(word_t NO, vaddr_t epc, word_t tval)
 {
     /* Trigger an interrupt/exception with ``NO''.
     * Then return the address of the interrupt/exception vector.
@@ -146,13 +146,15 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc)
     // We don't check is interrupt now.
     // TODO: May need interrupt support.
     cpu.csr.mcause = NO;
+    cpu.csr.mtval = tval;
 
-// Skip current instruction to avoid Spilke advance one more step.
 #ifdef CONFIG_DIFFTEST
-    // extern void (*ref_difftest_regcpy)(void *dut, bool direction);
-    // CPU_state ref_r;
-    // ref_difftest_regcpy(&ref_r, 0);
-
+    /*
+     * Keep the reference model at the same architectural trap entry.  The
+     * instruction helper decides whether the next normal DiffTest step should
+     * be skipped; asynchronous interrupts still compare the first handler
+     * instruction normally.
+     */
     extern void (*ref_difftest_raise_intr)(uint64_t NO);
     ref_difftest_raise_intr(NO);
 #endif
@@ -185,6 +187,11 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc)
 
     // direct
     return base;
+}
+
+word_t isa_raise_intr(word_t NO, vaddr_t epc)
+{
+    return isa_raise_intr_tval(NO, epc, 0);
 }
 
 word_t isa_query_intr()
