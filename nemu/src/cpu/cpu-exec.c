@@ -316,6 +316,14 @@ void cpu_exec(uint64_t n)
             {
                 fetch_decode_exec_updatepc(&s);
                 executed = 1;
+#ifdef CONFIG_ISA_riscv32
+                /*
+                 * Unsupported instructions are handled by the interpreter and
+                 * may have changed page tables, satp, mstatus, or privilege
+                 * state. Drop the private fast-exec TLB before the next batch.
+                 */
+                rv32_fast_tlb_flush();
+#endif
             }
 
             n -= executed;

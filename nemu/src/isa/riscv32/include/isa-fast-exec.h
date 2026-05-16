@@ -35,6 +35,15 @@
 #define RV32_FAST_PTE_R 0x002u
 #define RV32_FAST_PTE_W 0x004u
 #define RV32_FAST_PTE_X 0x008u
+#define RV32_FAST_PTE_U 0x010u
+#define RV32_FAST_PTE_A 0x040u
+#define RV32_FAST_PTE_D 0x080u
+
+#define RV32_FAST_MSTATUS_MPRV ((word_t)1u << 17)
+#define RV32_FAST_MSTATUS_SUM ((word_t)1u << 18)
+#define RV32_FAST_MSTATUS_MXR ((word_t)1u << 19)
+#define RV32_FAST_MSTATUS_MPP_SHIFT 11u
+#define RV32_FAST_MSTATUS_MPP_MASK ((word_t)0x3u << RV32_FAST_MSTATUS_MPP_SHIFT)
 
 /*
  * A small direct-mapped TLB is enough for the hot Nanos-lite/PAL working set and
@@ -52,7 +61,9 @@ typedef struct
     uint32_t satp;
     /* Virtual page number, excluding the 12-bit page offset. */
     uint32_t vpn;
-    /* Cached R/W/X permission bits from the leaf PTE. */
+    /* Effective privilege plus SUM/MXR bits used when this entry was checked. */
+    uint32_t ctx;
+    /* Cached low PTE flag bits from the leaf PTE. */
     uint32_t perm;
     /* Physical base address of the translated 4 KiB page. */
     paddr_t pg_paddr;
@@ -157,14 +168,67 @@ RV32_FAST_INLINE bool rv32_fast_csr_access_ok(word_t csr_addr, bool will_write)
            (!will_write || isCSRWriteable(csr_addr));
 }
 
-/*
- * Direct mode is the cheapest memory case. satp.MODE == Bare means no Sv32 page
- * walk is needed, so the fast path can treat a virtual address as a physical
- * address and only check whether it points inside PMEM before using host memory.
- */
-RV32_FAST_INLINE bool rv32_fast_direct_mode()
+RV32_FAST_INLINE bool rv32_fast_csr_raw_write_safe(word_t csr_addr)
 {
-    return likely((cpu.csr.satp & RV32_FAST_SATP_MODE_MASK) == 0);
+    /*
+     * Keep WARL-sensitive CSRs on the interpreter path.  The fast executor may
+     * write only simple storage CSRs where the current project model treats the
+     * value as plain architectural state.
+     */
+    return csr_addr == 0x340u || /* mscratch */
+           csr_addr == 0x341u || /* mepc */
+           csr_addr == 0x342u || /* mcause */
+           csr_addr == 0x343u;   /* mtval */
+}
+
+RV32_FAST_INLINE word_t rv32_fast_effective_mem_priv(int type)
+{
+    /*
+     * MPRV affects explicit loads and stores only. Instruction fetch always uses
+     * the current privilege mode, so M-mode fetch stays untranslated even when
+     * satp contains an Sv32 root.
+     */
+    if (type == MEM_TYPE_IFETCH)
+    {
+        return cpu.prvi;
+    }
+
+    const word_t mstatus = cpu.csr.mstatus;
+
+    if (cpu.prvi == RISCV32_PRIV_M && (mstatus & RV32_FAST_MSTATUS_MPRV) != 0)
+    {
+        return (mstatus & RV32_FAST_MSTATUS_MPP_MASK) >> RV32_FAST_MSTATUS_MPP_SHIFT;
+    }
+
+    return cpu.prvi;
+}
+
+RV32_FAST_INLINE bool rv32_fast_translation_active(int type)
+{
+    if ((cpu.csr.satp & RV32_FAST_SATP_MODE_MASK) == 0)
+    {
+        return false;
+    }
+
+    return rv32_fast_effective_mem_priv(type) != RISCV32_PRIV_M;
+}
+
+RV32_FAST_INLINE uint32_t rv32_fast_access_ctx(int type)
+{
+    const word_t mstatus = cpu.csr.mstatus;
+    uint32_t ctx = (uint32_t)(rv32_fast_effective_mem_priv(type) & 0x3u);
+
+    if ((mstatus & RV32_FAST_MSTATUS_SUM) != 0)
+    {
+        ctx |= 1u << 2;
+    }
+
+    if ((mstatus & RV32_FAST_MSTATUS_MXR) != 0)
+    {
+        ctx |= 1u << 3;
+    }
+
+    return ctx;
 }
 
 /*
@@ -188,23 +252,86 @@ RV32_FAST_INLINE bool rv32_fast_pmem_range(paddr_t addr, int len)
     return len > 0 && end >= addr && likely(in_pmem(addr) && in_pmem(end));
 }
 
-/*
- * Map NEMU's memory access kind to the Sv32 permission bit that must be present
- * on a leaf PTE. If a caller passes an unknown type, requiring no bit forces a
- * later conservative fallback rather than inventing new behaviour.
- */
-RV32_FAST_INLINE uint32_t rv32_fast_required_perm(int type)
+RV32_FAST_INLINE bool rv32_fast_nonleaf_pte_supported(uint32_t pte)
 {
+    const bool v = (pte & RV32_FAST_PTE_V) != 0;
+    const bool r = (pte & RV32_FAST_PTE_R) != 0;
+    const bool w = (pte & RV32_FAST_PTE_W) != 0;
+    const bool x = (pte & RV32_FAST_PTE_X) != 0;
+
+    if (!v || (!r && w))
+    {
+        return false;
+    }
+
+    if (r || w || x)
+    {
+        return false;
+    }
+
+    /*
+     * For a pointer PTE, U/A/D are reserved by the Sv32 algorithm. Treat them as
+     * unsupported here so the fast path cannot bless an architecturally invalid
+     * walk.
+     */
+    return (pte & (RV32_FAST_PTE_U | RV32_FAST_PTE_A | RV32_FAST_PTE_D)) == 0;
+}
+
+RV32_FAST_INLINE bool rv32_fast_leaf_pte_allows(uint32_t pte, int type, uint32_t ctx)
+{
+    const bool v = (pte & RV32_FAST_PTE_V) != 0;
+    const bool r = (pte & RV32_FAST_PTE_R) != 0;
+    const bool w = (pte & RV32_FAST_PTE_W) != 0;
+    const bool x = (pte & RV32_FAST_PTE_X) != 0;
+    const bool u = (pte & RV32_FAST_PTE_U) != 0;
+    const bool a = (pte & RV32_FAST_PTE_A) != 0;
+    const bool d = (pte & RV32_FAST_PTE_D) != 0;
+    const word_t priv = ctx & 0x3u;
+    const bool sum = (ctx & (1u << 2)) != 0;
+    const bool mxr = (ctx & (1u << 3)) != 0;
+
+    if (!v || (!r && w) || (!r && !x) || !a)
+    {
+        return false;
+    }
+
+    if (type == MEM_TYPE_WRITE && !d)
+    {
+        return false;
+    }
+
+    if (priv == RISCV32_PRIV_U)
+    {
+        if (!u)
+        {
+            return false;
+        }
+    }
+    else if (priv == RISCV32_PRIV_S)
+    {
+        if (u)
+        {
+            if (type == MEM_TYPE_IFETCH || !sum)
+            {
+                return false;
+            }
+        }
+    }
+    else
+    {
+        return false;
+    }
+
     switch (type)
     {
     case MEM_TYPE_IFETCH:
-        return RV32_FAST_PTE_X;
+        return x;
     case MEM_TYPE_READ:
-        return RV32_FAST_PTE_R;
+        return r || (mxr && x);
     case MEM_TYPE_WRITE:
-        return RV32_FAST_PTE_W;
+        return w;
     default:
-        return 0;
+        return false;
     }
 }
 
@@ -235,9 +362,8 @@ RV32_FAST_INLINE bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr
 {
     const uint32_t satp = cpu.csr.satp;
 
-    /* In Bare mode virtual address == physical address. */
-
-    if (rv32_fast_direct_mode())
+    /* If satp is inactive for this access, virtual address == physical address. */
+    if (!rv32_fast_translation_active(type))
     {
         *paddr = (paddr_t)addr;
         return true;
@@ -252,7 +378,7 @@ RV32_FAST_INLINE bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr
    * The TLB is direct-mapped. Using a power-of-two size makes the modulo a cheap
    * mask, and the full tag comparison below keeps collisions correct.
    */
-    const uint32_t need_perm = rv32_fast_required_perm(type);
+    const uint32_t ctx = rv32_fast_access_ctx(type);
     const uint32_t vpn = (uint32_t)(addr >> PAGE_SHIFT);
     const uint32_t idx = vpn & (RV32_FAST_TLB_SIZE - 1u);
     rv32_fast_tlb_entry_t *entry = &rv32_fast_tlb[idx];
@@ -263,7 +389,7 @@ RV32_FAST_INLINE bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr
    */
 
     if (likely(entry->valid && entry->satp == satp && entry->vpn == vpn &&
-               (entry->perm & need_perm) != 0))
+               entry->ctx == ctx && rv32_fast_leaf_pte_allows(entry->perm, type, ctx)))
     {
         *paddr = entry->pg_paddr | (paddr_t)(addr & PAGE_MASK);
         return true;
@@ -276,20 +402,11 @@ RV32_FAST_INLINE bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr
     const paddr_t pte1_addr = root + (paddr_t)(vpn1 * 4u);
     const uint32_t pte1 = (uint32_t)paddr_read(pte1_addr, 4);
 
-    /* Invalid first-level PTEs need the full slow path for the usual handling. */
-
-    if ((pte1 & RV32_FAST_PTE_V) == 0)
-    {
-        return false;
-    }
-
     /*
-   * This fast path only caches normal 4 KiB pages. A first-level leaf would be
-   * an Sv32 superpage, so let the existing page-walk code deal with it.
-   */
-    const uint32_t pte1_rwx = pte1 & (RV32_FAST_PTE_R | RV32_FAST_PTE_W | RV32_FAST_PTE_X);
-
-    if (pte1_rwx != 0)
+     * This fast path only caches normal 4 KiB pages. Invalid pointer PTEs,
+     * superpages, and reserved non-leaf encodings fall back to the full path.
+     */
+    if (!rv32_fast_nonleaf_pte_supported(pte1))
     {
         return false;
     }
@@ -298,16 +415,7 @@ RV32_FAST_INLINE bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr
     const paddr_t pte0_addr = l0_pt + (paddr_t)(vpn0 * 4u);
     const uint32_t pte0 = (uint32_t)paddr_read(pte0_addr, 4);
 
-    /* The second-level PTE must be valid and must be a leaf. */
-
-    if ((pte0 & RV32_FAST_PTE_V) == 0)
-    {
-        return false;
-    }
-
-    const uint32_t perm = pte0 & (RV32_FAST_PTE_R | RV32_FAST_PTE_W | RV32_FAST_PTE_X);
-
-    if (perm == 0 || (perm & need_perm) == 0)
+    if (!rv32_fast_leaf_pte_allows(pte0, type, ctx))
     {
         return false;
     }
@@ -315,8 +423,12 @@ RV32_FAST_INLINE bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr
     /*
    * Cache the translated physical page base, not the exact byte address. Future
    * accesses to the same 4 KiB virtual page then only need to restore the page
-   * offset with bitwise OR.
+    * offset with bitwise OR.
    */
+    const uint32_t perm = pte0 & (RV32_FAST_PTE_V | RV32_FAST_PTE_R |
+                                  RV32_FAST_PTE_W | RV32_FAST_PTE_X |
+                                  RV32_FAST_PTE_U | RV32_FAST_PTE_A |
+                                  RV32_FAST_PTE_D);
     const paddr_t pg_paddr = ((paddr_t)(pte0 >> 10)) << PAGE_SHIFT;
     if (!entry->valid)
     {
@@ -326,6 +438,7 @@ RV32_FAST_INLINE bool rv32_fast_translate(vaddr_t addr, int len, int type, paddr
     *entry = (rv32_fast_tlb_entry_t){
         .satp = satp,
         .vpn = vpn,
+        .ctx = ctx,
         .perm = perm,
         .pg_paddr = pg_paddr,
         .pt_page = l0_pt,
@@ -391,7 +504,7 @@ RV32_FAST_INLINE bool rv32_fast_read_pmem_u8(paddr_t paddr, word_t *data)
    * physical address is enough before dereferencing the host PMEM pointer.
    */
 
-    if (!likely(in_pmem(paddr)))
+    if (!likely(rv32_fast_pmem_range(paddr, 1)))
     {
         return false;
     }
@@ -407,7 +520,7 @@ RV32_FAST_INLINE bool rv32_fast_read_pmem_u16(paddr_t paddr, word_t *data)
    * the same little-endian unaligned access style already used by host_read().
    */
 
-    if (!likely(in_pmem(paddr)))
+    if (!likely(rv32_fast_pmem_range(paddr, 2)))
     {
         return false;
     }
@@ -423,7 +536,7 @@ RV32_FAST_INLINE bool rv32_fast_read_pmem_u32(paddr_t paddr, word_t *data)
    * operations, so this removes the generic host_read(len) switch completely.
    */
 
-    if (!likely(in_pmem(paddr)))
+    if (!likely(rv32_fast_pmem_range(paddr, 4)))
     {
         return false;
     }
@@ -459,7 +572,7 @@ RV32_FAST_INLINE bool rv32_fast_read_u8(vaddr_t addr, int type, word_t *data)
    * the physical address, and the helper below only needs the PMEM bound check.
    */
 
-    if (rv32_fast_direct_mode())
+    if (!rv32_fast_translation_active(type))
     {
         return rv32_fast_read_pmem_u8((paddr_t)addr, data);
     }
@@ -473,7 +586,7 @@ RV32_FAST_INLINE bool rv32_fast_read_u16(vaddr_t addr, int type, word_t *data)
 {
     /* Same split as byte reads, specialised for the LH/LHU access width. */
 
-    if (rv32_fast_direct_mode())
+    if (!rv32_fast_translation_active(type))
     {
         return rv32_fast_read_pmem_u16((paddr_t)addr, data);
     }
@@ -490,7 +603,7 @@ RV32_FAST_INLINE bool rv32_fast_read_u32(vaddr_t addr, int type, word_t *data)
    * width-specific avoids a switch in the common direct-PMEM case.
    */
 
-    if (rv32_fast_direct_mode())
+    if (!rv32_fast_translation_active(type))
     {
         return rv32_fast_read_pmem_u32((paddr_t)addr, data);
     }
@@ -511,7 +624,7 @@ RV32_FAST_INLINE bool rv32_fast_write_pmem_u8(paddr_t paddr, word_t data)
    * host_write() for SB/SH/SW without carrying a runtime length argument.
    */
 
-    if (!likely(in_pmem(paddr)))
+    if (!likely(rv32_fast_pmem_range(paddr, 1)))
     {
         return false;
     }
@@ -534,7 +647,7 @@ RV32_FAST_INLINE bool rv32_fast_write_pmem_u16(paddr_t paddr, word_t data)
 {
     /* Halfword store for SH; falls back before dereference if the address is MMIO. */
 
-    if (!likely(in_pmem(paddr)))
+    if (!likely(rv32_fast_pmem_range(paddr, 2)))
     {
         return false;
     }
@@ -557,7 +670,7 @@ RV32_FAST_INLINE bool rv32_fast_write_pmem_u32(paddr_t paddr, word_t data)
 {
     /* Word store for SW, the dominant benchmark store width. */
 
-    if (!likely(in_pmem(paddr)))
+    if (!likely(rv32_fast_pmem_range(paddr, 4)))
     {
         return false;
     }
@@ -588,7 +701,7 @@ RV32_FAST_INLINE bool rv32_fast_write_u8(vaddr_t addr, word_t data)
    * notification used after translated PMEM stores.
    */
 
-    if (rv32_fast_direct_mode())
+    if (!rv32_fast_translation_active(MEM_TYPE_WRITE))
     {
         return rv32_fast_write_pmem_u8((paddr_t)addr, data);
     }
@@ -607,7 +720,7 @@ RV32_FAST_INLINE bool rv32_fast_write_u16(vaddr_t addr, word_t data)
 {
     /* SH version of rv32_fast_write_u8(), with the same fallback and TLB rules. */
 
-    if (rv32_fast_direct_mode())
+    if (!rv32_fast_translation_active(MEM_TYPE_WRITE))
     {
         return rv32_fast_write_pmem_u16((paddr_t)addr, data);
     }
@@ -630,7 +743,7 @@ RV32_FAST_INLINE bool rv32_fast_write_u32(vaddr_t addr, word_t data)
    * visible so the next walk observes the updated PTE.
    */
 
-    if (rv32_fast_direct_mode())
+    if (!rv32_fast_translation_active(MEM_TYPE_WRITE))
     {
         return rv32_fast_write_pmem_u32((paddr_t)addr, data);
     }
@@ -723,15 +836,12 @@ RV32_FAST_INLINE void rv32_fast_write_or_fallback(vaddr_t addr, int len, word_t 
 }
 
 /*
- * satp is CSR 0x180. Changing it can replace the whole active address space, so
- * cached virtual-to-physical translations become suspect and must be dropped.
- * JIT blocks are keyed by satp and re-check their physical source mapping before
- * reuse, so a normal context switch does not need to throw away the native-code
- * arena.
+ * satp selects the page-table root, while mstatus controls MPRV/SUM/MXR and can
+ * therefore change which cached translation is legal for the next access.
  */
-RV32_FAST_INLINE void rv32_fast_tlb_flush_if_satp(word_t csr_addr)
+RV32_FAST_INLINE void rv32_fast_tlb_flush_if_mmu_csr(word_t csr_addr)
 {
-    if (unlikely(csr_addr == 0x180u))
+    if (unlikely(csr_addr == 0x180u || csr_addr == 0x300u))
     {
         rv32_fast_tlb_flush();
     }
@@ -767,6 +877,12 @@ RV32_FAST_INLINE void rv32_fast_mret(vaddr_t pc)
     word_t mpp = (mstatus >> 11) & 0x3u;
     word_t mpie = (mstatus >> 7) & 0x1u;
 
+    if (mpp == 0x2u)
+    {
+        rv32_fast_raise_trap(RISCV32_CAUSE_ILLEGAL_INST, pc, 0);
+        return;
+    }
+
     mstatus &= ~((word_t)0x3u << 11);
     mstatus = (mstatus & ~((word_t)1u << 3)) | (mpie << 3);
     mstatus |= ((word_t)1u << 7);
@@ -779,6 +895,7 @@ RV32_FAST_INLINE void rv32_fast_mret(vaddr_t pc)
     cpu.csr.mstatus = mstatus;
     cpu.prvi = mpp;
     cpu.pc = cpu.csr.mepc;
+    rv32_fast_tlb_flush();
 }
 
 /*
@@ -1097,8 +1214,8 @@ RV32_FAST_INLINE bool rv32_fast_exec_branch(uint32_t instr, vaddr_t pc)
 
 /*
  * Fast SYSTEM execution handles the subset used by this project: ECALL, MRET,
- * and the standard CSR read/write/set/clear forms. Unsupported SYSTEM encodings
- * return false so the normal interpreter can perform complete handling.
+ * CSR reads, and writes to raw storage CSRs. WARL-sensitive CSR writes return
+ * false so the normal interpreter remains the single owner of that state.
  */
 RV32_FAST_INLINE bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
 {
@@ -1150,6 +1267,11 @@ RV32_FAST_INLINE bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
         return true;
     }
 
+    if (will_write && !rv32_fast_csr_raw_write_safe(csr_addr))
+    {
+        return false;
+    }
+
     csr = getCSRAddress(csr_addr);
 
     switch (funct3)
@@ -1166,7 +1288,7 @@ RV32_FAST_INLINE bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
             rv32_fast_write_gpr(rd, old);
         }
         *csr = rs1_value;
-        rv32_fast_tlb_flush_if_satp(csr_addr);
+        rv32_fast_tlb_flush_if_mmu_csr(csr_addr);
         break;
     case 0x2:
         /* CSRRS writes only when rs1 is not x0; reads still return the old value. */
@@ -1176,7 +1298,7 @@ RV32_FAST_INLINE bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
         if (rs1 != 0)
         {
             *csr = old | rs1_value;
-            rv32_fast_tlb_flush_if_satp(csr_addr);
+            rv32_fast_tlb_flush_if_mmu_csr(csr_addr);
         }
         break;
     case 0x3:
@@ -1187,7 +1309,7 @@ RV32_FAST_INLINE bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
         if (rs1 != 0)
         {
             *csr = old & ~rs1_value;
-            rv32_fast_tlb_flush_if_satp(csr_addr);
+            rv32_fast_tlb_flush_if_mmu_csr(csr_addr);
         }
         break;
     case 0x5:
@@ -1198,7 +1320,7 @@ RV32_FAST_INLINE bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
             rv32_fast_write_gpr(rd, old);
         }
         *csr = rs1;
-        rv32_fast_tlb_flush_if_satp(csr_addr);
+        rv32_fast_tlb_flush_if_mmu_csr(csr_addr);
         break;
     case 0x6:
         /* CSRRSI sets bits from the immediate value when zimm is non-zero. */
@@ -1208,7 +1330,7 @@ RV32_FAST_INLINE bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
         if (rs1 != 0)
         {
             *csr = old | rs1;
-            rv32_fast_tlb_flush_if_satp(csr_addr);
+            rv32_fast_tlb_flush_if_mmu_csr(csr_addr);
         }
         break;
     case 0x7:
@@ -1219,7 +1341,7 @@ RV32_FAST_INLINE bool rv32_fast_exec_system(uint32_t instr, vaddr_t pc)
         if (rs1 != 0)
         {
             *csr = old & ~(word_t)rs1;
-            rv32_fast_tlb_flush_if_satp(csr_addr);
+            rv32_fast_tlb_flush_if_mmu_csr(csr_addr);
         }
         break;
     default:

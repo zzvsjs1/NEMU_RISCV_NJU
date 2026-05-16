@@ -15,22 +15,50 @@
 #define SATP_MODE_MASK 0x80000000u
 #define SATP_PPN_MASK 0x003FFFFFu // low 22 bits
 
+#define MSTATUS_MPRV ((word_t)1u << 17)
+#define MSTATUS_MPP_SHIFT 11u
+#define MSTATUS_MPP_MASK ((word_t)0x3u << MSTATUS_MPP_SHIFT)
+
 static bool is_cross_page(vaddr_t vaddr, int len)
 {
     const word_t off = (word_t)(vaddr & PAGE_MASK);
     return off + (word_t)len > PAGE_SIZE;
 }
 
+static word_t riscv32_effective_mem_priv(int type)
+{
+    if (type == MEM_TYPE_IFETCH)
+    {
+        return cpu.prvi;
+    }
+
+    if (cpu.prvi == RISCV32_PRIV_M && (cpu.csr.mstatus & MSTATUS_MPRV) != 0)
+    {
+        return (cpu.csr.mstatus & MSTATUS_MPP_MASK) >> MSTATUS_MPP_SHIFT;
+    }
+
+    return cpu.prvi;
+}
+
+static bool riscv32_translation_active(int type)
+{
+    if ((cpu.csr.satp & SATP_MODE_MASK) == 0)
+    {
+        return false;
+    }
+
+    return riscv32_effective_mem_priv(type) != RISCV32_PRIV_M;
+}
+
 int isa_mmu_check(vaddr_t vaddr, int len, int type)
 {
     /*
-     * This teaching Sv32 model treats satp.MODE as the only mode selector.  The
-     * detailed access checks are deferred to isa_mmu_translate(), so callers get
-     * a cheap direct/translate decision before doing any page-table walks.
+     * Sv32 is active only when satp selects translation and the effective
+     * privilege for this access is S/U.  Detailed access checks are deferred to
+     * isa_mmu_translate(), so callers get a cheap direct/translate decision
+     * before doing any page-table walks.
      */
-    uint32_t satp = cpu.csr.satp;
-    uint32_t mode = (satp & SATP_MODE_MASK) ? 1 : 0;
-    return mode ? MMU_TRANSLATE : MMU_DIRECT;
+    return riscv32_translation_active(type) ? MMU_TRANSLATE : MMU_DIRECT;
 }
 
 paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
@@ -47,8 +75,7 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
     }
 
     const rtlreg_t satp = cpu.csr.satp;
-    const word_t mode = (satp & SATP_MODE_MASK) ? 1 : 0;
-    Assert(mode == 1, "Not in memory protection mode!");
+    Assert(riscv32_translation_active(type), "Not in memory protection mode!");
 
     // root page directory physical address
     // mul by 4096 (<< 12)

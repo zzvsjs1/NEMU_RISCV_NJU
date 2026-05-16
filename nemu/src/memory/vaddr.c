@@ -5,10 +5,29 @@
 
 #ifdef CONFIG_ISA_riscv32
 #define RISCV32_SATP_MODE_MASK 0x80000000u
+#define RISCV32_MSTATUS_MPRV ((word_t)1u << 17)
+#define RISCV32_MSTATUS_MPP_SHIFT 11u
+#define RISCV32_MSTATUS_MPP_MASK ((word_t)0x3u << RISCV32_MSTATUS_MPP_SHIFT)
 
-static inline bool rv32_mmu_direct_mode()
+static inline word_t rv32_effective_mem_priv(int type)
 {
-    return likely((cpu.csr.satp & RISCV32_SATP_MODE_MASK) == 0);
+    if (type == MEM_TYPE_IFETCH)
+    {
+        return cpu.prvi;
+    }
+
+    if (cpu.prvi == RISCV32_PRIV_M && (cpu.csr.mstatus & RISCV32_MSTATUS_MPRV) != 0)
+    {
+        return (cpu.csr.mstatus & RISCV32_MSTATUS_MPP_MASK) >> RISCV32_MSTATUS_MPP_SHIFT;
+    }
+
+    return cpu.prvi;
+}
+
+static inline bool rv32_mmu_direct_mode(int type)
+{
+    return likely((cpu.csr.satp & RISCV32_SATP_MODE_MASK) == 0 ||
+                  rv32_effective_mem_priv(type) == RISCV32_PRIV_M);
 }
 #endif
 
@@ -36,7 +55,7 @@ word_t vaddr_ifetch(vaddr_t addr, int len)
      * common translation path so faults and cross-page limits stay centralised.
      */
 
-    if (rv32_mmu_direct_mode())
+    if (rv32_mmu_direct_mode(MEM_TYPE_IFETCH))
     {
         return paddr_ifetch((paddr_t)addr);
     }
@@ -90,7 +109,7 @@ word_t vaddr_ifetch(vaddr_t addr, int len)
 word_t vaddr_read(vaddr_t addr, int len)
 {
 #ifdef CONFIG_ISA_riscv32
-    if (rv32_mmu_direct_mode())
+    if (rv32_mmu_direct_mode(MEM_TYPE_READ))
     {
         return paddr_read((paddr_t)addr, len);
     }
@@ -138,7 +157,7 @@ void vaddr_write(vaddr_t addr, int len, word_t data)
      * the physical address is decoded.
      */
 
-    if (rv32_mmu_direct_mode())
+    if (rv32_mmu_direct_mode(MEM_TYPE_WRITE))
     {
         paddr_write((paddr_t)addr, len, data);
         return;

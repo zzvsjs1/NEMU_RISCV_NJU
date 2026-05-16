@@ -21,6 +21,9 @@ typedef int (*generated_fn_t)(void);
 #define PTE_D 0x080u
 
 #define SATP_MODE_SV32 0x80000000u
+#define MSTATUS_MPIE (1u << 7)
+#define MSTATUS_MPP_MASK (3u << 11)
+#define MSTATUS_MPP_S (1u << 11)
 
 /*
  * Keep the normal program identity mapped at 0x80000000, and use the following
@@ -105,6 +108,35 @@ static void enable_sv32(void)
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
 }
 
+static void enter_supervisor_mode(void)
+{
+    uintptr_t mstatus;
+
+    /*
+     * S-mode is the architectural mode where satp translation is active for
+     * instruction fetch. This keeps the cross-page JIT test valid after M-mode
+     * fetches correctly ignore satp.
+     */
+    asm volatile(
+        "csrr %[mstatus], mstatus\n"
+        "li t0, %[mpp_mask]\n"
+        "not t0, t0\n"
+        "and %[mstatus], %[mstatus], t0\n"
+        "li t0, %[mpp_s]\n"
+        "or %[mstatus], %[mstatus], t0\n"
+        "ori %[mstatus], %[mstatus], %[mpie]\n"
+        "csrw mstatus, %[mstatus]\n"
+        "la t0, 1f\n"
+        "csrw mepc, t0\n"
+        "mret\n"
+        "1:\n"
+        : [mstatus] "=&r"(mstatus)
+        : [mpp_mask] "i"(MSTATUS_MPP_MASK),
+          [mpp_s] "i"(MSTATUS_MPP_S),
+          [mpie] "i"(MSTATUS_MPIE)
+        : "t0", "memory");
+}
+
 static void prepare_generated_code(void)
 {
     /*
@@ -134,6 +166,7 @@ int main()
     prepare_generated_code();
     install_page_tables();
     enable_sv32();
+    enter_supervisor_mode();
 
     generated_fn_t fn = (generated_fn_t)(uintptr_t)ALIAS_ENTRY;
 

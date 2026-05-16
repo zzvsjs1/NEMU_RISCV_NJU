@@ -74,7 +74,7 @@ static bool mtrace_in_range(paddr_t addr, int len)
 
 word_t paddr_ifetch(paddr_t addr)
 {
-    if (likely(in_pmem(addr)))
+    if (likely(in_pmem_range(addr, 4)))
     {
         word_t data = *(uint32_t *)pmem_host_addr(addr);
 #ifdef CONFIG_MTRACE
@@ -92,7 +92,7 @@ word_t paddr_ifetch(paddr_t addr)
 
 word_t paddr_read(paddr_t addr, int len)
 {
-    if (likely(in_pmem(addr)))
+    if (likely(in_pmem_range(addr, len)))
     {
         word_t data = pmem_read(addr, len);
 #ifdef CONFIG_MTRACE
@@ -119,7 +119,7 @@ word_t paddr_read(paddr_t addr, int len)
 
 void paddr_write(paddr_t addr, int len, word_t data)
 {
-    if (likely(in_pmem(addr)))
+    if (likely(in_pmem_range(addr, len)))
     {
 #ifdef CONFIG_MTRACE
         /* Log before the write so the trace records the value being committed. */

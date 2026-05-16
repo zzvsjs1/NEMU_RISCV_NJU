@@ -16,8 +16,13 @@ typedef int (*generated_fn_t)(void);
 #define PTE_R 0x002u
 #define PTE_W 0x004u
 #define PTE_X 0x008u
+#define PTE_A 0x040u
+#define PTE_D 0x080u
 
 #define SATP_MODE_SV32 0x80000000u
+#define MSTATUS_MPIE (1u << 7)
+#define MSTATUS_MPP_MASK (3u << 11)
+#define MSTATUS_MPP_S (1u << 11)
 
 /*
  * The test image is linked at CONFIG_MBASE. Keeping an identity-mapped window
@@ -70,7 +75,7 @@ static void clear_page_table(uint32_t *pt)
 
 static void map_identity_window(void)
 {
-    const uint32_t leaf_flags = PTE_V | PTE_R | PTE_W | PTE_X;
+    const uint32_t leaf_flags = PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
     /*
    * Map enough of the low PMEM image for this test: text, rodata, bss, page
    * tables, generated code, and the stack. The window is deliberately small so
@@ -100,7 +105,7 @@ static void install_page_tables(void)
     root_pt[IDENTITY_BASE >> 22] = pte_for_page(identity_l0, table_flags);
     root_pt[ALIAS_VA >> 22] = pte_for_page(alias_l0, table_flags);
     alias_l0[(ALIAS_VA >> 12) & 0x3ffu] =
-        pte_for_page(code_page_a, PTE_V | PTE_R | PTE_X);
+        pte_for_page(code_page_a, PTE_V | PTE_R | PTE_X | PTE_A);
 }
 
 static void enable_sv32(void)
@@ -113,6 +118,35 @@ static void enable_sv32(void)
    * emulator because the interpreter/JIT observes memory directly.
    */
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
+}
+
+static void enter_supervisor_mode(void)
+{
+    uintptr_t mstatus;
+
+    /*
+     * satp is active for S/U effective privilege, not for normal M-mode. Run
+     * the generated-code calls in S-mode so this test follows the privileged
+     * architecture instead of the old teaching shortcut.
+     */
+    asm volatile(
+        "csrr %[mstatus], mstatus\n"
+        "li t0, %[mpp_mask]\n"
+        "not t0, t0\n"
+        "and %[mstatus], %[mstatus], t0\n"
+        "li t0, %[mpp_s]\n"
+        "or %[mstatus], %[mstatus], t0\n"
+        "ori %[mstatus], %[mstatus], %[mpie]\n"
+        "csrw mstatus, %[mstatus]\n"
+        "la t0, 1f\n"
+        "csrw mepc, t0\n"
+        "mret\n"
+        "1:\n"
+        : [mstatus] "=&r"(mstatus)
+        : [mpp_mask] "i"(MSTATUS_MPP_MASK),
+          [mpp_s] "i"(MSTATUS_MPP_S),
+          [mpie] "i"(MSTATUS_MPIE)
+        : "t0", "memory");
 }
 
 static void prepare_generated_code(void)
@@ -132,6 +166,7 @@ int main()
     prepare_generated_code();
     install_page_tables();
     enable_sv32();
+    enter_supervisor_mode();
 
     generated_fn_t fn = (generated_fn_t)(uintptr_t)ALIAS_VA;
 
@@ -144,7 +179,7 @@ int main()
    * the virtual PC and satp tag are unchanged.
    */
     alias_l0[(ALIAS_VA >> 12) & 0x3ffu] =
-        pte_for_page(code_page_b, PTE_V | PTE_R | PTE_X);
+        pte_for_page(code_page_b, PTE_V | PTE_R | PTE_X | PTE_A);
 
     const int second = fn();
     check(second == 9);

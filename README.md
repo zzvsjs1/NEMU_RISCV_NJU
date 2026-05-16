@@ -336,6 +336,56 @@ that the interpreter would raise.
 - Device timing is bounded by instruction-count polling, but it is not a
   cycle-accurate hardware timing model.
 
+### Current RISC-V Spec Differences
+
+The current RISC-V32 interpreter, fast executor, and JIT do not implement every
+behaviour required by the RISC-V unprivileged and privileged specifications.
+The important differences are listed here so tests and workloads can choose the
+right execution path deliberately.
+
+- The interpreter decodes RV32IM integer, multiply/divide, CSR, `ecall`,
+  `ebreak`, `mret`, and the private `nemu_trap` stop instruction. It does not
+  decode the base `FENCE` instruction, Zifencei `FENCE.I`, `WFI`, `SRET`, or
+  `SFENCE.VMA`; those encodings currently reach the illegal-instruction path.
+- The CSR model is a small machine-level subset: `satp`, `mstatus`, `mtvec`,
+  `mscratch`, `mepc`, `mcause`, and `mtval`. Standard CSRs such as `misa`,
+  `mie`, `mip`, `medeleg`, `mideleg`, `sstatus`, `stvec`, `sepc`, `scause`,
+  and `stval` are not modelled.
+- CSR writes mostly store raw values after implemented/writeable/privilege
+  checks. Full WARL/WPRI behaviour is not applied for fields such as
+  `mstatus.MPP`, `mtvec.MODE`, `mepc[1:0]`, or unsupported `satp` encodings.
+  The fast executor avoids fast raw writes to the more sensitive CSRs, but the
+  final architectural behaviour still follows the interpreter when it falls
+  back.
+- Timer interrupt delivery uses NEMU's internal pending-interrupt flag plus
+  `mstatus.MIE`. Guest-visible `mie`/`mip` enable and pending bits are not
+  implemented, so machine timer interrupt control is not the same as a standard
+  privileged machine.
+- Trap delegation and supervisor trap entry are not implemented. Normal traps
+  enter M-mode through `mtvec` and write machine CSRs; there is no
+  `medeleg`/`mideleg` routing to `stvec`, `sepc`, `scause`, or `stval`.
+- The shared Sv32 walker in `nemu/src/isa/riscv32/system/mmu.c` handles only
+  ordinary 4 KiB leaves with basic `V/R/W/X` checks. It does not complete the
+  privileged page-walk rules for `U`, `SUM`, `MXR`, `A`, `D`, reserved
+  `W=1,R=0` PTEs, non-leaf reserved bits, ASIDs, or 4 MiB megapages.
+- Many Sv32 fault cases currently become NEMU assertions or panics instead of
+  guest-visible instruction/load/store page-fault traps with `mtval`. This
+  includes invalid PTEs, bad permissions, unsupported superpages, and translated
+  accesses that cross a page boundary.
+- The fast executor has stricter local Sv32 checks than the shared interpreter
+  path for effective privilege, `U`, `SUM`, `MXR`, `A`, and `D`, but rejected
+  cases still fall back to the shared memory path. Therefore it inherits the
+  same incomplete architectural page-fault delivery described above.
+- The JIT has a separate, simpler Sv32 fast path. Its local translation cache is
+  keyed mainly by `satp` and VPN and its paged guards mostly check `V` plus
+  `R/W/X`. It does not fully encode effective privilege, `MPRV`, `SUM`, `MXR`,
+  `PTE.U`, `A`, or `D`, so JIT execution should not be used as the reference for
+  full privileged/Sv32 conformance.
+- In particular, JIT memory paths still use `satp.MODE` as the main signal for
+  translation. Standard RISC-V treats `satp` as active only when the effective
+  privilege mode is S or U; normal M-mode instruction fetches and M-mode
+  loads/stores with `MPRV=0` are physical even if `satp.MODE=Sv32`.
+
 ## Performance Measurements
 
 These are local reference numbers from the current JIT branch, measured in this

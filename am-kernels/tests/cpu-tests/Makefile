@@ -16,11 +16,14 @@ $(ALL): %: Makefile.%
 
 Makefile.%: tests/%.c latest
 	@/bin/echo -e "NAME = $*\nSRCS = $<\ninclude $${AM_HOME}/Makefile" > $@
-# Provide one deterministic mouse event for jit-ldst-signext-asm, so the
-# lw x0, 0(mouse_type) read has an observable side effect and the following
-# read must see an empty queue.
+# Provide deterministic mouse events for tests that check MMIO side effects.
+# The scripts make headless runs repeatable and avoid requiring real host input.
 	@if [ "$*" = "jit-ldst-signext-asm" ]; then \
 		NEMU_MOUSE_SCRIPT=move:17,23 make -s -f $@ ARCH=$(ARCH) $(MAKECMDGOALS); \
+	elif [ "$*" = "riscv-io-strict" ]; then \
+		NEMU_MOUSE_SCRIPT='move:31,47;move:31,47;wheel:2,-3' make -s -f $@ ARCH=$(ARCH) $(MAKECMDGOALS); \
+	elif [ "$*" = "riscv-fast-mmu-priv-strict" ]; then \
+		NEMU_DISABLE_JIT=1 make -s -f $@ ARCH=$(ARCH) $(MAKECMDGOALS); \
 	else \
 		make -s -f $@ ARCH=$(ARCH) $(MAKECMDGOALS); \
 	fi; \

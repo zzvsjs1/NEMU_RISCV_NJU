@@ -15,6 +15,17 @@ static inline bool in_pmem(paddr_t addr)
     return (addr >= CONFIG_MBASE) && (addr < (paddr_t)CONFIG_MBASE + CONFIG_MSIZE);
 }
 
+static inline bool in_pmem_range(paddr_t addr, int len)
+{
+    if (len <= 0)
+    {
+        return false;
+    }
+
+    const paddr_t end = addr + (paddr_t)len - 1u;
+    return end >= addr && in_pmem(addr) && in_pmem(end);
+}
+
 word_t paddr_read(paddr_t addr, int len);
 word_t paddr_ifetch(paddr_t addr);
 void paddr_write(paddr_t addr, int len, word_t data);
