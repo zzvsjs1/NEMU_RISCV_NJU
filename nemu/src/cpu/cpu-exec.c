@@ -205,9 +205,9 @@ static inline bool should_update_device_after(uint32_t *counter, uint32_t execut
 
 static inline bool can_fast_exec()
 {
-#if defined(CONFIG_ISA_riscv32) && !defined(CONFIG_TRACE) && \
+#if defined(CONFIG_RV32_FAST_EXEC) && !defined(CONFIG_TRACE) && \
     !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
-    !defined(CONFIG_MTRACE)
+    !defined(CONFIG_MTRACE) && !defined(CONFIG_FTRACE)
     return !g_print_step;
 #else
     return false;

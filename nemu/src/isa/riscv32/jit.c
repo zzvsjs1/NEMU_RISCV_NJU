@@ -200,8 +200,10 @@ static uint16_t jit_source_chunk_refs[RV32_JIT_PMEM_CHUNK_COUNT];
 static uint8_t *jit_code = NULL;
 /* Number of bytes already used in `jit_code`, rounded up before each block. */
 static size_t jit_code_used = 0;
+#if RV32_JIT_ENABLED
 /* Sticky flag set when executable memory allocation fails. */
 static bool jit_disabled = false;
+#endif
 /* Cached value of the runtime `NEMU_DISABLE_JIT` environment switch. */
 static bool jit_env_disable = false;
 /* True after runtime environment switches have been read once. */
@@ -1028,6 +1030,11 @@ static void jit_cache_clear(void)
 static bool jit_code_init(void)
 {
 #if RV32_JIT_ENABLED
+    if (jit_disabled)
+    {
+        return false;
+    }
+
     if (jit_code != NULL)
     {
         return true;
