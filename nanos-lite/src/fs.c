@@ -237,14 +237,8 @@ void init_fs()
     const AM_GPU_CONFIG_T gpuConfig = io_read(AM_GPU_CONFIG);
 
     assert(gpuConfig.present);
-    assert(gpuConfig.width > 0 && gpuConfig.height > 0);
-    /*
-     * /dev/fb exposes the visible linear framebuffer.  AM_GPU_CONFIG.vmemsz can
-     * describe accelerator-private memory on NEMU, so derive the userspace
-     * framebuffer length from the display geometry instead.
-     */
-    special_files[FD_FB].size =
-        (size_t)gpuConfig.width * (size_t)gpuConfig.height * sizeof(uint32_t);
+    assert(gpuConfig.vmemsz > 0);
+    special_files[FD_FB].size = (size_t)gpuConfig.vmemsz;
     assert(regular_fs_backend.init() == 0);
 }
 
