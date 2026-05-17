@@ -5,7 +5,12 @@
 #define MSTATUS_MPP_SHIFT 11
 #define MSTATUS_MPP_WIDTH 2
 #define MSTATUS_MPRV_BIT 17
-#define MSTATUS_GVA_BIT 18
+/*
+ * In RV64 mstatus, bit 18 is SUM.  The hypervisor GVA field is in the upper
+ * status layout, so clearing bit 18 on trap entry would incorrectly change
+ * supervisor data-access permissions.
+ */
+#define MSTATUS_GVA_BIT 38
 
 #define IRQ_TIMER ((word_t)0x8000000000000007ull)
 

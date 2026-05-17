@@ -12,7 +12,7 @@ export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
 
 DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit_defconfig"
-TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-negative-cache riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data)
+TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-negative-cache riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data riscv64-jit-sv39-dtlb)
 
 fail() {
   echo "RISC-V64 JIT correctness check failed: $*" >&2
@@ -247,6 +247,158 @@ require_positive_zero_side_exits() {
   fi
 }
 
+require_positive_data_tlb_hits() {
+  local log=$1
+  local test_name=$2
+  local data_tlb_hits
+
+  data_tlb_hits=$(sed -n 's/.*data TLB hits = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$data_tlb_hits" ]; then
+    echo "Failed to find data TLB hit stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$data_tlb_hits" -le 0 ]; then
+    echo "Expected positive data TLB hit count for $test_name, got $data_tlb_hits" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_data_tlb_fills() {
+  local log=$1
+  local test_name=$2
+  local data_tlb_fills
+
+  data_tlb_fills=$(sed -n 's/.*data TLB fills = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$data_tlb_fills" ]; then
+    echo "Failed to find data TLB fill stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$data_tlb_fills" -le 0 ]; then
+    echo "Expected positive data TLB fill count for $test_name, got $data_tlb_fills" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_data_tlb_flushes() {
+  local log=$1
+  local test_name=$2
+  local data_tlb_flushes
+
+  data_tlb_flushes=$(sed -n 's/.*data TLB flushes = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$data_tlb_flushes" ]; then
+    echo "Failed to find data TLB flush stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$data_tlb_flushes" -le 0 ]; then
+    echo "Expected positive data TLB flush count for $test_name, got $data_tlb_flushes" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_data_tlb_page_table_flushes() {
+  local log=$1
+  local test_name=$2
+  local data_tlb_page_table_flushes
+
+  data_tlb_page_table_flushes=$(sed -n 's/.*data TLB page-table flushes = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$data_tlb_page_table_flushes" ]; then
+    echo "Failed to find data TLB page-table flush stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$data_tlb_page_table_flushes" -le 0 ]; then
+    echo "Expected positive data TLB page-table flush count for $test_name, got $data_tlb_page_table_flushes" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_inline_paged_loads() {
+  local log=$1
+  local test_name=$2
+  local inline_paged_loads
+
+  inline_paged_loads=$(sed -n 's/.*inline paged loads = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$inline_paged_loads" ]; then
+    echo "Failed to find inline paged load stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$inline_paged_loads" -le 0 ]; then
+    echo "Expected positive inline paged load count for $test_name, got $inline_paged_loads" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_inline_paged_stores() {
+  local log=$1
+  local test_name=$2
+  local inline_paged_stores
+
+  inline_paged_stores=$(sed -n 's/.*inline paged stores = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$inline_paged_stores" ]; then
+    echo "Failed to find inline paged store stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$inline_paged_stores" -le 0 ]; then
+    echo "Expected positive inline paged store count for $test_name, got $inline_paged_stores" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_inline_paged_load_hits() {
+  local log=$1
+  local test_name=$2
+  local inline_paged_load_hits
+
+  inline_paged_load_hits=$(sed -n 's/.*inline paged load hits = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$inline_paged_load_hits" ]; then
+    echo "Failed to find inline paged load hit stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$inline_paged_load_hits" -le 0 ]; then
+    echo "Expected positive inline paged load hit count for $test_name, got $inline_paged_load_hits" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_inline_paged_store_hits() {
+  local log=$1
+  local test_name=$2
+  local inline_paged_store_hits
+
+  inline_paged_store_hits=$(sed -n 's/.*inline paged store hits = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$inline_paged_store_hits" ]; then
+    echo "Failed to find inline paged store hit stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$inline_paged_store_hits" -le 0 ]; then
+    echo "Expected positive inline paged store hit count for $test_name, got $inline_paged_store_hits" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 cd "$ROOT"
 
 [ -f "$DEFCONFIG" ] || fail "missing $DEFCONFIG"
@@ -294,6 +446,20 @@ for test_name in "${TESTS[@]}"; do
     require_positive_translated_blocks "$out" "$test_name"
     require_positive_native_paged_loads "$out" "$test_name"
     require_positive_native_paged_stores "$out" "$test_name"
+  fi
+  if [ "$test_name" = "riscv64-jit-sv39-dtlb" ]; then
+    require_positive_translated_blocks "$out" "$test_name"
+    require_positive_native_paged_loads "$out" "$test_name"
+    require_positive_native_paged_stores "$out" "$test_name"
+    require_positive_data_tlb_hits "$out" "$test_name"
+    require_positive_data_tlb_fills "$out" "$test_name"
+    require_positive_data_tlb_flushes "$out" "$test_name"
+    require_positive_data_tlb_page_table_flushes "$out" "$test_name"
+    require_positive_inline_paged_loads "$out" "$test_name"
+    require_positive_inline_paged_stores "$out" "$test_name"
+    require_positive_inline_paged_load_hits "$out" "$test_name"
+    require_positive_inline_paged_store_hits "$out" "$test_name"
+    require_positive_invalidated_blocks "$out" "$test_name"
   fi
   rm -f "$out"
   trap - EXIT

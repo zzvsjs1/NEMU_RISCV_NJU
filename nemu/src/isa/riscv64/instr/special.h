@@ -1,3 +1,5 @@
+#include <isa-jit.h>
+
 def_EHelper(inv)
 {
     riscv64_raise_trap(s, RISCV64_CAUSE_ILLEGAL_INST, 0);
@@ -29,7 +31,10 @@ def_EHelper(sfence_vma)
         (cpu.prvi == RISCV64_PRIV_S && (cpu.csr.mstatus & mstatus_tvm) != 0))
     {
         riscv64_raise_trap(s, RISCV64_CAUSE_ILLEGAL_INST, 0);
+        return;
     }
+
+    isa_jit_flush_data_tlb();
 }
 
 def_EHelper(wfi)

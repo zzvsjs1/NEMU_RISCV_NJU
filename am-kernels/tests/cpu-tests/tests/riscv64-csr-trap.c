@@ -56,6 +56,7 @@ enum
     MSTATUS_MPP_MASK = 3ull << 11,
     MSTATUS_MPP_M = 3ull << 11,
     MSTATUS_MPRV = 1ull << 17,
+    MSTATUS_SUM = 1ull << 18,
 };
 
 static inline uintptr_t read_mstatus(void)
@@ -132,6 +133,7 @@ static void test_m_mode_ecall_trap_entry(void)
     prepare_trap();
 
     armed |= MSTATUS_MIE;
+    armed |= MSTATUS_SUM;
     armed &= ~MSTATUS_MPIE;
     write_mstatus(armed);
 
@@ -145,6 +147,7 @@ static void test_m_mode_ecall_trap_entry(void)
     check((rv64_csr_saved_mstatus & MSTATUS_MPP_MASK) == MSTATUS_MPP_M);
     check((rv64_csr_saved_mstatus & MSTATUS_MPIE) != 0);
     check((rv64_csr_saved_mstatus & MSTATUS_MIE) == 0);
+    check((rv64_csr_saved_mstatus & MSTATUS_SUM) != 0);
 }
 
 static void test_mret_restores_machine_mstatus_fields(void)

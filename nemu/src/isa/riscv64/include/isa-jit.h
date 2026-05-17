@@ -25,6 +25,9 @@ extern bool isa_jit_invalidation_active;
 /* Drop all cached native blocks and private JIT state. */
 void isa_jit_flush_all(void);
 
+/* Drop only JIT-local data translations, normally after SFENCE.VMA. */
+void isa_jit_flush_data_tlb(void);
+
 /* Notify the JIT that a physical PMEM byte range has been written. */
 void isa_jit_invalidate_paddr(paddr_t addr, int len);
 

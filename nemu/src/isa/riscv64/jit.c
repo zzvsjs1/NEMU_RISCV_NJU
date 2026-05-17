@@ -80,6 +80,46 @@
 #define RV64_JIT_PMEM_CHUNK_COUNT \
     (((size_t)CONFIG_MSIZE + (size_t)RV64_JIT_SOURCE_CHUNK_SIZE - 1u) / \
      (size_t)RV64_JIT_SOURCE_CHUNK_SIZE)
+/*
+ * Keep the helper data TLB intentionally small: 256 direct-mapped entries cover
+ * common hot pages while keeping the inline index mask to one byte of entropy.
+ */
+#define RV64_JIT_DATA_TLB_SIZE 256u
+/*
+ * Page-table dependency refs are tracked per guest PMEM page.  A store to any
+ * referenced page flushes the data TLB before a stale translation can be reused.
+ */
+#define RV64_JIT_PMEM_PAGE_COUNT \
+    (((size_t)CONFIG_MSIZE + (size_t)PAGE_SIZE - 1u) / (size_t)PAGE_SIZE)
+
+/* RV64/Sv39 constants repeated here so the JIT helper can reject unsafe cases. */
+#define RV64_JIT_SATP_MODE_SHIFT 60u
+#define RV64_JIT_SATP_MODE_SV39 8u
+#define RV64_JIT_SATP_PPN_MASK (((word_t)1u << 44) - 1u)
+#define RV64_JIT_PTE_V ((word_t)1u << 0)
+#define RV64_JIT_PTE_R ((word_t)1u << 1)
+#define RV64_JIT_PTE_W ((word_t)1u << 2)
+#define RV64_JIT_PTE_X ((word_t)1u << 3)
+#define RV64_JIT_PTE_U ((word_t)1u << 4)
+#define RV64_JIT_PTE_A ((word_t)1u << 6)
+#define RV64_JIT_PTE_D ((word_t)1u << 7)
+#define RV64_JIT_PTE_RWX (RV64_JIT_PTE_R | RV64_JIT_PTE_W | RV64_JIT_PTE_X)
+#define RV64_JIT_PTE_NON_LEAF_RESERVED \
+    (RV64_JIT_PTE_U | RV64_JIT_PTE_A | RV64_JIT_PTE_D)
+#define RV64_JIT_PTE_PPN_SHIFT 10u
+#define RV64_JIT_PTE_PPN_MASK (((word_t)1u << 44) - 1u)
+/*
+ * The RV64 JIT has no Svnapot/Svpbmt support.  Sv39 PTE bits [63:54] therefore
+ * remain reserved and must fault rather than produce a cached translation.
+ */
+#define RV64_JIT_PTE_RESERVED_63_54_MASK (((word_t)0x3ffu) << 54)
+#define RV64_JIT_MSTATUS_MPRV ((word_t)1u << 17)
+#define RV64_JIT_MSTATUS_SUM ((word_t)1u << 18)
+#define RV64_JIT_MSTATUS_MXR ((word_t)1u << 19)
+#define RV64_JIT_MSTATUS_MPP_SHIFT 11u
+#define RV64_JIT_MSTATUS_MPP_MASK ((word_t)0x3u << RV64_JIT_MSTATUS_MPP_SHIFT)
+#define RV64_JIT_DATA_TLB_READ 0x1u
+#define RV64_JIT_DATA_TLB_WRITE 0x2u
 
 typedef uint32_t (*rv64_jit_entry_t)(void);
 
@@ -118,10 +158,26 @@ typedef struct
 
 typedef struct
 {
+    word_t satp;
+    uint64_t vpn;
+    uint32_t state;
+    uint32_t access;
+    uint64_t pg_paddr;
+    uint64_t pt_pages[3];
+    uint8_t pt_page_count;
+    bool valid;
+} rv64_jit_data_tlb_entry_t;
+
+typedef char rv64_jit_data_tlb_entry_size_must_be_64[sizeof(rv64_jit_data_tlb_entry_t) == 64 ? 1 : -1];
+typedef char rv64_jit_pmem_mapping_must_be_page_aligned[((CONFIG_MBASE | CONFIG_MSIZE) & PAGE_MASK) == 0 ? 1 : -1];
+
+typedef struct
+{
     bool valid;
     bool translated;
     vaddr_t pc;
     word_t satp;
+    uint32_t data_state;
     paddr_t paddr_start;
     uint32_t source_len;
     uint32_t insn_count;
@@ -149,12 +205,31 @@ typedef struct
     uint64_t native_paged_loads;
     uint64_t native_paged_stores;
     uint64_t zero_side_exits;
+    uint64_t data_tlb_hits;
+    uint64_t data_tlb_misses;
+    uint64_t data_tlb_fills;
+    uint64_t data_tlb_flushes;
+    uint64_t data_tlb_page_table_flushes;
+    uint64_t data_tlb_direct_loads;
+    uint64_t data_tlb_direct_stores;
+    uint64_t inline_paged_loads;
+    uint64_t inline_paged_stores;
+    uint64_t inline_paged_load_hits;
+    uint64_t inline_paged_store_hits;
     uint64_t invalidation_requests;
     uint64_t invalidated_blocks;
     uint64_t arena_resets;
 } rv64_jit_stats_t;
 
+typedef struct
+{
+    uint8_t *slow_disps[10];
+    uint32_t count;
+} rv64_jit_tlb_guard_patch_t;
+
 static rv64_jit_block_t jit_cache[RV64_JIT_CACHE_SIZE];
+static rv64_jit_data_tlb_entry_t jit_data_tlb[RV64_JIT_DATA_TLB_SIZE];
+static uint16_t jit_data_tlb_pt_page_refs[RV64_JIT_PMEM_PAGE_COUNT];
 static uint16_t jit_source_chunk_refs[RV64_JIT_PMEM_CHUNK_COUNT];
 static uint8_t *jit_code = NULL;
 static size_t jit_code_used = 0;
@@ -307,6 +382,472 @@ static bool jit_runtime_disabled(void)
     return jit_env_disable;
 }
 
+/* Clear the RV64 JIT data TLB and its page-table dependency refcounts. */
+static void jit_data_tlb_flush(void)
+{
+    /*
+     * SFENCE.VMA and page-table writes do not need selective invalidation for
+     * this first stage.  The table is small, and a full clear avoids mistakes
+     * around ASID, virtual-address operands, and superpage dependency ranges.
+     */
+    memset(jit_data_tlb, 0, sizeof(jit_data_tlb));
+    memset(jit_data_tlb_pt_page_refs, 0, sizeof(jit_data_tlb_pt_page_refs));
+    JIT_STAT_INC(data_tlb_flushes);
+}
+
+/* Check that a complete physical byte range is ordinary guest PMEM. */
+static bool jit_data_pmem_range(paddr_t addr, uint32_t len)
+{
+    if (len == 0)
+    {
+        return false;
+    }
+
+    const paddr_t end = addr + (paddr_t)len - 1u;
+    return end >= addr && likely(in_pmem(addr) && in_pmem(end));
+}
+
+/* Convert a PMEM page base into the dependency-ref array index. */
+static bool jit_data_pmem_page_index(paddr_t page, size_t *idx)
+{
+    const paddr_t base = (paddr_t)CONFIG_MBASE;
+
+    if (page < base || page >= base + (paddr_t)CONFIG_MSIZE)
+    {
+        return false;
+    }
+
+    *idx = (size_t)((page - base) >> PAGE_SHIFT);
+    return *idx < RV64_JIT_PMEM_PAGE_COUNT;
+}
+
+/* Record that one data-TLB entry depends on a physical page-table page. */
+static void jit_data_tlb_ref_page(paddr_t page)
+{
+    size_t idx = 0;
+
+    if (jit_data_pmem_page_index(page, &idx) &&
+        jit_data_tlb_pt_page_refs[idx] != UINT16_MAX)
+    {
+        jit_data_tlb_pt_page_refs[idx]++;
+    }
+}
+
+/* Drop one dependency ref for an overwritten data-TLB entry. */
+static void jit_data_tlb_unref_page(paddr_t page)
+{
+    size_t idx = 0;
+
+    if (jit_data_pmem_page_index(page, &idx) &&
+        jit_data_tlb_pt_page_refs[idx] > 0)
+    {
+        jit_data_tlb_pt_page_refs[idx]--;
+    }
+}
+
+/* Return whether any live data-TLB entry depends on this page-table page. */
+static bool jit_data_tlb_refs_page(paddr_t page)
+{
+    size_t idx = 0;
+    return jit_data_pmem_page_index(page, &idx) &&
+           jit_data_tlb_pt_page_refs[idx] != 0;
+}
+
+/* Remove page-table dependency refs owned by one direct-mapped TLB slot. */
+static void jit_data_tlb_unref_entry(rv64_jit_data_tlb_entry_t *entry)
+{
+    if (!entry->valid)
+    {
+        return;
+    }
+
+    for (uint32_t i = 0; i < entry->pt_page_count; i++)
+    {
+        jit_data_tlb_unref_page((paddr_t)entry->pt_pages[i]);
+    }
+}
+
+/* Return whether a PMEM write may have changed a page table used by the TLB. */
+static bool jit_write_may_touch_data_tlb_page_table(paddr_t addr, int len)
+{
+    /*
+     * The data TLB is tagged by satp and effective privilege state, but old
+     * entries can survive after the guest temporarily leaves an address space.
+     * Track dependencies physically, so editing an old root or leaf table page
+     * invalidates entries before the guest can switch back to that satp value.
+     */
+    if (len <= 0)
+    {
+        return false;
+    }
+
+    const paddr_t end = addr + (paddr_t)len - 1u;
+
+    if (end < addr)
+    {
+        return true;
+    }
+
+    for (paddr_t page = addr & ~(paddr_t)PAGE_MASK;
+         page <= (end & ~(paddr_t)PAGE_MASK);
+         page += PAGE_SIZE)
+    {
+        if (jit_data_tlb_refs_page(page))
+        {
+            return true;
+        }
+
+        if (page > (paddr_t)-1 - PAGE_SIZE)
+        {
+            break;
+        }
+    }
+
+    return false;
+}
+
+/* Return the privilege level that the architecture uses for this data access. */
+static word_t jit_data_effective_priv(int type)
+{
+    if (type != MEM_TYPE_IFETCH &&
+        cpu.prvi == RISCV64_PRIV_M &&
+        (cpu.csr.mstatus & RV64_JIT_MSTATUS_MPRV) != 0)
+    {
+        return (cpu.csr.mstatus & RV64_JIT_MSTATUS_MPP_MASK) >>
+               RV64_JIT_MSTATUS_MPP_SHIFT;
+    }
+
+    return cpu.prvi;
+}
+
+/* Compact the permission-relevant state into a TLB tag. */
+static uint32_t jit_data_tlb_state(int type)
+{
+    /*
+     * MPRV is folded into the effective privilege.  SUM and MXR stay explicit
+     * because they change whether S-mode may access U pages and whether reads
+     * may use execute-only PTEs.
+     */
+    uint32_t state = (uint32_t)jit_data_effective_priv(type);
+
+    if ((cpu.csr.mstatus & RV64_JIT_MSTATUS_SUM) != 0)
+    {
+        state |= 1u << 2;
+    }
+
+    if ((cpu.csr.mstatus & RV64_JIT_MSTATUS_MXR) != 0)
+    {
+        state |= 1u << 3;
+    }
+
+    return state;
+}
+
+/* Return the satp mode field used by RV64 address translation. */
+static word_t jit_data_satp_mode(word_t satp)
+{
+    return satp >> RV64_JIT_SATP_MODE_SHIFT;
+}
+
+/* Return whether an Sv39 virtual address is canonical. */
+static bool jit_data_sv39_canonical(vaddr_t vaddr)
+{
+    const uint64_t sign = ((uint64_t)vaddr >> 38) & 1u;
+    const uint64_t high = (uint64_t)vaddr >> 39;
+
+    return sign ? high == ((1ull << 25) - 1ull) : high == 0;
+}
+
+/* Return whether a data access stays within one 4 KiB translated page. */
+static bool jit_data_cross_page(vaddr_t addr, uint32_t len)
+{
+    const word_t off = (word_t)(addr & PAGE_MASK);
+    return len == 0 || off + (word_t)len > PAGE_SIZE;
+}
+
+/* Validate the Sv39 PTE bits that are illegal before leaf/non-leaf selection. */
+static bool jit_data_pte_valid(word_t pte)
+{
+    return (pte & RV64_JIT_PTE_V) != 0 &&
+           (pte & (RV64_JIT_PTE_R | RV64_JIT_PTE_W)) != RV64_JIT_PTE_W &&
+           (pte & RV64_JIT_PTE_RESERVED_63_54_MASK) == 0;
+}
+
+/* Return whether an Sv39 PTE is a leaf rather than the next-level pointer. */
+static bool jit_data_pte_leaf(word_t pte)
+{
+    return (pte & RV64_JIT_PTE_RWX) != 0;
+}
+
+/* Extract the physical page number encoded in an Sv39 PTE. */
+static word_t jit_data_pte_ppn(word_t pte)
+{
+    return (pte >> RV64_JIT_PTE_PPN_SHIFT) & RV64_JIT_PTE_PPN_MASK;
+}
+
+/* Check the low PPN fields that must be zero for legal Sv39 superpages. */
+static bool jit_data_superpage_aligned(word_t ppn, int level)
+{
+    if (level == 2)
+    {
+        return (ppn & 0x3ffffu) == 0;
+    }
+
+    if (level == 1)
+    {
+        return (ppn & 0x1ffu) == 0;
+    }
+
+    return true;
+}
+
+/* Return whether the leaf PTE permits the effective privilege to touch it. */
+static bool jit_data_pte_allows_priv(word_t pte, word_t priv)
+{
+    const bool user_page = (pte & RV64_JIT_PTE_U) != 0;
+
+    if (priv == RISCV64_PRIV_U)
+    {
+        return user_page;
+    }
+
+    if (priv == RISCV64_PRIV_S)
+    {
+        return !user_page || (cpu.csr.mstatus & RV64_JIT_MSTATUS_SUM) != 0;
+    }
+
+    return false;
+}
+
+/* Compute which data access kinds are legal for this leaf and CPU state. */
+static uint32_t jit_data_leaf_access(word_t pte, word_t priv)
+{
+    if (!jit_data_pte_allows_priv(pte, priv) ||
+        (pte & RV64_JIT_PTE_A) == 0)
+    {
+        return 0;
+    }
+
+    uint32_t access = 0;
+
+    if ((pte & RV64_JIT_PTE_R) != 0 ||
+        ((cpu.csr.mstatus & RV64_JIT_MSTATUS_MXR) != 0 &&
+         (pte & RV64_JIT_PTE_X) != 0))
+    {
+        access |= RV64_JIT_DATA_TLB_READ;
+    }
+
+    if ((pte & (RV64_JIT_PTE_W | RV64_JIT_PTE_D)) ==
+        (RV64_JIT_PTE_W | RV64_JIT_PTE_D))
+    {
+        access |= RV64_JIT_DATA_TLB_WRITE;
+    }
+
+    return access;
+}
+
+/* Combine a leaf PPN with lower VPN fields for 1 GiB/2 MiB Sv39 leaves. */
+static paddr_t jit_data_leaf_page_base(word_t ppn, const word_t vpn[3], int level)
+{
+    word_t pa_ppn = ppn;
+
+    if (level >= 1)
+    {
+        pa_ppn = (pa_ppn & ~0x1ffu) | vpn[0];
+    }
+
+    if (level >= 2)
+    {
+        pa_ppn = (pa_ppn & ~0x3ffffu) | (vpn[1] << 9) | vpn[0];
+    }
+
+    return (paddr_t)(pa_ppn << PAGE_SHIFT);
+}
+
+/* Map an access type to the access bit stored in a JIT data-TLB entry. */
+static uint32_t jit_data_tlb_need(int type)
+{
+    if (type == MEM_TYPE_READ)
+    {
+        return RV64_JIT_DATA_TLB_READ;
+    }
+
+    if (type == MEM_TYPE_WRITE)
+    {
+        return RV64_JIT_DATA_TLB_WRITE;
+    }
+
+    return 0;
+}
+
+/* Hash a 4 KiB virtual page and translation state into the direct-mapped TLB. */
+static uint32_t jit_data_tlb_index(uint64_t vpn, word_t satp, uint32_t state)
+{
+    /*
+     * The low VPN bits give locality, while shifted VPN/satp bits reduce simple
+     * collisions between neighbouring pages and reused address spaces.
+     */
+    return (uint32_t)((vpn ^ (vpn >> 9) ^ satp ^ (satp >> 12) ^ state) &
+                      (RV64_JIT_DATA_TLB_SIZE - 1u));
+}
+
+/* Fill or hit the RV64/Sv39 data TLB for ordinary translated PMEM accesses. */
+static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *paddr)
+{
+    const word_t satp = cpu.csr.satp;
+    const word_t mode = jit_data_satp_mode(satp);
+    const word_t priv = jit_data_effective_priv(type);
+
+    if (mode == 0)
+    {
+        const paddr_t direct = (paddr_t)addr;
+
+        if (!jit_data_pmem_range(direct, len))
+        {
+            return false;
+        }
+        *paddr = direct;
+        return true;
+    }
+
+    if (mode != RV64_JIT_SATP_MODE_SV39)
+    {
+        return false;
+    }
+
+    if (priv == RISCV64_PRIV_M)
+    {
+        const paddr_t direct = (paddr_t)addr;
+
+        if (!jit_data_pmem_range(direct, len))
+        {
+            return false;
+        }
+        *paddr = direct;
+        return true;
+    }
+
+    if (!jit_data_sv39_canonical(addr) || jit_data_cross_page(addr, len))
+    {
+        return false;
+    }
+
+    const uint32_t need = jit_data_tlb_need(type);
+
+    if (need == 0)
+    {
+        return false;
+    }
+
+    const uint64_t vpn_tag = (uint64_t)addr >> PAGE_SHIFT;
+    const uint32_t state = jit_data_tlb_state(type);
+    const uint32_t idx = jit_data_tlb_index(vpn_tag, satp, state);
+    rv64_jit_data_tlb_entry_t *entry = &jit_data_tlb[idx];
+
+    if (likely(entry->valid &&
+               entry->satp == satp &&
+               entry->vpn == vpn_tag &&
+               entry->state == state &&
+               (entry->access & need) != 0))
+    {
+        const paddr_t translated =
+            (paddr_t)entry->pg_paddr | (paddr_t)(addr & PAGE_MASK);
+
+        if (!jit_data_pmem_range(translated, len))
+        {
+            return false;
+        }
+
+        JIT_STAT_INC(data_tlb_hits);
+        *paddr = translated;
+        return true;
+    }
+
+    JIT_STAT_INC(data_tlb_misses);
+
+    const word_t vpn[3] = {
+        ((word_t)addr >> 12) & 0x1ffu,
+        ((word_t)addr >> 21) & 0x1ffu,
+        ((word_t)addr >> 30) & 0x1ffu,
+    };
+    paddr_t pt_base = (paddr_t)((satp & RV64_JIT_SATP_PPN_MASK) << PAGE_SHIFT);
+    paddr_t pt_pages[3] = {0};
+    uint8_t pt_page_count = 0;
+
+    for (int level = 2; level >= 0; --level)
+    {
+        const paddr_t pte_addr = pt_base + (paddr_t)(vpn[level] * sizeof(uint64_t));
+
+        if (!jit_data_pmem_range(pte_addr, sizeof(uint64_t)))
+        {
+            return false;
+        }
+
+        pt_pages[pt_page_count++] = pt_base;
+        const word_t pte = (word_t)paddr_read(pte_addr, 8);
+
+        if (!jit_data_pte_valid(pte))
+        {
+            return false;
+        }
+
+        const word_t ppn = jit_data_pte_ppn(pte);
+
+        if (jit_data_pte_leaf(pte))
+        {
+            if (!jit_data_superpage_aligned(ppn, level))
+            {
+                return false;
+            }
+
+            const uint32_t access = jit_data_leaf_access(pte, priv);
+
+            if ((access & need) == 0)
+            {
+                return false;
+            }
+
+            const paddr_t pg_paddr = jit_data_leaf_page_base(ppn, vpn, level);
+            const paddr_t translated = pg_paddr | (paddr_t)(addr & PAGE_MASK);
+
+            if (!jit_data_pmem_range(translated, len))
+            {
+                return false;
+            }
+
+            jit_data_tlb_unref_entry(entry);
+            *entry = (rv64_jit_data_tlb_entry_t){
+                .satp = satp,
+                .vpn = vpn_tag,
+                .state = state,
+                .access = access,
+                .pg_paddr = pg_paddr,
+                .pt_page_count = pt_page_count,
+                .valid = true,
+            };
+
+            for (uint32_t i = 0; i < pt_page_count; i++)
+            {
+                entry->pt_pages[i] = pt_pages[i];
+                jit_data_tlb_ref_page(pt_pages[i]);
+            }
+
+            JIT_STAT_INC(data_tlb_fills);
+            *paddr = translated;
+            return true;
+        }
+
+        if (level == 0 || (pte & RV64_JIT_PTE_NON_LEAF_RESERVED) != 0)
+        {
+            return false;
+        }
+
+        pt_base = (paddr_t)(ppn << PAGE_SHIFT);
+    }
+
+    return false;
+}
+
 /* Forward declaration: store helpers need source-chunk state defined below. */
 static bool jit_write_may_touch_source_chunk(paddr_t addr, int len);
 
@@ -314,10 +855,19 @@ static bool jit_write_may_touch_source_chunk(paddr_t addr, int len);
 static uint64_t jit_load_vaddr_raw(vaddr_t addr, uint32_t len)
 {
     /*
-     * The helper-backed Sv39 path deliberately does not duplicate the page-table
-     * walk.  vaddr_read() reaches isa_mmu_check()/isa_mmu_translate(), which own
-     * MPRV, SUM, MXR, U-page, A/D-bit, canonical-address and superpage checks.
+     * The JIT data TLB only accepts cases where a strict Sv39 walk proves that
+     * the final physical byte range is ordinary PMEM.  MMIO, faulting,
+     * cross-page, and otherwise ambiguous accesses fall back to vaddr_read(),
+     * which remains the architectural reference for visible failure behaviour.
      */
+    paddr_t paddr = 0;
+
+    if (jit_translate_pmem(addr, len, MEM_TYPE_READ, &paddr))
+    {
+        JIT_STAT_INC(data_tlb_direct_loads);
+        return (uint64_t)host_read(guest_to_host(paddr), (int)len);
+    }
+
     return (uint64_t)vaddr_read(addr, (int)len);
 }
 
@@ -367,10 +917,20 @@ static uint64_t jit_load_u32(vaddr_t addr)
 static void jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data)
 {
     /*
-     * vaddr_write() is intentionally used instead of host_write().  It routes
-     * translated writes through paddr_write(), so device dispatch and exact JIT
-     * source invalidation remain identical to the interpreter.
+     * A data-TLB hit skips the repeated page walk but still commits through
+     * paddr_write().  That keeps device boundaries, source invalidation, and
+     * page-table dependency flushing under the same write-side hook used by the
+     * interpreter.  Anything not proven ordinary PMEM uses vaddr_write().
      */
+    paddr_t paddr = 0;
+
+    if (jit_translate_pmem(addr, len, MEM_TYPE_WRITE, &paddr))
+    {
+        JIT_STAT_INC(data_tlb_direct_stores);
+        paddr_write(paddr, (int)len, (word_t)data);
+        return;
+    }
+
     vaddr_write(addr, (int)len, (word_t)data);
 }
 
@@ -903,6 +1463,24 @@ static bool emit_mov_rdx_rax(rv64_jit_writer_t *w)
     return emit_u8(w, 0x48) && emit_u8(w, 0x89) && emit_u8(w, 0xc2);
 }
 
+/* Emit `mov rdx, rcx`, preserving a store value as a helper argument. */
+static bool emit_mov_rdx_rcx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x89) && emit_u8(w, 0xca);
+}
+
+/* Emit `mov r8, rdx`, copying a VPN or PMEM offset into an index register. */
+static bool emit_mov_r8_rdx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x49) && emit_u8(w, 0x89) && emit_u8(w, 0xd0);
+}
+
+/* Emit `mov r8d, edx`, used before indexing small refcount tables. */
+static bool emit_mov_r8d_edx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xd0);
+}
+
 /* Emit `mov rdi, rdx`, preparing the first helper argument from a PMEM offset. */
 static bool emit_mov_rdi_rdx(rv64_jit_writer_t *w)
 {
@@ -939,6 +1517,12 @@ static bool emit_sub_rdx_rcx(rv64_jit_writer_t *w)
     return emit_u8(w, 0x48) && emit_u8(w, 0x29) && emit_u8(w, 0xca);
 }
 
+/* Emit `sub rdx, rax`, converting translated paddr to a PMEM byte offset. */
+static bool emit_sub_rdx_rax(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x29) && emit_u8(w, 0xc2);
+}
+
 /* Emit `add rdi, rcx`, converting a PMEM offset back to a physical address. */
 static bool emit_add_rdi_rcx(rv64_jit_writer_t *w)
 {
@@ -949,6 +1533,113 @@ static bool emit_add_rdi_rcx(rv64_jit_writer_t *w)
 static bool emit_cmp_rdx_rcx(rv64_jit_writer_t *w)
 {
     return emit_u8(w, 0x48) && emit_u8(w, 0x39) && emit_u8(w, 0xca);
+}
+
+/* Emit `or rdx, rax`, combining a page base with a low page offset. */
+static bool emit_or_rdx_rax(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x09) && emit_u8(w, 0xc2);
+}
+
+/* Shift RDX right by an immediate count. */
+static bool emit_shr_rdx_imm(rv64_jit_writer_t *w, uint8_t value)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0xc1) && emit_u8(w, 0xea) && emit_u8(w, value);
+}
+
+/* Shift R8 left by an immediate count; DTLB entries are power-of-two sized. */
+static bool emit_shl_r8_imm(rv64_jit_writer_t *w, uint8_t value)
+{
+    return emit_u8(w, 0x49) && emit_u8(w, 0xc1) && emit_u8(w, 0xe0) && emit_u8(w, value);
+}
+
+/* Shift R8 right by an immediate count while preserving high VPN tag bits. */
+static bool emit_shr_r8_imm(rv64_jit_writer_t *w, uint8_t value)
+{
+    return emit_u8(w, 0x49) && emit_u8(w, 0xc1) && emit_u8(w, 0xe8) && emit_u8(w, value);
+}
+
+/* Shift R8D right by an immediate count for PMEM refcount table indexes. */
+static bool emit_shr_r8d_imm(rv64_jit_writer_t *w, uint8_t value)
+{
+    return emit_u8(w, 0x41) && emit_u8(w, 0xc1) && emit_u8(w, 0xe8) && emit_u8(w, value);
+}
+
+/* Mask R8D with an immediate, usually to keep a direct-mapped table index. */
+static bool emit_and_r8d_imm(rv64_jit_writer_t *w, uint32_t value)
+{
+    return emit_u8(w, 0x41) && emit_u8(w, 0x81) && emit_u8(w, 0xe0) && emit_u32(w, value);
+}
+
+/* Compare R8D with an immediate, used by store source-chunk guards. */
+static bool emit_cmp_r8d_imm(rv64_jit_writer_t *w, uint32_t value)
+{
+    return emit_u8(w, 0x41) && emit_u8(w, 0x81) && emit_u8(w, 0xf8) && emit_u32(w, value);
+}
+
+/* Add RDX to R8, producing a pointer into the direct-mapped DTLB. */
+static bool emit_add_r8_rdx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x49) && emit_u8(w, 0x01) && emit_u8(w, 0xd0);
+}
+
+/* XOR RDX into R8, matching the helper TLB hash mix. */
+static bool emit_xor_r8_rdx(rv64_jit_writer_t *w)
+{
+    /* `49 31 d0` is `xor r8, rdx`; R8 holds the evolving TLB index. */
+    return emit_u8(w, 0x49) && emit_u8(w, 0x31) && emit_u8(w, 0xd0);
+}
+
+/* Compare a byte field in the R8-pointed DTLB entry with an immediate. */
+static bool emit_cmp_r8b_field_imm8(rv64_jit_writer_t *w, uint32_t offset,
+                                    uint8_t value)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 DTLB byte field offset is too large");
+    return emit_u8(w, 0x41) && emit_u8(w, 0x80) &&
+           emit_u8(w, 0x78) && emit_u8(w, (uint8_t)offset) && emit_u8(w, value);
+}
+
+/* Compare a qword field in the R8-pointed DTLB entry with RDX. */
+static bool emit_cmp_r8q_field_rdx(rv64_jit_writer_t *w, uint32_t offset)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 DTLB qword field offset is too large");
+    return emit_u8(w, 0x49) && emit_u8(w, 0x39) &&
+           emit_u8(w, 0x50) && emit_u8(w, (uint8_t)offset);
+}
+
+/* Compare a dword field in the R8-pointed DTLB entry with an immediate. */
+static bool emit_cmp_r8d_field_imm32(rv64_jit_writer_t *w, uint32_t offset,
+                                     uint32_t value)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 DTLB dword field offset is too large");
+    return emit_u8(w, 0x41) && emit_u8(w, 0x81) &&
+           emit_u8(w, 0x78) && emit_u8(w, (uint8_t)offset) && emit_u32(w, value);
+}
+
+/* Test permission bits in a dword field in the R8-pointed DTLB entry. */
+static bool emit_test_r8d_field_imm32(rv64_jit_writer_t *w, uint32_t offset,
+                                      uint32_t value)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 DTLB dword field offset is too large");
+    return emit_u8(w, 0x41) && emit_u8(w, 0xf7) &&
+           emit_u8(w, 0x40) && emit_u8(w, (uint8_t)offset) && emit_u32(w, value);
+}
+
+/* Load a qword field from the R8-pointed DTLB entry into RDX. */
+static bool emit_mov_rdx_r8q_field(rv64_jit_writer_t *w, uint32_t offset)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 DTLB qword field offset is too large");
+    return emit_u8(w, 0x49) && emit_u8(w, 0x8b) &&
+           emit_u8(w, 0x50) && emit_u8(w, (uint8_t)offset);
+}
+
+/* Compare a refcount word in the RAX-based table indexed by R8D with zero. */
+static bool emit_cmp_ref_word_zero_rax_r8(rv64_jit_writer_t *w)
+{
+    /* `66 42 83 3c 40 00` is `cmp word ptr [rax + r8 * 2], 0`. */
+    return emit_u8(w, 0x66) && emit_u8(w, 0x42) &&
+           emit_u8(w, 0x83) && emit_u8(w, 0x3c) &&
+           emit_u8(w, 0x40) && emit_u8(w, 0x00);
 }
 
 /* Emit `mov esi, imm32`, preparing the second helper argument. */
@@ -1534,6 +2225,38 @@ static bool emit_call_abs(rv64_jit_writer_t *w, uintptr_t target)
            emit_u8(w, 0xff) && emit_u8(w, 0xd0);
 }
 
+/* Emit an optional native-side increment for one 64-bit JIT stat counter. */
+static bool emit_inc_jit_stat_counter(rv64_jit_writer_t *w, uint64_t *counter)
+{
+#if RV64_JIT_STATS
+    /*
+     * `48 ff 00` is `inc qword ptr [rax]`.  The helper deliberately clobbers
+     * RAX; callers place it after address proof and before instructions that
+     * overwrite RAX or no longer need it.
+     */
+    return emit_movabs_rax(w, (uint64_t)(uintptr_t)counter) &&
+           emit_u8(w, 0x48) && emit_u8(w, 0xff) && emit_u8(w, 0x00);
+#else
+    (void)w;
+    (void)counter;
+    return true;
+#endif
+}
+
+/* Count one runtime load that completed through the inline translated-PMEM path. */
+static bool emit_inline_paged_load_hit_stats(rv64_jit_writer_t *w)
+{
+    return emit_inc_jit_stat_counter(w, &jit_stats.data_tlb_hits) &&
+           emit_inc_jit_stat_counter(w, &jit_stats.inline_paged_load_hits);
+}
+
+/* Count one runtime store that completed through the inline translated-PMEM path. */
+static bool emit_inline_paged_store_hit_stats(rv64_jit_writer_t *w)
+{
+    return emit_inc_jit_stat_counter(w, &jit_stats.data_tlb_hits) &&
+           emit_inc_jit_stat_counter(w, &jit_stats.inline_paged_store_hits);
+}
+
 /* Patch a rel32 displacement emitted by a previous branch helper. */
 static void patch_rel32(uint8_t *disp, const uint8_t *target)
 {
@@ -1592,17 +2315,206 @@ static bool emit_direct_pmem_load_rax(rv64_jit_writer_t *w, uint32_t funct3)
     }
 }
 
+/* Emit one conservative fallback branch for an inline RV64 data-TLB guard. */
+static bool emit_tlb_guard_slow_jcc(rv64_jit_writer_t *w,
+                                    rv64_jit_tlb_guard_patch_t *patch,
+                                    uint8_t jcc_opcode)
+{
+    Assert(patch->count < sizeof(patch->slow_disps) / sizeof(patch->slow_disps[0]),
+           "jit: too many RV64 DTLB slow-path branches");
+    return emit_jcc_rel32_placeholder(w, jcc_opcode,
+                                      &patch->slow_disps[patch->count++]);
+}
+
+/* Patch every fallback branch emitted by an inline RV64 data-TLB guard. */
+static void patch_tlb_guard(const rv64_jit_tlb_guard_patch_t *patch,
+                            const uint8_t *slow_path)
+{
+    for (uint32_t i = 0; i < patch->count; i++)
+    {
+        patch_rel32(patch->slow_disps[i], slow_path);
+    }
+}
+
+/* Emit the shared inline DTLB-hit proof for translated PMEM data accesses. */
+static bool emit_paged_tlb_common_offset_rdx(rv64_jit_writer_t *w, uint32_t len,
+                                            uint32_t need_access,
+                                            rv64_jit_tlb_guard_patch_t *patch)
+{
+    Assert(len >= 1 && len <= 8, "jit: unsupported RV64 DTLB width %u", len);
+
+    const word_t satp = cpu.csr.satp;
+    const uint32_t state = jit_data_tlb_state(MEM_TYPE_READ);
+    const uint32_t valid_off = (uint32_t)offsetof(rv64_jit_data_tlb_entry_t, valid);
+    const uint32_t satp_off = (uint32_t)offsetof(rv64_jit_data_tlb_entry_t, satp);
+    const uint32_t vpn_off = (uint32_t)offsetof(rv64_jit_data_tlb_entry_t, vpn);
+    const uint32_t state_off = (uint32_t)offsetof(rv64_jit_data_tlb_entry_t, state);
+    const uint32_t access_off = (uint32_t)offsetof(rv64_jit_data_tlb_entry_t, access);
+    const uint32_t pg_paddr_off =
+        (uint32_t)offsetof(rv64_jit_data_tlb_entry_t, pg_paddr);
+    const uint8_t entry_shift = 6; /* sizeof(rv64_jit_data_tlb_entry_t) == 64. */
+
+    /*
+     * The generated proof mirrors jit_translate_pmem()'s TLB-hit half:
+     *   vpn = vaddr >> 12
+     *   entry = &jit_data_tlb[(vpn ^ vpn>>9 ^ satp ^ satp>>12 ^ state) & mask]
+     *   require valid, exact satp, exact VPN, exact permission state and access
+     *   require the byte range to stay inside the translated 4 KiB page
+     *
+     * RCX is reserved by the caller for the original guest address or store
+     * value, so the guard uses RAX/RDX/R8 only.  Any failed guard branches to
+     * the old helper path, which still owns faults, MMIO, and fresh TLB fills.
+     *
+     * x86 condition opcodes below are the near-Jcc low bytes: 0x84 is JE/JZ,
+     * 0x85 is JNE/JNZ, and 0x87 is JA for unsigned page-offset overflow.
+     */
+    if (!emit_mov_rdx_rax(w) ||
+        !emit_shr_rdx_imm(w, PAGE_SHIFT) ||
+        !emit_mov_r8_rdx(w) ||
+        !emit_shr_r8_imm(w, 9) ||
+        !emit_xor_r8_rdx(w) ||
+        !emit_movabs_rdx(w, satp ^ (satp >> 12) ^ state) ||
+        !emit_xor_r8_rdx(w) ||
+        !emit_and_r8d_imm(w, RV64_JIT_DATA_TLB_SIZE - 1u) ||
+        !emit_shl_r8_imm(w, entry_shift) ||
+        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)jit_data_tlb) ||
+        !emit_add_r8_rdx(w) ||
+        !emit_cmp_r8b_field_imm8(w, valid_off, 0) ||
+        !emit_tlb_guard_slow_jcc(w, patch, 0x84) ||
+        !emit_movabs_rdx(w, satp) ||
+        !emit_cmp_r8q_field_rdx(w, satp_off) ||
+        !emit_tlb_guard_slow_jcc(w, patch, 0x85) ||
+        !emit_mov_rdx_rax(w) ||
+        !emit_shr_rdx_imm(w, PAGE_SHIFT) ||
+        !emit_cmp_r8q_field_rdx(w, vpn_off) ||
+        !emit_tlb_guard_slow_jcc(w, patch, 0x85) ||
+        !emit_cmp_r8d_field_imm32(w, state_off, state) ||
+        !emit_tlb_guard_slow_jcc(w, patch, 0x85) ||
+        !emit_test_r8d_field_imm32(w, access_off, need_access) ||
+        !emit_tlb_guard_slow_jcc(w, patch, 0x84) ||
+        !emit_and_rax_imm32(w, PAGE_MASK) ||
+        !emit_cmp_rax_imm32(w, PAGE_SIZE - len) ||
+        !emit_tlb_guard_slow_jcc(w, patch, 0x87) ||
+        !emit_mov_rdx_r8q_field(w, pg_paddr_off) ||
+        !emit_or_rdx_rax(w) ||
+        !emit_movabs_rax(w, (uint64_t)CONFIG_MBASE) ||
+        !emit_sub_rdx_rax(w))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+/* Emit an inline translated-PMEM load using a previously filled RV64 data TLB. */
+static bool emit_paged_tlb_load_rax(rv64_jit_writer_t *w, uint32_t funct3,
+                                    uint32_t len,
+                                    rv64_jit_tlb_guard_patch_t *patch)
+{
+    /*
+     * RCX must contain the original guest virtual address before entry.  The
+     * common guard may clobber RAX while computing the page offset; on success
+     * RDX is the byte offset from CONFIG_MBASE for emit_direct_pmem_load_rax().
+     */
+    return emit_paged_tlb_common_offset_rdx(w, len, RV64_JIT_DATA_TLB_READ, patch) &&
+           emit_inline_paged_load_hit_stats(w) &&
+           emit_direct_pmem_load_rax(w, funct3);
+}
+
+/* Emit an inline PMEM store from RCX using the selected RV64 store width. */
+static bool emit_direct_pmem_store_from_rcx(rv64_jit_writer_t *w, uint32_t len)
+{
+    /*
+     * The low part of RCX naturally supplies SB/SH/SW truncation.  SD uses the
+     * full 64-bit register.  The caller has already proved that RDX is an
+     * in-PMEM byte offset and that the write is not to tracked source or page
+     * table bytes.
+     */
+    switch (len)
+    {
+    case 1: /* mov byte ptr [r10 + rdx], cl. */
+        return emit_u8(w, 0x41) && emit_u8(w, 0x88) &&
+               emit_u8(w, 0x0c) && emit_u8(w, 0x12);
+    case 2: /* mov word ptr [r10 + rdx], cx. */
+        return emit_u8(w, 0x66) && emit_u8(w, 0x41) &&
+               emit_u8(w, 0x89) && emit_u8(w, 0x0c) && emit_u8(w, 0x12);
+    case 4: /* mov dword ptr [r10 + rdx], ecx. */
+        return emit_u8(w, 0x41) && emit_u8(w, 0x89) &&
+               emit_u8(w, 0x0c) && emit_u8(w, 0x12);
+    case 8: /* mov qword ptr [r10 + rdx], rcx. */
+        return emit_u8(w, 0x49) && emit_u8(w, 0x89) &&
+               emit_u8(w, 0x0c) && emit_u8(w, 0x12);
+    default:
+        return false;
+    }
+}
+
+/* Emit guards that keep inline stores away from compiled source chunks. */
+static bool emit_store_source_chunk_guard(rv64_jit_writer_t *w, uint32_t len,
+                                          uint8_t **cross_chunk_disp,
+                                          uint8_t **source_chunk_disp)
+{
+    Assert(len >= 1 && len <= 8, "jit: unsupported RV64 store width %u", len);
+
+    /*
+     * Direct inline stores only continue when they stay within one source-ref
+     * chunk and that chunk currently has no compiled block references.  The
+     * helper path performs exact invalidation and exits for every ambiguous
+     * store, preserving self-modifying-code ordering.
+     */
+    return emit_mov_r8d_edx(w) &&
+           emit_and_r8d_imm(w, RV64_JIT_SOURCE_CHUNK_MASK) &&
+           emit_cmp_r8d_imm(w, RV64_JIT_SOURCE_CHUNK_SIZE - len) &&
+           emit_jcc_rel32_placeholder(w, 0x87, cross_chunk_disp) &&
+           emit_mov_r8d_edx(w) &&
+           emit_shr_r8d_imm(w, RV64_JIT_SOURCE_CHUNK_SHIFT) &&
+           emit_movabs_rax(w, (uint64_t)(uintptr_t)jit_source_chunk_refs) &&
+           emit_cmp_ref_word_zero_rax_r8(w) &&
+           emit_jcc_rel32_placeholder(w, 0x85, source_chunk_disp);
+}
+
+/* Emit a guard that keeps inline stores away from cached page-table pages. */
+static bool emit_store_page_table_guard(rv64_jit_writer_t *w,
+                                        uint8_t **page_table_disp)
+{
+    /*
+     * RDX is the PMEM byte offset.  A non-zero page-table refcount means a
+     * direct write could stale a data-TLB entry, so the helper must perform the
+     * store, flush the DTLB through isa_jit_invalidate_paddr(), and exit.
+     */
+    return emit_mov_r8d_edx(w) &&
+           emit_shr_r8d_imm(w, PAGE_SHIFT) &&
+           emit_movabs_rax(w, (uint64_t)(uintptr_t)jit_data_tlb_pt_page_refs) &&
+           emit_cmp_ref_word_zero_rax_r8(w) &&
+           emit_jcc_rel32_placeholder(w, 0x85, page_table_disp);
+}
+
+/* Emit an inline translated-PMEM store address proof through the RV64 data TLB. */
+static bool emit_paged_tlb_store_offset_rdx(rv64_jit_writer_t *w, uint32_t len,
+                                            rv64_jit_tlb_guard_patch_t *patch)
+{
+    /*
+     * RDI must hold the original guest virtual address and RCX the store value.
+     * The common guard may clobber RAX while proving the page offset.  On
+     * success RDX is the byte offset from CONFIG_MBASE for the direct store.
+     */
+    return emit_paged_tlb_common_offset_rdx(w, len, RV64_JIT_DATA_TLB_WRITE, patch);
+}
+
 /* Emit one helper-backed RV64 load for non-Bare address translation modes. */
 static bool emit_paged_load_instr(rv64_jit_writer_t *w,
                                   rv64_jit_reg_cache_t *regs,
                                   uint32_t rd, uint32_t rs1,
+                                  uint32_t funct3,
                                   int32_t imm, uint32_t len,
                                   uintptr_t helper, vaddr_t pc,
                                   uint32_t completed_count,
                                   bool loop_count_needed)
 {
     uint8_t *align_slow_disp = NULL;
+    uint8_t *fast_done_disp = NULL;
     uint8_t *done_disp = NULL;
+    rv64_jit_tlb_guard_patch_t tlb_guard = {0};
     rv64_jit_reg_cache_t side_exit_regs;
 
     if (!jit_reg_read_rax(w, regs, rs1) ||
@@ -1622,34 +2534,68 @@ static bool emit_paged_load_instr(rv64_jit_writer_t *w,
     }
 
     /*
-     * RAX holds the guest virtual address.  Move it to RDI before writing
-     * cpu.pc, because emit_store_pc_imm() materialises the PC in RAX.  The
-     * helper returns the correctly extended load value in RAX.
+     * The inline path consumes a TLB hit without leaving generated code.  RCX
+     * preserves the original guest address until every fallback branch has
+     * reached the helper path; the helper remains the only place that fills the
+     * TLB or reports faults/MMIO.
      */
-    if (!jit_reg_flush_all_dirty(w, regs) ||
+    if (!emit_mov_rcx_rax(w) ||
+        !emit_paged_tlb_load_rax(w, funct3, len, &tlb_guard))
+    {
+        return false;
+    }
+
+    if (!emit_jmp_rel32_placeholder(w, &fast_done_disp))
+    {
+        return false;
+    }
+
+    const uint8_t *slow_path = w->cur;
+    patch_tlb_guard(&tlb_guard, slow_path);
+
+    if (!emit_mov_rax_rcx(w) ||
+        !jit_reg_emit_flush_all_dirty(w, regs) ||
         !emit_mov_rdi_rax(w) ||
         !emit_store_pc_imm(w, pc) ||
         !emit_call_abs(w, helper) ||
         !emit_load_cpu_base(w) ||
-        !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
-        !jit_reg_write_rax(w, regs, rd) ||
-        !emit_jmp_rel32_placeholder(w, &done_disp))
+        !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)))
+    {
+        return false;
+    }
+
+    patch_rel32(fast_done_disp, w->cur);
+
+    if (!jit_reg_write_rax(w, regs, rd))
     {
         return false;
     }
 
     if (align_slow_disp != NULL)
     {
+        /*
+         * The alignment side exit is only valid before the load changes RD.
+         * Fast and helper-backed success must skip it; otherwise an instruction
+         * such as `ld a4, imm(a4)` would re-enter the interpreter with the
+         * loaded value already in the base register.
+         */
+        if (!emit_jmp_rel32_placeholder(w, &done_disp))
+        {
+            return false;
+        }
+
         patch_rel32(align_slow_disp, w->cur);
         if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count, loop_count_needed))
         {
             return false;
         }
+
+        patch_rel32(done_disp, w->cur);
     }
 
-    patch_rel32(done_disp, w->cur);
     JIT_STAT_INC(native_loads);
     JIT_STAT_INC(native_paged_loads);
+    JIT_STAT_INC(inline_paged_loads);
     return true;
 }
 
@@ -1710,7 +2656,7 @@ static bool emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
      */
     if ((cpu.csr.satp >> 60) != 0)
     {
-        return emit_paged_load_instr(w, regs, rd, rs1, imm, len, helper, pc,
+        return emit_paged_load_instr(w, regs, rd, rs1, funct3, imm, len, helper, pc,
                                      completed_count, loop_count_needed);
     }
 
@@ -1774,9 +2720,16 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
                                    bool loop_count_needed)
 {
     uint8_t *align_slow_disp = NULL;
+    uint8_t *cross_chunk_disp = NULL;
+    uint8_t *source_chunk_disp = NULL;
+    uint8_t *page_table_disp = NULL;
+    uint8_t *fast_done_disp = NULL;
+    uint8_t *done_disp = NULL;
+    rv64_jit_tlb_guard_patch_t tlb_guard = {0};
     rv64_jit_reg_cache_t side_exit_regs;
 
-    if (!jit_reg_read_rax(w, regs, rs1) ||
+    if (!jit_reg_flush_all_dirty(w, regs) ||
+        !jit_reg_read_rax(w, regs, rs1) ||
         !emit_add_rax_imm32(w, imm))
     {
         return false;
@@ -1793,14 +2746,32 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
     }
 
     /*
-     * Paged stores are conservative for now: call vaddr_write(), then leave the
-     * native block at next_pc.  A translated store may change source bytes or
-     * page tables, so the dispatcher must revalidate the next block before more
-     * native code runs.
+     * A DTLB-hit store can commit inline only when the final physical bytes are
+     * ordinary PMEM and are not tracked as compiled source or page-table pages.
+     * Every miss or sensitive write uses the old helper-and-exit path, so stale
+     * translations and self-modifying code are still observed before the next
+     * native block lookup.
      */
-    if (!jit_reg_flush_all_dirty(w, regs) ||
-        !emit_mov_rdi_rax(w) ||
-        !jit_reg_read_rdx(w, regs, rs2) ||
+    if (!emit_mov_rdi_rax(w) ||
+        !jit_reg_read_rcx(w, regs, rs2) ||
+        !emit_paged_tlb_store_offset_rdx(w, len, &tlb_guard) ||
+        !emit_store_source_chunk_guard(w, len, &cross_chunk_disp,
+                                       &source_chunk_disp) ||
+        !emit_store_page_table_guard(w, &page_table_disp) ||
+        !emit_inline_paged_store_hit_stats(w) ||
+        !emit_direct_pmem_store_from_rcx(w, len) ||
+        !emit_jmp_rel32_placeholder(w, &fast_done_disp))
+    {
+        return false;
+    }
+
+    const uint8_t *slow_path = w->cur;
+    patch_tlb_guard(&tlb_guard, slow_path);
+    patch_rel32(cross_chunk_disp, slow_path);
+    patch_rel32(source_chunk_disp, slow_path);
+    patch_rel32(page_table_disp, slow_path);
+
+    if (!emit_mov_rdx_rcx(w) ||
         !emit_mov_esi_imm32(w, len) ||
         !emit_store_pc_imm(w, pc) ||
         !emit_call_abs(w, (uintptr_t)jit_store_vaddr) ||
@@ -1813,17 +2784,32 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
         return false;
     }
 
+    patch_rel32(fast_done_disp, w->cur);
+
     if (align_slow_disp != NULL)
     {
+        /*
+         * Only the pre-store alignment guard may enter this side exit.  A
+         * successful inline store continues in native code, while a helper store
+         * has already returned to the dispatcher after updating cpu.pc.
+         */
+        if (!emit_jmp_rel32_placeholder(w, &done_disp))
+        {
+            return false;
+        }
+
         patch_rel32(align_slow_disp, w->cur);
         if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count, loop_count_needed))
         {
             return false;
         }
+
+        patch_rel32(done_disp, w->cur);
     }
 
     JIT_STAT_INC(native_stores);
     JIT_STAT_INC(native_paged_stores);
+    JIT_STAT_INC(inline_paged_stores);
     return true;
 }
 
@@ -2429,7 +3415,10 @@ static bool jit_translate_ifetch(vaddr_t pc, paddr_t *paddr)
 /* Check whether a cache slot still describes the current PC and source bytes. */
 static bool jit_block_matches(const rv64_jit_block_t *block, vaddr_t pc)
 {
-    if (!block->valid || block->pc != pc || block->satp != cpu.csr.satp)
+    if (!block->valid ||
+        block->pc != pc ||
+        block->satp != cpu.csr.satp ||
+        block->data_state != jit_data_tlb_state(MEM_TYPE_READ))
     {
         return false;
     }
@@ -2469,6 +3458,7 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, bool translated)
         .translated = translated,
         .pc = pc,
         .satp = cpu.csr.satp,
+        .data_state = jit_data_tlb_state(MEM_TYPE_READ),
         .paddr_start = paddr,
         .source_len = RV64_INSN_SIZE,
         .insn_count = 0,
@@ -2719,6 +3709,7 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         .translated = first_translated,
         .pc = pc,
         .satp = cpu.csr.satp,
+        .data_state = jit_data_tlb_state(MEM_TYPE_READ),
         .paddr_start = first_paddr,
         .source_len = source_len,
         .insn_count = count,
@@ -2748,6 +3739,13 @@ void isa_jit_flush_all(void)
     {
         jit_arena_reset();
     }
+    jit_data_tlb_flush();
+}
+
+/* Flush only the JIT's local data translations after SFENCE.VMA. */
+void isa_jit_flush_data_tlb(void)
+{
+    jit_data_tlb_flush();
 }
 
 /* Invalidate native blocks whose physical source bytes overlap a PMEM write. */
@@ -2758,6 +3756,12 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
     if (len <= 0 || jit_code == NULL)
     {
         return;
+    }
+
+    if (jit_write_may_touch_data_tlb_page_table(addr, len))
+    {
+        JIT_STAT_INC(data_tlb_page_table_flushes);
+        jit_data_tlb_flush();
     }
 
     if (!jit_write_may_touch_source_chunk(addr, len))
@@ -2964,6 +3968,28 @@ void isa_jit_dump_stats(void)
         jit_stats.native_paged_loads);
     Log("jit: native paged stores = %" PRIu64,
         jit_stats.native_paged_stores);
+    Log("jit: data TLB hits = %" PRIu64
+        ", misses = %" PRIu64,
+        jit_stats.data_tlb_hits,
+        jit_stats.data_tlb_misses);
+    Log("jit: data TLB fills = %" PRIu64,
+        jit_stats.data_tlb_fills);
+    Log("jit: data TLB flushes = %" PRIu64,
+        jit_stats.data_tlb_flushes);
+    Log("jit: data TLB page-table flushes = %" PRIu64,
+        jit_stats.data_tlb_page_table_flushes);
+    Log("jit: data TLB direct loads = %" PRIu64
+        ", direct stores = %" PRIu64,
+        jit_stats.data_tlb_direct_loads,
+        jit_stats.data_tlb_direct_stores);
+    Log("jit: inline paged loads = %" PRIu64
+        ", inline paged stores = %" PRIu64,
+        jit_stats.inline_paged_loads,
+        jit_stats.inline_paged_stores);
+    Log("jit: inline paged load hits = %" PRIu64
+        ", inline paged store hits = %" PRIu64,
+        jit_stats.inline_paged_load_hits,
+        jit_stats.inline_paged_store_hits);
     Log("jit: zero side exits = %" PRIu64,
         jit_stats.zero_side_exits);
 #else

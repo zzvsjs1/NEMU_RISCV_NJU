@@ -15,9 +15,16 @@
 #define PTE_A ((word_t)1u << 6)
 #define PTE_D ((word_t)1u << 7)
 #define PTE_RWX (PTE_R | PTE_W | PTE_X)
+#define PTE_NON_LEAF_RESERVED (PTE_U | PTE_A | PTE_D)
 
 #define PTE_PPN_SHIFT 10u
 #define PTE_PPN_MASK (((word_t)1u << 44) - 1u)
+/*
+ * This NEMU target does not implement Svnapot or Svpbmt, and the remaining
+ * Sv39 PTE bits [60:54] are still reserved by the privileged spec.  Step 3 of
+ * the translation algorithm requires a page fault if any of these bits are set.
+ */
+#define PTE_RESERVED_63_54_MASK (((word_t)0x3ffu) << 54)
 
 #define MSTATUS_MPRV ((word_t)1u << 17)
 #define MSTATUS_SUM ((word_t)1u << 18)
@@ -67,7 +74,9 @@ static bool is_sv39_canonical(vaddr_t vaddr)
 
 static bool pte_is_valid(word_t pte)
 {
-    return (pte & PTE_V) != 0 && (pte & (PTE_R | PTE_W)) != PTE_W;
+    return (pte & PTE_V) != 0 &&
+           (pte & (PTE_R | PTE_W)) != PTE_W &&
+           (pte & PTE_RESERVED_63_54_MASK) == 0;
 }
 
 static bool pte_is_leaf(word_t pte)
@@ -231,7 +240,7 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
             return leaf_page_base(ppn, vpn, level) | (paddr_t)MEM_RET_OK;
         }
 
-        if (level == 0)
+        if (level == 0 || (pte & PTE_NON_LEAF_RESERVED) != 0)
         {
             return (paddr_t)MEM_RET_FAIL;
         }
