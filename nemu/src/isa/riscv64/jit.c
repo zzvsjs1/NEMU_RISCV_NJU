@@ -102,6 +102,7 @@ typedef struct
     uint64_t native_loads;
     uint64_t native_stores;
     uint64_t native_jumps;
+    uint64_t native_m_ops;
     uint64_t invalidation_requests;
     uint64_t invalidated_blocks;
     uint64_t arena_resets;
@@ -268,6 +269,99 @@ static void jit_store_pmem(paddr_t addr, uint32_t len, uint64_t data)
      * duplicate those correctness-sensitive policies.
      */
     paddr_write(addr, (int)len, (word_t)data);
+}
+
+/* Sign-extend one 32-bit W-form result to the RV64 register width. */
+static uint64_t jit_sext32(uint32_t value)
+{
+    return (uint64_t)(int64_t)(int32_t)value;
+}
+
+/* Compute RV64M operations that are uncommon or awkward to emit inline. */
+static uint64_t jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr)
+{
+    const uint32_t opcode = instr & RV64_OPCODE_MASK;
+    const uint32_t funct3 = bits(instr, 14, 12);
+    const uint32_t key = (bits(instr, 31, 25) << 3) | funct3;
+
+    if (opcode == RV64_OPCODE_OP)
+    {
+        switch (key)
+        {
+        case 0x009: /* MULH */
+            return (uint64_t)(((__int128)(int64_t)lhs * (__int128)(int64_t)rhs) >> 64);
+        case 0x00a: /* MULHSU */
+            return (uint64_t)(((__int128)(int64_t)lhs * (__int128)(uint64_t)rhs) >> 64);
+        case 0x00b: /* MULHU */
+            return (uint64_t)(((__uint128_t)lhs * (__uint128_t)rhs) >> 64);
+        case 0x00c: /* DIV */
+            if (rhs == 0)
+            {
+                return UINT64_MAX;
+            }
+            if (lhs == (uint64_t)INT64_MIN && rhs == UINT64_MAX)
+            {
+                return lhs;
+            }
+            return (uint64_t)((int64_t)lhs / (int64_t)rhs);
+        case 0x00d: /* DIVU */
+            return rhs == 0 ? UINT64_MAX : lhs / rhs;
+        case 0x00e: /* REM */
+            if (rhs == 0)
+            {
+                return lhs;
+            }
+            if (lhs == (uint64_t)INT64_MIN && rhs == UINT64_MAX)
+            {
+                return 0;
+            }
+            return (uint64_t)((int64_t)lhs % (int64_t)rhs);
+        case 0x00f: /* REMU */
+            return rhs == 0 ? lhs : lhs % rhs;
+        default:
+            return 0;
+        }
+    }
+
+    if (opcode == RV64_OPCODE_OP_32)
+    {
+        const int32_t lhs_s = (int32_t)lhs;
+        const int32_t rhs_s = (int32_t)rhs;
+        const uint32_t lhs_u = (uint32_t)lhs;
+        const uint32_t rhs_u = (uint32_t)rhs;
+
+        switch (key)
+        {
+        case 0x00c: /* DIVW */
+            if (rhs_s == 0)
+            {
+                return UINT64_MAX;
+            }
+            if (lhs_s == INT32_MIN && rhs_s == -1)
+            {
+                return jit_sext32((uint32_t)lhs_s);
+            }
+            return jit_sext32((uint32_t)(lhs_s / rhs_s));
+        case 0x00d: /* DIVUW */
+            return rhs_u == 0 ? UINT64_MAX : jit_sext32(lhs_u / rhs_u);
+        case 0x00e: /* REMW */
+            if (rhs_s == 0)
+            {
+                return jit_sext32((uint32_t)lhs_s);
+            }
+            if (lhs_s == INT32_MIN && rhs_s == -1)
+            {
+                return 0;
+            }
+            return jit_sext32((uint32_t)(lhs_s % rhs_s));
+        case 0x00f: /* REMUW */
+            return rhs_u == 0 ? jit_sext32(lhs_u) : jit_sext32(lhs_u % rhs_u);
+        default:
+            return 0;
+        }
+    }
+
+    return 0;
 }
 
 /* Round a code offset up to the next power-of-two alignment boundary. */
@@ -512,6 +606,18 @@ static bool emit_mov_rdi_rdx(rv64_jit_writer_t *w)
     return emit_u8(w, 0x48) && emit_u8(w, 0x89) && emit_u8(w, 0xd7);
 }
 
+/* Emit `mov rdi, rax`, preparing the first helper argument from a guest value. */
+static bool emit_mov_rdi_rax(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x89) && emit_u8(w, 0xc7);
+}
+
+/* Emit `mov rsi, rdx`, preparing the second helper argument from a guest value. */
+static bool emit_mov_rsi_rdx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x89) && emit_u8(w, 0xd6);
+}
+
 /* Emit `add eax, imm32`, used for completed-loop instruction accounting. */
 static bool emit_add_eax_imm32(rv64_jit_writer_t *w, uint32_t imm)
 {
@@ -546,6 +652,12 @@ static bool emit_cmp_rdx_rcx(rv64_jit_writer_t *w)
 static bool emit_mov_esi_imm32(rv64_jit_writer_t *w, uint32_t imm)
 {
     return emit_u8(w, 0xbe) && emit_u32(w, imm);
+}
+
+/* Emit `mov edx, imm32`, preparing the third helper argument. */
+static bool emit_mov_edx_imm32(rv64_jit_writer_t *w, uint32_t imm)
+{
+    return emit_u8(w, 0xba) && emit_u32(w, imm);
 }
 
 /* Emit `cmp ecx, [rdx]`, comparing proposed work with the entry budget. */
@@ -1002,6 +1114,32 @@ static bool emit_store_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
     return true;
 }
 
+/* Emit a helper-backed RV64M operation and keep compiling after the call. */
+static bool emit_m_helper(rv64_jit_writer_t *w, uint32_t instr,
+                          uint32_t rd, uint32_t rs1, uint32_t rs2)
+{
+    /*
+     * System V arguments are RDI, RSI, RDX. The helper returns the result in
+     * RAX. Because a C call may clobber caller-saved R10/R11, reload both JIT
+     * base registers before storing the result or emitting later PMEM accesses.
+     */
+    if (!emit_load_gpr_rax(w, rs1) ||
+        !emit_mov_rdi_rax(w) ||
+        !emit_load_gpr_rdx(w, rs2) ||
+        !emit_mov_rsi_rdx(w) ||
+        !emit_mov_edx_imm32(w, instr) ||
+        !emit_call_abs(w, (uintptr_t)jit_m_result) ||
+        !emit_load_cpu_base(w) ||
+        !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
+        !emit_store_rax_gpr(w, rd))
+    {
+        return false;
+    }
+
+    JIT_STAT_INC(native_m_ops);
+    return true;
+}
+
 /* Emit a 64-bit RISC-V OP-IMM instruction into native code. */
 static bool emit_op_imm(rv64_jit_writer_t *w, uint32_t instr)
 {
@@ -1129,8 +1267,17 @@ static bool emit_op(rv64_jit_writer_t *w, uint32_t instr)
     case 0x007: /* AND */
         return emit_rax_rcx_alu64(w, 0x21) && emit_store_rax_gpr(w, rd);
     case 0x008: /* MUL; low 64 bits match x86-64 IMUL RAX, RCX. */
+        JIT_STAT_INC(native_m_ops);
         return emit_u8(w, 0x48) && emit_u8(w, 0x0f) && emit_u8(w, 0xaf) && emit_u8(w, 0xc1) &&
                emit_store_rax_gpr(w, rd);
+    case 0x009: /* MULH */
+    case 0x00a: /* MULHSU */
+    case 0x00b: /* MULHU */
+    case 0x00c: /* DIV */
+    case 0x00d: /* DIVU */
+    case 0x00e: /* REM */
+    case 0x00f: /* REMU */
+        return emit_m_helper(w, instr, rd, rs1, rs2);
     default:
         return false;
     }
@@ -1163,9 +1310,15 @@ static bool emit_op32(rv64_jit_writer_t *w, uint32_t instr)
     case 0x105: /* SRAW */
         return emit_shift_eax_cl_sext(w, 0xf8) && emit_store_rax_gpr(w, rd);
     case 0x008: /* MULW; IMUL low 32 bits, then CDQE sign-extension. */
+        JIT_STAT_INC(native_m_ops);
         return emit_u8(w, 0x0f) && emit_u8(w, 0xaf) && emit_u8(w, 0xc1) &&
                emit_u8(w, 0x48) && emit_u8(w, 0x98) &&
                emit_store_rax_gpr(w, rd);
+    case 0x00c: /* DIVW */
+    case 0x00d: /* DIVUW */
+    case 0x00e: /* REMW */
+    case 0x00f: /* REMUW */
+        return emit_m_helper(w, instr, rd, rs1, rs2);
     default:
         return false;
     }
@@ -1874,6 +2027,8 @@ void isa_jit_dump_stats(void)
         jit_stats.native_stores);
     Log("jit: native jumps = %" PRIu64,
         jit_stats.native_jumps);
+    Log("jit: native M ops = %" PRIu64,
+        jit_stats.native_m_ops);
 #else
     if (jit_stats_enabled)
     {
