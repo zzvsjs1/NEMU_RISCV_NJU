@@ -22,24 +22,118 @@ int abs(int x)
     return x < 0 ? -x : x;
 }
 
+static int digit_value(int ch)
+{
+    if (ch >= '0' && ch <= '9')
+    {
+        return ch - '0';
+    }
+
+    if (ch >= 'a' && ch <= 'z')
+    {
+        return ch - 'a' + 10;
+    }
+
+    if (ch >= 'A' && ch <= 'Z')
+    {
+        return ch - 'A' + 10;
+    }
+
+    return -1;
+}
+
+static unsigned long long strtoull_core(const char *nptr, char **endptr, int base, int *negative)
+{
+    const char *p = nptr;
+    unsigned long long value = 0;
+    int any = 0;
+
+    while (isspace(*p))
+    {
+        p++;
+    }
+
+    *negative = 0;
+    if (*p == '+' || *p == '-')
+    {
+        *negative = (*p == '-');
+        p++;
+    }
+
+    if ((base == 0 || base == 16) && p[0] == '0' && (p[1] == 'x' || p[1] == 'X'))
+    {
+        base = 16;
+        p += 2;
+    }
+    else if (base == 0)
+    {
+        base = (p[0] == '0') ? 8 : 10;
+    }
+
+    if (base < 2 || base > 36)
+    {
+        if (endptr)
+        {
+            *endptr = (char *)nptr;
+        }
+        return 0;
+    }
+
+    while (*p)
+    {
+        int digit = digit_value(*p);
+        if (digit < 0 || digit >= base)
+        {
+            break;
+        }
+
+        value = value * (unsigned)base + (unsigned)digit;
+        p++;
+        any = 1;
+    }
+
+    if (endptr)
+    {
+        *endptr = (char *)(any ? p : nptr);
+    }
+
+    return value;
+}
+
+long strtol(const char *nptr, char **endptr, int base)
+{
+    int negative;
+    unsigned long long value = strtoull_core(nptr, endptr, base, &negative);
+    return negative ? (long)(0ul - (unsigned long)value) : (long)value;
+}
+
+unsigned long strtoul(const char *nptr, char **endptr, int base)
+{
+    int negative;
+    unsigned long long value = strtoull_core(nptr, endptr, base, &negative);
+    return negative ? (0ul - (unsigned long)value) : (unsigned long)value;
+}
+
+long long strtoll(const char *nptr, char **endptr, int base)
+{
+    int negative;
+    unsigned long long value = strtoull_core(nptr, endptr, base, &negative);
+    return negative ? (long long)(0ull - value) : (long long)value;
+}
+
+unsigned long long strtoull(const char *nptr, char **endptr, int base)
+{
+    int negative;
+    unsigned long long value = strtoull_core(nptr, endptr, base, &negative);
+    return negative ? (0ull - value) : value;
+}
+
 int atoi(const char *nptr)
 {
-    int x = 0;
-    // This tiny atoi() only accepts leading spaces followed by decimal digits.
-    // Signs, overflow handling, and locale rules are outside klib's required
-    // subset for the AM tests.
-    while (*nptr == ' ')
-    {
-        nptr++;
-    }
-
-    while (*nptr >= '0' && *nptr <= '9')
-    {
-        x = x * 10 + *nptr - '0';
-        nptr++;
-    }
-
-    return x;
+    // Keep atoi() in lock-step with strtol(): the conversion must skip all C
+    // whitespace and accept an optional sign, not only a literal space followed
+    // by unsigned decimal digits.
+    return (int)strtol(nptr, NULL, 10);
 }
 
 static size_t si = 0;
@@ -126,6 +220,63 @@ void *malloc(size_t size)
     return (void *)addr;
 }
 
+void *calloc(size_t nmemb, size_t size)
+{
+    if (nmemb != 0 && size > (size_t)-1 / nmemb)
+    {
+        return NULL;
+    }
+
+    size *= nmemb;
+    void *ret = malloc(size);
+    if (ret != NULL)
+    {
+        memset(ret, 0, size);
+    }
+    return ret;
+}
+
+void *realloc(void *ptr, size_t size)
+{
+    if (ptr == NULL)
+    {
+        return malloc(size);
+    }
+
+    if (size == 0)
+    {
+        free(ptr);
+        return NULL;
+    }
+
+    /*
+     * The AM bump allocator deliberately does not store allocation sizes.
+     * Copying an existing allocation to a new block would therefore require
+     * guessing how many bytes are valid. Report failure instead of silently
+     * over-reading the old object.
+     */
+    return NULL;
+}
+
+// void *calloc(size_t nmemb, size_t size) {
+//   size *= nmemb;
+//   void *ret = malloc(size);
+//   memset(ret, 0, size);
+//   return ret;
+// }
+
+// void *realloc(void *ptr, size_t size) {
+//   if (ptr == NULL) return malloc(size);
+//   if (size == 0) {
+//     free(ptr);
+//     return NULL;
+//   }
+//   void *ret = malloc(size);
+//   memcpy(ret, ptr, size);
+//   free(ptr);
+//   return ret;
+// }
+
 void free(void *ptr)
 {
     if (ptr == NULL)
@@ -136,6 +287,11 @@ void free(void *ptr)
     // AM klib intentionally keeps malloc() as a bump allocator. Memory is not
     // reclaimed here because ownership of the global heap can also belong to
     // simple kernels and page allocators layered above AM.
+}
+
+void exit(int status)
+{
+    halt(status);
 }
 
 #endif

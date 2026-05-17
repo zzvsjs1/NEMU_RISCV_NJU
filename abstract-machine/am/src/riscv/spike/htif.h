@@ -6,10 +6,10 @@
 #include <stdint.h>
 
 #if __riscv_xlen == 64
-#define TOHOST_CMD(dev, cmd, payload) \
-    (((uint64_t)(dev) << 56) | ((uint64_t)(cmd) << 48) | (uint64_t)(payload))
+# define TOHOST_CMD(dev, cmd, payload) \
+  (((uint64_t)(dev) << 56) | ((uint64_t)(cmd) << 48) | (uint64_t)(payload))
 #else
-#define TOHOST_CMD(dev, cmd, payload) ({ \
+# define TOHOST_CMD(dev, cmd, payload) ({ \
   if ((dev) || (cmd)) __builtin_trap(); \
   (payload); })
 #endif
