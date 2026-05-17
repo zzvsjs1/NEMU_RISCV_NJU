@@ -320,6 +320,15 @@ def_THelper(SYSTEM)
 
     if (rv32_funct3(s) == 0x0)
     {
+        /*
+         * SFENCE.VMA keeps rs1 and rs2 as operands, so match the funct7 and rd
+         * fields rather than one exact all-zero instruction word.
+         */
+        if (rv32_funct7(s) == 0x09 && rv32_rd(s) == 0)
+        {
+            return EXEC_ID_sfence_vma;
+        }
+
         switch (get_instr(s))
         {
         case 0x00000073u:
@@ -328,6 +337,8 @@ def_THelper(SYSTEM)
             return EXEC_ID_ebreak;
         case 0x30200073u:
             return EXEC_ID_mret;
+        case 0x10500073u:
+            return EXEC_ID_wfi;
         default:
             return EXEC_ID_inv;
         }
@@ -347,6 +358,19 @@ def_THelper(SYSTEM)
         return EXEC_ID_csrrsi;
     case 0x7:
         return EXEC_ID_csrrci;
+    default:
+        return EXEC_ID_inv;
+    }
+}
+
+def_THelper(MISC_MEM)
+{
+    switch (rv32_funct3(s))
+    {
+    case 0x0:
+        return EXEC_ID_fence;
+    case 0x1:
+        return EXEC_ID_fence_i;
     default:
         return EXEC_ID_inv;
     }
@@ -390,6 +414,8 @@ def_THelper(main)
     case 0x73:
         decode_CSR(s, 0);
         return table_SYSTEM(s);
+    case 0x0f:
+        return table_MISC_MEM(s);
     case 0x6b:
         return EXEC_ID_nemu_trap;
     default:

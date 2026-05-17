@@ -12,7 +12,7 @@ export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
 
 DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit_defconfig"
-TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-negative-cache riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data riscv64-jit-sv39-dtlb)
+TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-negative-cache riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-sv39-cross-page riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data riscv64-jit-sv39-dtlb)
 
 fail() {
   echo "RISC-V64 JIT correctness check failed: $*" >&2
@@ -128,6 +128,25 @@ require_positive_translated_blocks() {
 
   if [ "$translated_blocks" -le 0 ]; then
     echo "Expected positive translated block count for $test_name, got $translated_blocks" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_translated_cross_page_blocks() {
+  local log=$1
+  local test_name=$2
+  local translated_cross_page_blocks
+
+  translated_cross_page_blocks=$(sed -n 's/.*translated cross-page blocks = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$translated_cross_page_blocks" ]; then
+    echo "Failed to find translated cross-page block stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$translated_cross_page_blocks" -le 0 ]; then
+    echo "Expected positive translated cross-page block count for $test_name, got $translated_cross_page_blocks" >&2
     cat "$log" >&2
     exit 1
   fi
@@ -432,6 +451,10 @@ for test_name in "${TESTS[@]}"; do
   fi
   if [ "$test_name" = "riscv64-jit-sv39-remap" ]; then
     require_positive_translated_blocks "$out" "$test_name"
+  fi
+  if [ "$test_name" = "riscv64-jit-sv39-cross-page" ]; then
+    require_positive_translated_blocks "$out" "$test_name"
+    require_positive_translated_cross_page_blocks "$out" "$test_name"
   fi
   if [ "$test_name" = "riscv64-jit-reg-cache" ]; then
     require_positive_reg_cache_spills "$out" "$test_name"

@@ -200,6 +200,7 @@ typedef struct
     uint64_t native_jumps;
     uint64_t native_m_ops;
     uint64_t translated_blocks;
+    uint64_t translated_cross_page_blocks;
     uint64_t reg_cache_spills;
     uint64_t native_store_continuations;
     uint64_t native_paged_loads;
@@ -3425,21 +3426,32 @@ static bool jit_block_matches(const rv64_jit_block_t *block, vaddr_t pc)
 
     /*
      * Sv39 page tables can remap virtual instruction pages without changing
-     * satp.  Paged blocks are kept within one virtual page when compiled, so the
-     * first instruction mapping proves the physical page base for every
-     * instruction in the block.  This matches the RV32 JIT shape and avoids
-     * turning every hot cache hit into a miniature page-walk loop.
+     * satp.  Re-translate every virtual page touched by this block before
+     * trusting cached native code.  Most blocks fit in one page, while hot loops
+     * near a page boundary still keep their native block if the recorded
+     * physical source bytes are unchanged.
      */
     if (block->translated)
     {
-        paddr_t now = 0;
-        bool translated = false;
+        uint32_t offset = 0;
 
-        if (!jit_translate_ifetch_ex(pc, &now, &translated) ||
-            !translated ||
-            now != block->paddr_start)
+        while (offset < block->source_len)
         {
-            return false;
+            const vaddr_t check_pc = pc + (vaddr_t)offset;
+            paddr_t now = 0;
+            bool translated = false;
+
+            if (!jit_translate_ifetch_ex(check_pc, &now, &translated) ||
+                !translated ||
+                now != block->paddr_start + (paddr_t)offset)
+            {
+                return false;
+            }
+
+            const uint32_t page_left =
+                PAGE_SIZE - (uint32_t)(check_pc & PAGE_MASK);
+            const uint32_t remaining = block->source_len - offset;
+            offset += page_left < remaining ? page_left : remaining;
         }
     }
 
@@ -3504,12 +3516,6 @@ static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
 
     while (count < max_insns && count < RV64_JIT_BLOCK_MAX_INSNS)
     {
-        if (count != 0 && jit_data_satp_mode(cpu.csr.satp) != 0 &&
-            ((cur_pc ^ pc) & ~(vaddr_t)PAGE_MASK) != 0)
-        {
-            return false;
-        }
-
         paddr_t cur_paddr = 0;
 
         if (!jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr) ||
@@ -3587,17 +3593,10 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     while (count < max_insns && count < RV64_JIT_BLOCK_MAX_INSNS)
     {
         /*
-         * A paged cache hit validates only the first instruction mapping.  Keep
-         * translated blocks within one virtual page so that one mapping check is
-         * enough to prove the remaining instruction bytes still come from the
-         * same physical page.
+         * Re-translate every guest instruction, even inside one block. This keeps
+         * the block metadata honest across page boundaries and avoids assuming that
+         * adjacent virtual PCs are adjacent physical bytes.
          */
-        if (count != 0 && jit_data_satp_mode(cpu.csr.satp) != 0 &&
-            ((cur_pc ^ pc) & ~(vaddr_t)PAGE_MASK) != 0)
-        {
-            break;
-        }
-
         paddr_t cur_paddr = 0;
         bool cur_translated = false;
 
@@ -3739,6 +3738,10 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     if (first_translated)
     {
         JIT_STAT_INC(translated_blocks);
+        if (((pc ^ (cur_pc - RV64_INSN_SIZE)) & ~(vaddr_t)PAGE_MASK) != 0)
+        {
+            JIT_STAT_INC(translated_cross_page_blocks);
+        }
     }
     JIT_STAT_ADD(compiled_insns, count);
     return block;
@@ -3978,6 +3981,8 @@ void isa_jit_dump_stats(void)
         jit_stats.native_m_ops);
     Log("jit: translated blocks = %" PRIu64,
         jit_stats.translated_blocks);
+    Log("jit: translated cross-page blocks = %" PRIu64,
+        jit_stats.translated_cross_page_blocks);
     Log("jit: reg cache spills = %" PRIu64,
         jit_stats.reg_cache_spills);
     Log("jit: native store continuations = %" PRIu64,

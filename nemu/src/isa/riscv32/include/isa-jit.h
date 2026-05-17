@@ -29,6 +29,8 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
 extern bool isa_jit_invalidation_active;
 /* Drop every cached native block, used after broad address-space/state changes. */
 void isa_jit_flush_all(void);
+/* Drop only JIT-local data translations, normally after SFENCE.VMA. */
+void isa_jit_flush_data_tlb(void);
 /* Notify the JIT that a physical PMEM byte range was written. */
 void isa_jit_invalidate_paddr(paddr_t addr, int len);
 /* Print optional runtime statistics when the binary and env flag enable them. */

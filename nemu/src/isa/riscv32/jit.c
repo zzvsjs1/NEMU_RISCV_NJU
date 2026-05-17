@@ -3806,6 +3806,12 @@ void isa_jit_flush_all(void)
     jit_tlb_flush();
 }
 
+/* Public hook: discard only the RV32 JIT's private Sv32 data translations. */
+void isa_jit_flush_data_tlb(void)
+{
+    jit_tlb_flush();
+}
+
 /* Public hook: react to PMEM writes that can stale native code or JIT translations. */
 void isa_jit_invalidate_paddr(paddr_t addr, int len)
 {
@@ -3892,10 +3898,10 @@ static bool jit_translate_ifetch(vaddr_t pc, paddr_t *paddr)
 static bool jit_block_matches(const rv32_jit_block_t *block, vaddr_t pc)
 {
     /*
-   * Cheap tag checks come first. Unsupported markers also pass this test when
-   * their PC and satp still match; the caller will see entry == NULL and fall
-   * back without trying to execute native code.
-   */
+     * Cheap tag checks come first. Unsupported markers also pass this test when
+     * their PC and satp still match; the caller will see entry == NULL and fall
+     * back without trying to execute native code.
+     */
 
     if (!block->valid || block->pc != pc || block->satp != cpu.csr.satp)
     {
@@ -3903,23 +3909,37 @@ static bool jit_block_matches(const rv32_jit_block_t *block, vaddr_t pc)
     }
 
     /*
-   * satp alone is not enough in paged mode: a guest can rewrite page tables so
-   * the same virtual PC points at different physical source bytes. Re-translate
-   * the first instruction before trusting cached native code.
-   */
+     * satp alone is not enough in paged mode: a guest can rewrite page tables so
+     * the same virtual PCs point at different physical source bytes. Re-translate
+     * every virtual page touched by this block before trusting cached native code.
+     * Most blocks fit in one page, while hot loops near a page boundary still keep
+     * their native block if the recorded physical source bytes are unchanged.
+     */
 
     if ((cpu.csr.satp & 0x80000000u) != 0)
     {
-        paddr_t now = 0;
-        /*
-     * A translation failure is treated as a cache miss. That keeps the JIT out
-     * of cases where the normal interpreter path needs to raise or report the
-     * underlying memory problem.
-     */
+        uint32_t offset = 0;
 
-        if (!jit_translate_ifetch(pc, &now) || now != block->paddr_start)
+        while (offset < block->source_len)
         {
-            return false;
+            const vaddr_t check_pc = pc + (vaddr_t)offset;
+            paddr_t now = 0;
+
+            /*
+             * A translation failure is treated as a cache miss. That keeps the JIT out
+             * of cases where the normal interpreter path needs to raise or report the
+             * underlying memory problem.
+             */
+            if (!jit_translate_ifetch(check_pc, &now) ||
+                now != block->paddr_start + (paddr_t)offset)
+            {
+                return false;
+            }
+
+            const uint32_t page_left =
+                PAGE_SIZE - (uint32_t)(check_pc & PAGE_MASK);
+            const uint32_t remaining = block->source_len - offset;
+            offset += page_left < remaining ? page_left : remaining;
         }
     }
 
@@ -3971,12 +3991,6 @@ static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
 
     while (count < max_insns && count < RV32_JIT_BLOCK_MAX_INSNS)
     {
-        if (count != 0 && (cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) != 0 &&
-            ((cur_pc ^ pc) & ~(vaddr_t)PAGE_MASK) != 0)
-        {
-            return false;
-        }
-
         paddr_t cur_paddr = 0;
         if (!jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr) ||
             cur_paddr != first_paddr + (paddr_t)source_len)
@@ -4061,25 +4075,10 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     while (count < max_insns && count < RV32_JIT_BLOCK_MAX_INSNS)
     {
         /*
-     * In paged mode a cache hit revalidates the first instruction mapping before
-     * entering native code.  Keeping one native block within one virtual page
-     * makes that one mapping check sufficient: the rest of the block cannot move
-     * to a different physical page unless the first mapping also changes.  Bare
-     * mode has no virtual remapping, so it can still use the physical-contiguity
-     * check below to span normal PMEM bytes.
-     */
-
-        if (count != 0 && (cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) != 0 &&
-            ((cur_pc ^ pc) & ~(vaddr_t)PAGE_MASK) != 0)
-        {
-            break;
-        }
-
-        /*
-     * Re-translate every guest instruction, even inside one block. This keeps
-     * the block metadata honest across page boundaries and avoids assuming that
-     * adjacent virtual PCs are adjacent physical bytes.
-     */
+         * Re-translate every guest instruction, even inside one block. This keeps
+         * the block metadata honest across page boundaries and avoids assuming that
+         * adjacent virtual PCs are adjacent physical bytes.
+         */
         paddr_t cur_paddr = 0;
 
         if (!jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr))
@@ -4088,9 +4087,9 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         }
 
         /*
-     * Source invalidation records one physical byte range. Stop if virtual
-     * aliases make the next guest instruction non-contiguous in PMEM.
-     */
+         * Source invalidation records one physical byte range. Stop if virtual
+         * aliases make the next guest instruction non-contiguous in PMEM.
+         */
 
         if (cur_paddr != first_paddr + (paddr_t)source_len)
         {
