@@ -12,7 +12,7 @@ export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
 
 DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit_defconfig"
-TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-reg-cache)
+TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-negative-cache riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data)
 
 fail() {
   echo "RISC-V64 JIT correctness check failed: $*" >&2
@@ -152,6 +152,101 @@ require_positive_reg_cache_spills() {
   fi
 }
 
+require_positive_store_continuations() {
+  local log=$1
+  local test_name=$2
+  local store_continuations
+
+  store_continuations=$(sed -n 's/.*native store continuations = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$store_continuations" ]; then
+    echo "Failed to find native store continuation stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$store_continuations" -le 0 ]; then
+    echo "Expected positive native store continuation count for $test_name, got $store_continuations" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_native_paged_loads() {
+  local log=$1
+  local test_name=$2
+  local native_paged_loads
+
+  native_paged_loads=$(sed -n 's/.*native paged loads = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$native_paged_loads" ]; then
+    echo "Failed to find native paged load stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$native_paged_loads" -le 0 ]; then
+    echo "Expected positive native paged load count for $test_name, got $native_paged_loads" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_native_paged_stores() {
+  local log=$1
+  local test_name=$2
+  local native_paged_stores
+
+  native_paged_stores=$(sed -n 's/.*native paged stores = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$native_paged_stores" ]; then
+    echo "Failed to find native paged store stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$native_paged_stores" -le 0 ]; then
+    echo "Expected positive native paged store count for $test_name, got $native_paged_stores" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_invalidated_blocks() {
+  local log=$1
+  local test_name=$2
+  local invalidated_blocks
+
+  invalidated_blocks=$(sed -n 's/.*invalidated blocks = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$invalidated_blocks" ]; then
+    echo "Failed to find invalidated block stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$invalidated_blocks" -le 0 ]; then
+    echo "Expected positive invalidated block count for $test_name, got $invalidated_blocks" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_zero_side_exits() {
+  local log=$1
+  local test_name=$2
+  local zero_side_exits
+
+  zero_side_exits=$(sed -n 's/.*zero side exits = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$zero_side_exits" ]; then
+    echo "Failed to find zero side-exit stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$zero_side_exits" -le 0 ]; then
+    echo "Expected positive zero side-exit count for $test_name, got $zero_side_exits" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 cd "$ROOT"
 
 [ -f "$DEFCONFIG" ] || fail "missing $DEFCONFIG"
@@ -174,6 +269,9 @@ for test_name in "${TESTS[@]}"; do
   if [ "$test_name" = "riscv64-jit-store-fast" ]; then
     require_positive_native_stores "$out" "$test_name"
   fi
+  if [ "$test_name" = "riscv64-jit-negative-cache" ]; then
+    require_positive_invalidated_blocks "$out" "$test_name"
+  fi
   if [ "$test_name" = "riscv64-jit-jump-fast" ]; then
     require_positive_native_jumps "$out" "$test_name"
   fi
@@ -185,6 +283,17 @@ for test_name in "${TESTS[@]}"; do
   fi
   if [ "$test_name" = "riscv64-jit-reg-cache" ]; then
     require_positive_reg_cache_spills "$out" "$test_name"
+  fi
+  if [ "$test_name" = "riscv64-jit-memory-entry" ]; then
+    require_positive_native_loads "$out" "$test_name"
+    require_positive_native_stores "$out" "$test_name"
+    require_positive_store_continuations "$out" "$test_name"
+    require_positive_zero_side_exits "$out" "$test_name"
+  fi
+  if [ "$test_name" = "riscv64-jit-sv39-data" ]; then
+    require_positive_translated_blocks "$out" "$test_name"
+    require_positive_native_paged_loads "$out" "$test_name"
+    require_positive_native_paged_stores "$out" "$test_name"
   fi
   rm -f "$out"
   trap - EXIT

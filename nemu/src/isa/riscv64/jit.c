@@ -11,11 +11,10 @@
 /*
  * Minimal RISC-V64 JIT bring-up.
  *
- * This first native emitter is deliberately small. It compiles RV64 integer ALU
- * instructions and conditional branches into x86-64 code, records the physical
- * source bytes used by each block, and lets the interpreter handle memory,
- * CSR/trap, fence, and other sensitive instructions. This gives a strict,
- * testable native-execution baseline before widening the fast path.
+ * The native emitter compiles RV64 integer ALU, control-flow, and guarded memory
+ * instructions into x86-64 code.  Bare PMEM loads/stores use direct guards;
+ * Sv39 data memory uses helper calls that reuse the interpreter MMU. CSR/trap,
+ * fence, and other sensitive instructions still fall back to the interpreter.
  */
 
 #if defined(__x86_64__) && defined(CONFIG_RV64_JIT) && \
@@ -146,6 +145,10 @@ typedef struct
     uint64_t native_m_ops;
     uint64_t translated_blocks;
     uint64_t reg_cache_spills;
+    uint64_t native_store_continuations;
+    uint64_t native_paged_loads;
+    uint64_t native_paged_stores;
+    uint64_t zero_side_exits;
     uint64_t invalidation_requests;
     uint64_t invalidated_blocks;
     uint64_t arena_resets;
@@ -304,15 +307,86 @@ static bool jit_runtime_disabled(void)
     return jit_env_disable;
 }
 
-/* Commit one already-guarded bare-mode PMEM store through the normal boundary. */
-static void jit_store_pmem(paddr_t addr, uint32_t len, uint64_t data)
+/* Forward declaration: store helpers need source-chunk state defined below. */
+static bool jit_write_may_touch_source_chunk(paddr_t addr, int len);
+
+/* Shared RV64 load helper that delegates translation and faults to vaddr_read(). */
+static uint64_t jit_load_vaddr_raw(vaddr_t addr, uint32_t len)
 {
     /*
-     * Keep paddr_write() in the store fast path. It owns MMIO dispatch, tracing
-     * hooks and exact JIT source invalidation, so the native emitter does not
-     * duplicate those correctness-sensitive policies.
+     * The helper-backed Sv39 path deliberately does not duplicate the page-table
+     * walk.  vaddr_read() reaches isa_mmu_check()/isa_mmu_translate(), which own
+     * MPRV, SUM, MXR, U-page, A/D-bit, canonical-address and superpage checks.
      */
+    return (uint64_t)vaddr_read(addr, (int)len);
+}
+
+/* Load one signed byte and sign-extend it to RV64 XLEN. */
+static uint64_t jit_load_i8(vaddr_t addr)
+{
+    return (uint64_t)(int64_t)(int8_t)jit_load_vaddr_raw(addr, 1);
+}
+
+/* Load one signed halfword and sign-extend it to RV64 XLEN. */
+static uint64_t jit_load_i16(vaddr_t addr)
+{
+    return (uint64_t)(int64_t)(int16_t)jit_load_vaddr_raw(addr, 2);
+}
+
+/* Load one signed word and sign-extend it to RV64 XLEN. */
+static uint64_t jit_load_i32(vaddr_t addr)
+{
+    return (uint64_t)(int64_t)(int32_t)jit_load_vaddr_raw(addr, 4);
+}
+
+/* Load one doubleword; RV64 LD already produces a full-width value. */
+static uint64_t jit_load_u64(vaddr_t addr)
+{
+    return jit_load_vaddr_raw(addr, 8);
+}
+
+/* Load one unsigned byte and zero-extend it to RV64 XLEN. */
+static uint64_t jit_load_u8(vaddr_t addr)
+{
+    return jit_load_vaddr_raw(addr, 1) & 0xffu;
+}
+
+/* Load one unsigned halfword and zero-extend it to RV64 XLEN. */
+static uint64_t jit_load_u16(vaddr_t addr)
+{
+    return jit_load_vaddr_raw(addr, 2) & 0xffffu;
+}
+
+/* Load one unsigned word and zero-extend it to RV64 XLEN. */
+static uint64_t jit_load_u32(vaddr_t addr)
+{
+    return jit_load_vaddr_raw(addr, 4) & 0xffffffffu;
+}
+
+/* Shared RV64 store helper that preserves MMIO, tracing, and invalidation. */
+static void jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data)
+{
+    /*
+     * vaddr_write() is intentionally used instead of host_write().  It routes
+     * translated writes through paddr_write(), so device dispatch and exact JIT
+     * source invalidation remain identical to the interpreter.
+     */
+    vaddr_write(addr, (int)len, (word_t)data);
+}
+
+/* Commit a guarded PMEM store and report whether native code may continue. */
+static uint32_t jit_store_pmem_continue(paddr_t addr, uint32_t len, uint64_t data)
+{
+    /*
+     * Source writes must leave the native block after paddr_write() because the
+     * write can invalidate the block currently running.  Ordinary data writes
+     * can continue: paddr_write() still owns tracing/MMIO boundaries and exact
+     * invalidation, while the source-chunk pre-check decides whether continuing
+     * would risk executing stale native bytes.
+     */
+    const bool may_touch_source = jit_write_may_touch_source_chunk(addr, (int)len);
     paddr_write(addr, (int)len, (word_t)data);
+    return may_touch_source ? 0u : 1u;
 }
 
 /* Sign-extend one 32-bit W-form result to the RV64 register width. */
@@ -526,10 +600,10 @@ static bool jit_write_may_touch_source_chunk(paddr_t addr, int len)
     return false;
 }
 
-/* Release one cache slot and its source refs, if it owns native code. */
+/* Release one cache slot and its source refs, if it owns source bytes. */
 static void jit_block_discard(rv64_jit_block_t *block)
 {
-    if (block->valid && block->entry != NULL)
+    if (block->valid && block->source_len != 0)
     {
         jit_source_chunks_unref(block->paddr_start, block->source_len);
     }
@@ -803,6 +877,12 @@ static bool emit_mov_ecx_eax(rv64_jit_writer_t *w)
 static bool emit_mov_eax_ecx(rv64_jit_writer_t *w)
 {
     return emit_u8(w, 0x89) && emit_u8(w, 0xc8);
+}
+
+/* Emit `test eax, eax`, commonly used after boolean helper returns. */
+static bool emit_test_eax_eax(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x85) && emit_u8(w, 0xc0);
 }
 
 /* Emit `mov rcx, rax`, preserving a dynamic JALR target across link writes. */
@@ -1512,6 +1592,67 @@ static bool emit_direct_pmem_load_rax(rv64_jit_writer_t *w, uint32_t funct3)
     }
 }
 
+/* Emit one helper-backed RV64 load for non-Bare address translation modes. */
+static bool emit_paged_load_instr(rv64_jit_writer_t *w,
+                                  rv64_jit_reg_cache_t *regs,
+                                  uint32_t rd, uint32_t rs1,
+                                  int32_t imm, uint32_t len,
+                                  uintptr_t helper, vaddr_t pc,
+                                  uint32_t completed_count,
+                                  bool loop_count_needed)
+{
+    uint8_t *align_slow_disp = NULL;
+    uint8_t *done_disp = NULL;
+    rv64_jit_reg_cache_t side_exit_regs;
+
+    if (!jit_reg_read_rax(w, regs, rs1) ||
+        !emit_add_rax_imm32(w, imm))
+    {
+        return false;
+    }
+
+    side_exit_regs = *regs;
+
+    if (len > 1 &&
+        (!emit_test_al_imm8(w, (uint8_t)(len - 1u)) ||
+         /* 0x85 is x86 JNE/JNZ rel32: misaligned address falls back. */
+         !emit_jcc_rel32_placeholder(w, 0x85, &align_slow_disp)))
+    {
+        return false;
+    }
+
+    /*
+     * RAX holds the guest virtual address.  Move it to RDI before writing
+     * cpu.pc, because emit_store_pc_imm() materialises the PC in RAX.  The
+     * helper returns the correctly extended load value in RAX.
+     */
+    if (!jit_reg_flush_all_dirty(w, regs) ||
+        !emit_mov_rdi_rax(w) ||
+        !emit_store_pc_imm(w, pc) ||
+        !emit_call_abs(w, helper) ||
+        !emit_load_cpu_base(w) ||
+        !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
+        !jit_reg_write_rax(w, regs, rd) ||
+        !emit_jmp_rel32_placeholder(w, &done_disp))
+    {
+        return false;
+    }
+
+    if (align_slow_disp != NULL)
+    {
+        patch_rel32(align_slow_disp, w->cur);
+        if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count, loop_count_needed))
+        {
+            return false;
+        }
+    }
+
+    patch_rel32(done_disp, w->cur);
+    JIT_STAT_INC(native_loads);
+    JIT_STAT_INC(native_paged_loads);
+    return true;
+}
+
 /* Emit one guarded bare-mode RV64 load that falls back before unsafe accesses. */
 static bool emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
                             uint32_t instr, vaddr_t pc,
@@ -1522,25 +1663,40 @@ static bool emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     const uint32_t rs1 = bits(instr, 19, 15);
     const int32_t imm = (int32_t)imm_i(instr);
     uint32_t len = 0;
+    uintptr_t helper = 0;
     uint8_t *align_slow_disp = NULL;
     uint8_t *range_slow_disp = NULL;
     uint8_t *done_disp = NULL;
+    rv64_jit_reg_cache_t side_exit_regs;
 
     switch (funct3)
     {
     case 0x0: /* LB */
+        helper = (uintptr_t)jit_load_i8;
+        len = 1;
+        break;
     case 0x4: /* LBU */
+        helper = (uintptr_t)jit_load_u8;
         len = 1;
         break;
     case 0x1: /* LH */
+        helper = (uintptr_t)jit_load_i16;
+        len = 2;
+        break;
     case 0x5: /* LHU */
+        helper = (uintptr_t)jit_load_u16;
         len = 2;
         break;
     case 0x2: /* LW */
+        helper = (uintptr_t)jit_load_i32;
+        len = 4;
+        break;
     case 0x6: /* LWU */
+        helper = (uintptr_t)jit_load_u32;
         len = 4;
         break;
     case 0x3: /* LD */
+        helper = (uintptr_t)jit_load_u64;
         len = 8;
         break;
     default:
@@ -1548,14 +1704,14 @@ static bool emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
 
     /*
-     * This first memory tier is intentionally bare-mode only. The block cache
-     * is tagged by satp, so a block compiled while satp.MODE is Bare cannot run
-     * after paging is enabled. Sv39 gets its own dependency-tracked fast path
-     * later instead of reusing this direct physical-address proof.
+     * The direct PMEM tier is intentionally Bare-mode only.  Non-Bare modes use
+     * helper calls below, because Sv39 permission and effective-privilege checks
+     * are subtler than this physical-address range proof.
      */
     if ((cpu.csr.satp >> 60) != 0)
     {
-        return false;
+        return emit_paged_load_instr(w, regs, rd, rs1, imm, len, helper, pc,
+                                     completed_count, loop_count_needed);
     }
 
     if (!jit_reg_read_rax(w, regs, rs1) ||
@@ -1563,6 +1719,8 @@ static bool emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     {
         return false;
     }
+
+    side_exit_regs = *regs;
 
     if (len > 1 &&
         (!emit_test_al_imm8(w, (uint8_t)(len - 1u)) ||
@@ -1596,13 +1754,76 @@ static bool emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
     patch_rel32(range_slow_disp, w->cur);
 
-    if (!emit_interpreter_side_exit(w, regs, pc, completed_count, loop_count_needed))
+    if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count, loop_count_needed))
     {
         return false;
     }
 
     patch_rel32(done_disp, w->cur);
     JIT_STAT_INC(native_loads);
+    return true;
+}
+
+/* Emit one helper-backed RV64 store for non-Bare address translation modes. */
+static bool emit_paged_store_instr(rv64_jit_writer_t *w,
+                                   rv64_jit_reg_cache_t *regs,
+                                   uint32_t rs1, uint32_t rs2,
+                                   int32_t imm, uint32_t len,
+                                   vaddr_t pc, vaddr_t next_pc,
+                                   uint32_t completed_count,
+                                   bool loop_count_needed)
+{
+    uint8_t *align_slow_disp = NULL;
+    rv64_jit_reg_cache_t side_exit_regs;
+
+    if (!jit_reg_read_rax(w, regs, rs1) ||
+        !emit_add_rax_imm32(w, imm))
+    {
+        return false;
+    }
+
+    side_exit_regs = *regs;
+
+    if (len > 1 &&
+        (!emit_test_al_imm8(w, (uint8_t)(len - 1u)) ||
+         /* 0x85 is x86 JNE/JNZ rel32: misaligned address falls back. */
+         !emit_jcc_rel32_placeholder(w, 0x85, &align_slow_disp)))
+    {
+        return false;
+    }
+
+    /*
+     * Paged stores are conservative for now: call vaddr_write(), then leave the
+     * native block at next_pc.  A translated store may change source bytes or
+     * page tables, so the dispatcher must revalidate the next block before more
+     * native code runs.
+     */
+    if (!jit_reg_flush_all_dirty(w, regs) ||
+        !emit_mov_rdi_rax(w) ||
+        !jit_reg_read_rdx(w, regs, rs2) ||
+        !emit_mov_esi_imm32(w, len) ||
+        !emit_store_pc_imm(w, pc) ||
+        !emit_call_abs(w, (uintptr_t)jit_store_vaddr) ||
+        !emit_load_cpu_base(w) ||
+        !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
+        !emit_store_pc_imm(w, next_pc) ||
+        !(loop_count_needed ? emit_return_loop_count(w, completed_count + 1u)
+                             : emit_return_count(w, completed_count + 1u)))
+    {
+        return false;
+    }
+
+    if (align_slow_disp != NULL)
+    {
+        patch_rel32(align_slow_disp, w->cur);
+        if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count, loop_count_needed))
+        {
+            return false;
+        }
+    }
+
+    JIT_STAT_INC(native_stores);
+    JIT_STAT_INC(native_paged_stores);
     return true;
 }
 
@@ -1619,6 +1840,8 @@ static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     uint32_t len = 0;
     uint8_t *align_slow_disp = NULL;
     uint8_t *range_slow_disp = NULL;
+    uint8_t *exit_disp = NULL;
+    uint8_t *continue_disp = NULL;
 
     switch (funct3)
     {
@@ -1640,7 +1863,8 @@ static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
 
     if ((cpu.csr.satp >> 60) != 0)
     {
-        return false;
+        return emit_paged_store_instr(w, regs, rs1, rs2, imm, len, pc, next_pc,
+                                      completed_count, loop_count_needed);
     }
 
     if (!jit_reg_flush_all_dirty(w, regs) ||
@@ -1670,8 +1894,10 @@ static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     /*
      * Convert the proven PMEM offset back to a physical address for paddr_write:
      *   RDI = offset + CONFIG_MBASE, ESI = byte width, RDX = store data.
-     * The helper may clobber caller-saved registers, so reload R11 before
-     * updating cpu.pc for the completed store side exit.
+     * The continuation helper returns zero when the write may have invalidated
+     * translated source bytes.  That path exits after the store; otherwise the
+     * native block reloads its base registers and keeps compiling after the
+     * safe data store.
      */
     if (!emit_mov_rdi_rdx(w) ||
         !emit_movabs_rcx(w, (uint64_t)CONFIG_MBASE) ||
@@ -1680,8 +1906,20 @@ static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         !jit_reg_read_rdx(w, regs, rs2) ||
         !emit_mov_esi_imm32(w, len) ||
         !emit_store_pc_imm(w, pc) ||
-        !emit_call_abs(w, (uintptr_t)jit_store_pmem) ||
+        !emit_call_abs(w, (uintptr_t)jit_store_pmem_continue) ||
         !emit_load_cpu_base(w) ||
+        !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
+        !emit_test_eax_eax(w) ||
+        /* 0x84 is x86 JE/JZ rel32: helper returned zero, so exit. */
+        !emit_jcc_rel32_placeholder(w, 0x84, &exit_disp) ||
+        !emit_jmp_rel32_placeholder(w, &continue_disp))
+    {
+        return false;
+    }
+
+    patch_rel32(exit_disp, w->cur);
+
+    if (!emit_load_cpu_base(w) ||
         !emit_store_pc_imm(w, next_pc) ||
         !(loop_count_needed ? emit_return_loop_count(w, completed_count + 1u)
                              : emit_return_count(w, completed_count + 1u)))
@@ -1700,7 +1938,10 @@ static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         return false;
     }
 
+    patch_rel32(continue_disp, w->cur);
+
     JIT_STAT_INC(native_stores);
+    JIT_STAT_INC(native_store_continuations);
     return true;
 }
 
@@ -2051,6 +2292,7 @@ static bool emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     const uint32_t rd = bits(instr, 11, 7);
     const vaddr_t link = pc + RV64_INSN_SIZE;
     uint8_t *misaligned_disp = NULL;
+    rv64_jit_reg_cache_t side_exit_regs;
 
     if (opcode == RV64_OPCODE_JAL)
     {
@@ -2084,8 +2326,15 @@ static bool emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         !emit_add_rax_imm32(w, (int32_t)imm_i(instr)) ||
         !emit_and_rax_imm32(w, -2) ||
         !emit_test_al_imm8(w, RV64_BRANCH_ALIGN_MASK) ||
-        !emit_jcc_rel32_placeholder(w, 0x85, &misaligned_disp) ||
-        !emit_mov_rcx_rax(w) ||
+        /* 0x85 is x86 JNE/JNZ rel32: target misalignment falls back. */
+        !emit_jcc_rel32_placeholder(w, 0x85, &misaligned_disp))
+    {
+        return false;
+    }
+
+    side_exit_regs = *regs;
+
+    if (!emit_mov_rcx_rax(w) ||
         !emit_movabs_rax(w, link) ||
         !jit_reg_write_rax(w, regs, rd) ||
         !jit_reg_flush_all_dirty(w, regs) ||
@@ -2098,7 +2347,7 @@ static bool emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
 
     patch_rel32(misaligned_disp, w->cur);
-    if (!emit_interpreter_side_exit(w, regs, pc, completed_count, loop_count_needed))
+    if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count, loop_count_needed))
     {
         return false;
     }
@@ -2225,6 +2474,12 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, bool translated)
         .insn_count = 0,
         .entry = NULL,
     };
+    /*
+     * Negative cache entries need source refs too.  If self-modifying code
+     * rewrites an unsupported instruction into a supported one, exact
+     * invalidation must remove this marker so the JIT can compile the new bytes.
+     */
+    jit_source_chunks_ref(paddr, RV64_INSN_SIZE);
 }
 
 /* Return true for opcodes that can appear inside a native chained loop body. */
@@ -2359,8 +2614,7 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         if (opcode == RV64_OPCODE_JAL ||
             opcode == RV64_OPCODE_JALR)
         {
-            if ((opcode == RV64_OPCODE_JALR && count == 0) ||
-                !emit_jump_instr(&w, &regs, instr, cur_pc, count, loop_count_needed))
+            if (!emit_jump_instr(&w, &regs, instr, cur_pc, count, loop_count_needed))
             {
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
@@ -2371,13 +2625,12 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         else if (opcode == RV64_OPCODE_LOAD)
         {
             /*
-             * A slow load side exit returns before the load executes. Avoid
-             * publishing a block whose first possible exit would report zero
-             * retired instructions; the interpreter will handle that leading
-             * load directly.
+             * A guarded load may side-exit with zero completed instructions
+             * when it is the first block instruction and the runtime address is
+             * unsafe.  The dispatcher treats that as a miss-like fallback and
+             * lets the interpreter execute the load.
              */
-            if (count == 0 ||
-                !emit_load_instr(&w, &regs, instr, cur_pc, count, loop_count_needed))
+            if (!emit_load_instr(&w, &regs, instr, cur_pc, count, loop_count_needed))
             {
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
@@ -2387,20 +2640,18 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         else if (opcode == RV64_OPCODE_STORE)
         {
             /*
-             * The helper-backed store path returns after committing the store.
-             * If the store is the first instruction, an unsafe-address side exit
-             * would need to return zero retired instructions, so leave that case
-             * to the interpreter.
+             * Safe PMEM data stores can continue in the native block.  Stores
+             * that may fault, hit MMIO, or touch source bytes side-exit before
+             * or immediately after the store so interpreter-visible ordering is
+             * preserved.
              */
-            if (count == 0 ||
-                !emit_store_instr(&w, &regs, instr, cur_pc, cur_pc + RV64_INSN_SIZE,
+            if (!emit_store_instr(&w, &regs, instr, cur_pc, cur_pc + RV64_INSN_SIZE,
                                   count, loop_count_needed))
             {
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
                 break;
             }
-            end_block = true;
         }
         else if (opcode == RV64_OPCODE_BRANCH)
         {
@@ -2598,7 +2849,13 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
         jit_entry_budget = remaining_budget;
         jit_loop_extra = 0;
         const uint32_t ran = block->entry();
-        Assert(ran > 0 && ran <= remaining_budget,
+        if (ran == 0)
+        {
+            JIT_STAT_INC(zero_side_exits);
+            break;
+        }
+
+        Assert(ran <= remaining_budget,
                "jit: invalid RV64 executed count %u", ran);
         JIT_STAT_INC(blocks_executed);
         JIT_STAT_ADD(executed_insns, ran);
@@ -2701,6 +2958,14 @@ void isa_jit_dump_stats(void)
         jit_stats.translated_blocks);
     Log("jit: reg cache spills = %" PRIu64,
         jit_stats.reg_cache_spills);
+    Log("jit: native store continuations = %" PRIu64,
+        jit_stats.native_store_continuations);
+    Log("jit: native paged loads = %" PRIu64,
+        jit_stats.native_paged_loads);
+    Log("jit: native paged stores = %" PRIu64,
+        jit_stats.native_paged_stores);
+    Log("jit: zero side exits = %" PRIu64,
+        jit_stats.zero_side_exits);
 #else
     if (jit_stats_enabled)
     {
