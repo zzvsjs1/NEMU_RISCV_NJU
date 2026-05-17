@@ -119,7 +119,7 @@ config AUDIO_DUMMY
 
 config SB_ADDR
   hex "Physical address of the audio stream buffer"
-  default 0xa1400000
+  default 0xa1200000
 
 config SB_SIZE
   hex "Size of the audio stream buffer"

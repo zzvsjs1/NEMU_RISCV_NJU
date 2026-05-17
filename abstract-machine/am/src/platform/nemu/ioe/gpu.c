@@ -2,7 +2,7 @@
 #include <klib.h>
 #include <nemu.h>
 
-#define GPU_ACCEL_VMEM_SIZE NEMU_FB_SIZE_MAX
+#define GPU_ACCEL_VMEM_SIZE (512 << 10)
 
 static inline uintptr_t vgactl_reg_addr(uint32_t reg)
 {
@@ -137,12 +137,14 @@ void __am_gpu_init()
 
 void __am_gpu_config(AM_GPU_CONFIG_T *cfg)
 {
+    const size_t framebuffer_bytes = gpu_framebuffer_bytes();
+
     *cfg = (AM_GPU_CONFIG_T){
         .present = true,
         .has_accel = gpu_accel_available(),
         .width = W,
         .height = H,
-        .vmemsz = GPU_ACCEL_VMEM_SIZE,
+        .vmemsz = (int)framebuffer_bytes,
     };
 }
 

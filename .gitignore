@@ -3,6 +3,6 @@
 .vscode/
 *.json/nanos-lite
 scripts/codex-*.sh
-/docs
+/docs/
+/fceux
 /notes
-/nemu-master
