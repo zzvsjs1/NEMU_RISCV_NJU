@@ -163,6 +163,15 @@ config WATCHPOINT
   help
     Check active SDB watchpoints after each executed instruction.
 
+config SDB_BATCH_DEFAULT
+  depends on TARGET_NATIVE_ELF
+  bool "Run SDB in batch mode by default"
+  default n
+  help
+    Start execution immediately instead of entering the interactive SDB prompt.
+    The -b/--batch command-line option remains available for configurations
+    that keep this disabled.
+
 config MTRACE
   depends on TRACE && TARGET_NATIVE_ELF
   bool "Enable memory access tracer"

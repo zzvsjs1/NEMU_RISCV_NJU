@@ -47,6 +47,12 @@ else
 INC_PATH += include $(NAVY_HOME)/libs/libc/include $(NAVY_HOME)/libs/libos/src
 endif
 
+ifeq ($(ISA),riscv64)
+NAVY_APPS ?=
+NAVY_TESTS ?= hello
+NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
+endif
+
 ./src/resources.S: $(RAMDISK_FILE)
 	@touch $@
 
@@ -63,7 +69,7 @@ ifneq ($(FS_MODE_CHECK_GOALS),)
 endif
 
 update:
-	$(MAKE) -s -C $(NAVY_HOME) ISA=$(ISA) FS_MODE=$(FS_MODE) ramdisk
+	$(MAKE) -s -C $(NAVY_HOME) ISA=$(ISA) FS_MODE=$(FS_MODE) $(NAVY_UPDATE_APP_ARGS) ramdisk
 	@ln -sf $(NAVY_HOME)/build/ramdisk.img $(RAMDISK_FILE)
 ifeq ($(FS_MODE),flat)
 	@ln -sf $(NAVY_HOME)/build/ramdisk.h src/files.h

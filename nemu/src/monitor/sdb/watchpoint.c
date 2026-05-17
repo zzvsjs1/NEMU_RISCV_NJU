@@ -203,7 +203,7 @@ void printWpByInfoCommand()
             ANSI_FMT(
                 "%-5" FMT_WORD_PURE "%-32s%-32" FMT_WORD_PURE "\n",
                 ANSI_FG_MAGENTA),
-            cur->NO,
+            (word_t)cur->NO,
             cur->exprStr,
             cur->lastVal);
     }
