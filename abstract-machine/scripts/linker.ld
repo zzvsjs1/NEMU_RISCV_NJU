@@ -19,7 +19,7 @@ SECTIONS {
   edata = .;
   _data = .;
   .bss : {
-    _bss_start = .;
+	_bss_start = .;
     *(.bss*)
     *(.sbss*)
     *(.scommon)

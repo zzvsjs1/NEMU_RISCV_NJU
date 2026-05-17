@@ -8,7 +8,7 @@
 #if !defined(__ISA_NATIVE__) || defined(__NATIVE_USE_KLIB__)
 
 /*
- * Minimal printf family implementation for bare‑metal runtime.
+ * Minimal printf family implementation for bare-metal runtime.
  *
  * Supported conversions:
  *   %c %s %d %i %u %x %X %o %O %p %%
@@ -23,10 +23,10 @@
  * Length modifiers:
  *   l     long / unsigned long
  *   ll    long long / unsigned long long
- *   z     size_t / ssize_t
+ *   z     size_t / ptrdiff_t-sized signed value
  *
  * Internals:
- *   A single 8 KiB buffer is allocated with malloc() on first call to printf() and reused forever
+ *   A single static 8 KiB buffer is reused by printf() to avoid heap use during panic reporting.
  */
 
 #define ARRAY_LEN(arr) (sizeof(arr) / sizeof((arr)[0]))
@@ -36,15 +36,15 @@
 /*  Numeric helpers                                                           */
 /* -------------------------------------------------------------------------- */
 
-static int utoa_base(unsigned long long value,
-                     char *buf,
-                     int base,
-                     int uppercase)
+static int utoa_base_ulong(unsigned long value,
+                           char *buf,
+                           int base,
+                           int uppercase)
 {
     /*
-     * Conversion is done backwards into a small local buffer, then reversed
-     * into the caller buffer. That keeps division logic simple and avoids heap
-     * allocation inside printf paths used during panic reporting.
+     * Plain int/long formatting stays on the native word size. On RV32 this
+     * avoids pulling in 64-bit division for common printf paths, while the ll
+     * path below still handles callers that explicitly ask for it.
      */
     static const char *digits_lc = "0123456789abcdef";
     static const char *digits_uc = "0123456789ABCDEF";
@@ -56,7 +56,40 @@ static int utoa_base(unsigned long long value,
         return 0;
     }
 
-    char tmp[64]; /* enough for binary of 64‑bit value */
+    char tmp[64]; /* enough for binary of 64-bit value */
+    int pos = 0;
+
+    do
+    {
+        tmp[pos++] = digits[value % (unsigned long)base];
+        value /= (unsigned long)base;
+    } while (value != 0UL);
+
+    for (int i = 0; i < pos; i++)
+    {
+        buf[i] = tmp[pos - 1 - i];
+    }
+
+    buf[pos] = '\0';
+    return pos;
+}
+
+static int utoa_base_ull(unsigned long long value,
+                         char *buf,
+                         int base,
+                         int uppercase)
+{
+    static const char *digits_lc = "0123456789abcdef";
+    static const char *digits_uc = "0123456789ABCDEF";
+    const char *digits = uppercase ? digits_uc : digits_lc;
+
+    if (base < 2 || base > 16)
+    {
+        buf[0] = '\0';
+        return 0;
+    }
+
+    char tmp[64];
     int pos = 0;
 
     do
@@ -74,7 +107,7 @@ static int utoa_base(unsigned long long value,
     return pos;
 }
 
-static int ltoa_dec(long long value, char *buf)
+static int ltoa_dec_long(long value, char *buf)
 {
     if (value == 0)
     {
@@ -83,7 +116,43 @@ static int ltoa_dec(long long value, char *buf)
         return 1;
     }
 
-    unsigned long long v = (value < 0) ? (unsigned long long)(-value)
+    unsigned long v = (value < 0) ? (unsigned long)(-(value + 1)) + 1UL
+                                  : (unsigned long)value;
+    int neg = (value < 0);
+
+    char tmp[64];
+    int pos = 0;
+
+    while (v > 0UL)
+    {
+        tmp[pos++] = (char)('0' + (v % 10UL));
+        v /= 10UL;
+    }
+
+    if (neg)
+    {
+        tmp[pos++] = '-';
+    }
+
+    for (int i = 0; i < pos; i++)
+    {
+        buf[i] = tmp[pos - 1 - i];
+    }
+
+    buf[pos] = '\0';
+    return pos;
+}
+
+static int ltoa_dec_ll(long long value, char *buf)
+{
+    if (value == 0)
+    {
+        buf[0] = '0';
+        buf[1] = '\0';
+        return 1;
+    }
+
+    unsigned long long v = (value < 0) ? (unsigned long long)(-(value + 1)) + 1ULL
                                        : (unsigned long long)value;
     int neg = (value < 0);
 
@@ -170,6 +239,31 @@ static void write_str(const char *s,
     {
         write_repeat(' ', pad, out, n, out_pos, total_written);
     }
+}
+
+static void write_signed_decimal(const char *s,
+                                 int len,
+                                 int width,
+                                 int left_align,
+                                 int zero_pad,
+                                 char *out,
+                                 size_t n,
+                                 size_t *out_pos,
+                                 size_t *total_written)
+{
+    /*
+     * For zero-padded negative numbers, the sign is a prefix rather than a digit
+     * to be padded over. This gives "%05d", -7 the conventional "-0007" layout.
+     */
+    if (!left_align && zero_pad && len > 0 && s[0] == '-' && width > len)
+    {
+        write_str("-", 1, 0, 0, 0, out, n, out_pos, total_written);
+        write_repeat('0', width - len, out, n, out_pos, total_written);
+        write_str(s + 1, len - 1, 0, 0, 0, out, n, out_pos, total_written);
+        return;
+    }
+
+    write_str(s, len, width, left_align, zero_pad, out, n, out_pos, total_written);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -331,30 +425,33 @@ int vsnprintf(char *out,
         case 'd':
         case 'i':
         {
-            long long val;
-
             if (length_ll)
             {
-                val = va_arg(ap, long long);
+                long long val = va_arg(ap, long long);
+                len = ltoa_dec_ll(val, tmp);
             }
-            else if (length_l)
-            {
-                val = va_arg(ap, long);
-            }
-            // No ssize_t.
-
-            // else if (length_size)
-            // {
-            //     val = (long long)va_arg(ap, ssize_t);
-            // }
             else
             {
-                val = (long long)va_arg(ap, int);
+                long val;
+
+                if (length_l)
+                {
+                    val = va_arg(ap, long);
+                }
+                else if (length_size)
+                {
+                    val = (long)va_arg(ap, ptrdiff_t);
+                }
+                else
+                {
+                    val = (long)va_arg(ap, int);
+                }
+
+                len = ltoa_dec_long(val, tmp);
             }
 
-            len = ltoa_dec(val, tmp);
-            write_str(tmp, len, width, left_align, zero_pad, out, n,
-                      &out_pos, &total_written);
+            write_signed_decimal(tmp, len, width, left_align, zero_pad, out, n,
+                                 &out_pos, &total_written);
             break;
         }
 
@@ -364,40 +461,59 @@ int vsnprintf(char *out,
         case 'o':
         case 'O':
         {
-            unsigned long long val;
-
             if (length_ll)
             {
-                val = va_arg(ap, unsigned long long);
-            }
-            else if (length_l)
-            {
-                val = va_arg(ap, unsigned long);
-            }
-            else if (length_size)
-            {
-                val = (unsigned long long)va_arg(ap, size_t);
+                unsigned long long val = va_arg(ap, unsigned long long);
+                int base = 10;
+                int upper = 0;
+
+                if (spec == 'x' || spec == 'X')
+                {
+                    base = 16;
+                    upper = (spec == 'X');
+                }
+                else if (spec == 'o' || spec == 'O')
+                {
+                    base = 8;
+                    upper = (spec == 'O');
+                }
+
+                len = utoa_base_ull(val, tmp, base, upper);
             }
             else
             {
-                val = (unsigned long long)va_arg(ap, unsigned);
+                unsigned long val;
+
+                if (length_l)
+                {
+                    val = va_arg(ap, unsigned long);
+                }
+                else if (length_size)
+                {
+                    val = (unsigned long)va_arg(ap, size_t);
+                }
+                else
+                {
+                    val = (unsigned long)va_arg(ap, unsigned);
+                }
+
+                int base = 10;
+                int upper = 0;
+
+                if (spec == 'x' || spec == 'X')
+                {
+                    base = 16;
+                    upper = (spec == 'X');
+                }
+                else if (spec == 'o' || spec == 'O')
+                {
+                    base = 8;
+                    upper = (spec == 'O');
+                }
+
+                len = utoa_base_ulong(val, tmp, base, upper);
             }
 
-            int base = 10;
-            int upper = 0;
-
-            if (spec == 'x' || spec == 'X')
-            {
-                base = 16;
-                upper = (spec == 'X');
-            }
-            else if (spec == 'o' || spec == 'O')
-            {
-                base = 8;
-                upper = (spec == 'O');
-            }
-
-            len = utoa_base(val, tmp, base, upper);
             write_str(tmp, len, width, left_align, zero_pad, out, n,
                       &out_pos, &total_written);
             break;
@@ -412,7 +528,7 @@ int vsnprintf(char *out,
             tmp[1] = 'x';
             len = 2;
 
-            int len_addr = utoa_base(addr, tmp + 2, 16, 0);
+            int len_addr = utoa_base_ulong((unsigned long)addr, tmp + 2, 16, 0);
             len += len_addr;
 
             write_str(tmp, len, width, left_align, zero_pad, out, n,
@@ -498,17 +614,113 @@ int sprintf(char *out,
     return ret;
 }
 
-int printf(const char *fmt, ...)
+int vsprintf(char *out, const char *fmt, va_list ap)
+{
+    return vsnprintf(out, (size_t)-1, fmt, ap);
+}
+
+int vprintf(const char *fmt, va_list ap)
 {
     static char buffer[PRINTF_BUFFER_SIZE];
 
-    va_list ap;
-    va_start(ap, fmt);
     int ret = vsnprintf(buffer, PRINTF_BUFFER_SIZE, fmt, ap);
-    va_end(ap);
-
     putstr(buffer);
     return ret;
+}
+
+int printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int ret = vprintf(fmt, ap);
+    va_end(ap);
+    return ret;
+}
+
+int __am_vsscanf_internal(const char *str, const char **end_pstr, const char *fmt, va_list ap)
+{
+    const char *pstr = str;
+    const char *pfmt = fmt;
+    int assigned = 0;
+    while (*pfmt)
+    {
+        char ch = *pfmt++;
+        if (isspace(ch))
+        {
+            for (ch = *pfmt; isspace(ch); ch = *(++pfmt))
+                ;
+            for (ch = *pstr; isspace(ch); ch = *(++pstr))
+                ;
+            continue;
+        }
+        switch (ch)
+        {
+        case '%':
+            break;
+        default:
+            if (*pstr == ch)
+            { // match
+                pstr++;
+                continue;
+            }
+            goto end; // fail
+        }
+
+        char *p;
+        ch = *pfmt++;
+        switch (ch)
+        {
+        // conversion specifier
+        case 'd':
+            *(va_arg(ap, int *)) = strtol(pstr, &p, 10);
+            if (p == pstr)
+                goto end; // fail
+            pstr = p;
+            assigned++;
+            break;
+
+        case 'c':
+            if (*pstr == '\0')
+                goto end; // fail
+            *(va_arg(ap, char *)) = *pstr++;
+            assigned++;
+            break;
+
+        default:
+            printf("Unsupported conversion specifier '%c'\n", ch);
+            assert(0);
+        }
+    }
+
+end:
+    if (end_pstr)
+    {
+        *end_pstr = pstr;
+    }
+    return assigned;
+}
+
+int vsscanf(const char *str, const char *fmt, va_list ap)
+{
+    return __am_vsscanf_internal(str, NULL, fmt, ap);
+}
+
+int sscanf(const char *str, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsscanf(str, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+int __isoc99_sscanf(const char *str, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsscanf(str, fmt, ap);
+    va_end(ap);
+    return r;
 }
 
 #endif /* !defined(__ISA_NATIVE__) || defined(__NATIVE_USE_KLIB__) */

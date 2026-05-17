@@ -25,11 +25,11 @@ void __am_input_keybrd(AM_INPUT_KEYBRD_T *kbd)
 void __am_input_mouse(AM_INPUT_MOUSE_T *mouse)
 {
     /*
-   * The mouse ABI mirrors the keyboard poll style: one type word says whether an
-   * event exists, and payload words are meaningful only for a non-empty event.
-   * Clearing the payload on NONE keeps Nanos from accidentally reusing the last
-   * coordinates when it formats /dev/events text.
-   */
+     * The mouse ABI mirrors the keyboard poll style: one type word says whether
+     * an event exists, and payload words are meaningful only for a non-empty
+     * event. Clearing the payload on NONE keeps Nanos from accidentally reusing
+     * the last coordinates when it formats /dev/events text.
+     */
     mouse->type = inl(MOUSE_ADDR + MOUSE_REG_TYPE);
 
     if (mouse->type == AM_MOUSE_NONE)
@@ -44,10 +44,10 @@ void __am_input_mouse(AM_INPUT_MOUSE_T *mouse)
     }
 
     /*
-   * Reading the type register latches a complete event in NEMU. The remaining
-   * reads below must therefore come from the same latched event, not subsequent
-   * host SDL input.
-   */
+     * Reading the type register latches a complete event in NEMU. The remaining
+     * reads below must therefore come from the same latched event, not
+     * subsequent host SDL input.
+     */
     mouse->x = inl(MOUSE_ADDR + MOUSE_REG_X);
     mouse->y = inl(MOUSE_ADDR + MOUSE_REG_Y);
     mouse->button = inl(MOUSE_ADDR + MOUSE_REG_BUTTON);
