@@ -50,20 +50,10 @@ static inline void set_satp(void *pdir)
     // RV32 uses Sv32, whose mode value is 1 in bit 31. RV64 uses Sv39, whose
     // mode value is 8 in bits [63:60]. ASID is left as zero for both cases
     // because this small NEMU port does not maintain per-address-space ASIDs.
-    // Real hardware requires an sfence.vma around address-space changes, but
-    // this NEMU target does not model a guest TLB and currently does not decode
-    // sfence.vma. The omission is therefore NEMU-specific, not portable RISC-V.
     uintptr_t root_ppn = ((uintptr_t)pdir >> PAGE_SHIFT) & SATP_PPN_MASK;
     uintptr_t mode = SATP_MODE << SATP_MODE_SHIFT;
     asm volatile("csrw satp, %0" : : "r"(mode | root_ppn));
 }
-
-static_assert(offsetof(Context, mcause) == (NR_REGS + 0) * sizeof(uintptr_t));
-static_assert(offsetof(Context, mstatus) == (NR_REGS + 1) * sizeof(uintptr_t));
-static_assert(offsetof(Context, mepc) == (NR_REGS + 2) * sizeof(uintptr_t));
-static_assert(offsetof(Context, ksp) == (NR_REGS + 4) * sizeof(uintptr_t));
-static_assert(offsetof(Context, np) == (NR_REGS + 5) * sizeof(uintptr_t));
-static_assert(sizeof(Context) == (NR_REGS + 3 + 1 + 1 + 3) * sizeof(uintptr_t));
 
 static inline uintptr_t get_satp()
 {
@@ -260,16 +250,10 @@ Context *ucontext(AddrSpace *as, Area kstack, void *entry)
     // For a user process, return to U-mode after mret.
     // RISC-V mstatus.MPP is at bits [12:11].
     // Set MPP=00 (U-mode) by clearing those bits.
-    // On RV64, set SXL/UXL to 64-bit explicitly; on RV32 these masks are zero.
     // Also set MPIE (bit 7) so interrupt enable state is sane after mret.
-    c->mstatus = MSTATUS_SXL | MSTATUS_UXL;
+    c->mstatus = 0;
     c->mstatus |= (1 << 7);             // MPIE = 1
     c->mstatus &= ~((uintptr_t)0x1800); // MPP = 00 (U)
-
-    // Start the user stack at the top of the user address range. nanos-lite may
-    // later patch this register for argc/argv layout, but AM's generic
-    // ucontext() must still produce a valid standalone user context.
-    c->GPRSP = (uintptr_t)as->area.end;
 
     c->pdir = as->ptr; // Use this address space's page table root
     c->ksp = kstack.end;

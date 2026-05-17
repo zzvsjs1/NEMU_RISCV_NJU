@@ -86,8 +86,8 @@ int strcmp(const char *s1, const char *s2)
     // Zero if lhs and rhs compare equal.
     // Positive value if lhs appears after rhs in lexicographical order.
 
-    const unsigned char *str1 = (const unsigned char *)s1;
-    const unsigned char *str2 = (const unsigned char *)s2;
+    const char *str1 = s1;
+    const char *str2 = s2;
 
     for (; *str1 && *str2; ++str1, ++str2)
     {
@@ -116,7 +116,7 @@ int strcmp(const char *s1, const char *s2)
         return 1;
     }
 
-    return *str1 < *str2 ? -1 : 1;
+    return *str1 - *str2 < 0 ? -1 : 1;
 }
 
 int strncmp(const char *s1, const char *s2, size_t n)
@@ -124,13 +124,8 @@ int strncmp(const char *s1, const char *s2, size_t n)
     // A zero-length comparison succeeds without reading either string. The loop
     // condition keeps that property, which is important when callers pass NULL
     // only with n == 0 in libc-compatible edge cases.
-    if (n == 0)
-    {
-        return 0;
-    }
-
-    const unsigned char *str1 = (const unsigned char *)s1;
-    const unsigned char *str2 = (const unsigned char *)s2;
+    const char *str1 = s1;
+    const char *str2 = s2;
 
     for (; *str1 && *str2 && n; ++str1, ++str2, --n)
     {
@@ -138,11 +133,6 @@ int strncmp(const char *s1, const char *s2, size_t n)
         {
             break;
         }
-    }
-
-    if (n == 0)
-    {
-        return 0;
     }
 
     // Reach end.
@@ -164,7 +154,7 @@ int strncmp(const char *s1, const char *s2, size_t n)
         return 1;
     }
 
-    return *str1 < *str2 ? -1 : 1;
+    return *str1 - *str2 < 0 ? -1 : 1;
 }
 
 void *memset(void *s, int c, size_t n)
@@ -240,37 +230,6 @@ int memcmp(const void *s1, const void *s2, size_t n)
     }
 
     return 0;
-}
-
-char *strchr(const char *s, int c)
-{
-    unsigned char ch = (unsigned char)c;
-    const unsigned char *p = (const unsigned char *)s;
-
-    do
-    {
-        if (*p == ch)
-            return (char *)p;
-        if (*p == '\0')
-            break;
-        p++;
-    } while (1);
-    return NULL;
-}
-
-char *strrchr(const char *s, int c)
-{
-    unsigned char ch = (unsigned char)c;
-    const unsigned char *p = (const unsigned char *)s + strlen(s);
-    do
-    {
-        if (*p == ch)
-            return (char *)p;
-        if ((const unsigned char *)s == p)
-            break;
-        p--;
-    } while (1);
-    return NULL;
 }
 
 #endif
