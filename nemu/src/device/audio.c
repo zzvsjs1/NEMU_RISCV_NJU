@@ -220,7 +220,6 @@ static void sdlAudioCallback(void *userdata, Uint8 *stream, int len)
 }
 #endif
 
-#ifndef CONFIG_AUDIO_DUMMY
 static bool audio_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
                                    size_t *len)
 {
@@ -274,7 +273,6 @@ static bool audio_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
     *len = chunk;
     return chunk > 0;
 }
-#endif
 
 static void append_audio_bytes(vaddr_t src, uint32_t len)
 {
@@ -315,8 +313,8 @@ static void append_audio_bytes(vaddr_t src, uint32_t len)
         size_t src_chunk = 0;
         Assert(audio_guest_read_chunk(src + (vaddr_t)done, (size_t)len - done,
                                       &host, &src_chunk),
-               "audio: cannot translate bulk source vaddr=" FMT_WORD,
-               (word_t)(src + (vaddr_t)done));
+               "audio: cannot translate bulk source vaddr=0x%08x",
+               src + (vaddr_t)done);
 
         size_t dst_chunk = CONFIG_SB_SIZE - writeIndex;
 

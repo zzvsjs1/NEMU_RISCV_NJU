@@ -19,51 +19,23 @@ static Area segments[] = { // Kernel memory mappings
 #define PAGE_SIZE (1ul << PAGE_SHIFT)
 #define PAGE_MASK (PAGE_SIZE - 1)
 
-#define PTE_FLAG_MASK 0x3FFul
-#define PTE_PPN_SHIFT 10
-
-#if __riscv_xlen == 32
-#define SATP_MODE 1ul
-#define SATP_MODE_SHIFT 31
-#define SATP_PPN_MASK 0x003FFFFFul
-#define PT_LEVELS 2
-#define VPN_BITS 10
-#elif __riscv_xlen == 64
-#define SATP_MODE 8ul
-#define SATP_MODE_SHIFT 60
-#define SATP_PPN_MASK 0x00000FFFFFFFFFFFul
-#define PT_LEVELS 3
-#define VPN_BITS 9
-#else
-#error "Unsupported RISC-V XLEN"
-#endif
-
-#define PTE_PER_PAGE (PGSIZE / sizeof(PTE))
-#define VPN_MASK ((1ul << VPN_BITS) - 1)
-
 static inline void set_satp(void *pdir)
 {
-    // The AM kernel keeps page-table pages in identity-mapped physical memory.
-    // Therefore the C pointer value is also the physical address that satp must
-    // receive after dropping the 4 KiB page offset.
-    //
-    // RV32 uses Sv32, whose mode value is 1 in bit 31. RV64 uses Sv39, whose
-    // mode value is 8 in bits [63:60]. ASID is left as zero for both cases
-    // because this small NEMU port does not maintain per-address-space ASIDs.
-    uintptr_t root_ppn = ((uintptr_t)pdir >> PAGE_SHIFT) & SATP_PPN_MASK;
-    uintptr_t mode = SATP_MODE << SATP_MODE_SHIFT;
-    asm volatile("csrw satp, %0" : : "r"(mode | root_ppn));
+    // Sv32 mode is encoded in the top bit of satp on RV32. The root page-table
+    // physical page number occupies the remaining low bits after shifting the
+    // page-aligned pointer by 12.
+    // Page-table pages come from the kernel bump allocator, so their physical
+    // addresses are also directly usable C pointers under the identity map.
+    uintptr_t mode = 1ul << (__riscv_xlen - 1);
+    asm volatile("csrw satp, %0" : : "r"(mode | ((uintptr_t)pdir >> 12)));
 }
 
 static inline uintptr_t get_satp()
 {
     uintptr_t satp;
     asm volatile("csrr %0, satp" : "=r"(satp));
-    // Keep the CTE contract unchanged: Context.pdir stores the root page-table
-    // pointer, not the raw satp value. Masking with the active XLEN's PPN field
-    // discards MODE and ASID before rebuilding the identity-mapped pointer.
-    uintptr_t ppn = satp & SATP_PPN_MASK;
-    return ppn << PAGE_SHIFT;
+    uintptr_t ppn = satp & 0x003FFFFFul; // Sv32 PPN is low 22 bits
+    return ppn << 12;
 }
 
 bool vme_init(void *(*pgalloc_f)(int), void (*pgfree_f)(void *))
@@ -76,7 +48,7 @@ bool vme_init(void *(*pgalloc_f)(int), void (*pgfree_f)(void *))
     // The kernel address space is an identity map over NEMU's physical memory.
     // AM and the simple kernels rely on physical addresses also being valid C
     // pointers while they build page tables and touch device buffers.
-    size_t i;
+    int i;
     for (i = 0; i < LENGTH(segments); i++)
     {
         void *va = segments[i].start;
@@ -106,7 +78,6 @@ void protect(AddrSpace *as)
 
 void unprotect(AddrSpace *as)
 {
-    (void)as;
 }
 
 void __am_get_cur_as(Context *c)
@@ -136,8 +107,6 @@ void __am_switch(Context *c)
 
 void map(AddrSpace *as, void *va, void *pa, int prot)
 {
-    (void)prot;
-
     // ---- Basic sanity checks ----
     assert(as != NULL);
     assert(as->ptr != NULL);
@@ -147,71 +116,63 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
 
     // This implementation intentionally maps one 4 KiB page per call. It does
     // not accept arbitrary byte ranges; callers must round addresses before
-    // asking AM to install the mapping. Sv32 and Sv39 both use 4 KiB base
-    // pages, so virtual and physical addresses must be page-aligned.
+    // asking AM to install the mapping.
+    // Sv32 uses 4KiB pages, so both virtual and physical addresses should be page-aligned for mapping.
     assert((v & PAGE_MASK) == 0);
+
+    // ---- Split VPN fields for Sv32 ----
+    // va[31:22] = VPN[1], va[21:12] = VPN[0], va[11:0] = page offset
+    uint32_t vpn1 = (uint32_t)((v >> 22) & 0x3FFu);
+    uint32_t vpn0 = (uint32_t)((v >> 12) & 0x3FFu);
+
+    // Root page table (level-1) base.
+    // In PA, physical address is identity-mapped for the kernel, so we can treat it as a C pointer.
+    PTE *l1 = (PTE *)as->ptr;
+
+    // ---- Ensure the level-0 page table exists ----
+    PTE pte1 = l1[vpn1];
+
+    if ((pte1 & PTE_V) == 0)
+    {
+        // Allocate one page for the next-level page table (level-0 page table).
+        void *new_pt_page = pgalloc_usr(PGSIZE);
+        assert(new_pt_page != NULL);
+
+        // pg_alloc() in OS already zeroes pages, but keeping this makes the function robust.
+        memset(new_pt_page, 0, PGSIZE);
+
+        // Build a non-leaf PTE:
+        // PTE.PPN is stored in bits [31:10], flags in bits [9:0].
+        uint32_t ppn = (uint32_t)(((uintptr_t)new_pt_page) >> 12);
+
+        // For a pointer PTE, R/W/X must be 0 (otherwise it would be a leaf).
+        // Set V=1, keep other bits 0 for forward compatibility.
+        l1[vpn1] = (PTE)((ppn << 10) | PTE_V);
+
+        pte1 = l1[vpn1];
+    }
+    else
+    {
+        // If R/W/X are not all zero at level-1, it means a superpage leaf PTE.
+        // We does not build superpages, so assert to catch bugs early.
+        assert((pte1 & (PTE_R | PTE_W | PTE_X)) == 0);
+    }
+
+    // ---- Locate the level-0 page table ----
+    // Extract PPN from PTE and convert it to a physical page base address.
+    uintptr_t l0_base = (uintptr_t)((((uintptr_t)pte1) >> 10) << 12);
+    PTE *l0 = (PTE *)l0_base;
+
+    // Physical address must also be page-aligned for 4KiB mapping.
     assert((p & PAGE_MASK) == 0);
 
-#if __riscv_xlen == 64
-    // Sv39 virtual addresses are canonical: bits [63:39] must all match bit
-    // 38. The current AM/NEMU layout uses low addresses for user memory,
-    // physical memory, and devices, but this assertion catches accidental Sv48
-    // or host-pointer values before they become malformed PTEs.
-    uintptr_t upper = v >> 39;
-    assert(upper == 0 || upper == ((1ul << 25) - 1));
-#endif
-
-    // Root page-table base. With identity-mapped physical memory, converting a
-    // PPN back to an address is just a shift and cast to a C pointer.
-    PTE *table = (PTE *)as->ptr;
-
-    // Walk from the root level down to the leaf level, allocating missing
-    // intermediate tables. RV32/Sv32 has levels 1 and 0 with 10-bit VPN fields
-    // and 1024 PTEs per page. RV64/Sv39 has levels 2, 1, and 0 with 9-bit VPN
-    // fields and 512 PTEs per page, because each PTE is 8 bytes.
-    for (int level = PT_LEVELS - 1; level > 0; level--)
-    {
-        uintptr_t vpn = (v >> (PAGE_SHIFT + level * VPN_BITS)) & VPN_MASK;
-        assert(vpn < PTE_PER_PAGE);
-
-        PTE pte = table[vpn];
-
-        if ((pte & PTE_V) == 0)
-        {
-            void *new_pt_page = pgalloc_usr(PGSIZE);
-            assert(new_pt_page != NULL);
-
-            // The allocator used by nanos-lite currently returns zeroed pages,
-            // but clearing here keeps map() correct if a different allocator is
-            // wired in later.
-            memset(new_pt_page, 0, PGSIZE);
-
-            uintptr_t ppn = (uintptr_t)new_pt_page >> PAGE_SHIFT;
-
-            // A non-leaf PTE is valid but has R/W/X clear. That is how the
-            // hardware distinguishes a pointer to the next page table from a
-            // superpage leaf. The PPN field starts at bit 10 for both Sv32 and
-            // Sv39.
-            table[vpn] = (PTE)((ppn << PTE_PPN_SHIFT) | PTE_V);
-            pte = table[vpn];
-        }
-        else
-        {
-            // This AM code always installs 4 KiB leaves at level 0. Encountering
-            // R/W/X at an upper level would mean a superpage created elsewhere,
-            // which would make the single-page mapping request ambiguous.
-            assert((pte & (PTE_R | PTE_W | PTE_X)) == 0);
-        }
-
-        uintptr_t next_table_base = (((uintptr_t)pte >> PTE_PPN_SHIFT) << PAGE_SHIFT);
-        table = (PTE *)next_table_base;
-    }
+    uint32_t leaf_ppn = (uint32_t)(p >> 12);
 
     // Build flags for leaf PTE.
     // In PA, we do not implement fine-grained protection,
     // so we can set R/W/X all to 1 to avoid permission faults.
     // Also set A and D to 1, avoiding hardware A/D update complexity.
-    uintptr_t flags = PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    uint32_t flags = PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
 
     // Mark user pages with U=1, kernel pages keep U=0.
     // User space is as->area, protect() sets it to USER_SPACE.
@@ -224,9 +185,7 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
         flags |= PTE_U;
     }
 
-    uintptr_t leaf_vpn = (v >> PAGE_SHIFT) & VPN_MASK;
-    uintptr_t leaf_ppn = p >> PAGE_SHIFT;
-    table[leaf_vpn] = (PTE)((leaf_ppn << PTE_PPN_SHIFT) | (flags & PTE_FLAG_MASK));
+    l0[vpn0] = (PTE)((leaf_ppn << 10) | flags);
 }
 
 Context *ucontext(AddrSpace *as, Area kstack, void *entry)

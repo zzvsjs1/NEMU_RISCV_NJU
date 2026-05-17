@@ -176,4 +176,6 @@ typedef struct
     } instr;
 } riscv64_ISADecodeInfo;
 
+#define isa_mmu_check(vaddr, len, type) (MMU_DIRECT)
+
 #endif

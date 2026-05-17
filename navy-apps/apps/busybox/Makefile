@@ -17,6 +17,7 @@ CFLAGS += -I$(WORK_DIR)/include/navy/ -D__GLIBC__ -fdata-sections -ffunction-sec
 comma = ,
 LDFLAGS := $(addprefix -Wl$(comma), $(LDFLAGS))
 export LDFLAGS
+export LINKAGE
 endif
 
 export CFLAGS
@@ -25,16 +26,16 @@ export CROSS_COMPILE
 # The busybox Makefile can not correctly handle the dependency when
 # $(LINKAGE) are updated. If it is the case, perform a fresh build.
 $(APP): force;
-	$(MAKE) -C $(REPO_PATH) LINKAGE="$(LINKAGE)"
+	$(MAKE) -C $(REPO_PATH)
 	cp $(REPO_PATH)/busybox $@
 
 force: ;
 
 menuconfig:
-	$(MAKE) -C $(REPO_PATH) LINKAGE="$(LINKAGE) "$@
+	$(MAKE) -C $(REPO_PATH) $@
 
 install:
-	$(MAKE) -C $(REPO_PATH) LINKAGE="$(LINKAGE)" CONFIG_PREFIX=$(NAVY_HOME)/fsimg $@
+	$(MAKE) -C $(REPO_PATH) CONFIG_PREFIX=$(NAVY_HOME)/fsimg $@
 
 clean: clean-busybox
 
