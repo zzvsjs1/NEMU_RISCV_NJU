@@ -9,6 +9,8 @@ WRITE_SRCS := test_fat32_write.c fat32_test_disk.c ../../src/fs/fat32.c ../../sr
 POSIX_SRCS := test_fat32_posix.c fat32_test_disk.c ../../src/fs/fat32.c ../../src/fs/fat32_dir.c ../../src/fs/fat32_lfn.c ../../src/fs/fat32_cluster.c ../../src/fs/fat32_bpb.c
 ABI_SRCS := test_nanos_syscall_abi.c ../../../navy-apps/libs/libos/src/nanos_abi.c
 ABI_CFLAGS := $(CFLAGS) -I../../../navy-apps/libs/libc/include -I../../../navy-apps/libs/libos/src
+PAGEWALK_SRCS := test_nanos_pagewalk.c ../../src/pagewalk.c
+PAGEWALK_CFLAGS := $(CFLAGS) -DNANOS_PAGEWALK_XLEN=64
 TIME_ABI_CC ?= riscv64-linux-gnu-gcc
 TIME_ABI_CFLAGS := -std=c11 -Wall -Wextra -Werror -march=rv32im_zicsr -mabi=ilp32 \
 	-DARCH_H='"arch/riscv32-nemu.h"' -I../../include \
@@ -16,7 +18,7 @@ TIME_ABI_CFLAGS := -std=c11 -Wall -Wextra -Werror -march=rv32im_zicsr -mabi=ilp3
 
 .PHONY: all test clean
 
-all: test_fat32_lfn test_fat32_bpb test_fat32_read test_fat32_lookup test_fat32_write test_fat32_posix test_nanos_syscall_abi test_nanos_time_abi.o
+all: test_fat32_lfn test_fat32_bpb test_fat32_read test_fat32_lookup test_fat32_write test_fat32_posix test_nanos_syscall_abi test_nanos_pagewalk test_nanos_time_abi.o
 
 test: all
 	./test_fat32_lfn
@@ -26,6 +28,7 @@ test: all
 	./test_fat32_write
 	./test_fat32_posix
 	./test_nanos_syscall_abi
+	./test_nanos_pagewalk
 
 test_fat32_lfn: $(LFN_SRCS) ../../src/fs/fat32.h
 	$(CC) $(CFLAGS) -DFAT32_HOST_TEST -o $@ $(LFN_SRCS)
@@ -48,8 +51,11 @@ test_fat32_posix: $(POSIX_SRCS) ../../src/fs/fat32.h
 test_nanos_syscall_abi: $(ABI_SRCS)
 	$(CC) $(ABI_CFLAGS) -o $@ $(ABI_SRCS)
 
+test_nanos_pagewalk: $(PAGEWALK_SRCS)
+	$(CC) $(PAGEWALK_CFLAGS) -o $@ $(PAGEWALK_SRCS)
+
 test_nanos_time_abi.o: test_nanos_time_abi.c ../../include/common.h
 	$(TIME_ABI_CC) $(TIME_ABI_CFLAGS) -c -o $@ $<
 
 clean:
-	rm -rf test_fat32_lfn test_fat32_bpb test_fat32_read test_fat32_lookup test_fat32_write test_fat32_posix test_nanos_syscall_abi test_nanos_time_abi.o fat32-read-work fat32-lookup-work fat32-write-work fat32-posix-work
+	rm -rf test_fat32_lfn test_fat32_bpb test_fat32_read test_fat32_lookup test_fat32_write test_fat32_posix test_nanos_syscall_abi test_nanos_pagewalk test_nanos_time_abi.o fat32-read-work fat32-lookup-work fat32-write-work fat32-posix-work

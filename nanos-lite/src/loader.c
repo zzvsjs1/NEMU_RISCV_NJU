@@ -2,6 +2,7 @@
 #include <elf.h>
 #include "debug.h"
 #include "fs.h"
+#include "pagewalk.h"
 
 #ifdef __LP64__
 #define Elf_Ehdr Elf64_Ehdr
@@ -24,99 +25,6 @@
 
 // Provided by Nanos-lite memory system.
 extern Area heap;
-
-// Use uint32_t for Sv32 PTE representation.
-// In your codebase, PTE is often typedef'd to uintptr_t, but Sv32 hardware PTE is 32-bit.
-typedef uint32_t PTE;
-
-// Sv32 PTE flag bits (low 10 bits)
-#define PTE_V 0x001u // Valid
-#define PTE_R 0x002u // Read
-#define PTE_W 0x004u // Write
-#define PTE_X 0x008u // Execute
-#define PTE_U 0x010u // User
-#define PTE_G 0x020u // Global
-#define PTE_A 0x040u // Accessed
-#define PTE_D 0x080u // Dirty
-
-// Some helpful bit masks for Sv32 PTE layout
-// PPN is stored in bits [31:10], flags in [9:0].
-#define PTE_FLAGS_MASK 0x3FFu
-#define PTE_PPN_SHIFT 10
-
-// Extract PPN (physical page number) from a PTE
-static inline uint32_t pte_get_ppn(PTE pte)
-{
-    return (uint32_t)(pte >> PTE_PPN_SHIFT);
-}
-
-// Extract physical page base address from a PTE (assumes Sv32 and 4 KiB pages)
-static inline uintptr_t pte_get_pa(PTE pte)
-{
-    return ((uintptr_t)pte_get_ppn(pte)) << 12;
-}
-
-// Make a leaf PTE mapping to a physical page base with given flags.
-// Caller should ensure pa is 4 KiB aligned, and flags include PTE_V.
-static inline PTE pte_make_leaf(uintptr_t pa, uint32_t flags)
-{
-    return (PTE)(((uint32_t)(pa >> 12) << PTE_PPN_SHIFT) | (flags & PTE_FLAGS_MASK));
-}
-
-// Make a non-leaf (pointer) PTE to the next-level page table page.
-// For Sv32, a pointer PTE must have V=1 and R/W/X=0.
-static inline PTE pte_make_ptr(uintptr_t next_pt_pa)
-{
-    return (PTE)(((uint32_t)(next_pt_pa >> 12) << PTE_PPN_SHIFT) | PTE_V);
-}
-
-// Check whether a PTE is valid
-static inline int pte_is_valid(PTE pte)
-{
-    return (pte & PTE_V) != 0;
-}
-
-// Check whether a PTE is a leaf PTE (i.e., any of R/W/X is set)
-static inline int pte_is_leaf(PTE pte)
-{
-    return (pte & (PTE_R | PTE_W | PTE_X)) != 0;
-}
-
-// Return the mapped physical page base for a given user virtual page base.
-// Return NULL if not mapped.
-// This is a software page-table walk for Sv32, independent of NEMU MMU.
-// The loader uses it while constructing an address space, before the CPU is
-// necessarily running with that address space in satp.
-static void *lookup_pa_page(AddrSpace *as, uintptr_t page_va)
-{
-    // page_va must be 4 KiB aligned.
-    assert((page_va & (PGSIZE - 1)) == 0);
-
-    PTE *l1 = (PTE *)as->ptr;
-    uint32_t vpn1 = (uint32_t)((page_va >> 22) & 0x3FFu);
-    uint32_t vpn0 = (uint32_t)((page_va >> 12) & 0x3FFu);
-
-    PTE pde = l1[vpn1];
-
-    if ((pde & PTE_V) == 0)
-        return NULL;
-
-    // We only build 2-level 4 KiB pages, so PDE must be a pointer PTE.
-    assert((pde & (PTE_R | PTE_W | PTE_X)) == 0);
-
-    uintptr_t l0_pa = pte_get_pa(pde);
-    PTE *l0 = (PTE *)l0_pa;
-
-    PTE pte = l0[vpn0];
-
-    if ((pte & PTE_V) == 0)
-        return NULL;
-
-    // Leaf PTE must have at least one of R/W/X.
-    assert((pte & (PTE_R | PTE_W | PTE_X)) != 0);
-
-    return (void *)pte_get_pa(pte);
-}
 
 static uintptr_t align_down(uintptr_t x, uintptr_t a)
 {
@@ -181,7 +89,7 @@ static uintptr_t loader(PCB *pcb, const char *filename)
             // Reuse an existing mapping if this page VA was already mapped by another segment.
             // ELF segments can share a page at their boundary; allocating a
             // fresh page here would lose bytes copied for the previous segment.
-            void *page_pa = lookup_pa_page(&pcb->as, page_va);
+            void *page_pa = nanos_pagewalk_lookup_page(pcb->as.ptr, page_va);
 
             if (page_pa == NULL)
             {
