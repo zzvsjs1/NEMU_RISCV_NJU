@@ -48,7 +48,7 @@ INC_PATH += include $(NAVY_HOME)/libs/libc/include $(NAVY_HOME)/libs/libos/src
 endif
 
 ifeq ($(ISA),riscv64)
-NAVY_APPS ?=
+NAVY_APPS ?= pal fceux onscripter
 NAVY_TESTS ?= hello
 NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
 endif
