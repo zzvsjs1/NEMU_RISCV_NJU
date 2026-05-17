@@ -52,6 +52,8 @@
 #define RV64_OPCODE_LUI 0x37u
 #define RV64_OPCODE_OP_32 0x3bu
 #define RV64_OPCODE_BRANCH 0x63u
+#define RV64_OPCODE_JALR 0x67u
+#define RV64_OPCODE_JAL 0x6fu
 
 /* Compile at most 32 guest instructions so one block remains cheap to build. */
 #define RV64_JIT_BLOCK_MAX_INSNS 32u
@@ -99,6 +101,7 @@ typedef struct
     uint64_t executed_insns;
     uint64_t native_loads;
     uint64_t native_stores;
+    uint64_t native_jumps;
     uint64_t invalidation_requests;
     uint64_t invalidated_blocks;
     uint64_t arena_resets;
@@ -202,6 +205,20 @@ static int64_t imm_u_sext(uint32_t instr)
 {
     /* `0xfffff000` keeps imm[31:12], the upper 20-bit U-type payload. */
     return (int64_t)(int32_t)(instr & 0xfffff000u);
+}
+
+/* Decode the J-format immediate, including the implicit low zero bit. */
+static int64_t imm_j(uint32_t instr)
+{
+    /*
+     * JAL scatters offsets as imm[20|10:1|11|19:12]. The low bit is implicit
+     * zero, then the 21-bit value is sign-extended to XLEN.
+     */
+    uint32_t imm = (bits(instr, 30, 21) << 1) |
+                   (bits(instr, 20, 20) << 11) |
+                   (bits(instr, 19, 12) << 12) |
+                   (bits(instr, 31, 31) << 20);
+    return sext(imm, 21);
 }
 
 /* Return the byte offset of a guest GPR inside CPU_state. */
@@ -471,6 +488,18 @@ static bool emit_mov_eax_ecx(rv64_jit_writer_t *w)
     return emit_u8(w, 0x89) && emit_u8(w, 0xc8);
 }
 
+/* Emit `mov rcx, rax`, preserving a dynamic JALR target across link writes. */
+static bool emit_mov_rcx_rax(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x89) && emit_u8(w, 0xc1);
+}
+
+/* Emit `mov rax, rcx`, restoring a dynamic JALR target. */
+static bool emit_mov_rax_rcx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x89) && emit_u8(w, 0xc8);
+}
+
 /* Emit `mov rdx, rax`, copying a guest address for PMEM range checks. */
 static bool emit_mov_rdx_rax(rv64_jit_writer_t *w)
 {
@@ -607,10 +636,23 @@ static bool emit_store_pc_imm(rv64_jit_writer_t *w, vaddr_t pc)
            emit_u8(w, 0x83) && emit_u32(w, jit_pc_offset());
 }
 
+/* Store a dynamic guest PC already held in RAX. */
+static bool emit_store_rax_pc(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x49) && emit_u8(w, 0x89) &&
+           emit_u8(w, 0x83) && emit_u32(w, jit_pc_offset());
+}
+
 /* Emit `add rax, imm32`, whose immediate is sign-extended by x86-64. */
 static bool emit_add_rax_imm32(rv64_jit_writer_t *w, int32_t imm)
 {
     return emit_u8(w, 0x48) && emit_u8(w, 0x05) && emit_u32(w, (uint32_t)imm);
+}
+
+/* Emit `and rax, imm32`, whose immediate is sign-extended by x86-64. */
+static bool emit_and_rax_imm32(rv64_jit_writer_t *w, int32_t imm)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x25) && emit_u32(w, (uint32_t)imm);
 }
 
 /* Emit one RAX op RCX 64-bit ALU instruction selected by the opcode byte. */
@@ -1242,6 +1284,68 @@ static bool emit_branch(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
     return true;
 }
 
+/* Emit JAL or JALR, both of which end the current native block. */
+static bool emit_jump_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
+                            uint32_t completed_count, bool loop_count_needed)
+{
+    const uint32_t opcode = instr & RV64_OPCODE_MASK;
+    const uint32_t rd = bits(instr, 11, 7);
+    const vaddr_t link = pc + RV64_INSN_SIZE;
+    uint8_t *misaligned_disp = NULL;
+
+    if (opcode == RV64_OPCODE_JAL)
+    {
+        const vaddr_t target = pc + imm_j(instr);
+
+        if ((target & RV64_BRANCH_ALIGN_MASK) != 0)
+        {
+            return false;
+        }
+
+        JIT_STAT_INC(native_jumps);
+        return emit_movabs_rax(w, link) &&
+               emit_store_rax_gpr(w, rd) &&
+               emit_store_pc_imm(w, target) &&
+               (loop_count_needed ? emit_return_loop_count(w, completed_count + 1u)
+                                  : emit_return_count(w, completed_count + 1u));
+    }
+
+    if (opcode != RV64_OPCODE_JALR || bits(instr, 14, 12) != 0)
+    {
+        return false;
+    }
+
+    /*
+     * JALR computes `(rs1 + imm) & ~1`, then checks instruction alignment after
+     * clearing bit zero.  The misaligned case returns before JALR executes so
+     * the interpreter raises the same trap and does not write the link register.
+     */
+    if (!emit_load_gpr_rax(w, bits(instr, 19, 15)) ||
+        !emit_add_rax_imm32(w, (int32_t)imm_i(instr)) ||
+        !emit_and_rax_imm32(w, -2) ||
+        !emit_test_al_imm8(w, RV64_BRANCH_ALIGN_MASK) ||
+        !emit_jcc_rel32_placeholder(w, 0x85, &misaligned_disp) ||
+        !emit_mov_rcx_rax(w) ||
+        !emit_movabs_rax(w, link) ||
+        !emit_store_rax_gpr(w, rd) ||
+        !emit_mov_rax_rcx(w) ||
+        !emit_store_rax_pc(w) ||
+        !(loop_count_needed ? emit_return_loop_count(w, completed_count + 1u)
+                             : emit_return_count(w, completed_count + 1u)))
+    {
+        return false;
+    }
+
+    patch_rel32(misaligned_disp, w->cur);
+    if (!emit_interpreter_side_exit(w, pc, completed_count, loop_count_needed))
+    {
+        return false;
+    }
+
+    JIT_STAT_INC(native_jumps);
+    return true;
+}
+
 /* Dispatch one supported non-branch RISC-V instruction to the native emitter. */
 static bool emit_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
                        uint32_t exit_count)
@@ -1448,7 +1552,18 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         uint8_t *instr_start = w.cur;
         bool end_block = false;
 
-        if (opcode == RV64_OPCODE_LOAD)
+        if (opcode == RV64_OPCODE_JAL ||
+            opcode == RV64_OPCODE_JALR)
+        {
+            if ((opcode == RV64_OPCODE_JALR && count == 0) ||
+                !emit_jump_instr(&w, instr, cur_pc, count, loop_count_needed))
+            {
+                w.cur = instr_start;
+                break;
+            }
+            end_block = true;
+        }
+        else if (opcode == RV64_OPCODE_LOAD)
         {
             /*
              * A slow load side exit returns before the load executes. Avoid
@@ -1757,6 +1872,8 @@ void isa_jit_dump_stats(void)
         jit_stats.native_loads);
     Log("jit: native stores = %" PRIu64,
         jit_stats.native_stores);
+    Log("jit: native jumps = %" PRIu64,
+        jit_stats.native_jumps);
 #else
     if (jit_stats_enabled)
     {

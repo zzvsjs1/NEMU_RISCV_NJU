@@ -12,7 +12,7 @@ export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
 
 DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit_defconfig"
-TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-load-fast riscv64-jit-store-fast)
+TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast)
 
 fail() {
   echo "RISC-V64 JIT correctness check failed: $*" >&2
@@ -76,6 +76,25 @@ require_positive_native_stores() {
   fi
 }
 
+require_positive_native_jumps() {
+  local log=$1
+  local test_name=$2
+  local native_jumps
+
+  native_jumps=$(sed -n 's/.*native jumps = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$native_jumps" ]; then
+    echo "Failed to find native jump stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$native_jumps" -le 0 ]; then
+    echo "Expected positive native jump count for $test_name, got $native_jumps" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 cd "$ROOT"
 
 [ -f "$DEFCONFIG" ] || fail "missing $DEFCONFIG"
@@ -97,6 +116,9 @@ for test_name in "${TESTS[@]}"; do
   fi
   if [ "$test_name" = "riscv64-jit-store-fast" ]; then
     require_positive_native_stores "$out" "$test_name"
+  fi
+  if [ "$test_name" = "riscv64-jit-jump-fast" ]; then
+    require_positive_native_jumps "$out" "$test_name"
   fi
   rm -f "$out"
   trap - EXIT
