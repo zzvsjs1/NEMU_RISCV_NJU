@@ -297,6 +297,34 @@ config RV32_JIT_STATS
 
 endmenu
 
+menu "RISC-V64 execution acceleration"
+  depends on ISA_riscv64 && TARGET_NATIVE_ELF && ENGINE_INTERPRETER
+  depends on !TRACE && !DIFFTEST && !WATCHPOINT && !MTRACE && !FTRACE
+
+config RV64_JIT
+  bool "Enable RISC-V64 x86-64 JIT"
+  default n
+  help
+    Translate supported RISC-V64 basic blocks to native x86-64 code. The first
+    RV64 milestone is deliberately conservative: unsupported instructions,
+    complex memory cases, traps, and debugging-sensitive behaviour fall back to
+    the interpreter/helper path.
+
+    The environment variable NEMU_DISABLE_JIT=1 can disable this at run time for
+    interpreter/JIT A/B checks without changing the saved config.
+
+config RV64_JIT_STATS
+  bool "Collect RISC-V64 JIT statistics"
+  depends on RV64_JIT
+  default n
+  help
+    Count RV64 JIT cache hits, compiled blocks, executed blocks, helper exits,
+    and invalidations. Leave this disabled for normal performance runs. When it
+    is enabled in the binary, set NEMU_JIT_STATS=1 at run time to print the
+    summary.
+
+endmenu
+
 if MODE_SYSTEM
 source "src/memory/Kconfig"
 source "src/device/Kconfig"

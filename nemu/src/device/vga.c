@@ -1,7 +1,7 @@
 #include <common.h>
 #include <device/map.h>
 #include <isa.h>
-#ifdef CONFIG_ISA_riscv32
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
 #include <isa-jit.h>
 #endif
 #include <memory/paddr.h>
@@ -376,15 +376,18 @@ static void vga_capture_to_guest(vaddr_t dst)
                "vga: cannot translate capture destination vaddr=" FMT_WORD,
                (word_t)cur);
         memcpy(host, (const uint8_t *)vmem + done, chunk);
-#ifdef CONFIG_ISA_riscv32
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
         /*
          * The device writes guest PMEM directly, bypassing paddr_write().  If the
          * destination overlaps translated code bytes, cached JIT blocks must be
          * invalidated for the exact physical chunk that changed before execution
          * can safely continue.
          */
-        Assert(chunk <= INT32_MAX, "vga: capture chunk is too large for JIT invalidation");
-        isa_jit_invalidate_paddr(paddr, (int)chunk);
+        if (unlikely(isa_jit_invalidation_active))
+        {
+            Assert(chunk <= INT32_MAX, "vga: capture chunk is too large for JIT invalidation");
+            isa_jit_invalidate_paddr(paddr, (int)chunk);
+        }
 #endif
         done += chunk;
     }

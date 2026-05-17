@@ -4,6 +4,8 @@
 #include <isa-all-instr.h>
 #ifdef CONFIG_ISA_riscv32
 #include <isa-fast-exec.h>
+#endif
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
 #include <isa-jit.h>
 #endif
 #include <locale.h>
@@ -148,7 +150,7 @@ static void statistic()
         Log("Finish running in less than 1 us and can not calculate the simulation frequency");
     }
 
-#ifdef CONFIG_ISA_riscv32
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
     isa_jit_dump_stats();
 #endif
 }
@@ -175,7 +177,7 @@ void fetch_decode(Decode *s, vaddr_t pc)
 
 static inline word_t query_pending_intr()
 {
-#ifdef CONFIG_ISA_riscv32
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
     /*
      * Most fast/JIT batches have no pending interrupt. Avoid the heavier ISA
      * query unless the latched CPU flag says there is real work to inspect.
@@ -222,7 +224,7 @@ static inline bool can_fast_exec()
 
 static inline bool can_jit_exec()
 {
-#if defined(CONFIG_RV32_JIT) && !defined(CONFIG_TRACE) && \
+#if (defined(CONFIG_RV32_JIT) || defined(CONFIG_RV64_JIT)) && !defined(CONFIG_TRACE) && \
     !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
     !defined(CONFIG_MTRACE) && !defined(CONFIG_FTRACE)
     /*
@@ -260,6 +262,8 @@ void cpu_exec(uint64_t n)
 #endif
 #ifdef CONFIG_ISA_riscv32
     const bool fast_exec = can_fast_exec();
+#endif
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
     const bool jit_exec = can_jit_exec();
 #endif
 
@@ -267,7 +271,7 @@ void cpu_exec(uint64_t n)
     {
         uint32_t executed = 0;
         bool jit_done = false;
-#ifdef CONFIG_ISA_riscv32
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
         if (jit_exec)
         {
             /*

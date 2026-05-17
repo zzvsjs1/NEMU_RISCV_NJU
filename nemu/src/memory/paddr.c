@@ -2,7 +2,7 @@
 #include <memory/paddr.h>
 #include <device/mmio.h>
 #include <isa.h>
-#ifdef CONFIG_ISA_riscv32
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
 #include <isa-jit.h>
 #endif
 #include <utils.h>
@@ -131,12 +131,12 @@ void paddr_write(paddr_t addr, int len, word_t data)
         }
 #endif
         pmem_write(addr, len, data);
-#ifdef CONFIG_ISA_riscv32
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
         /*
          * PMEM writes are the common meeting point for interpreter stores and
          * any device path that writes through paddr_write(). Tell the JIT about
          * the physical byte range after the new value is visible, so a later
-         * fetch, block lookup, or JIT-local Sv32 translation cannot use stale
+         * fetch, block lookup, or JIT-local translation cannot use stale
          * PMEM state.
          *
          * Do not move this above pmem_write(): a translated block discarded
