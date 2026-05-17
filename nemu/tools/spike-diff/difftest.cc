@@ -23,11 +23,6 @@
 #define DEFAULT_ISA "RV32IM"
 #endif
 
-#ifdef CONFIG_ISA_riscv64
-#undef DEFAULT_ISA
-#define DEFAULT_ISA "RV64IM_Zicsr_Zifencei"
-#endif
-
 static std::vector<std::pair<reg_t, abstract_device_t *>> difftest_plugin_devices;
 static std::vector<std::string> difftest_htif_args;
 static std::vector<std::pair<reg_t, mem_t *>> difftest_mem(
@@ -51,10 +46,6 @@ struct diff_context_t
 
     struct
     {
-        // Supervisor address translation and protection register.
-        // 0x180
-        rtlreg_t satp;
-
         // Machine status register.
         // 0x300
         rtlreg_t mstatus;
@@ -63,10 +54,6 @@ struct diff_context_t
         // 0x305
         rtlreg_t mtvec;
 
-        // Machine scratch register.
-        // 0x340
-        rtlreg_t mscratch;
-
         // Machine exception program counter.
         // 0x341
         rtlreg_t mepc;
@@ -74,34 +61,14 @@ struct diff_context_t
         // Machine trap cause
         // 0x342
         rtlreg_t mcause;
-
-        // Machine trap value.
-        // 0x343
-        rtlreg_t mtval;
     } csr;
 
     rtlreg_t prvi;
-    bool INTR;
 };
 
 static sim_t *s = NULL;
 static processor_t *p = NULL;
 static state_t *state = NULL;
-
-static reg_t diff_read_csr(reg_t csr_addr)
-{
-    auto item = state->csrmap.find(csr_addr);
-    return item == state->csrmap.end() ? 0 : item->second->read();
-}
-
-static void diff_write_csr(reg_t csr_addr, reg_t value)
-{
-    auto item = state->csrmap.find(csr_addr);
-    if (item != state->csrmap.end())
-    {
-        item->second->write(value);
-    }
-}
 
 void sim_t::diff_init(int port)
 {
@@ -127,16 +94,12 @@ void sim_t::diff_get_regs(void *diff_context)
 
     ctx->pc = state->pc;
 
-    ctx->csr.satp = diff_read_csr(CSR_SATP);
-    ctx->csr.mstatus = diff_read_csr(CSR_MSTATUS);
-    ctx->csr.mtvec = diff_read_csr(CSR_MTVEC);
-    ctx->csr.mscratch = diff_read_csr(CSR_MSCRATCH);
-    ctx->csr.mepc = diff_read_csr(CSR_MEPC);
-    ctx->csr.mcause = diff_read_csr(CSR_MCAUSE);
-    ctx->csr.mtval = diff_read_csr(CSR_MTVAL);
+    ctx->csr.mstatus = state->mstatus.get()->read();
+    ctx->csr.mtvec = state->mtvec.get()->read();
+    ctx->csr.mepc = state->mepc.get()->read();
+    ctx->csr.mcause = state->mcause.get()->read();
 
-    ctx->prvi = state->prv;
-    ctx->INTR = false;
+    ctx->prvi = state->prvi;
 }
 
 void sim_t::diff_set_regs(void *diff_context)
@@ -148,14 +111,10 @@ void sim_t::diff_set_regs(void *diff_context)
     }
     state->pc = ctx->pc;
 
-    diff_write_csr(CSR_SATP, ctx->csr.satp);
-    diff_write_csr(CSR_MSTATUS, ctx->csr.mstatus);
-    diff_write_csr(CSR_MTVEC, ctx->csr.mtvec);
-    diff_write_csr(CSR_MSCRATCH, ctx->csr.mscratch);
-    diff_write_csr(CSR_MEPC, ctx->csr.mepc);
-    diff_write_csr(CSR_MCAUSE, ctx->csr.mcause);
-    diff_write_csr(CSR_MTVAL, ctx->csr.mtval);
-    state->prv = ctx->prvi;
+    // state->mstatus.get()->write(ctx->csr.mstatus);
+    // state->mtvec.get()->write(ctx->csr.mtvec);
+    // state->mepc.get()->write(ctx->csr.mepc);
+    // state->mcause.get()->write(ctx->csr.mcause);
 }
 
 void sim_t::diff_memcpy(reg_t dest, void *src, size_t n)

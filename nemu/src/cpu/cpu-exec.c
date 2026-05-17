@@ -252,10 +252,8 @@ void cpu_exec(uint64_t n)
 #ifdef CONFIG_DEVICE
     uint32_t device_update_counter = 0;
 #endif
-#ifdef CONFIG_ISA_riscv32
     const bool fast_exec = can_fast_exec();
     const bool jit_exec = can_jit_exec();
-#endif
 
     while (n > 0)
     {

@@ -165,8 +165,8 @@ static void exprTest()
         else if (res != a)
         {
             printf(ANSI_FMT(
-                       "Cal failed Input: " FMT_DECIMAL_WORD " %s\n"
-                       "The out is " FMT_DECIMAL_WORD "\n",
+                       "Cal failed Input: %u %s\n"
+                       "The out is %u\n",
                        ANSI_FG_RED),
                    a, otherBuffer, res);
         }
