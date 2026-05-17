@@ -12,7 +12,7 @@ export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
 
 DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit_defconfig"
-TESTS=(riscv64-jit-strict riscv64-jit-smc)
+TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-load-fast riscv64-jit-store-fast)
 
 fail() {
   echo "RISC-V64 JIT correctness check failed: $*" >&2
@@ -38,6 +38,44 @@ require_positive_jit_instructions() {
   fi
 }
 
+require_positive_native_loads() {
+  local log=$1
+  local test_name=$2
+  local native_loads
+
+  native_loads=$(sed -n 's/.*native loads = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$native_loads" ]; then
+    echo "Failed to find native load stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$native_loads" -le 0 ]; then
+    echo "Expected positive native load count for $test_name, got $native_loads" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_native_stores() {
+  local log=$1
+  local test_name=$2
+  local native_stores
+
+  native_stores=$(sed -n 's/.*native stores = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$native_stores" ]; then
+    echo "Failed to find native store stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$native_stores" -le 0 ]; then
+    echo "Expected positive native store count for $test_name, got $native_stores" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 cd "$ROOT"
 
 [ -f "$DEFCONFIG" ] || fail "missing $DEFCONFIG"
@@ -54,6 +92,12 @@ for test_name in "${TESTS[@]}"; do
   fi
 
   require_positive_jit_instructions "$out" "$test_name"
+  if [ "$test_name" = "riscv64-jit-load-fast" ]; then
+    require_positive_native_loads "$out" "$test_name"
+  fi
+  if [ "$test_name" = "riscv64-jit-store-fast" ]; then
+    require_positive_native_stores "$out" "$test_name"
+  fi
   rm -f "$out"
   trap - EXIT
 done

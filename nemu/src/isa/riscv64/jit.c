@@ -1,5 +1,6 @@
 #include <isa-jit.h>
 #include <isa.h>
+#include <memory/host.h>
 #include <memory/paddr.h>
 #include <memory/vaddr.h>
 #include <utils.h>
@@ -42,9 +43,11 @@
 #define RV64_BRANCH_ALIGN_MASK 0x3u
 
 /* RISC-V opcodes used by this first native subset. */
+#define RV64_OPCODE_LOAD 0x03u
 #define RV64_OPCODE_OP_IMM 0x13u
 #define RV64_OPCODE_AUIPC 0x17u
 #define RV64_OPCODE_OP_IMM_32 0x1bu
+#define RV64_OPCODE_STORE 0x23u
 #define RV64_OPCODE_OP 0x33u
 #define RV64_OPCODE_LUI 0x37u
 #define RV64_OPCODE_OP_32 0x3bu
@@ -94,6 +97,8 @@ typedef struct
     uint64_t blocks_executed;
     uint64_t compiled_insns;
     uint64_t executed_insns;
+    uint64_t native_loads;
+    uint64_t native_stores;
     uint64_t invalidation_requests;
     uint64_t invalidated_blocks;
     uint64_t arena_resets;
@@ -171,6 +176,13 @@ static int64_t imm_i(uint32_t instr)
     return sext(bits(instr, 31, 20), 12);
 }
 
+/* Decode the S-format store immediate as a signed XLEN value. */
+static int64_t imm_s(uint32_t instr)
+{
+    const uint32_t imm = bits(instr, 11, 7) | (bits(instr, 31, 25) << 5);
+    return sext(imm, 12);
+}
+
 /* Decode the B-format immediate, including the implicit low zero bit. */
 static int64_t imm_b(uint32_t instr)
 {
@@ -228,6 +240,17 @@ static bool jit_runtime_disabled(void)
 {
     jit_init_runtime_options();
     return jit_env_disable;
+}
+
+/* Commit one already-guarded bare-mode PMEM store through the normal boundary. */
+static void jit_store_pmem(paddr_t addr, uint32_t len, uint64_t data)
+{
+    /*
+     * Keep paddr_write() in the store fast path. It owns MMIO dispatch, tracing
+     * hooks and exact JIT source invalidation, so the native emitter does not
+     * duplicate those correctness-sensitive policies.
+     */
+    paddr_write(addr, (int)len, (word_t)data);
 }
 
 /* Round a code offset up to the next power-of-two alignment boundary. */
@@ -354,18 +377,30 @@ static bool emit_u64(rv64_jit_writer_t *w, uint64_t value)
     return true;
 }
 
-/* Emit `sub rsp, 8; movabs r11, &cpu`, aligning the stack and fixing CPU base. */
+/* Forward declaration: the prologue needs R10 before the grouped move helpers. */
+static bool emit_movabs_r10(rv64_jit_writer_t *w, uint64_t value);
+
+/* Emit `movabs r11, &cpu`, restoring the fixed CPU-state base register. */
+static bool emit_load_cpu_base(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x49) && emit_u8(w, 0xbb) &&
+           emit_u64(w, (uint64_t)(uintptr_t)&cpu);
+}
+
+/* Emit the common native-block prologue and load long-lived base registers. */
 static bool emit_prologue(rv64_jit_writer_t *w)
 {
     /*
      * System V enters a function with rsp % 16 == 8. Subtracting 8 gives helper
      * calls normal 16-byte alignment. R11 is caller-saved, so the generated code
-     * can dedicate it to `CPU_state *` without saving it in the prologue.
+     * can dedicate it to `CPU_state *` without saving it. R10 holds the host
+     * pointer for guest physical CONFIG_MBASE, letting direct PMEM loads use
+     * `[r10 + offset]` after a strict in-range guard.
      */
     return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
            emit_u8(w, 0xec) && emit_u8(w, 0x08) &&
-           emit_u8(w, 0x49) && emit_u8(w, 0xbb) &&
-           emit_u64(w, (uint64_t)(uintptr_t)&cpu);
+           emit_load_cpu_base(w) &&
+           emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE));
 }
 
 /* Emit `add rsp, 8; ret`, restoring the caller's stack pointer. */
@@ -400,6 +435,18 @@ static bool emit_movabs_rdx(rv64_jit_writer_t *w, uint64_t value)
     return emit_u8(w, 0x48) && emit_u8(w, 0xba) && emit_u64(w, value);
 }
 
+/* Emit `movabs rcx, imm64`, used for full-width PMEM range guards. */
+static bool emit_movabs_rcx(rv64_jit_writer_t *w, uint64_t value)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0xb9) && emit_u64(w, value);
+}
+
+/* Emit `movabs r10, imm64`, the fixed host PMEM base for direct loads. */
+static bool emit_movabs_r10(rv64_jit_writer_t *w, uint64_t value)
+{
+    return emit_u8(w, 0x49) && emit_u8(w, 0xba) && emit_u64(w, value);
+}
+
 /* Emit `mov eax, [rdx]`, loading one 32-bit JIT loop counter. */
 static bool emit_mov_eax_m32_rdx(rv64_jit_writer_t *w)
 {
@@ -424,6 +471,18 @@ static bool emit_mov_eax_ecx(rv64_jit_writer_t *w)
     return emit_u8(w, 0x89) && emit_u8(w, 0xc8);
 }
 
+/* Emit `mov rdx, rax`, copying a guest address for PMEM range checks. */
+static bool emit_mov_rdx_rax(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x89) && emit_u8(w, 0xc2);
+}
+
+/* Emit `mov rdi, rdx`, preparing the first helper argument from a PMEM offset. */
+static bool emit_mov_rdi_rdx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x89) && emit_u8(w, 0xd7);
+}
+
 /* Emit `add eax, imm32`, used for completed-loop instruction accounting. */
 static bool emit_add_eax_imm32(rv64_jit_writer_t *w, uint32_t imm)
 {
@@ -434,6 +493,30 @@ static bool emit_add_eax_imm32(rv64_jit_writer_t *w, uint32_t imm)
 static bool emit_add_ecx_imm32(rv64_jit_writer_t *w, uint32_t imm)
 {
     return emit_u8(w, 0x81) && emit_u8(w, 0xc1) && emit_u32(w, imm);
+}
+
+/* Emit `sub rdx, rcx`, converting guest address to a PMEM byte offset. */
+static bool emit_sub_rdx_rcx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x29) && emit_u8(w, 0xca);
+}
+
+/* Emit `add rdi, rcx`, converting a PMEM offset back to a physical address. */
+static bool emit_add_rdi_rcx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x01) && emit_u8(w, 0xcf);
+}
+
+/* Emit `cmp rdx, rcx`, used by unsigned PMEM range guards. */
+static bool emit_cmp_rdx_rcx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x39) && emit_u8(w, 0xca);
+}
+
+/* Emit `mov esi, imm32`, preparing the second helper argument. */
+static bool emit_mov_esi_imm32(rv64_jit_writer_t *w, uint32_t imm)
+{
+    return emit_u8(w, 0xbe) && emit_u32(w, imm);
 }
 
 /* Emit `cmp ecx, [rdx]`, comparing proposed work with the entry budget. */
@@ -455,6 +538,12 @@ static bool emit_return_loop_count(rv64_jit_writer_t *w, uint32_t count)
 static bool emit_zero_rax(rv64_jit_writer_t *w)
 {
     return emit_u8(w, 0x31) && emit_u8(w, 0xc0);
+}
+
+/* Emit `test al, imm8`, checking low address alignment bits. */
+static bool emit_test_al_imm8(rv64_jit_writer_t *w, uint8_t mask)
+{
+    return emit_u8(w, 0xa8) && emit_u8(w, mask);
 }
 
 /* Load one guest register into RAX, treating x0 as the constant zero. */
@@ -481,6 +570,19 @@ static bool emit_load_gpr_rcx(rv64_jit_writer_t *w, uint32_t reg)
     /* `49 8b 8b disp32` is `mov rcx, [r11 + disp32]`. */
     return emit_u8(w, 0x49) && emit_u8(w, 0x8b) &&
            emit_u8(w, 0x8b) && emit_u32(w, jit_gpr_offset(reg));
+}
+
+/* Load one guest register into RDX, treating x0 as the constant zero. */
+static bool emit_load_gpr_rdx(rv64_jit_writer_t *w, uint32_t reg)
+{
+    if (reg == 0)
+    {
+        return emit_u8(w, 0x31) && emit_u8(w, 0xd2);
+    }
+
+    /* `49 8b 93 disp32` is `mov rdx, [r11 + disp32]`. */
+    return emit_u8(w, 0x49) && emit_u8(w, 0x8b) &&
+           emit_u8(w, 0x93) && emit_u32(w, jit_gpr_offset(reg));
 }
 
 /* Store RAX into a guest register, ignoring writes to x0. */
@@ -607,6 +709,13 @@ static bool emit_jmp_rel32_placeholder(rv64_jit_writer_t *w, uint8_t **disp)
     return emit_u32(w, 0);
 }
 
+/* Emit `movabs rax, target; call rax` for rare helper-backed side paths. */
+static bool emit_call_abs(rv64_jit_writer_t *w, uintptr_t target)
+{
+    return emit_movabs_rax(w, (uint64_t)target) &&
+           emit_u8(w, 0xff) && emit_u8(w, 0xd0);
+}
+
 /* Patch a rel32 displacement emitted by a previous branch helper. */
 static void patch_rel32(uint8_t *disp, const uint8_t *target)
 {
@@ -614,6 +723,241 @@ static void patch_rel32(uint8_t *disp, const uint8_t *target)
     Assert(rel >= INT32_MIN && rel <= INT32_MAX, "jit: rel32 target is out of range");
     int32_t rel32 = (int32_t)rel;
     memcpy(disp, &rel32, sizeof(rel32));
+}
+
+/* Emit a side exit that lets the interpreter execute the current instruction. */
+static bool emit_interpreter_side_exit(rv64_jit_writer_t *w, vaddr_t pc,
+                                       uint32_t completed_count,
+                                       bool loop_count_needed)
+{
+    return emit_store_pc_imm(w, pc) &&
+           (loop_count_needed ? emit_return_loop_count(w, completed_count)
+                              : emit_return_count(w, completed_count));
+}
+
+/* Emit the x86 load instruction matching one RV64 load funct3 field. */
+static bool emit_direct_pmem_load_rax(rv64_jit_writer_t *w, uint32_t funct3)
+{
+    /*
+     * RDX is the byte offset from CONFIG_MBASE and R10 is the host pointer for
+     * CONFIG_MBASE. Signed byte/half/word forms use x86 sign-extension loads;
+     * unsigned forms write EAX, which zeroes the upper half of RAX by x86-64
+     * rule. LD is a plain 64-bit load.
+     */
+    switch (funct3)
+    {
+    case 0x0: /* LB: movsx rax, byte ptr [r10 + rdx]. */
+        return emit_u8(w, 0x49) && emit_u8(w, 0x0f) && emit_u8(w, 0xbe) &&
+               emit_u8(w, 0x04) && emit_u8(w, 0x12);
+    case 0x1: /* LH: movsx rax, word ptr [r10 + rdx]. */
+        return emit_u8(w, 0x49) && emit_u8(w, 0x0f) && emit_u8(w, 0xbf) &&
+               emit_u8(w, 0x04) && emit_u8(w, 0x12);
+    case 0x2: /* LW: movsxd rax, dword ptr [r10 + rdx]. */
+        return emit_u8(w, 0x49) && emit_u8(w, 0x63) &&
+               emit_u8(w, 0x04) && emit_u8(w, 0x12);
+    case 0x3: /* LD: mov rax, qword ptr [r10 + rdx]. */
+        return emit_u8(w, 0x49) && emit_u8(w, 0x8b) &&
+               emit_u8(w, 0x04) && emit_u8(w, 0x12);
+    case 0x4: /* LBU: movzx eax, byte ptr [r10 + rdx]. */
+        return emit_u8(w, 0x41) && emit_u8(w, 0x0f) && emit_u8(w, 0xb6) &&
+               emit_u8(w, 0x04) && emit_u8(w, 0x12);
+    case 0x5: /* LHU: movzx eax, word ptr [r10 + rdx]. */
+        return emit_u8(w, 0x41) && emit_u8(w, 0x0f) && emit_u8(w, 0xb7) &&
+               emit_u8(w, 0x04) && emit_u8(w, 0x12);
+    case 0x6: /* LWU: mov eax, dword ptr [r10 + rdx]. */
+        return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
+               emit_u8(w, 0x04) && emit_u8(w, 0x12);
+    default:
+        return false;
+    }
+}
+
+/* Emit one guarded bare-mode RV64 load that falls back before unsafe accesses. */
+static bool emit_load_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
+                            uint32_t completed_count, bool loop_count_needed)
+{
+    const uint32_t rd = bits(instr, 11, 7);
+    const uint32_t funct3 = bits(instr, 14, 12);
+    const uint32_t rs1 = bits(instr, 19, 15);
+    const int32_t imm = (int32_t)imm_i(instr);
+    uint32_t len = 0;
+    uint8_t *align_slow_disp = NULL;
+    uint8_t *range_slow_disp = NULL;
+    uint8_t *done_disp = NULL;
+
+    switch (funct3)
+    {
+    case 0x0: /* LB */
+    case 0x4: /* LBU */
+        len = 1;
+        break;
+    case 0x1: /* LH */
+    case 0x5: /* LHU */
+        len = 2;
+        break;
+    case 0x2: /* LW */
+    case 0x6: /* LWU */
+        len = 4;
+        break;
+    case 0x3: /* LD */
+        len = 8;
+        break;
+    default:
+        return false;
+    }
+
+    /*
+     * This first memory tier is intentionally bare-mode only. The block cache
+     * is tagged by satp, so a block compiled while satp.MODE is Bare cannot run
+     * after paging is enabled. Sv39 gets its own dependency-tracked fast path
+     * later instead of reusing this direct physical-address proof.
+     */
+    if ((cpu.csr.satp >> 60) != 0)
+    {
+        return false;
+    }
+
+    if (!emit_load_gpr_rax(w, rs1) ||
+        !emit_add_rax_imm32(w, imm))
+    {
+        return false;
+    }
+
+    if (len > 1 &&
+        (!emit_test_al_imm8(w, (uint8_t)(len - 1u)) ||
+         !emit_jcc_rel32_placeholder(w, 0x85, &align_slow_disp)))
+    {
+        return false;
+    }
+
+    /*
+     * Guard the complete physical byte range before touching host memory:
+     *   offset = guest_addr - CONFIG_MBASE
+     *   accept only offset <= CONFIG_MSIZE - len
+     * Unsigned JA catches underflow, wraparound, MMIO and out-of-PMEM addresses.
+     */
+    if (!emit_mov_rdx_rax(w) ||
+        !emit_movabs_rcx(w, (uint64_t)CONFIG_MBASE) ||
+        !emit_sub_rdx_rcx(w) ||
+        !emit_movabs_rcx(w, (uint64_t)CONFIG_MSIZE - len) ||
+        !emit_cmp_rdx_rcx(w) ||
+        !emit_jcc_rel32_placeholder(w, 0x87, &range_slow_disp) ||
+        !emit_direct_pmem_load_rax(w, funct3) ||
+        !emit_store_rax_gpr(w, rd) ||
+        !emit_jmp_rel32_placeholder(w, &done_disp))
+    {
+        return false;
+    }
+
+    if (align_slow_disp != NULL)
+    {
+        patch_rel32(align_slow_disp, w->cur);
+    }
+    patch_rel32(range_slow_disp, w->cur);
+
+    if (!emit_interpreter_side_exit(w, pc, completed_count, loop_count_needed))
+    {
+        return false;
+    }
+
+    patch_rel32(done_disp, w->cur);
+    JIT_STAT_INC(native_loads);
+    return true;
+}
+
+/* Emit one guarded bare-mode RV64 store that commits through paddr_write(). */
+static bool emit_store_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
+                             vaddr_t next_pc, uint32_t completed_count,
+                             bool loop_count_needed)
+{
+    const uint32_t funct3 = bits(instr, 14, 12);
+    const uint32_t rs1 = bits(instr, 19, 15);
+    const uint32_t rs2 = bits(instr, 24, 20);
+    const int32_t imm = (int32_t)imm_s(instr);
+    uint32_t len = 0;
+    uint8_t *align_slow_disp = NULL;
+    uint8_t *range_slow_disp = NULL;
+
+    switch (funct3)
+    {
+    case 0x0: /* SB */
+        len = 1;
+        break;
+    case 0x1: /* SH */
+        len = 2;
+        break;
+    case 0x2: /* SW */
+        len = 4;
+        break;
+    case 0x3: /* SD */
+        len = 8;
+        break;
+    default:
+        return false;
+    }
+
+    if ((cpu.csr.satp >> 60) != 0)
+    {
+        return false;
+    }
+
+    if (!emit_load_gpr_rax(w, rs1) ||
+        !emit_add_rax_imm32(w, imm))
+    {
+        return false;
+    }
+
+    if (len > 1 &&
+        (!emit_test_al_imm8(w, (uint8_t)(len - 1u)) ||
+         !emit_jcc_rel32_placeholder(w, 0x85, &align_slow_disp)))
+    {
+        return false;
+    }
+
+    if (!emit_mov_rdx_rax(w) ||
+        !emit_movabs_rcx(w, (uint64_t)CONFIG_MBASE) ||
+        !emit_sub_rdx_rcx(w) ||
+        !emit_movabs_rcx(w, (uint64_t)CONFIG_MSIZE - len) ||
+        !emit_cmp_rdx_rcx(w) ||
+        !emit_jcc_rel32_placeholder(w, 0x87, &range_slow_disp))
+    {
+        return false;
+    }
+
+    /*
+     * Convert the proven PMEM offset back to a physical address for paddr_write:
+     *   RDI = offset + CONFIG_MBASE, ESI = byte width, RDX = store data.
+     * The helper may clobber caller-saved registers, so reload R11 before
+     * updating cpu.pc for the completed store side exit.
+     */
+    if (!emit_mov_rdi_rdx(w) ||
+        !emit_movabs_rcx(w, (uint64_t)CONFIG_MBASE) ||
+        !emit_add_rdi_rcx(w) ||
+        !emit_load_gpr_rdx(w, rs2) ||
+        !emit_mov_esi_imm32(w, len) ||
+        !emit_store_pc_imm(w, pc) ||
+        !emit_call_abs(w, (uintptr_t)jit_store_pmem) ||
+        !emit_load_cpu_base(w) ||
+        !emit_store_pc_imm(w, next_pc) ||
+        !(loop_count_needed ? emit_return_loop_count(w, completed_count + 1u)
+                             : emit_return_count(w, completed_count + 1u)))
+    {
+        return false;
+    }
+
+    if (align_slow_disp != NULL)
+    {
+        patch_rel32(align_slow_disp, w->cur);
+    }
+    patch_rel32(range_slow_disp, w->cur);
+
+    if (!emit_interpreter_side_exit(w, pc, completed_count, loop_count_needed))
+    {
+        return false;
+    }
+
+    JIT_STAT_INC(native_stores);
+    return true;
 }
 
 /* Emit a 64-bit RISC-V OP-IMM instruction into native code. */
@@ -990,6 +1334,8 @@ static bool jit_instr_can_chain_body(uint32_t instr)
 
     switch (opcode)
     {
+    case RV64_OPCODE_LOAD:
+    case RV64_OPCODE_STORE:
     case RV64_OPCODE_OP_IMM:
     case RV64_OPCODE_OP_IMM_32:
     case RV64_OPCODE_OP:
@@ -1102,7 +1448,39 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         uint8_t *instr_start = w.cur;
         bool end_block = false;
 
-        if (opcode == RV64_OPCODE_BRANCH)
+        if (opcode == RV64_OPCODE_LOAD)
+        {
+            /*
+             * A slow load side exit returns before the load executes. Avoid
+             * publishing a block whose first possible exit would report zero
+             * retired instructions; the interpreter will handle that leading
+             * load directly.
+             */
+            if (count == 0 ||
+                !emit_load_instr(&w, instr, cur_pc, count, loop_count_needed))
+            {
+                w.cur = instr_start;
+                break;
+            }
+        }
+        else if (opcode == RV64_OPCODE_STORE)
+        {
+            /*
+             * The helper-backed store path returns after committing the store.
+             * If the store is the first instruction, an unsafe-address side exit
+             * would need to return zero retired instructions, so leave that case
+             * to the interpreter.
+             */
+            if (count == 0 ||
+                !emit_store_instr(&w, instr, cur_pc, cur_pc + RV64_INSN_SIZE,
+                                  count, loop_count_needed))
+            {
+                w.cur = instr_start;
+                break;
+            }
+            end_block = true;
+        }
+        else if (opcode == RV64_OPCODE_BRANCH)
         {
             bool branch_chained = false;
 
@@ -1375,6 +1753,10 @@ void isa_jit_dump_stats(void)
         jit_stats.invalidation_requests,
         jit_stats.invalidated_blocks,
         jit_stats.arena_resets);
+    Log("jit: native loads = %" PRIu64,
+        jit_stats.native_loads);
+    Log("jit: native stores = %" PRIu64,
+        jit_stats.native_stores);
 #else
     if (jit_stats_enabled)
     {
