@@ -121,6 +121,16 @@ void init_proc()
 
     static char *const envp_empty[] = {NULL};
 
+#if defined(__ISA_RISCV64__)
+    /*
+     * Keep the first RV64 Nanos/Navy target small and deterministic.  PAL,
+     * FCEUX, and ONScripter exercise large graphics/audio stacks and still need
+     * separate RV64 compatibility work; /bin/hello proves the syscall, loader,
+     * Sv39, context-switch, and user-mode return path first.
+     */
+    static char *const argv_hello[] = {"/bin/hello", NULL};
+    context_uload(&pcb[0], "/bin/hello", argv_hello, envp_empty);
+#else
     static char *const argv_pal[] = {"/bin/pal", NULL};
     static char *const argv_fceux[] = {"/bin/fceux", "/share/games/nes/c.nes", NULL};
     static char *const argv_onscripter[] = {"/bin/onscripter", "-r", "/share/games/ons", NULL};
@@ -131,6 +141,7 @@ void init_proc()
     context_uload(&pcb[2], "/bin/onscripter", argv_onscripter, envp_empty);
     // context_uload(&pcb[2], "/bin/nslider", argv_nslider, envp_empty);
     // context_uload(&pcb[3], "/bin/hello", argv_hello, envp_empty);
+#endif
     fg_pcb = &pcb[0];
     foreground_budget = FOREGROUND_QUANTA;
 
