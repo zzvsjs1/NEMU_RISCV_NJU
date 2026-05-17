@@ -16,6 +16,17 @@ static uint32_t gpu_accel_frame[GPU_ACCEL_VMEM_SIZE / sizeof(uint32_t)];
 static uint8_t gpu_accel_scratch[GPU_ACCEL_VMEM_SIZE];
 static uint8_t *gpu_accel_scratch_head;
 
+static size_t gpu_framebuffer_bytes()
+{
+    assert(W > 0 && H > 0);
+    return (size_t)W * (size_t)H * sizeof(uint32_t);
+}
+
+static bool gpu_accel_available()
+{
+    return gpu_framebuffer_bytes() <= GPU_ACCEL_VMEM_SIZE;
+}
+
 static void *gpu_accel_to_host(gpuptr_t ptr, size_t bytes)
 {
     assert(ptr != AM_GPU_NULL);
@@ -126,12 +137,14 @@ void __am_gpu_init()
 
 void __am_gpu_config(AM_GPU_CONFIG_T *cfg)
 {
+    const size_t framebuffer_bytes = gpu_framebuffer_bytes();
+
     *cfg = (AM_GPU_CONFIG_T){
         .present = true,
-        .has_accel = true,
+        .has_accel = gpu_accel_available(),
         .width = W,
         .height = H,
-        .vmemsz = GPU_ACCEL_VMEM_SIZE,
+        .vmemsz = (int)framebuffer_bytes,
     };
 }
 
@@ -174,6 +187,7 @@ void __am_gpu_status(AM_GPU_STATUS_T *status)
 
 void __am_gpu_memcpy(AM_GPU_MEMCPY_T *ctl)
 {
+    assert(gpu_accel_available());
     assert(ctl->size >= 0);
     assert((uint64_t)ctl->dest + (uint64_t)ctl->size <= GPU_ACCEL_VMEM_SIZE);
     memcpy(gpu_accel_vmem + ctl->dest, ctl->src, (size_t)ctl->size);
@@ -181,6 +195,8 @@ void __am_gpu_memcpy(AM_GPU_MEMCPY_T *ctl)
 
 void __am_gpu_render(AM_GPU_RENDER_T *ctl)
 {
+    assert(gpu_accel_available());
+
     struct gpu_canvas display = {
         .type = AM_GPU_SUBTREE,
         .w = (uint16_t)W,
