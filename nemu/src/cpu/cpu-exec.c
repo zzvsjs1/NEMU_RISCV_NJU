@@ -161,6 +161,12 @@ void assert_fail_msg()
     statistic();
 }
 
+static bool should_dump_failure_registers()
+{
+    return nemu_state.state == NEMU_ABORT ||
+           (nemu_state.state == NEMU_END && nemu_state.halt_ret != 0);
+}
+
 void fetch_decode(Decode *s, vaddr_t pc)
 {
     int idx = fetch_decode_idx(s, pc);
@@ -372,6 +378,10 @@ void cpu_exec(uint64_t n)
         Log("nemu: %s at pc = " FMT_WORD,
             (nemu_state.state == NEMU_ABORT ? ANSI_FMT("ABORT", ANSI_FG_RED) : (nemu_state.halt_ret == 0 ? ANSI_FMT("HIT GOOD TRAP", ANSI_FG_GREEN) : ANSI_FMT("HIT BAD TRAP", ANSI_FG_RED))),
             nemu_state.halt_pc);
+        if (should_dump_failure_registers())
+        {
+            isa_reg_display();
+        }
         // fall through
     case NEMU_QUIT:
         statistic();
