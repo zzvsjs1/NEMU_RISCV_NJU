@@ -12,7 +12,7 @@ export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
 
 DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit_defconfig"
-TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-m-fast)
+TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-reg-cache)
 
 fail() {
   echo "RISC-V64 JIT correctness check failed: $*" >&2
@@ -114,6 +114,44 @@ require_positive_native_m_ops() {
   fi
 }
 
+require_positive_translated_blocks() {
+  local log=$1
+  local test_name=$2
+  local translated_blocks
+
+  translated_blocks=$(sed -n 's/.*translated blocks = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$translated_blocks" ]; then
+    echo "Failed to find translated block stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$translated_blocks" -le 0 ]; then
+    echo "Expected positive translated block count for $test_name, got $translated_blocks" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_reg_cache_spills() {
+  local log=$1
+  local test_name=$2
+  local reg_cache_spills
+
+  reg_cache_spills=$(sed -n 's/.*reg cache spills = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$reg_cache_spills" ]; then
+    echo "Failed to find register-cache spill stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$reg_cache_spills" -le 0 ]; then
+    echo "Expected positive register-cache spill count for $test_name, got $reg_cache_spills" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 cd "$ROOT"
 
 [ -f "$DEFCONFIG" ] || fail "missing $DEFCONFIG"
@@ -141,6 +179,12 @@ for test_name in "${TESTS[@]}"; do
   fi
   if [ "$test_name" = "riscv64-jit-m-fast" ]; then
     require_positive_native_m_ops "$out" "$test_name"
+  fi
+  if [ "$test_name" = "riscv64-jit-sv39-remap" ]; then
+    require_positive_translated_blocks "$out" "$test_name"
+  fi
+  if [ "$test_name" = "riscv64-jit-reg-cache" ]; then
+    require_positive_reg_cache_spills "$out" "$test_name"
   fi
   rm -f "$out"
   trap - EXIT

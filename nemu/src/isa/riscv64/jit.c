@@ -55,18 +55,32 @@
 #define RV64_OPCODE_JALR 0x67u
 #define RV64_OPCODE_JAL 0x6fu
 
-/* Compile at most 32 guest instructions so one block remains cheap to build. */
-#define RV64_JIT_BLOCK_MAX_INSNS 32u
+/* Match RV32's longer block budget now that RV64 has register caching. */
+#define RV64_JIT_BLOCK_MAX_INSNS 64u
 /* Match the CPU loop's device polling window; native code still returns bounded work. */
 #define RV64_JIT_BATCH_MAX_INSNS 65536u
 /* Power-of-two direct-mapped cache size, so `(size - 1)` is a valid index mask. */
-#define RV64_JIT_CACHE_SIZE 65536u
-/* 64 MiB keeps early RV64 experiments away from frequent arena resets. */
-#define RV64_JIT_CODE_SIZE (64u * 1024u * 1024u)
+#define RV64_JIT_CACHE_SIZE 262144u
+/* Keep the RV64 arena in parity with RV32 so long-running workloads reset less. */
+#define RV64_JIT_CODE_SIZE (256u * 1024u * 1024u)
 /* 16-byte alignment is the normal x86-64 code-entry alignment. */
 #define RV64_JIT_CODE_ALIGN 16u
 /* Conservative per-block free-space check for the worst native byte expansion. */
-#define RV64_JIT_BLOCK_CODE_HEADROOM (16u * 1024u)
+/*
+ * A 64-instruction block with register spills, guarded memory, helper calls and
+ * side exits can be much larger than the early minimal emitter's blocks.
+ */
+#define RV64_JIT_BLOCK_CODE_HEADROOM (32u * 1024u)
+/*
+ * Source invalidation is tracked in 128-byte chunks, matching RV32.  This is
+ * fine-grained enough that normal data stores near code avoid a full cache scan.
+ */
+#define RV64_JIT_SOURCE_CHUNK_SHIFT 7u
+#define RV64_JIT_SOURCE_CHUNK_SIZE (1u << RV64_JIT_SOURCE_CHUNK_SHIFT)
+#define RV64_JIT_SOURCE_CHUNK_MASK (RV64_JIT_SOURCE_CHUNK_SIZE - 1u)
+#define RV64_JIT_PMEM_CHUNK_COUNT \
+    (((size_t)CONFIG_MSIZE + (size_t)RV64_JIT_SOURCE_CHUNK_SIZE - 1u) / \
+     (size_t)RV64_JIT_SOURCE_CHUNK_SIZE)
 
 typedef uint32_t (*rv64_jit_entry_t)(void);
 
@@ -77,9 +91,36 @@ typedef struct
     uint8_t *end;
 } rv64_jit_writer_t;
 
+typedef enum
+{
+    RV64_JIT_HREG_RBX = 0,
+    RV64_JIT_HREG_R12,
+    RV64_JIT_HREG_R13,
+    RV64_JIT_HREG_R14,
+    RV64_JIT_HREG_R15,
+    RV64_JIT_HREG_COUNT,
+} rv64_jit_hreg_t;
+
 typedef struct
 {
     bool valid;
+    bool loaded;
+    bool dirty;
+    uint32_t guest_reg;
+    uint32_t age;
+    rv64_jit_hreg_t hreg;
+} rv64_jit_reg_slot_t;
+
+typedef struct
+{
+    rv64_jit_reg_slot_t slots[RV64_JIT_HREG_COUNT];
+    uint32_t next_age;
+} rv64_jit_reg_cache_t;
+
+typedef struct
+{
+    bool valid;
+    bool translated;
     vaddr_t pc;
     word_t satp;
     paddr_t paddr_start;
@@ -103,12 +144,15 @@ typedef struct
     uint64_t native_stores;
     uint64_t native_jumps;
     uint64_t native_m_ops;
+    uint64_t translated_blocks;
+    uint64_t reg_cache_spills;
     uint64_t invalidation_requests;
     uint64_t invalidated_blocks;
     uint64_t arena_resets;
 } rv64_jit_stats_t;
 
 static rv64_jit_block_t jit_cache[RV64_JIT_CACHE_SIZE];
+static uint16_t jit_source_chunk_refs[RV64_JIT_PMEM_CHUNK_COUNT];
 static uint8_t *jit_code = NULL;
 static size_t jit_code_used = 0;
 static rv64_jit_stats_t jit_stats;
@@ -383,6 +427,116 @@ static bool jit_ranges_overlap(paddr_t a, uint32_t a_len, paddr_t b, int b_len)
     return a < b_end && b < a_end;
 }
 
+/* Convert a PMEM physical address to its source-ref chunk index. */
+static bool jit_paddr_to_source_chunk(paddr_t addr, size_t *chunk)
+{
+    if (!in_pmem(addr))
+    {
+        return false;
+    }
+
+    *chunk = (size_t)((addr - (paddr_t)CONFIG_MBASE) >> RV64_JIT_SOURCE_CHUNK_SHIFT);
+    return *chunk < RV64_JIT_PMEM_CHUNK_COUNT;
+}
+
+/* Add source-ref counts for the physical bytes backing one native block. */
+static void jit_source_chunks_ref(paddr_t addr, uint32_t len)
+{
+    if (len == 0)
+    {
+        return;
+    }
+
+    size_t first = 0;
+    size_t last = 0;
+
+    if (!jit_paddr_to_source_chunk(addr, &first) ||
+        !jit_paddr_to_source_chunk(addr + (paddr_t)len - 1u, &last))
+    {
+        return;
+    }
+
+    for (size_t i = first; i <= last; i++)
+    {
+        Assert(jit_source_chunk_refs[i] != UINT16_MAX,
+               "jit: RV64 source chunk refcount overflow at %zu", i);
+        jit_source_chunk_refs[i]++;
+    }
+}
+
+/* Remove source-ref counts when a native block is discarded. */
+static void jit_source_chunks_unref(paddr_t addr, uint32_t len)
+{
+    if (len == 0)
+    {
+        return;
+    }
+
+    size_t first = 0;
+    size_t last = 0;
+
+    if (!jit_paddr_to_source_chunk(addr, &first) ||
+        !jit_paddr_to_source_chunk(addr + (paddr_t)len - 1u, &last))
+    {
+        return;
+    }
+
+    for (size_t i = first; i <= last; i++)
+    {
+        Assert(jit_source_chunk_refs[i] > 0,
+               "jit: RV64 source chunk refcount underflow at %zu", i);
+        jit_source_chunk_refs[i]--;
+    }
+}
+
+/* Return whether a PMEM write can overlap any compiled source chunk. */
+static bool jit_write_may_touch_source_chunk(paddr_t addr, int len)
+{
+    if (len <= 0)
+    {
+        return false;
+    }
+
+    if (!in_pmem_range(addr, len))
+    {
+        /*
+         * Ambiguous ranges stay conservative.  Device/DMA paths are rare here,
+         * and a full scan is still correct when a range cannot be chunked.
+         */
+        return true;
+    }
+
+    size_t first = 0;
+    size_t last = 0;
+
+    if (!jit_paddr_to_source_chunk(addr, &first) ||
+        !jit_paddr_to_source_chunk(addr + (paddr_t)len - 1u, &last))
+    {
+        return true;
+    }
+
+    for (size_t i = first; i <= last; i++)
+    {
+        if (jit_source_chunk_refs[i] != 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* Release one cache slot and its source refs, if it owns native code. */
+static void jit_block_discard(rv64_jit_block_t *block)
+{
+    if (block->valid && block->entry != NULL)
+    {
+        jit_source_chunks_unref(block->paddr_start, block->source_len);
+    }
+
+    *block = (rv64_jit_block_t){0};
+}
+
 /* Hash the current address-space tag and guest PC into the direct-mapped cache. */
 static uint32_t jit_hash(vaddr_t pc, word_t satp)
 {
@@ -404,6 +558,7 @@ static rv64_jit_block_t *jit_cache_slot(vaddr_t pc)
 static void jit_cache_clear(void)
 {
     memset(jit_cache, 0, sizeof(jit_cache));
+    memset(jit_source_chunk_refs, 0, sizeof(jit_source_chunk_refs));
 }
 
 /* Allocate executable memory for generated x86-64 blocks. */
@@ -488,6 +643,77 @@ static bool emit_u64(rv64_jit_writer_t *w, uint64_t value)
     return true;
 }
 
+/* Return the x86 register number backing one callee-saved cache slot. */
+static uint8_t jit_hreg_x86_reg(rv64_jit_hreg_t hreg)
+{
+    switch (hreg)
+    {
+    case RV64_JIT_HREG_RBX:
+        return 3;
+    case RV64_JIT_HREG_R12:
+        return 12;
+    case RV64_JIT_HREG_R13:
+        return 13;
+    case RV64_JIT_HREG_R14:
+        return 14;
+    case RV64_JIT_HREG_R15:
+        return 15;
+    default:
+        Assert(0, "jit: invalid RV64 host register slot %d", hreg);
+    }
+
+    return 3;
+}
+
+/* Build an x86 ModRM byte from its mode, register, and r/m fields. */
+static uint8_t jit_modrm(uint8_t mod, uint8_t reg, uint8_t rm)
+{
+    return (uint8_t)((mod << 6) | ((reg & 7u) << 3) | (rm & 7u));
+}
+
+/* Emit a 64-bit REX.W prefix, including high-register extension bits. */
+static bool emit_rex64(rv64_jit_writer_t *w, uint8_t reg, uint8_t rm)
+{
+    uint8_t rex = 0x48;
+
+    if ((reg & 8u) != 0)
+    {
+        rex |= 0x04;
+    }
+
+    if ((rm & 8u) != 0)
+    {
+        rex |= 0x01;
+    }
+
+    return emit_u8(w, rex);
+}
+
+/* Save all callee-saved host registers used as guest-register cache slots. */
+static bool emit_push_saved_hregs(rv64_jit_writer_t *w)
+{
+    /*
+     * Push order is RBX, R12, R13, R14, R15.  Five 8-byte pushes also change
+     * the System V entry stack from rsp%16==8 to rsp%16==0, so helper calls are
+     * naturally aligned without a separate stack adjustment.
+     */
+    return emit_u8(w, 0x53) &&
+           emit_u8(w, 0x41) && emit_u8(w, 0x54) &&
+           emit_u8(w, 0x41) && emit_u8(w, 0x55) &&
+           emit_u8(w, 0x41) && emit_u8(w, 0x56) &&
+           emit_u8(w, 0x41) && emit_u8(w, 0x57);
+}
+
+/* Restore callee-saved cache registers in the reverse of the push order. */
+static bool emit_pop_saved_hregs(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x41) && emit_u8(w, 0x5f) &&
+           emit_u8(w, 0x41) && emit_u8(w, 0x5e) &&
+           emit_u8(w, 0x41) && emit_u8(w, 0x5d) &&
+           emit_u8(w, 0x41) && emit_u8(w, 0x5c) &&
+           emit_u8(w, 0x5b);
+}
+
 /* Forward declaration: the prologue needs R10 before the grouped move helpers. */
 static bool emit_movabs_r10(rv64_jit_writer_t *w, uint64_t value);
 
@@ -502,24 +728,21 @@ static bool emit_load_cpu_base(rv64_jit_writer_t *w)
 static bool emit_prologue(rv64_jit_writer_t *w)
 {
     /*
-     * System V enters a function with rsp % 16 == 8. Subtracting 8 gives helper
-     * calls normal 16-byte alignment. R11 is caller-saved, so the generated code
-     * can dedicate it to `CPU_state *` without saving it. R10 holds the host
-     * pointer for guest physical CONFIG_MBASE, letting direct PMEM loads use
-     * `[r10 + offset]` after a strict in-range guard.
+     * R11 is caller-saved, so generated code can dedicate it to `CPU_state *`
+     * without saving it. R10 holds the host pointer for guest physical
+     * CONFIG_MBASE, letting direct PMEM loads use `[r10 + offset]` after a
+     * strict in-range guard. The saved host registers are the per-block guest
+     * register cache and also provide 16-byte stack alignment for helper calls.
      */
-    return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
-           emit_u8(w, 0xec) && emit_u8(w, 0x08) &&
+    return emit_push_saved_hregs(w) &&
            emit_load_cpu_base(w) &&
            emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE));
 }
 
-/* Emit `add rsp, 8; ret`, restoring the caller's stack pointer. */
+/* Restore saved host registers and return to the C dispatcher. */
 static bool emit_epilogue(rv64_jit_writer_t *w)
 {
-    return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
-           emit_u8(w, 0xc4) && emit_u8(w, 0x08) &&
-           emit_u8(w, 0xc3);
+    return emit_pop_saved_hregs(w) && emit_u8(w, 0xc3);
 }
 
 /* Emit a native return with a fixed completed guest-instruction count. */
@@ -687,56 +910,417 @@ static bool emit_test_al_imm8(rv64_jit_writer_t *w, uint8_t mask)
     return emit_u8(w, 0xa8) && emit_u8(w, mask);
 }
 
-/* Load one guest register into RAX, treating x0 as the constant zero. */
-static bool emit_load_gpr_rax(rv64_jit_writer_t *w, uint32_t reg)
+/* Load `cpu.gpr[reg]` into one 64-bit cached host register. */
+static bool emit_load_gpr_hreg(rv64_jit_writer_t *w, rv64_jit_hreg_t hreg,
+                               uint32_t reg)
+{
+    const uint8_t dst = jit_hreg_x86_reg(hreg);
+    const uint8_t base = 11;
+
+    /* `REX.W 8b /r` is `mov r64, qword ptr [r11 + disp32]`. */
+    return emit_rex64(w, dst, base) &&
+           emit_u8(w, 0x8b) &&
+           emit_u8(w, jit_modrm(2, dst, base)) &&
+           emit_u32(w, jit_gpr_offset(reg));
+}
+
+/* Store one cached 64-bit host register back into `cpu.gpr[reg]`. */
+static bool emit_store_gpr_hreg(rv64_jit_writer_t *w, uint32_t reg,
+                                rv64_jit_hreg_t hreg)
+{
+    const uint8_t src = jit_hreg_x86_reg(hreg);
+    const uint8_t base = 11;
+
+    /* `REX.W 89 /r` is `mov qword ptr [r11 + disp32], r64`. */
+    return emit_rex64(w, src, base) &&
+           emit_u8(w, 0x89) &&
+           emit_u8(w, jit_modrm(2, src, base)) &&
+           emit_u32(w, jit_gpr_offset(reg));
+}
+
+/* Copy one cached host-register value into RAX for generic emitters. */
+static bool emit_mov_rax_hreg(rv64_jit_writer_t *w, rv64_jit_hreg_t hreg)
+{
+    const uint8_t src = jit_hreg_x86_reg(hreg);
+
+    /* `mov rax, hreg` is encoded as `REX.W 89 /r` with RAX in the r/m field. */
+    return emit_rex64(w, src, 0) &&
+           emit_u8(w, 0x89) &&
+           emit_u8(w, jit_modrm(3, src, 0));
+}
+
+/* Copy one cached host-register value into RCX for second operands. */
+static bool emit_mov_rcx_hreg(rv64_jit_writer_t *w, rv64_jit_hreg_t hreg)
+{
+    const uint8_t src = jit_hreg_x86_reg(hreg);
+
+    /* RCX is r/m field 1 in `mov rcx, hreg`. */
+    return emit_rex64(w, src, 1) &&
+           emit_u8(w, 0x89) &&
+           emit_u8(w, jit_modrm(3, src, 1));
+}
+
+/* Copy one cached host-register value into RDX for helper arguments. */
+static bool emit_mov_rdx_hreg(rv64_jit_writer_t *w, rv64_jit_hreg_t hreg)
+{
+    const uint8_t src = jit_hreg_x86_reg(hreg);
+
+    /* RDX is r/m field 2 in `mov rdx, hreg`. */
+    return emit_rex64(w, src, 2) &&
+           emit_u8(w, 0x89) &&
+           emit_u8(w, jit_modrm(3, src, 2));
+}
+
+/* Copy the RAX temporary result into a cached host register. */
+static bool emit_mov_hreg_rax(rv64_jit_writer_t *w, rv64_jit_hreg_t hreg)
+{
+    const uint8_t dst = jit_hreg_x86_reg(hreg);
+
+    /* `mov hreg, rax` is `REX.W 89 /r` with RAX in the reg field. */
+    return emit_rex64(w, 0, dst) &&
+           emit_u8(w, 0x89) &&
+           emit_u8(w, jit_modrm(3, 0, dst));
+}
+
+/* Copy one cached host register to another. */
+static bool emit_mov_hreg_hreg(rv64_jit_writer_t *w, rv64_jit_hreg_t dst,
+                               rv64_jit_hreg_t src)
+{
+    const uint8_t dst_reg = jit_hreg_x86_reg(dst);
+    const uint8_t src_reg = jit_hreg_x86_reg(src);
+
+    if (dst == src)
+    {
+        return true;
+    }
+
+    /* `mov dst, src` keeps both operands in 64-bit host registers. */
+    return emit_rex64(w, src_reg, dst_reg) &&
+           emit_u8(w, 0x89) &&
+           emit_u8(w, jit_modrm(3, src_reg, dst_reg));
+}
+
+/* Load a full-width constant into one cached host register. */
+static bool emit_mov_hreg_imm64(rv64_jit_writer_t *w, rv64_jit_hreg_t hreg,
+                                uint64_t value)
+{
+    const uint8_t dst = jit_hreg_x86_reg(hreg);
+
+    if ((int64_t)value >= INT32_MIN && (int64_t)value <= INT32_MAX)
+    {
+        /*
+         * `REX.W c7 /0 imm32` sign-extends a 32-bit immediate to 64 bits, which
+         * is shorter than movabs and exactly matches small RV64 constants.
+         */
+        return emit_rex64(w, 0, dst) &&
+               emit_u8(w, 0xc7) &&
+               emit_u8(w, jit_modrm(3, 0, dst)) &&
+               emit_u32(w, (uint32_t)value);
+    }
+
+    /* `REX.W b8+rd imm64` is the full movabs form for arbitrary RV64 values. */
+    return emit_rex64(w, 0, dst) &&
+           emit_u8(w, (uint8_t)(0xb8u + (dst & 7u))) &&
+           emit_u64(w, value);
+}
+
+/* Initialise per-block guest-register cache metadata. */
+static void jit_reg_cache_init(rv64_jit_reg_cache_t *regs)
+{
+    regs->next_age = 1;
+
+    for (uint32_t i = 0; i < RV64_JIT_HREG_COUNT; i++)
+    {
+        regs->slots[i] = (rv64_jit_reg_slot_t){
+            .valid = false,
+            .loaded = false,
+            .dirty = false,
+            .guest_reg = 0,
+            .age = 0,
+            .hreg = (rv64_jit_hreg_t)i,
+        };
+    }
+}
+
+/* Restore compile-time cache metadata after an instruction emitter rolls back. */
+static void jit_reg_cache_restore(rv64_jit_reg_cache_t *regs,
+                                  const rv64_jit_reg_cache_t *snapshot)
+{
+    *regs = *snapshot;
+}
+
+/* Find the host-register slot currently assigned to one guest register. */
+static rv64_jit_reg_slot_t *jit_reg_find(rv64_jit_reg_cache_t *regs,
+                                         uint32_t reg)
+{
+    for (uint32_t i = 0; i < RV64_JIT_HREG_COUNT; i++)
+    {
+        rv64_jit_reg_slot_t *slot = &regs->slots[i];
+
+        if (slot->valid && slot->guest_reg == reg)
+        {
+            return slot;
+        }
+    }
+
+    return NULL;
+}
+
+/* Emit a store-back for one dirty cached slot without changing metadata. */
+static bool jit_reg_emit_flush_slot(rv64_jit_writer_t *w,
+                                    const rv64_jit_reg_slot_t *slot)
+{
+    if (!slot->valid || !slot->loaded || !slot->dirty || slot->guest_reg == 0)
+    {
+        return true;
+    }
+
+    return emit_store_gpr_hreg(w, slot->guest_reg, slot->hreg);
+}
+
+/* Flush one dirty slot and mark it clean once the native bytes are emitted. */
+static bool jit_reg_flush_slot(rv64_jit_writer_t *w, rv64_jit_reg_slot_t *slot)
+{
+    if (!jit_reg_emit_flush_slot(w, slot))
+    {
+        return false;
+    }
+
+    slot->dirty = false;
+    return true;
+}
+
+/* Flush every dirty cached guest register before helper-visible exits. */
+static bool jit_reg_flush_all_dirty(rv64_jit_writer_t *w,
+                                    rv64_jit_reg_cache_t *regs)
+{
+    for (uint32_t i = 0; i < RV64_JIT_HREG_COUNT; i++)
+    {
+        if (!jit_reg_flush_slot(w, &regs->slots[i]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/* Emit all dirty store-backs without changing the continuing path metadata. */
+static bool jit_reg_emit_flush_all_dirty(rv64_jit_writer_t *w,
+                                         const rv64_jit_reg_cache_t *regs)
+{
+    for (uint32_t i = 0; i < RV64_JIT_HREG_COUNT; i++)
+    {
+        if (!jit_reg_emit_flush_slot(w, &regs->slots[i]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/* Select a free slot or the least-recently-used slot when all are occupied. */
+static rv64_jit_reg_slot_t *jit_reg_choose_slot(rv64_jit_reg_cache_t *regs)
+{
+    rv64_jit_reg_slot_t *oldest = &regs->slots[0];
+
+    for (uint32_t i = 0; i < RV64_JIT_HREG_COUNT; i++)
+    {
+        rv64_jit_reg_slot_t *slot = &regs->slots[i];
+
+        if (!slot->valid)
+        {
+            return slot;
+        }
+
+        if (slot->age < oldest->age)
+        {
+            oldest = slot;
+        }
+    }
+
+    return oldest;
+}
+
+/* Reserve a cache slot for one guest register, spilling the LRU victim if needed. */
+static rv64_jit_reg_slot_t *jit_reg_alloc(rv64_jit_writer_t *w,
+                                          rv64_jit_reg_cache_t *regs,
+                                          uint32_t reg)
+{
+    rv64_jit_reg_slot_t *slot = jit_reg_find(regs, reg);
+
+    if (slot != NULL)
+    {
+        slot->age = regs->next_age++;
+        return slot;
+    }
+
+    slot = jit_reg_choose_slot(regs);
+    const bool spill = slot->valid && slot->loaded && slot->dirty && slot->guest_reg != 0;
+
+    if (!jit_reg_flush_slot(w, slot))
+    {
+        return NULL;
+    }
+
+    if (spill)
+    {
+        JIT_STAT_INC(reg_cache_spills);
+    }
+
+    slot->valid = true;
+    slot->loaded = false;
+    slot->dirty = false;
+    slot->guest_reg = reg;
+    slot->age = regs->next_age++;
+    return slot;
+}
+
+/* Return a slot whose host register definitely contains the guest value. */
+static rv64_jit_reg_slot_t *jit_reg_loaded_slot(rv64_jit_writer_t *w,
+                                                rv64_jit_reg_cache_t *regs,
+                                                uint32_t reg)
+{
+    rv64_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+
+    if (slot == NULL)
+    {
+        return NULL;
+    }
+
+    if (!slot->loaded)
+    {
+        if (!emit_load_gpr_hreg(w, slot->hreg, reg))
+        {
+            return NULL;
+        }
+        slot->loaded = true;
+    }
+
+    slot->age = regs->next_age++;
+    return slot;
+}
+
+/* Materialise a guest register in RAX, treating x0 as constant zero. */
+static bool jit_reg_read_rax(rv64_jit_writer_t *w,
+                             rv64_jit_reg_cache_t *regs, uint32_t reg)
 {
     if (reg == 0)
     {
         return emit_zero_rax(w);
     }
 
-    /* `49 8b 83 disp32` is `mov rax, [r11 + disp32]`. */
-    return emit_u8(w, 0x49) && emit_u8(w, 0x8b) &&
-           emit_u8(w, 0x83) && emit_u32(w, jit_gpr_offset(reg));
+    rv64_jit_reg_slot_t *slot = jit_reg_loaded_slot(w, regs, reg);
+    return slot != NULL && emit_mov_rax_hreg(w, slot->hreg);
 }
 
-/* Load one guest register into RCX, treating x0 as the constant zero. */
-static bool emit_load_gpr_rcx(rv64_jit_writer_t *w, uint32_t reg)
+/* Materialise a guest register in RCX, treating x0 as constant zero. */
+static bool jit_reg_read_rcx(rv64_jit_writer_t *w,
+                             rv64_jit_reg_cache_t *regs, uint32_t reg)
 {
     if (reg == 0)
     {
         return emit_u8(w, 0x31) && emit_u8(w, 0xc9);
     }
 
-    /* `49 8b 8b disp32` is `mov rcx, [r11 + disp32]`. */
-    return emit_u8(w, 0x49) && emit_u8(w, 0x8b) &&
-           emit_u8(w, 0x8b) && emit_u32(w, jit_gpr_offset(reg));
+    rv64_jit_reg_slot_t *slot = jit_reg_loaded_slot(w, regs, reg);
+    return slot != NULL && emit_mov_rcx_hreg(w, slot->hreg);
 }
 
-/* Load one guest register into RDX, treating x0 as the constant zero. */
-static bool emit_load_gpr_rdx(rv64_jit_writer_t *w, uint32_t reg)
+/* Materialise a guest register in RDX, treating x0 as constant zero. */
+static bool jit_reg_read_rdx(rv64_jit_writer_t *w,
+                             rv64_jit_reg_cache_t *regs, uint32_t reg)
 {
     if (reg == 0)
     {
         return emit_u8(w, 0x31) && emit_u8(w, 0xd2);
     }
 
-    /* `49 8b 93 disp32` is `mov rdx, [r11 + disp32]`. */
-    return emit_u8(w, 0x49) && emit_u8(w, 0x8b) &&
-           emit_u8(w, 0x93) && emit_u32(w, jit_gpr_offset(reg));
+    rv64_jit_reg_slot_t *slot = jit_reg_loaded_slot(w, regs, reg);
+    return slot != NULL && emit_mov_rdx_hreg(w, slot->hreg);
 }
 
-/* Store RAX into a guest register, ignoring writes to x0. */
-static bool emit_store_rax_gpr(rv64_jit_writer_t *w, uint32_t reg)
+/* Write the current RAX result into one guest-register cache slot. */
+static bool jit_reg_write_rax(rv64_jit_writer_t *w,
+                              rv64_jit_reg_cache_t *regs, uint32_t reg)
 {
     if (reg == 0)
     {
         return true;
     }
 
-    /* `49 89 83 disp32` is `mov [r11 + disp32], rax`. */
-    return emit_u8(w, 0x49) && emit_u8(w, 0x89) &&
-           emit_u8(w, 0x83) && emit_u32(w, jit_gpr_offset(reg));
+    rv64_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+
+    if (slot == NULL || !emit_mov_hreg_rax(w, slot->hreg))
+    {
+        return false;
+    }
+
+    slot->loaded = true;
+    slot->dirty = true;
+    slot->age = regs->next_age++;
+    return true;
+}
+
+/* Write a constant value into one guest-register cache slot. */
+static bool jit_reg_write_imm(rv64_jit_writer_t *w,
+                              rv64_jit_reg_cache_t *regs, uint32_t reg,
+                              uint64_t value)
+{
+    if (reg == 0)
+    {
+        return true;
+    }
+
+    rv64_jit_reg_slot_t *slot = jit_reg_alloc(w, regs, reg);
+
+    if (slot == NULL || !emit_mov_hreg_imm64(w, slot->hreg, value))
+    {
+        return false;
+    }
+
+    slot->loaded = true;
+    slot->dirty = true;
+    slot->age = regs->next_age++;
+    return true;
+}
+
+/* Copy a guest register value to another cache slot without touching memory. */
+static bool jit_reg_copy(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                         uint32_t dst_reg, uint32_t src_reg)
+{
+    if (dst_reg == 0)
+    {
+        return true;
+    }
+
+    if (src_reg == 0)
+    {
+        return jit_reg_write_imm(w, regs, dst_reg, 0);
+    }
+
+    rv64_jit_reg_slot_t *src = jit_reg_loaded_slot(w, regs, src_reg);
+    if (src == NULL)
+    {
+        return false;
+    }
+
+    if (dst_reg == src_reg)
+    {
+        return true;
+    }
+
+    rv64_jit_reg_slot_t *dst = jit_reg_alloc(w, regs, dst_reg);
+    if (dst == NULL || !emit_mov_hreg_hreg(w, dst->hreg, src->hreg))
+    {
+        return false;
+    }
+
+    dst->loaded = true;
+    dst->dirty = true;
+    dst->age = regs->next_age++;
+    return true;
 }
 
 /* Store an immediate guest PC by materialising it in RAX first. */
@@ -879,12 +1463,14 @@ static void patch_rel32(uint8_t *disp, const uint8_t *target)
     memcpy(disp, &rel32, sizeof(rel32));
 }
 
-/* Emit a side exit that lets the interpreter execute the current instruction. */
-static bool emit_interpreter_side_exit(rv64_jit_writer_t *w, vaddr_t pc,
+/* Flush cached registers and side-exit so the interpreter executes this PC. */
+static bool emit_interpreter_side_exit(rv64_jit_writer_t *w,
+                                       rv64_jit_reg_cache_t *regs, vaddr_t pc,
                                        uint32_t completed_count,
                                        bool loop_count_needed)
 {
-    return emit_store_pc_imm(w, pc) &&
+    return jit_reg_emit_flush_all_dirty(w, regs) &&
+           emit_store_pc_imm(w, pc) &&
            (loop_count_needed ? emit_return_loop_count(w, completed_count)
                               : emit_return_count(w, completed_count));
 }
@@ -927,7 +1513,8 @@ static bool emit_direct_pmem_load_rax(rv64_jit_writer_t *w, uint32_t funct3)
 }
 
 /* Emit one guarded bare-mode RV64 load that falls back before unsafe accesses. */
-static bool emit_load_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
+static bool emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                            uint32_t instr, vaddr_t pc,
                             uint32_t completed_count, bool loop_count_needed)
 {
     const uint32_t rd = bits(instr, 11, 7);
@@ -971,7 +1558,7 @@ static bool emit_load_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
         return false;
     }
 
-    if (!emit_load_gpr_rax(w, rs1) ||
+    if (!jit_reg_read_rax(w, regs, rs1) ||
         !emit_add_rax_imm32(w, imm))
     {
         return false;
@@ -997,7 +1584,7 @@ static bool emit_load_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
         !emit_cmp_rdx_rcx(w) ||
         !emit_jcc_rel32_placeholder(w, 0x87, &range_slow_disp) ||
         !emit_direct_pmem_load_rax(w, funct3) ||
-        !emit_store_rax_gpr(w, rd) ||
+        !jit_reg_write_rax(w, regs, rd) ||
         !emit_jmp_rel32_placeholder(w, &done_disp))
     {
         return false;
@@ -1009,7 +1596,7 @@ static bool emit_load_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
     }
     patch_rel32(range_slow_disp, w->cur);
 
-    if (!emit_interpreter_side_exit(w, pc, completed_count, loop_count_needed))
+    if (!emit_interpreter_side_exit(w, regs, pc, completed_count, loop_count_needed))
     {
         return false;
     }
@@ -1020,7 +1607,8 @@ static bool emit_load_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
 }
 
 /* Emit one guarded bare-mode RV64 store that commits through paddr_write(). */
-static bool emit_store_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
+static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                             uint32_t instr, vaddr_t pc,
                              vaddr_t next_pc, uint32_t completed_count,
                              bool loop_count_needed)
 {
@@ -1055,7 +1643,8 @@ static bool emit_store_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
         return false;
     }
 
-    if (!emit_load_gpr_rax(w, rs1) ||
+    if (!jit_reg_flush_all_dirty(w, regs) ||
+        !jit_reg_read_rax(w, regs, rs1) ||
         !emit_add_rax_imm32(w, imm))
     {
         return false;
@@ -1087,7 +1676,8 @@ static bool emit_store_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
     if (!emit_mov_rdi_rdx(w) ||
         !emit_movabs_rcx(w, (uint64_t)CONFIG_MBASE) ||
         !emit_add_rdi_rcx(w) ||
-        !emit_load_gpr_rdx(w, rs2) ||
+        !jit_reg_flush_all_dirty(w, regs) ||
+        !jit_reg_read_rdx(w, regs, rs2) ||
         !emit_mov_esi_imm32(w, len) ||
         !emit_store_pc_imm(w, pc) ||
         !emit_call_abs(w, (uintptr_t)jit_store_pmem) ||
@@ -1105,7 +1695,7 @@ static bool emit_store_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
     }
     patch_rel32(range_slow_disp, w->cur);
 
-    if (!emit_interpreter_side_exit(w, pc, completed_count, loop_count_needed))
+    if (!emit_interpreter_side_exit(w, regs, pc, completed_count, loop_count_needed))
     {
         return false;
     }
@@ -1115,7 +1705,8 @@ static bool emit_store_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
 }
 
 /* Emit a helper-backed RV64M operation and keep compiling after the call. */
-static bool emit_m_helper(rv64_jit_writer_t *w, uint32_t instr,
+static bool emit_m_helper(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                          uint32_t instr,
                           uint32_t rd, uint32_t rs1, uint32_t rs2)
 {
     /*
@@ -1123,15 +1714,15 @@ static bool emit_m_helper(rv64_jit_writer_t *w, uint32_t instr,
      * RAX. Because a C call may clobber caller-saved R10/R11, reload both JIT
      * base registers before storing the result or emitting later PMEM accesses.
      */
-    if (!emit_load_gpr_rax(w, rs1) ||
+    if (!jit_reg_read_rax(w, regs, rs1) ||
         !emit_mov_rdi_rax(w) ||
-        !emit_load_gpr_rdx(w, rs2) ||
+        !jit_reg_read_rdx(w, regs, rs2) ||
         !emit_mov_rsi_rdx(w) ||
         !emit_mov_edx_imm32(w, instr) ||
         !emit_call_abs(w, (uintptr_t)jit_m_result) ||
         !emit_load_cpu_base(w) ||
         !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
-        !emit_store_rax_gpr(w, rd))
+        !jit_reg_write_rax(w, regs, rd))
     {
         return false;
     }
@@ -1141,14 +1732,20 @@ static bool emit_m_helper(rv64_jit_writer_t *w, uint32_t instr,
 }
 
 /* Emit a 64-bit RISC-V OP-IMM instruction into native code. */
-static bool emit_op_imm(rv64_jit_writer_t *w, uint32_t instr)
+static bool emit_op_imm(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                        uint32_t instr)
 {
     const uint32_t rd = bits(instr, 11, 7);
     const uint32_t funct3 = bits(instr, 14, 12);
     const uint32_t rs1 = bits(instr, 19, 15);
     const int32_t imm = (int32_t)imm_i(instr);
 
-    if (!emit_load_gpr_rax(w, rs1))
+    if (funct3 == 0x0 && imm == 0)
+    {
+        return jit_reg_copy(w, regs, rd, rs1);
+    }
+
+    if (!jit_reg_read_rax(w, regs, rs1))
     {
         return false;
     }
@@ -1156,32 +1753,32 @@ static bool emit_op_imm(rv64_jit_writer_t *w, uint32_t instr)
     switch (funct3)
     {
     case 0x0: /* ADDI */
-        return emit_add_rax_imm32(w, imm) && emit_store_rax_gpr(w, rd);
+        return emit_add_rax_imm32(w, imm) && jit_reg_write_rax(w, regs, rd);
     case 0x2: /* SLTI, signed compare; SETL is opcode 0x9c. */
-        return emit_cmp_rax_imm32(w, imm) && emit_setcc_rax(w, 0x9c) && emit_store_rax_gpr(w, rd);
+        return emit_cmp_rax_imm32(w, imm) && emit_setcc_rax(w, 0x9c) && jit_reg_write_rax(w, regs, rd);
     case 0x3: /* SLTIU, unsigned compare; SETB is opcode 0x92. */
-        return emit_cmp_rax_imm32(w, imm) && emit_setcc_rax(w, 0x92) && emit_store_rax_gpr(w, rd);
+        return emit_cmp_rax_imm32(w, imm) && emit_setcc_rax(w, 0x92) && jit_reg_write_rax(w, regs, rd);
     case 0x4: /* XORI; `48 35 imm32` is XOR RAX, sign-extended imm32. */
-        return emit_u8(w, 0x48) && emit_u8(w, 0x35) && emit_u32(w, (uint32_t)imm) && emit_store_rax_gpr(w, rd);
+        return emit_u8(w, 0x48) && emit_u8(w, 0x35) && emit_u32(w, (uint32_t)imm) && jit_reg_write_rax(w, regs, rd);
     case 0x6: /* ORI; `48 0d imm32` is OR RAX, sign-extended imm32. */
-        return emit_u8(w, 0x48) && emit_u8(w, 0x0d) && emit_u32(w, (uint32_t)imm) && emit_store_rax_gpr(w, rd);
+        return emit_u8(w, 0x48) && emit_u8(w, 0x0d) && emit_u32(w, (uint32_t)imm) && jit_reg_write_rax(w, regs, rd);
     case 0x7: /* ANDI; `48 25 imm32` is AND RAX, sign-extended imm32. */
-        return emit_u8(w, 0x48) && emit_u8(w, 0x25) && emit_u32(w, (uint32_t)imm) && emit_store_rax_gpr(w, rd);
+        return emit_u8(w, 0x48) && emit_u8(w, 0x25) && emit_u32(w, (uint32_t)imm) && jit_reg_write_rax(w, regs, rd);
     case 0x1: /* SLLI; funct6 must be 000000 for RV64 base shifts. */
         if (bits(instr, 31, 26) != 0x00)
         {
             return false;
         }
-        return emit_shift_rax_imm(w, 0xe0, (uint8_t)bits(instr, 25, 20)) && emit_store_rax_gpr(w, rd);
+        return emit_shift_rax_imm(w, 0xe0, (uint8_t)bits(instr, 25, 20)) && jit_reg_write_rax(w, regs, rd);
     case 0x5: /* SRLI/SRAI; funct6 selects logical versus arithmetic right shift. */
         if (bits(instr, 31, 26) == 0x00)
         {
-            return emit_shift_rax_imm(w, 0xe8, (uint8_t)bits(instr, 25, 20)) && emit_store_rax_gpr(w, rd);
+            return emit_shift_rax_imm(w, 0xe8, (uint8_t)bits(instr, 25, 20)) && jit_reg_write_rax(w, regs, rd);
         }
 
         if (bits(instr, 31, 26) == 0x10)
         {
-            return emit_shift_rax_imm(w, 0xf8, (uint8_t)bits(instr, 25, 20)) && emit_store_rax_gpr(w, rd);
+            return emit_shift_rax_imm(w, 0xf8, (uint8_t)bits(instr, 25, 20)) && jit_reg_write_rax(w, regs, rd);
         }
         return false;
     default:
@@ -1190,14 +1787,15 @@ static bool emit_op_imm(rv64_jit_writer_t *w, uint32_t instr)
 }
 
 /* Emit an RV64 OP-IMM-32 instruction and sign-extend the 32-bit result. */
-static bool emit_op_imm32(rv64_jit_writer_t *w, uint32_t instr)
+static bool emit_op_imm32(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                          uint32_t instr)
 {
     const uint32_t rd = bits(instr, 11, 7);
     const uint32_t funct3 = bits(instr, 14, 12);
     const uint32_t rs1 = bits(instr, 19, 15);
     const int32_t imm = (int32_t)imm_i(instr);
 
-    if (!emit_load_gpr_rax(w, rs1))
+    if (!jit_reg_read_rax(w, regs, rs1))
     {
         return false;
     }
@@ -1207,22 +1805,22 @@ static bool emit_op_imm32(rv64_jit_writer_t *w, uint32_t instr)
     case 0x0: /* ADDIW; EAX addition naturally drops to 32 bits, then CDQE. */
         return emit_u8(w, 0x05) && emit_u32(w, (uint32_t)imm) &&
                emit_u8(w, 0x48) && emit_u8(w, 0x98) &&
-               emit_store_rax_gpr(w, rd);
+               jit_reg_write_rax(w, regs, rd);
     case 0x1: /* SLLIW; funct7 must be zero and shamt is five bits. */
         if (bits(instr, 31, 25) != 0x00)
         {
             return false;
         }
-        return emit_shift_eax_imm_sext(w, 0xe0, (uint8_t)bits(instr, 24, 20)) && emit_store_rax_gpr(w, rd);
+        return emit_shift_eax_imm_sext(w, 0xe0, (uint8_t)bits(instr, 24, 20)) && jit_reg_write_rax(w, regs, rd);
     case 0x5: /* SRLIW/SRAIW; funct7 distinguishes logical from arithmetic. */
         if (bits(instr, 31, 25) == 0x00)
         {
-            return emit_shift_eax_imm_sext(w, 0xe8, (uint8_t)bits(instr, 24, 20)) && emit_store_rax_gpr(w, rd);
+            return emit_shift_eax_imm_sext(w, 0xe8, (uint8_t)bits(instr, 24, 20)) && jit_reg_write_rax(w, regs, rd);
         }
 
         if (bits(instr, 31, 25) == 0x20)
         {
-            return emit_shift_eax_imm_sext(w, 0xf8, (uint8_t)bits(instr, 24, 20)) && emit_store_rax_gpr(w, rd);
+            return emit_shift_eax_imm_sext(w, 0xf8, (uint8_t)bits(instr, 24, 20)) && jit_reg_write_rax(w, regs, rd);
         }
         return false;
     default:
@@ -1231,7 +1829,8 @@ static bool emit_op_imm32(rv64_jit_writer_t *w, uint32_t instr)
 }
 
 /* Emit a 64-bit RV64 OP instruction for the integer ALU subset. */
-static bool emit_op(rv64_jit_writer_t *w, uint32_t instr)
+static bool emit_op(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                    uint32_t instr)
 {
     const uint32_t rd = bits(instr, 11, 7);
     const uint32_t funct3 = bits(instr, 14, 12);
@@ -1239,7 +1838,7 @@ static bool emit_op(rv64_jit_writer_t *w, uint32_t instr)
     const uint32_t rs2 = bits(instr, 24, 20);
     const uint32_t key = (bits(instr, 31, 25) << 3) | funct3;
 
-    if (!emit_load_gpr_rax(w, rs1) || !emit_load_gpr_rcx(w, rs2))
+    if (!jit_reg_read_rax(w, regs, rs1) || !jit_reg_read_rcx(w, regs, rs2))
     {
         return false;
     }
@@ -1247,29 +1846,29 @@ static bool emit_op(rv64_jit_writer_t *w, uint32_t instr)
     switch (key)
     {
     case 0x000: /* ADD */
-        return emit_rax_rcx_alu64(w, 0x01) && emit_store_rax_gpr(w, rd);
+        return emit_rax_rcx_alu64(w, 0x01) && jit_reg_write_rax(w, regs, rd);
     case 0x100: /* SUB */
-        return emit_rax_rcx_alu64(w, 0x29) && emit_store_rax_gpr(w, rd);
+        return emit_rax_rcx_alu64(w, 0x29) && jit_reg_write_rax(w, regs, rd);
     case 0x001: /* SLL */
-        return emit_shift_rax_cl(w, 0xe0) && emit_store_rax_gpr(w, rd);
+        return emit_shift_rax_cl(w, 0xe0) && jit_reg_write_rax(w, regs, rd);
     case 0x002: /* SLT, signed compare; SETL is opcode 0x9c. */
-        return emit_cmp_rax_rcx(w) && emit_setcc_rax(w, 0x9c) && emit_store_rax_gpr(w, rd);
+        return emit_cmp_rax_rcx(w) && emit_setcc_rax(w, 0x9c) && jit_reg_write_rax(w, regs, rd);
     case 0x003: /* SLTU, unsigned compare; SETB is opcode 0x92. */
-        return emit_cmp_rax_rcx(w) && emit_setcc_rax(w, 0x92) && emit_store_rax_gpr(w, rd);
+        return emit_cmp_rax_rcx(w) && emit_setcc_rax(w, 0x92) && jit_reg_write_rax(w, regs, rd);
     case 0x004: /* XOR */
-        return emit_rax_rcx_alu64(w, 0x31) && emit_store_rax_gpr(w, rd);
+        return emit_rax_rcx_alu64(w, 0x31) && jit_reg_write_rax(w, regs, rd);
     case 0x005: /* SRL */
-        return emit_shift_rax_cl(w, 0xe8) && emit_store_rax_gpr(w, rd);
+        return emit_shift_rax_cl(w, 0xe8) && jit_reg_write_rax(w, regs, rd);
     case 0x105: /* SRA */
-        return emit_shift_rax_cl(w, 0xf8) && emit_store_rax_gpr(w, rd);
+        return emit_shift_rax_cl(w, 0xf8) && jit_reg_write_rax(w, regs, rd);
     case 0x006: /* OR */
-        return emit_rax_rcx_alu64(w, 0x09) && emit_store_rax_gpr(w, rd);
+        return emit_rax_rcx_alu64(w, 0x09) && jit_reg_write_rax(w, regs, rd);
     case 0x007: /* AND */
-        return emit_rax_rcx_alu64(w, 0x21) && emit_store_rax_gpr(w, rd);
+        return emit_rax_rcx_alu64(w, 0x21) && jit_reg_write_rax(w, regs, rd);
     case 0x008: /* MUL; low 64 bits match x86-64 IMUL RAX, RCX. */
         JIT_STAT_INC(native_m_ops);
         return emit_u8(w, 0x48) && emit_u8(w, 0x0f) && emit_u8(w, 0xaf) && emit_u8(w, 0xc1) &&
-               emit_store_rax_gpr(w, rd);
+               jit_reg_write_rax(w, regs, rd);
     case 0x009: /* MULH */
     case 0x00a: /* MULHSU */
     case 0x00b: /* MULHU */
@@ -1277,14 +1876,15 @@ static bool emit_op(rv64_jit_writer_t *w, uint32_t instr)
     case 0x00d: /* DIVU */
     case 0x00e: /* REM */
     case 0x00f: /* REMU */
-        return emit_m_helper(w, instr, rd, rs1, rs2);
+        return emit_m_helper(w, regs, instr, rd, rs1, rs2);
     default:
         return false;
     }
 }
 
 /* Emit an RV64 OP-32 instruction and sign-extend the 32-bit result. */
-static bool emit_op32(rv64_jit_writer_t *w, uint32_t instr)
+static bool emit_op32(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                      uint32_t instr)
 {
     const uint32_t rd = bits(instr, 11, 7);
     const uint32_t funct3 = bits(instr, 14, 12);
@@ -1292,7 +1892,7 @@ static bool emit_op32(rv64_jit_writer_t *w, uint32_t instr)
     const uint32_t rs2 = bits(instr, 24, 20);
     const uint32_t key = (bits(instr, 31, 25) << 3) | funct3;
 
-    if (!emit_load_gpr_rax(w, rs1) || !emit_load_gpr_rcx(w, rs2))
+    if (!jit_reg_read_rax(w, regs, rs1) || !jit_reg_read_rcx(w, regs, rs2))
     {
         return false;
     }
@@ -1300,32 +1900,33 @@ static bool emit_op32(rv64_jit_writer_t *w, uint32_t instr)
     switch (key)
     {
     case 0x000: /* ADDW */
-        return emit_eax_ecx_alu32_sext(w, 0x01) && emit_store_rax_gpr(w, rd);
+        return emit_eax_ecx_alu32_sext(w, 0x01) && jit_reg_write_rax(w, regs, rd);
     case 0x100: /* SUBW */
-        return emit_eax_ecx_alu32_sext(w, 0x29) && emit_store_rax_gpr(w, rd);
+        return emit_eax_ecx_alu32_sext(w, 0x29) && jit_reg_write_rax(w, regs, rd);
     case 0x001: /* SLLW */
-        return emit_shift_eax_cl_sext(w, 0xe0) && emit_store_rax_gpr(w, rd);
+        return emit_shift_eax_cl_sext(w, 0xe0) && jit_reg_write_rax(w, regs, rd);
     case 0x005: /* SRLW */
-        return emit_shift_eax_cl_sext(w, 0xe8) && emit_store_rax_gpr(w, rd);
+        return emit_shift_eax_cl_sext(w, 0xe8) && jit_reg_write_rax(w, regs, rd);
     case 0x105: /* SRAW */
-        return emit_shift_eax_cl_sext(w, 0xf8) && emit_store_rax_gpr(w, rd);
+        return emit_shift_eax_cl_sext(w, 0xf8) && jit_reg_write_rax(w, regs, rd);
     case 0x008: /* MULW; IMUL low 32 bits, then CDQE sign-extension. */
         JIT_STAT_INC(native_m_ops);
         return emit_u8(w, 0x0f) && emit_u8(w, 0xaf) && emit_u8(w, 0xc1) &&
                emit_u8(w, 0x48) && emit_u8(w, 0x98) &&
-               emit_store_rax_gpr(w, rd);
+               jit_reg_write_rax(w, regs, rd);
     case 0x00c: /* DIVW */
     case 0x00d: /* DIVUW */
     case 0x00e: /* REMW */
     case 0x00f: /* REMUW */
-        return emit_m_helper(w, instr, rd, rs1, rs2);
+        return emit_m_helper(w, regs, instr, rd, rs1, rs2);
     default:
         return false;
     }
 }
 
 /* Emit the taken side of a branch that can jump back to the native loop head. */
-static bool emit_branch_chain_backedge(rv64_jit_writer_t *w, vaddr_t target,
+static bool emit_branch_chain_backedge(rv64_jit_writer_t *w,
+                                       rv64_jit_reg_cache_t *regs, vaddr_t target,
                                        uint32_t exit_count,
                                        const uint8_t *target_native)
 {
@@ -1348,6 +1949,7 @@ static bool emit_branch_chain_backedge(rv64_jit_writer_t *w, vaddr_t target,
         !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_entry_budget) ||
         !emit_cmp_ecx_m32_rdx(w) ||
         !emit_jcc_rel32_placeholder(w, 0x87, &over_budget_disp) || /* JA: unsigned proposed count > budget. */
+        !jit_reg_emit_flush_all_dirty(w, regs) ||
         !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_loop_extra) ||
         !emit_mov_m32_rdx_eax(w) ||
         !emit_jmp_rel32_placeholder(w, &loop_disp))
@@ -1363,13 +1965,15 @@ static bool emit_branch_chain_backedge(rv64_jit_writer_t *w, vaddr_t target,
      * and restore EAX before the native function returns.
      */
     return emit_mov_ecx_eax(w) &&
+           jit_reg_emit_flush_all_dirty(w, regs) &&
            emit_store_pc_imm(w, target) &&
            emit_mov_eax_ecx(w) &&
            emit_return_eax(w);
 }
 
 /* Emit one conditional branch with a taken side exit and fall-through fast path. */
-static bool emit_branch(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
+static bool emit_branch(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                        uint32_t instr, vaddr_t pc,
                         vaddr_t block_start_pc, const uint8_t *block_start_native,
                         bool loop_count_needed, bool chain_safe,
                         bool *branch_chained, uint32_t exit_count)
@@ -1410,8 +2014,8 @@ static bool emit_branch(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
         return false;
     }
 
-    if (!emit_load_gpr_rax(w, rs1) ||
-        !emit_load_gpr_rcx(w, rs2) ||
+    if (!jit_reg_read_rax(w, regs, rs1) ||
+        !jit_reg_read_rcx(w, regs, rs2) ||
         !emit_cmp_rax_rcx(w) ||
         !emit_jcc_rel32_placeholder(w, inverse_jcc, &fallthrough_disp))
     {
@@ -1420,13 +2024,14 @@ static bool emit_branch(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
 
     if (chain_safe && target == block_start_pc)
     {
-        if (!emit_branch_chain_backedge(w, target, exit_count, block_start_native))
+        if (!emit_branch_chain_backedge(w, regs, target, exit_count, block_start_native))
         {
             return false;
         }
         *branch_chained = true;
     }
-    else if (!emit_store_pc_imm(w, target) ||
+    else if (!jit_reg_emit_flush_all_dirty(w, regs) ||
+             !emit_store_pc_imm(w, target) ||
              !(loop_count_needed ? emit_return_loop_count(w, exit_count)
                                   : emit_return_count(w, exit_count)))
     {
@@ -1438,7 +2043,8 @@ static bool emit_branch(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
 }
 
 /* Emit JAL or JALR, both of which end the current native block. */
-static bool emit_jump_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
+static bool emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                            uint32_t instr, vaddr_t pc,
                             uint32_t completed_count, bool loop_count_needed)
 {
     const uint32_t opcode = instr & RV64_OPCODE_MASK;
@@ -1457,7 +2063,8 @@ static bool emit_jump_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
 
         JIT_STAT_INC(native_jumps);
         return emit_movabs_rax(w, link) &&
-               emit_store_rax_gpr(w, rd) &&
+               jit_reg_write_rax(w, regs, rd) &&
+               jit_reg_flush_all_dirty(w, regs) &&
                emit_store_pc_imm(w, target) &&
                (loop_count_needed ? emit_return_loop_count(w, completed_count + 1u)
                                   : emit_return_count(w, completed_count + 1u));
@@ -1473,14 +2080,15 @@ static bool emit_jump_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
      * clearing bit zero.  The misaligned case returns before JALR executes so
      * the interpreter raises the same trap and does not write the link register.
      */
-    if (!emit_load_gpr_rax(w, bits(instr, 19, 15)) ||
+    if (!jit_reg_read_rax(w, regs, bits(instr, 19, 15)) ||
         !emit_add_rax_imm32(w, (int32_t)imm_i(instr)) ||
         !emit_and_rax_imm32(w, -2) ||
         !emit_test_al_imm8(w, RV64_BRANCH_ALIGN_MASK) ||
         !emit_jcc_rel32_placeholder(w, 0x85, &misaligned_disp) ||
         !emit_mov_rcx_rax(w) ||
         !emit_movabs_rax(w, link) ||
-        !emit_store_rax_gpr(w, rd) ||
+        !jit_reg_write_rax(w, regs, rd) ||
+        !jit_reg_flush_all_dirty(w, regs) ||
         !emit_mov_rax_rcx(w) ||
         !emit_store_rax_pc(w) ||
         !(loop_count_needed ? emit_return_loop_count(w, completed_count + 1u)
@@ -1490,7 +2098,7 @@ static bool emit_jump_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
     }
 
     patch_rel32(misaligned_disp, w->cur);
-    if (!emit_interpreter_side_exit(w, pc, completed_count, loop_count_needed))
+    if (!emit_interpreter_side_exit(w, regs, pc, completed_count, loop_count_needed))
     {
         return false;
     }
@@ -1500,7 +2108,8 @@ static bool emit_jump_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
 }
 
 /* Dispatch one supported non-branch RISC-V instruction to the native emitter. */
-static bool emit_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
+static bool emit_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                       uint32_t instr, vaddr_t pc,
                        uint32_t exit_count)
 {
     const uint32_t opcode = instr & RV64_OPCODE_MASK;
@@ -1509,27 +2118,25 @@ static bool emit_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
     switch (opcode)
     {
     case RV64_OPCODE_OP_IMM: /* ADDI/SLTI/SLTIU/XORI/ORI/ANDI/SLLI/SRLI/SRAI. */
-        return emit_op_imm(w, instr);
+        return emit_op_imm(w, regs, instr);
     case RV64_OPCODE_OP_IMM_32: /* ADDIW/SLLIW/SRLIW/SRAIW. */
-        return emit_op_imm32(w, instr);
+        return emit_op_imm32(w, regs, instr);
     case RV64_OPCODE_OP: /* 64-bit register-register integer ALU subset. */
-        return emit_op(w, instr);
+        return emit_op(w, regs, instr);
     case RV64_OPCODE_OP_32: /* W-form register-register integer ALU subset. */
-        return emit_op32(w, instr);
+        return emit_op32(w, regs, instr);
     case RV64_OPCODE_LUI: /* LUI materialises the sign-extended U immediate. */
-        return emit_movabs_rax(w, (uint64_t)imm_u_sext(instr)) &&
-               emit_store_rax_gpr(w, rd);
+        return jit_reg_write_imm(w, regs, rd, (uint64_t)imm_u_sext(instr));
     case RV64_OPCODE_AUIPC: /* AUIPC adds the sign-extended U immediate to PC. */
-        return emit_movabs_rax(w, (uint64_t)(pc + imm_u_sext(instr))) &&
-               emit_store_rax_gpr(w, rd);
+        return jit_reg_write_imm(w, regs, rd, (uint64_t)(pc + imm_u_sext(instr)));
     default:
         (void)exit_count;
         return false;
     }
 }
 
-/* Translate an instruction-fetch virtual PC to its physical source address. */
-static bool jit_translate_ifetch(vaddr_t pc, paddr_t *paddr)
+/* Translate an instruction-fetch virtual PC and report whether paging was used. */
+static bool jit_translate_ifetch_ex(vaddr_t pc, paddr_t *paddr, bool *translated)
 {
     /* Only 32-bit base instructions are compiled; compressed fetch is fallback. */
     const int mmu = isa_mmu_check(pc, RV64_INSN_SIZE, MEM_TYPE_IFETCH);
@@ -1537,22 +2144,37 @@ static bool jit_translate_ifetch(vaddr_t pc, paddr_t *paddr)
     if (mmu == MMU_DIRECT)
     {
         *paddr = (paddr_t)pc;
+        *translated = false;
         return true;
     }
 
-    /*
-     * Keep the first RV64 JIT milestone conservative.  Sv39 instruction fetch
-     * depends on page-table memory as well as the final instruction bytes; the
-     * RV32 JIT tracks those page-table dependencies, but this minimal RV64
-     * emitter does not yet.  Falling back here preserves strict interpreter
-     * behaviour for paged kernels until that dependency tracking is added.
-     */
     if (mmu == MMU_TRANSLATE)
     {
-        return false;
+        const paddr_t ret = isa_mmu_translate(pc, RV64_INSN_SIZE, MEM_TYPE_IFETCH);
+
+        /*
+         * `isa_mmu_translate()` stores the status code in the low page-offset
+         * bits and the 4 KiB physical page base in the upper bits.  The JIT only
+         * accepts the exact success code; page faults and cross-page compressed
+         * cases stay on the interpreter path where the normal trap behaviour is
+         * centralised.
+         */
+        if ((ret & (paddr_t)PAGE_MASK) == MEM_RET_OK)
+        {
+            *paddr = (ret & ~(paddr_t)PAGE_MASK) | (paddr_t)(pc & PAGE_MASK);
+            *translated = true;
+            return true;
+        }
     }
 
     return false;
+}
+
+/* Translate an instruction-fetch virtual PC to its physical source address. */
+static bool jit_translate_ifetch(vaddr_t pc, paddr_t *paddr)
+{
+    bool translated = false;
+    return jit_translate_ifetch_ex(pc, paddr, &translated);
 }
 
 /* Check whether a cache slot still describes the current PC and source bytes. */
@@ -1563,18 +2185,39 @@ static bool jit_block_matches(const rv64_jit_block_t *block, vaddr_t pc)
         return false;
     }
 
-    paddr_t now = 0;
-    return jit_translate_ifetch(pc, &now) && now == block->paddr_start;
+    /*
+     * Sv39 page tables can remap any virtual instruction inside a cached block
+     * without changing satp.  Re-walking every compiled instruction is slower
+     * than RV32's page-table dependency refs, but it is strict: stale native
+     * code is rejected before entry even when only a later instruction's page
+     * changes.
+     */
+    for (uint32_t off = 0; off < block->source_len; off += RV64_INSN_SIZE)
+    {
+        paddr_t now = 0;
+        bool translated = false;
+
+        if (!jit_translate_ifetch_ex(pc + off, &now, &translated) ||
+            translated != block->translated ||
+            now != block->paddr_start + (paddr_t)off)
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 /* Publish a negative cache entry for a currently unsupported instruction. */
-static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr)
+static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, bool translated)
 {
     JIT_STAT_INC(blocks_unsupported);
 
     rv64_jit_block_t *block = jit_cache_slot(pc);
+    jit_block_discard(block);
     *block = (rv64_jit_block_t){
         .valid = true,
+        .translated = translated,
         .pc = pc,
         .satp = cpu.csr.satp,
         .paddr_start = paddr,
@@ -1661,7 +2304,9 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     jit_code_used = jit_align_up(jit_code_used, RV64_JIT_CODE_ALIGN);
 
     paddr_t first_paddr = 0;
-    if (!jit_translate_ifetch(pc, &first_paddr) || !in_pmem(first_paddr))
+    bool first_translated = false;
+    if (!jit_translate_ifetch_ex(pc, &first_paddr, &first_translated) ||
+        !in_pmem(first_paddr))
     {
         return NULL;
     }
@@ -1671,6 +2316,8 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         .cur = jit_code + jit_code_used,
         .end = jit_code + RV64_JIT_CODE_SIZE,
     };
+    rv64_jit_reg_cache_t regs;
+    jit_reg_cache_init(&regs);
 
     if (!emit_prologue(&w))
     {
@@ -1689,8 +2336,11 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     while (count < max_insns && count < RV64_JIT_BLOCK_MAX_INSNS)
     {
         paddr_t cur_paddr = 0;
+        bool cur_translated = false;
 
-        if (!jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr))
+        if (!jit_translate_ifetch_ex(cur_pc, &cur_paddr, &cur_translated) ||
+            !in_pmem(cur_paddr) ||
+            cur_translated != first_translated)
         {
             break;
         }
@@ -1703,15 +2353,17 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         const uint32_t instr = (uint32_t)vaddr_ifetch(cur_pc, RV64_INSN_SIZE);
         const uint32_t opcode = instr & RV64_OPCODE_MASK;
         uint8_t *instr_start = w.cur;
+        rv64_jit_reg_cache_t regs_start = regs;
         bool end_block = false;
 
         if (opcode == RV64_OPCODE_JAL ||
             opcode == RV64_OPCODE_JALR)
         {
             if ((opcode == RV64_OPCODE_JALR && count == 0) ||
-                !emit_jump_instr(&w, instr, cur_pc, count, loop_count_needed))
+                !emit_jump_instr(&w, &regs, instr, cur_pc, count, loop_count_needed))
             {
                 w.cur = instr_start;
+                jit_reg_cache_restore(&regs, &regs_start);
                 break;
             }
             end_block = true;
@@ -1725,9 +2377,10 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
              * load directly.
              */
             if (count == 0 ||
-                !emit_load_instr(&w, instr, cur_pc, count, loop_count_needed))
+                !emit_load_instr(&w, &regs, instr, cur_pc, count, loop_count_needed))
             {
                 w.cur = instr_start;
+                jit_reg_cache_restore(&regs, &regs_start);
                 break;
             }
         }
@@ -1740,10 +2393,11 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
              * to the interpreter.
              */
             if (count == 0 ||
-                !emit_store_instr(&w, instr, cur_pc, cur_pc + RV64_INSN_SIZE,
+                !emit_store_instr(&w, &regs, instr, cur_pc, cur_pc + RV64_INSN_SIZE,
                                   count, loop_count_needed))
             {
                 w.cur = instr_start;
+                jit_reg_cache_restore(&regs, &regs_start);
                 break;
             }
             end_block = true;
@@ -1752,11 +2406,12 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         {
             bool branch_chained = false;
 
-            if (!emit_branch(&w, instr, cur_pc, pc, block_start_native,
+            if (!emit_branch(&w, &regs, instr, cur_pc, pc, block_start_native,
                              loop_count_needed, chain_safe, &branch_chained,
                              count + 1u))
             {
                 w.cur = instr_start;
+                jit_reg_cache_restore(&regs, &regs_start);
                 break;
             }
 
@@ -1766,9 +2421,10 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
                 end_block = true;
             }
         }
-        else if (!emit_instr(&w, instr, cur_pc, count + 1u))
+        else if (!emit_instr(&w, &regs, instr, cur_pc, count + 1u))
         {
             w.cur = instr_start;
+            jit_reg_cache_restore(&regs, &regs_start);
             break;
         }
 
@@ -1790,11 +2446,12 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
     if (count == 0)
     {
-        jit_mark_unsupported(pc, first_paddr);
+        jit_mark_unsupported(pc, first_paddr, first_translated);
         return NULL;
     }
 
-    if (!emit_store_pc_imm(&w, cur_pc) ||
+    if (!jit_reg_flush_all_dirty(&w, &regs) ||
+        !emit_store_pc_imm(&w, cur_pc) ||
         !(chained_loop ? emit_return_loop_count(&w, count)
                        : emit_return_count(&w, count)))
     {
@@ -1804,8 +2461,11 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     __builtin___clear_cache((char *)w.start, (char *)w.cur);
 
     rv64_jit_block_t *block = jit_cache_slot(pc);
+    jit_block_discard(block);
+    jit_source_chunks_ref(first_paddr, source_len);
     *block = (rv64_jit_block_t){
         .valid = true,
+        .translated = first_translated,
         .pc = pc,
         .satp = cpu.csr.satp,
         .paddr_start = first_paddr,
@@ -1816,6 +2476,10 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
     jit_code_used = (size_t)(w.cur - jit_code);
     JIT_STAT_INC(blocks_compiled);
+    if (first_translated)
+    {
+        JIT_STAT_INC(translated_blocks);
+    }
     JIT_STAT_ADD(compiled_insns, count);
     return block;
 }
@@ -1845,6 +2509,11 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
         return;
     }
 
+    if (!jit_write_may_touch_source_chunk(addr, len))
+    {
+        return;
+    }
+
     for (size_t i = 0; i < RV64_JIT_CACHE_SIZE; i++)
     {
         rv64_jit_block_t *block = &jit_cache[i];
@@ -1856,8 +2525,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
 
         if (jit_ranges_overlap(block->paddr_start, block->source_len, addr, len))
         {
-            block->valid = false;
-            block->entry = NULL;
+            jit_block_discard(block);
             JIT_STAT_INC(invalidated_blocks);
         }
     }
@@ -2029,6 +2697,10 @@ void isa_jit_dump_stats(void)
         jit_stats.native_jumps);
     Log("jit: native M ops = %" PRIu64,
         jit_stats.native_m_ops);
+    Log("jit: translated blocks = %" PRIu64,
+        jit_stats.translated_blocks);
+    Log("jit: reg cache spills = %" PRIu64,
+        jit_stats.reg_cache_spills);
 #else
     if (jit_stats_enabled)
     {

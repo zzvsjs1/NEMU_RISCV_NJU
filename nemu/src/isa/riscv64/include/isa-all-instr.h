@@ -73,6 +73,7 @@
     f(ecall) \
     f(ebreak) \
     f(mret) \
+    f(sfence_vma) \
     f(fence) \
     f(fence_i) \
     f(wfi) \

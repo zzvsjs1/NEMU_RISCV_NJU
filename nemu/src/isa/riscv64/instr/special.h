@@ -16,6 +16,22 @@ def_EHelper(fence_i)
 {
 }
 
+def_EHelper(sfence_vma)
+{
+    const word_t mstatus_tvm = (word_t)1u << 20;
+
+    /*
+     * NEMU has no hardware TLB to flush, so the architectural fence is a no-op
+     * after privilege checks.  U-mode may not execute SFENCE.VMA, and S-mode is
+     * blocked when mstatus.TVM is set, matching the privileged architecture.
+     */
+    if (cpu.prvi == RISCV64_PRIV_U ||
+        (cpu.prvi == RISCV64_PRIV_S && (cpu.csr.mstatus & mstatus_tvm) != 0))
+    {
+        riscv64_raise_trap(s, RISCV64_CAUSE_ILLEGAL_INST, 0);
+    }
+}
+
 def_EHelper(wfi)
 {
     /*

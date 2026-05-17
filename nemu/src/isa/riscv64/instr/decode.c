@@ -340,6 +340,16 @@ def_THelper(SYSTEM)
 {
     if (rv64_funct3(s) == 0x0)
     {
+        /*
+         * SFENCE.VMA is SYSTEM with funct7=0001001 and rd=x0.  rs1 and rs2 are
+         * operands to the fence, so they are intentionally not part of this
+         * decode check.
+         */
+        if (rv64_funct7(s) == 0x09 && rv64_rd(s) == 0)
+        {
+            return EXEC_ID_sfence_vma;
+        }
+
         switch (get_instr(s))
         {
         case 0x00000073u:
