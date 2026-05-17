@@ -194,7 +194,6 @@ void init_monitor(int argc, char *argv[])
 
     /* Parse arguments. */
     parse_args(argc, argv);
-    IFDEF(CONFIG_SDB_BATCH_DEFAULT, sdb_set_batch_mode());
 
     /* Set random seed. */
     init_rand();

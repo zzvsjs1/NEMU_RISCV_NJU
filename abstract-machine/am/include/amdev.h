@@ -32,12 +32,12 @@ AM_DEVREG(22, NET_STATUS,   RD, int rx_len, tx_len);
 AM_DEVREG(23, NET_TX,       WR, Area buf);
 AM_DEVREG(24, NET_RX,       WR, Area buf);
 
-// Local extensions are intentionally exposed only to NEMU, Navy, and native
+// Local extensions are intentionally exposed only to NEMU and native
 // compatibility builds. Other platforms should fail at compile time if shared
 // code accidentally depends on these non-standard AM registers.
-#if defined(__PLATFORM_NEMU) || defined(__NAVY__) || defined(__ISA_NATIVE__)
-// NEMU/Navy extension used by local event polling. Native implements a no-event
-// compatibility stub for host-side tests.
+#if defined(__PLATFORM_NEMU) || defined(__ISA_NATIVE__)
+// NEMU-only extension used by local Nanos event polling. Native implements a
+// no-event compatibility stub for host-side tests.
 AM_DEVREG(25, INPUT_MOUSE,  RD, int type; int x, y; int button; int buttons; int wheel_x, wheel_y);
 // Local wall-clock extension. NEMU and native implement it; other platforms
 // should use the standard TIMER_UPTIME path.
@@ -61,7 +61,7 @@ enum {
   AM_KEYS(AM_KEY_NAMES)
 };
 
-#if defined(__PLATFORM_NEMU) || defined(__NAVY__) || defined(__ISA_NATIVE__)
+#if defined(__PLATFORM_NEMU) || defined(__ISA_NATIVE__)
 enum {
   AM_MOUSE_NONE = 0,
   AM_MOUSE_MOVE = 1,
