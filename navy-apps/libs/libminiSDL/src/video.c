@@ -2,15 +2,42 @@
 #include <sdl-video.h>
 #include <sdl-file.h>
 #include <assert.h>
+#include <fcntl.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+
+#ifndef SDL_DISPINFO_PATH
+#define SDL_DISPINFO_PATH "/proc/dispinfo"
+#endif
 
 static uint32_t *update_argb_buf = NULL;
 static size_t update_argb_cap = 0;
 
+extern int SDL_SetError(const char *fmt, ...) __attribute__((weak));
 extern void SDL_PumpAudio(void) __attribute__((weak));
+
+static void report_video_mode_error(const char *fmt, ...)
+{
+    char message[256];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(message, sizeof(message), fmt, ap);
+    va_end(ap);
+
+    message[sizeof(message) - 1] = '\0';
+
+    if (SDL_SetError != NULL)
+    {
+        SDL_SetError("%s", message);
+    }
+
+    fprintf(stderr, "%s\n", message);
+}
 
 static void pump_audio_near_video_update(void)
 {
@@ -78,6 +105,103 @@ static int checked_argb_count(int w, int h, size_t *pixels)
 
     *pixels = sw * sh;
     return *pixels <= SIZE_MAX / sizeof(uint32_t);
+}
+
+static int read_runtime_display_size(int *display_w, int *display_h)
+{
+    assert(display_w != NULL);
+    assert(display_h != NULL);
+
+    const int fd = open(SDL_DISPINFO_PATH, O_RDONLY);
+    if (fd < 0)
+    {
+        report_video_mode_error("SDL_SetVideoMode: cannot open %s to check the runtime display size",
+                                SDL_DISPINFO_PATH);
+        return -1;
+    }
+
+    char buffer[64];
+    const ssize_t nread = read(fd, buffer, sizeof(buffer) - 1);
+    const int close_ret = close(fd);
+
+    if (nread < 0)
+    {
+        report_video_mode_error("SDL_SetVideoMode: cannot read %s to check the runtime display size",
+                                SDL_DISPINFO_PATH);
+        return -1;
+    }
+
+    if (close_ret != 0)
+    {
+        report_video_mode_error("SDL_SetVideoMode: cannot close %s after checking the runtime display size",
+                                SDL_DISPINFO_PATH);
+        return -1;
+    }
+
+    buffer[nread] = '\0';
+
+    if (sscanf(buffer, "WIDTH:%d\nHEIGHT:%d\n", display_w, display_h) != 2 ||
+        *display_w <= 0 || *display_h <= 0)
+    {
+        report_video_mode_error("SDL_SetVideoMode: invalid display information from %s: %s",
+                                SDL_DISPINFO_PATH, buffer);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int hardware_canvas_fits_runtime_display(int requested_w, int requested_h)
+{
+    /*
+     * NDL can centre a hardware canvas inside the physical framebuffer, but it
+     * cannot make the framebuffer larger.  When ONScripter asks for 640x480 on a
+     * NEMU build configured as 400x300, letting the request reach NDL only gives a
+     * late assert.  If the assert were removed, the maths below NDL would become
+     * negative: the centred canvas offset would be (400 - 640) / 2, and later
+     * /dev/fb writes would point outside the visible framebuffer.  miniSDL is the
+     * first layer that has both pieces of information needed for a useful runtime
+     * check: the SDL mode requested by the program and the actual display size
+     * exported by Nanos-lite through /proc/dispinfo.  Rejecting the mode here
+     * keeps the failure at the SDL API boundary, before any framebuffer state is
+     * changed and before NEMU sees an invalid blit rectangle.
+     */
+
+    if (requested_w == 0 && requested_h == 0)
+    {
+        /*
+         * SDL_SetVideoMode(0, 0, ...) is Navy's "use the whole display" request.
+         * NDL_OpenCanvas() already expands this pair to the runtime display size,
+         * so it is always a fitting canvas as long as /proc/dispinfo is valid.
+         */
+        return 1;
+    }
+
+    if (requested_w <= 0 || requested_h <= 0)
+    {
+        report_video_mode_error("SDL_SetVideoMode: invalid hardware canvas request %dx%d; "
+                                "use 0x0 for the full display or positive dimensions for a fixed canvas",
+                                requested_w, requested_h);
+        return 0;
+    }
+
+    int display_w = 0;
+    int display_h = 0;
+    if (read_runtime_display_size(&display_w, &display_h) != 0)
+    {
+        return 0;
+    }
+
+    if (requested_w > display_w || requested_h > display_h)
+    {
+        report_video_mode_error("SDL_SetVideoMode: requested hardware canvas %dx%d is larger than "
+                                "the runtime display %dx%d. Rebuild NEMU with a larger VGA mode "
+                                "or run game data that requests a smaller ONScripter mode.",
+                                requested_w, requested_h, display_w, display_h);
+        return 0;
+    }
+
+    return 1;
 }
 
 static void build_palette_argb_lut(const SDL_Palette *palette, uint32_t lut[256])
@@ -707,7 +831,15 @@ void SDL_FreeSurface(SDL_Surface *s)
 SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, uint32_t flags)
 {
     if (flags & SDL_HWSURFACE)
+    {
+        if (!hardware_canvas_fits_runtime_display(width, height))
+        {
+            return NULL;
+        }
+
         NDL_OpenCanvas(&width, &height);
+    }
+
     SDL_Surface *s = SDL_CreateRGBSurface(flags, width, height, bpp,
                                           DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
 

@@ -3424,20 +3424,20 @@ static bool jit_block_matches(const rv64_jit_block_t *block, vaddr_t pc)
     }
 
     /*
-     * Sv39 page tables can remap any virtual instruction inside a cached block
-     * without changing satp.  Re-walking every compiled instruction is slower
-     * than RV32's page-table dependency refs, but it is strict: stale native
-     * code is rejected before entry even when only a later instruction's page
-     * changes.
+     * Sv39 page tables can remap virtual instruction pages without changing
+     * satp.  Paged blocks are kept within one virtual page when compiled, so the
+     * first instruction mapping proves the physical page base for every
+     * instruction in the block.  This matches the RV32 JIT shape and avoids
+     * turning every hot cache hit into a miniature page-walk loop.
      */
-    for (uint32_t off = 0; off < block->source_len; off += RV64_INSN_SIZE)
+    if (block->translated)
     {
         paddr_t now = 0;
         bool translated = false;
 
-        if (!jit_translate_ifetch_ex(pc + off, &now, &translated) ||
-            translated != block->translated ||
-            now != block->paddr_start + (paddr_t)off)
+        if (!jit_translate_ifetch_ex(pc, &now, &translated) ||
+            !translated ||
+            now != block->paddr_start)
         {
             return false;
         }
@@ -3504,6 +3504,12 @@ static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
 
     while (count < max_insns && count < RV64_JIT_BLOCK_MAX_INSNS)
     {
+        if (count != 0 && jit_data_satp_mode(cpu.csr.satp) != 0 &&
+            ((cur_pc ^ pc) & ~(vaddr_t)PAGE_MASK) != 0)
+        {
+            return false;
+        }
+
         paddr_t cur_paddr = 0;
 
         if (!jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr) ||
@@ -3580,6 +3586,18 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
     while (count < max_insns && count < RV64_JIT_BLOCK_MAX_INSNS)
     {
+        /*
+         * A paged cache hit validates only the first instruction mapping.  Keep
+         * translated blocks within one virtual page so that one mapping check is
+         * enough to prove the remaining instruction bytes still come from the
+         * same physical page.
+         */
+        if (count != 0 && jit_data_satp_mode(cpu.csr.satp) != 0 &&
+            ((cur_pc ^ pc) & ~(vaddr_t)PAGE_MASK) != 0)
+        {
+            break;
+        }
+
         paddr_t cur_paddr = 0;
         bool cur_translated = false;
 

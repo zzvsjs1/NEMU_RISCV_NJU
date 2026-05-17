@@ -126,8 +126,8 @@ void init_proc()
     static char *const argv_onscripter[] = {"/bin/onscripter", "-r", "/share/games/ons", NULL};
     // static char *const argv_nslider[] = { "/bin/nslider", NULL };
     // static char *const argv_hello[] = { "/bin/hello", NULL };
-    context_uload(&pcb[0], "/bin/onscripter", argv_onscripter, envp_empty);
-    context_uload(&pcb[1], "/bin/fceux", argv_fceux, envp_empty);
+    context_uload(&pcb[0], "/bin/fceux", argv_fceux, envp_empty);
+    context_uload(&pcb[1], "/bin/onscripter", argv_onscripter, envp_empty);
     context_uload(&pcb[2], "/bin/pal", argv_pal, envp_empty);
     // context_uload(&pcb[2], "/bin/nslider", argv_nslider, envp_empty);
     // context_uload(&pcb[3], "/bin/hello", argv_hello, envp_empty);
