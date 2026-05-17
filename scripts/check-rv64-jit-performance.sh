@@ -14,6 +14,8 @@ export SDL_VIDEODRIVER=dummy
 BENCH_DIR="$ROOT/am-kernels/benchmarks/branchmark"
 INTERP_DEFCONFIG=riscv64-am-headless_defconfig
 JIT_DEFCONFIG=riscv64-am-headless-jit_defconfig
+# A chained BranchMark loop should retire many guest instructions per native entry.
+MIN_AVG_JIT_ENTRY_INSNS=128
 
 fail() {
   echo "RISC-V64 JIT performance check failed: $*" >&2
@@ -60,6 +62,7 @@ run_branchmark() {
   }
 
   local jit_insns=0
+  local jit_blocks=0
   if [ "$stats_env" = "jit" ]; then
     jit_insns=$(sed -n 's/.*JIT instructions = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
     [ -n "$jit_insns" ] || {
@@ -67,9 +70,16 @@ run_branchmark() {
       rm -f "$out"
       fail "could not parse JIT instruction count"
     }
+
+    jit_blocks=$(sed -n 's/.*executed blocks = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
+    [ -n "$jit_blocks" ] || {
+      cat "$out" >&2
+      rm -f "$out"
+      fail "could not parse executed JIT block count"
+    }
   fi
 
-  printf "%s guest_us=%s checksum=%s jit_insns=%s\n" "$label" "$guest_us" "$checksum" "$jit_insns"
+  printf "%s guest_us=%s checksum=%s jit_insns=%s jit_blocks=%s\n" "$label" "$guest_us" "$checksum" "$jit_insns" "$jit_blocks"
   rm -f "$out"
 }
 
@@ -81,11 +91,24 @@ jit_line=$(run_branchmark jit "$JIT_DEFCONFIG" jit)
 interp_us=$(printf "%s\n" "$interp_line" | sed -n 's/.*guest_us=\([0-9][0-9]*\).*/\1/p')
 jit_us=$(printf "%s\n" "$jit_line" | sed -n 's/.*guest_us=\([0-9][0-9]*\).*/\1/p')
 jit_insns=$(printf "%s\n" "$jit_line" | sed -n 's/.*jit_insns=\([0-9][0-9]*\).*/\1/p')
+jit_blocks=$(printf "%s\n" "$jit_line" | sed -n 's/.*jit_blocks=\([0-9][0-9]*\).*/\1/p')
 
 [ -n "$interp_us" ] || fail "missing interpreter time"
 [ -n "$jit_us" ] || fail "missing JIT time"
 [ -n "$jit_insns" ] || fail "missing JIT instruction count"
+[ -n "$jit_blocks" ] || fail "missing JIT block count"
 [ "$jit_insns" -gt 0 ] || fail "expected positive JIT instruction count"
+[ "$jit_blocks" -gt 0 ] || fail "expected positive JIT block count"
+
+avg_block=$(awk -v insns="$jit_insns" -v blocks="$jit_blocks" 'BEGIN {
+  printf "%.2f", insns / blocks;
+}')
+
+if awk -v avg="$avg_block" -v min="$MIN_AVG_JIT_ENTRY_INSNS" 'BEGIN { exit !(avg >= min) }'; then
+  :
+else
+  fail "expected average JIT entry to execute at least $MIN_AVG_JIT_ENTRY_INSNS guest instructions, got $avg_block"
+fi
 
 speedup=$(awk -v interp="$interp_us" -v jit="$jit_us" 'BEGIN {
   if (jit <= 0) {
@@ -97,4 +120,5 @@ speedup=$(awk -v interp="$interp_us" -v jit="$jit_us" 'BEGIN {
 
 printf "%s\n" "$interp_line"
 printf "%s\n" "$jit_line"
+printf "avg_jit_entry_insns=%s\n" "$avg_block"
 printf "speedup=%sx\n" "$speedup"

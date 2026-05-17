@@ -34,11 +34,33 @@
 #define RV64_JIT_STATS 0
 #endif
 
+/* RISC-V base instructions are 4 bytes here; compressed `C` is not emitted yet. */
+#define RV64_INSN_SIZE 4u
+/* Seven low bits select the base RISC-V opcode. */
+#define RV64_OPCODE_MASK 0x7fu
+/* Branch targets must be 4-byte aligned while the JIT has no compressed path. */
+#define RV64_BRANCH_ALIGN_MASK 0x3u
+
+/* RISC-V opcodes used by this first native subset. */
+#define RV64_OPCODE_OP_IMM 0x13u
+#define RV64_OPCODE_AUIPC 0x17u
+#define RV64_OPCODE_OP_IMM_32 0x1bu
+#define RV64_OPCODE_OP 0x33u
+#define RV64_OPCODE_LUI 0x37u
+#define RV64_OPCODE_OP_32 0x3bu
+#define RV64_OPCODE_BRANCH 0x63u
+
+/* Compile at most 32 guest instructions so one block remains cheap to build. */
 #define RV64_JIT_BLOCK_MAX_INSNS 32u
+/* Match the CPU loop's device polling window; native code still returns bounded work. */
 #define RV64_JIT_BATCH_MAX_INSNS 65536u
+/* Power-of-two direct-mapped cache size, so `(size - 1)` is a valid index mask. */
 #define RV64_JIT_CACHE_SIZE 65536u
+/* 64 MiB keeps early RV64 experiments away from frequent arena resets. */
 #define RV64_JIT_CODE_SIZE (64u * 1024u * 1024u)
+/* 16-byte alignment is the normal x86-64 code-entry alignment. */
 #define RV64_JIT_CODE_ALIGN 16u
+/* Conservative per-block free-space check for the worst native byte expansion. */
 #define RV64_JIT_BLOCK_CODE_HEADROOM (16u * 1024u)
 
 typedef uint32_t (*rv64_jit_entry_t)(void);
@@ -87,6 +109,10 @@ static bool jit_disabled = false;
 static bool jit_env_disable = false;
 static bool jit_stats_enabled = false;
 static bool jit_runtime_options_ready = false;
+/* Current native-entry instruction budget, used by in-block chained loops. */
+static volatile uint32_t jit_entry_budget = 0;
+/* Extra guest instructions completed by earlier chained loop laps. */
+static volatile uint32_t jit_loop_extra = 0;
 
 /*
  * Public write-side guard. It becomes true after the native arena exists, so
@@ -120,12 +146,21 @@ bool isa_jit_invalidation_active = false;
 /* Extract an inclusive bit range from a 32-bit RISC-V instruction. */
 static uint32_t bits(uint32_t value, int hi, int lo)
 {
+    /*
+     * All current callers pass 0 <= lo <= hi < 32. The `(1u << width) - 1`
+     * mask is therefore well-defined and keeps only the requested field.
+     */
     return (value >> lo) & ((1u << (hi - lo + 1)) - 1u);
 }
 
 /* Sign-extend an instruction field whose sign bit is at width - 1. */
 static int64_t sext(uint32_t value, unsigned width)
 {
+    /*
+     * RV64 immediates in this file are at most 32 bits before extension. Shift
+     * left until the field sign reaches bit 31, then rely on signed arithmetic
+     * right shift to fill the high bits.
+     */
     const uint32_t shift = 32u - width;
     return (int64_t)((int32_t)(value << shift) >> shift);
 }
@@ -139,6 +174,10 @@ static int64_t imm_i(uint32_t instr)
 /* Decode the B-format immediate, including the implicit low zero bit. */
 static int64_t imm_b(uint32_t instr)
 {
+    /*
+     * RISC-V scatters branch offsets as imm[12|10:5|4:1|11]. The low bit is
+     * always zero because base ISA branches target halfword/word boundaries.
+     */
     uint32_t imm = (bits(instr, 11, 8) << 1) |
                    (bits(instr, 30, 25) << 5) |
                    (bits(instr, 7, 7) << 11) |
@@ -149,6 +188,7 @@ static int64_t imm_b(uint32_t instr)
 /* Decode and sign-extend a U-format immediate for RV64 LUI/AUIPC. */
 static int64_t imm_u_sext(uint32_t instr)
 {
+    /* `0xfffff000` keeps imm[31:12], the upper 20-bit U-type payload. */
     return (int64_t)(int32_t)(instr & 0xfffff000u);
 }
 
@@ -212,6 +252,11 @@ static bool jit_ranges_overlap(paddr_t a, uint32_t a_len, paddr_t b, int b_len)
 /* Hash the current address-space tag and guest PC into the direct-mapped cache. */
 static uint32_t jit_hash(vaddr_t pc, word_t satp)
 {
+    /*
+     * `pc >> 2` drops fixed 4-byte instruction-alignment zeros. `satp >> 12`
+     * mixes the PPN/ASID-like high bits with the raw CSR value. The cache size
+     * is a power of two, so `size - 1` is the direct-mapped slot mask.
+     */
     return (uint32_t)(((pc >> 2) ^ satp ^ (satp >> 12)) & (RV64_JIT_CACHE_SIZE - 1u));
 }
 
@@ -284,7 +329,7 @@ static bool emit_u8(rv64_jit_writer_t *w, uint8_t value)
 /* Emit one little-endian 32-bit value into the current native block. */
 static bool emit_u32(rv64_jit_writer_t *w, uint32_t value)
 {
-    for (int i = 0; i < 4; i++)
+    for (size_t i = 0; i < sizeof(value); i++)
     {
         if (!emit_u8(w, (uint8_t)(value >> (i * 8))))
         {
@@ -298,7 +343,7 @@ static bool emit_u32(rv64_jit_writer_t *w, uint32_t value)
 /* Emit one little-endian 64-bit value into the current native block. */
 static bool emit_u64(rv64_jit_writer_t *w, uint64_t value)
 {
-    for (int i = 0; i < 8; i++)
+    for (size_t i = 0; i < sizeof(value); i++)
     {
         if (!emit_u8(w, (uint8_t)(value >> (i * 8))))
         {
@@ -309,9 +354,14 @@ static bool emit_u64(rv64_jit_writer_t *w, uint64_t value)
     return true;
 }
 
-/* Emit `sub rsp, 8`, aligning the stack before any helper call. */
+/* Emit `sub rsp, 8; movabs r11, &cpu`, aligning the stack and fixing CPU base. */
 static bool emit_prologue(rv64_jit_writer_t *w)
 {
+    /*
+     * System V enters a function with rsp % 16 == 8. Subtracting 8 gives helper
+     * calls normal 16-byte alignment. R11 is caller-saved, so the generated code
+     * can dedicate it to `CPU_state *` without saving it in the prologue.
+     */
     return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
            emit_u8(w, 0xec) && emit_u8(w, 0x08) &&
            emit_u8(w, 0x49) && emit_u8(w, 0xbb) &&
@@ -332,10 +382,73 @@ static bool emit_return_count(rv64_jit_writer_t *w, uint32_t count)
     return emit_u8(w, 0xb8) && emit_u32(w, count) && emit_epilogue(w);
 }
 
+/* Emit a native return when EAX already holds the completed instruction count. */
+static bool emit_return_eax(rv64_jit_writer_t *w)
+{
+    return emit_epilogue(w);
+}
+
 /* Emit `movabs rax, imm64`, used for full-width constants and helper targets. */
 static bool emit_movabs_rax(rv64_jit_writer_t *w, uint64_t value)
 {
     return emit_u8(w, 0x48) && emit_u8(w, 0xb8) && emit_u64(w, value);
+}
+
+/* Emit `movabs rdx, imm64`, used for addresses of JIT loop counters. */
+static bool emit_movabs_rdx(rv64_jit_writer_t *w, uint64_t value)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0xba) && emit_u64(w, value);
+}
+
+/* Emit `mov eax, [rdx]`, loading one 32-bit JIT loop counter. */
+static bool emit_mov_eax_m32_rdx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x8b) && emit_u8(w, 0x02);
+}
+
+/* Emit `mov [rdx], eax`, storing one 32-bit JIT loop counter. */
+static bool emit_mov_m32_rdx_eax(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x89) && emit_u8(w, 0x02);
+}
+
+/* Emit `mov ecx, eax`, copying the loop count for the budget look-ahead. */
+static bool emit_mov_ecx_eax(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x89) && emit_u8(w, 0xc1);
+}
+
+/* Emit `mov eax, ecx`, restoring a saved dynamic return count. */
+static bool emit_mov_eax_ecx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x89) && emit_u8(w, 0xc8);
+}
+
+/* Emit `add eax, imm32`, used for completed-loop instruction accounting. */
+static bool emit_add_eax_imm32(rv64_jit_writer_t *w, uint32_t imm)
+{
+    return emit_u8(w, 0x05) && emit_u32(w, imm);
+}
+
+/* Emit `add ecx, imm32`, used to test whether one more loop lap fits. */
+static bool emit_add_ecx_imm32(rv64_jit_writer_t *w, uint32_t imm)
+{
+    return emit_u8(w, 0x81) && emit_u8(w, 0xc1) && emit_u32(w, imm);
+}
+
+/* Emit `cmp ecx, [rdx]`, comparing proposed work with the entry budget. */
+static bool emit_cmp_ecx_m32_rdx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x3b) && emit_u8(w, 0x0a);
+}
+
+/* Return `jit_loop_extra + count` for exits from blocks with chained laps. */
+static bool emit_return_loop_count(rv64_jit_writer_t *w, uint32_t count)
+{
+    return emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_loop_extra) &&
+           emit_mov_eax_m32_rdx(w) &&
+           emit_add_eax_imm32(w, count) &&
+           emit_return_eax(w);
 }
 
 /* Emit a 32-bit zeroing idiom for RAX. */
@@ -352,6 +465,7 @@ static bool emit_load_gpr_rax(rv64_jit_writer_t *w, uint32_t reg)
         return emit_zero_rax(w);
     }
 
+    /* `49 8b 83 disp32` is `mov rax, [r11 + disp32]`. */
     return emit_u8(w, 0x49) && emit_u8(w, 0x8b) &&
            emit_u8(w, 0x83) && emit_u32(w, jit_gpr_offset(reg));
 }
@@ -364,6 +478,7 @@ static bool emit_load_gpr_rcx(rv64_jit_writer_t *w, uint32_t reg)
         return emit_u8(w, 0x31) && emit_u8(w, 0xc9);
     }
 
+    /* `49 8b 8b disp32` is `mov rcx, [r11 + disp32]`. */
     return emit_u8(w, 0x49) && emit_u8(w, 0x8b) &&
            emit_u8(w, 0x8b) && emit_u32(w, jit_gpr_offset(reg));
 }
@@ -376,6 +491,7 @@ static bool emit_store_rax_gpr(rv64_jit_writer_t *w, uint32_t reg)
         return true;
     }
 
+    /* `49 89 83 disp32` is `mov [r11 + disp32], rax`. */
     return emit_u8(w, 0x49) && emit_u8(w, 0x89) &&
            emit_u8(w, 0x83) && emit_u32(w, jit_gpr_offset(reg));
 }
@@ -384,6 +500,7 @@ static bool emit_store_rax_gpr(rv64_jit_writer_t *w, uint32_t reg)
 static bool emit_store_pc_imm(rv64_jit_writer_t *w, vaddr_t pc)
 {
     return emit_movabs_rax(w, pc) &&
+           /* `49 89 83 disp32` stores RAX into `cpu.pc` through R11. */
            emit_u8(w, 0x49) && emit_u8(w, 0x89) &&
            emit_u8(w, 0x83) && emit_u32(w, jit_pc_offset());
 }
@@ -397,12 +514,17 @@ static bool emit_add_rax_imm32(rv64_jit_writer_t *w, int32_t imm)
 /* Emit one RAX op RCX 64-bit ALU instruction selected by the opcode byte. */
 static bool emit_rax_rcx_alu64(rv64_jit_writer_t *w, uint8_t opcode)
 {
+    /*
+     * Opcodes use ModRM C8 (`rax, rcx`): 01=ADD, 29=SUB, 31=XOR,
+     * 09=OR and 21=AND. REX.W makes the operation full 64-bit.
+     */
     return emit_u8(w, 0x48) && emit_u8(w, opcode) && emit_u8(w, 0xc8);
 }
 
 /* Emit one EAX op ECX 32-bit ALU instruction, then sign-extend to 64 bits. */
 static bool emit_eax_ecx_alu32_sext(rv64_jit_writer_t *w, uint8_t opcode)
 {
+    /* W-form RV64 ALU operations keep low 32 bits, then CDQE sign-extends EAX. */
     return emit_u8(w, opcode) && emit_u8(w, 0xc8) &&
            emit_u8(w, 0x48) && emit_u8(w, 0x98);
 }
@@ -410,12 +532,14 @@ static bool emit_eax_ecx_alu32_sext(rv64_jit_writer_t *w, uint8_t opcode)
 /* Emit a 64-bit immediate shift of RAX. */
 static bool emit_shift_rax_imm(rv64_jit_writer_t *w, uint8_t subop, uint8_t shamt)
 {
+    /* Group-2 ModRM subops are e0=SHL, e8=SHR and f8=SAR on RAX. */
     return emit_u8(w, 0x48) && emit_u8(w, 0xc1) && emit_u8(w, subop) && emit_u8(w, shamt);
 }
 
 /* Emit a 32-bit immediate shift of EAX, then sign-extend to 64 bits. */
 static bool emit_shift_eax_imm_sext(rv64_jit_writer_t *w, uint8_t subop, uint8_t shamt)
 {
+    /* Group-2 ModRM subops are e0=SHL, e8=SHR and f8=SAR on EAX. */
     return emit_u8(w, 0xc1) && emit_u8(w, subop) && emit_u8(w, shamt) &&
            emit_u8(w, 0x48) && emit_u8(w, 0x98);
 }
@@ -423,12 +547,14 @@ static bool emit_shift_eax_imm_sext(rv64_jit_writer_t *w, uint8_t subop, uint8_t
 /* Emit a 64-bit variable shift of RAX by CL. */
 static bool emit_shift_rax_cl(rv64_jit_writer_t *w, uint8_t subop)
 {
+    /* D3 uses CL as the variable shift count; RISC-V masks the count similarly. */
     return emit_u8(w, 0x48) && emit_u8(w, 0xd3) && emit_u8(w, subop);
 }
 
 /* Emit a 32-bit variable shift of EAX by CL, then sign-extend to 64 bits. */
 static bool emit_shift_eax_cl_sext(rv64_jit_writer_t *w, uint8_t subop)
 {
+    /* D3 uses CL as the variable shift count; CDQE sign-extends W-form results. */
     return emit_u8(w, 0xd3) && emit_u8(w, subop) &&
            emit_u8(w, 0x48) && emit_u8(w, 0x98);
 }
@@ -448,6 +574,7 @@ static bool emit_cmp_rax_imm32(rv64_jit_writer_t *w, int32_t imm)
 /* Materialise a condition-code result as 0 or 1 in RAX. */
 static bool emit_setcc_rax(rv64_jit_writer_t *w, uint8_t setcc_opcode)
 {
+    /* `0f setcc c0` writes AL, then `0f b6 c0` zero-extends AL into EAX/RAX. */
     return emit_u8(w, 0x0f) && emit_u8(w, setcc_opcode) &&
            emit_u8(w, 0xc0) &&
            emit_u8(w, 0x0f) && emit_u8(w, 0xb6) && emit_u8(w, 0xc0);
@@ -457,7 +584,21 @@ static bool emit_setcc_rax(rv64_jit_writer_t *w, uint8_t setcc_opcode)
 static bool emit_jcc_rel32_placeholder(rv64_jit_writer_t *w, uint8_t jcc_opcode,
                                        uint8_t **disp)
 {
+    /* x86 near conditional branches are `0f 8x disp32`; `disp` points at disp32. */
     if (!emit_u8(w, 0x0f) || !emit_u8(w, jcc_opcode))
+    {
+        return false;
+    }
+
+    *disp = w->cur;
+    return emit_u32(w, 0);
+}
+
+/* Emit an unconditional `jmp rel32` and return its displacement patch site. */
+static bool emit_jmp_rel32_placeholder(rv64_jit_writer_t *w, uint8_t **disp)
+{
+    /* `e9 disp32` jumps relative to the byte after the 32-bit displacement. */
+    if (!emit_u8(w, 0xe9))
     {
         return false;
     }
@@ -490,25 +631,25 @@ static bool emit_op_imm(rv64_jit_writer_t *w, uint32_t instr)
 
     switch (funct3)
     {
-    case 0x0:
+    case 0x0: /* ADDI */
         return emit_add_rax_imm32(w, imm) && emit_store_rax_gpr(w, rd);
-    case 0x2:
+    case 0x2: /* SLTI, signed compare; SETL is opcode 0x9c. */
         return emit_cmp_rax_imm32(w, imm) && emit_setcc_rax(w, 0x9c) && emit_store_rax_gpr(w, rd);
-    case 0x3:
+    case 0x3: /* SLTIU, unsigned compare; SETB is opcode 0x92. */
         return emit_cmp_rax_imm32(w, imm) && emit_setcc_rax(w, 0x92) && emit_store_rax_gpr(w, rd);
-    case 0x4:
+    case 0x4: /* XORI; `48 35 imm32` is XOR RAX, sign-extended imm32. */
         return emit_u8(w, 0x48) && emit_u8(w, 0x35) && emit_u32(w, (uint32_t)imm) && emit_store_rax_gpr(w, rd);
-    case 0x6:
+    case 0x6: /* ORI; `48 0d imm32` is OR RAX, sign-extended imm32. */
         return emit_u8(w, 0x48) && emit_u8(w, 0x0d) && emit_u32(w, (uint32_t)imm) && emit_store_rax_gpr(w, rd);
-    case 0x7:
+    case 0x7: /* ANDI; `48 25 imm32` is AND RAX, sign-extended imm32. */
         return emit_u8(w, 0x48) && emit_u8(w, 0x25) && emit_u32(w, (uint32_t)imm) && emit_store_rax_gpr(w, rd);
-    case 0x1:
+    case 0x1: /* SLLI; funct6 must be 000000 for RV64 base shifts. */
         if (bits(instr, 31, 26) != 0x00)
         {
             return false;
         }
         return emit_shift_rax_imm(w, 0xe0, (uint8_t)bits(instr, 25, 20)) && emit_store_rax_gpr(w, rd);
-    case 0x5:
+    case 0x5: /* SRLI/SRAI; funct6 selects logical versus arithmetic right shift. */
         if (bits(instr, 31, 26) == 0x00)
         {
             return emit_shift_rax_imm(w, 0xe8, (uint8_t)bits(instr, 25, 20)) && emit_store_rax_gpr(w, rd);
@@ -539,17 +680,17 @@ static bool emit_op_imm32(rv64_jit_writer_t *w, uint32_t instr)
 
     switch (funct3)
     {
-    case 0x0:
+    case 0x0: /* ADDIW; EAX addition naturally drops to 32 bits, then CDQE. */
         return emit_u8(w, 0x05) && emit_u32(w, (uint32_t)imm) &&
                emit_u8(w, 0x48) && emit_u8(w, 0x98) &&
                emit_store_rax_gpr(w, rd);
-    case 0x1:
+    case 0x1: /* SLLIW; funct7 must be zero and shamt is five bits. */
         if (bits(instr, 31, 25) != 0x00)
         {
             return false;
         }
         return emit_shift_eax_imm_sext(w, 0xe0, (uint8_t)bits(instr, 24, 20)) && emit_store_rax_gpr(w, rd);
-    case 0x5:
+    case 0x5: /* SRLIW/SRAIW; funct7 distinguishes logical from arithmetic. */
         if (bits(instr, 31, 25) == 0x00)
         {
             return emit_shift_eax_imm_sext(w, 0xe8, (uint8_t)bits(instr, 24, 20)) && emit_store_rax_gpr(w, rd);
@@ -581,27 +722,27 @@ static bool emit_op(rv64_jit_writer_t *w, uint32_t instr)
 
     switch (key)
     {
-    case 0x000:
+    case 0x000: /* ADD */
         return emit_rax_rcx_alu64(w, 0x01) && emit_store_rax_gpr(w, rd);
-    case 0x100:
+    case 0x100: /* SUB */
         return emit_rax_rcx_alu64(w, 0x29) && emit_store_rax_gpr(w, rd);
-    case 0x001:
+    case 0x001: /* SLL */
         return emit_shift_rax_cl(w, 0xe0) && emit_store_rax_gpr(w, rd);
-    case 0x002:
+    case 0x002: /* SLT, signed compare; SETL is opcode 0x9c. */
         return emit_cmp_rax_rcx(w) && emit_setcc_rax(w, 0x9c) && emit_store_rax_gpr(w, rd);
-    case 0x003:
+    case 0x003: /* SLTU, unsigned compare; SETB is opcode 0x92. */
         return emit_cmp_rax_rcx(w) && emit_setcc_rax(w, 0x92) && emit_store_rax_gpr(w, rd);
-    case 0x004:
+    case 0x004: /* XOR */
         return emit_rax_rcx_alu64(w, 0x31) && emit_store_rax_gpr(w, rd);
-    case 0x005:
+    case 0x005: /* SRL */
         return emit_shift_rax_cl(w, 0xe8) && emit_store_rax_gpr(w, rd);
-    case 0x105:
+    case 0x105: /* SRA */
         return emit_shift_rax_cl(w, 0xf8) && emit_store_rax_gpr(w, rd);
-    case 0x006:
+    case 0x006: /* OR */
         return emit_rax_rcx_alu64(w, 0x09) && emit_store_rax_gpr(w, rd);
-    case 0x007:
+    case 0x007: /* AND */
         return emit_rax_rcx_alu64(w, 0x21) && emit_store_rax_gpr(w, rd);
-    case 0x008:
+    case 0x008: /* MUL; low 64 bits match x86-64 IMUL RAX, RCX. */
         return emit_u8(w, 0x48) && emit_u8(w, 0x0f) && emit_u8(w, 0xaf) && emit_u8(w, 0xc1) &&
                emit_store_rax_gpr(w, rd);
     default:
@@ -625,17 +766,17 @@ static bool emit_op32(rv64_jit_writer_t *w, uint32_t instr)
 
     switch (key)
     {
-    case 0x000:
+    case 0x000: /* ADDW */
         return emit_eax_ecx_alu32_sext(w, 0x01) && emit_store_rax_gpr(w, rd);
-    case 0x100:
+    case 0x100: /* SUBW */
         return emit_eax_ecx_alu32_sext(w, 0x29) && emit_store_rax_gpr(w, rd);
-    case 0x001:
+    case 0x001: /* SLLW */
         return emit_shift_eax_cl_sext(w, 0xe0) && emit_store_rax_gpr(w, rd);
-    case 0x005:
+    case 0x005: /* SRLW */
         return emit_shift_eax_cl_sext(w, 0xe8) && emit_store_rax_gpr(w, rd);
-    case 0x105:
+    case 0x105: /* SRAW */
         return emit_shift_eax_cl_sext(w, 0xf8) && emit_store_rax_gpr(w, rd);
-    case 0x008:
+    case 0x008: /* MULW; IMUL low 32 bits, then CDQE sign-extension. */
         return emit_u8(w, 0x0f) && emit_u8(w, 0xaf) && emit_u8(w, 0xc1) &&
                emit_u8(w, 0x48) && emit_u8(w, 0x98) &&
                emit_store_rax_gpr(w, rd);
@@ -644,9 +785,55 @@ static bool emit_op32(rv64_jit_writer_t *w, uint32_t instr)
     }
 }
 
+/* Emit the taken side of a branch that can jump back to the native loop head. */
+static bool emit_branch_chain_backedge(rv64_jit_writer_t *w, vaddr_t target,
+                                       uint32_t exit_count,
+                                       const uint8_t *target_native)
+{
+    uint8_t *over_budget_disp = NULL;
+    uint8_t *loop_disp = NULL;
+
+    /*
+     * The current lap has completed `exit_count` guest instructions at the
+     * branch.  EAX becomes the total completed count including this lap.  ECX
+     * then looks one more full lap ahead; only if that still fits
+     * `jit_entry_budget` do we store EAX in `jit_loop_extra` and jump back to
+     * the native loop body.  Otherwise, returning EAX keeps cpu_exec() budget
+     * accounting exact.
+     */
+    if (!emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_loop_extra) ||
+        !emit_mov_eax_m32_rdx(w) ||
+        !emit_add_eax_imm32(w, exit_count) ||
+        !emit_mov_ecx_eax(w) ||
+        !emit_add_ecx_imm32(w, exit_count) ||
+        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_entry_budget) ||
+        !emit_cmp_ecx_m32_rdx(w) ||
+        !emit_jcc_rel32_placeholder(w, 0x87, &over_budget_disp) || /* JA: unsigned proposed count > budget. */
+        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_loop_extra) ||
+        !emit_mov_m32_rdx_eax(w) ||
+        !emit_jmp_rel32_placeholder(w, &loop_disp))
+    {
+        return false;
+    }
+
+    patch_rel32(loop_disp, target_native);
+    patch_rel32(over_budget_disp, w->cur);
+    /*
+     * EAX contains the completed count, but emit_store_pc_imm() uses RAX as its
+     * immediate scratch register. Preserve the count in ECX across the PC store
+     * and restore EAX before the native function returns.
+     */
+    return emit_mov_ecx_eax(w) &&
+           emit_store_pc_imm(w, target) &&
+           emit_mov_eax_ecx(w) &&
+           emit_return_eax(w);
+}
+
 /* Emit one conditional branch with a taken side exit and fall-through fast path. */
 static bool emit_branch(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
-                        uint32_t exit_count)
+                        vaddr_t block_start_pc, const uint8_t *block_start_native,
+                        bool loop_count_needed, bool chain_safe,
+                        bool *branch_chained, uint32_t exit_count)
 {
     const uint32_t funct3 = bits(instr, 14, 12);
     const uint32_t rs1 = bits(instr, 19, 15);
@@ -655,29 +842,29 @@ static bool emit_branch(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
     uint8_t inverse_jcc = 0;
     uint8_t *fallthrough_disp = NULL;
 
-    if ((target & 0x3u) != 0)
+    if ((target & RV64_BRANCH_ALIGN_MASK) != 0)
     {
         return false;
     }
 
     switch (funct3)
     {
-    case 0x0:
+    case 0x0: /* BEQ: inverse JNE falls through when not equal. */
         inverse_jcc = 0x85;
         break;
-    case 0x1:
+    case 0x1: /* BNE: inverse JE falls through when equal. */
         inverse_jcc = 0x84;
         break;
-    case 0x4:
+    case 0x4: /* BLT: inverse JGE falls through for signed greater/equal. */
         inverse_jcc = 0x8d;
         break;
-    case 0x5:
+    case 0x5: /* BGE: inverse JL falls through for signed less-than. */
         inverse_jcc = 0x8c;
         break;
-    case 0x6:
+    case 0x6: /* BLTU: inverse JAE falls through for unsigned above/equal. */
         inverse_jcc = 0x83;
         break;
-    case 0x7:
+    case 0x7: /* BGEU: inverse JB falls through for unsigned below. */
         inverse_jcc = 0x82;
         break;
     default:
@@ -687,9 +874,22 @@ static bool emit_branch(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
     if (!emit_load_gpr_rax(w, rs1) ||
         !emit_load_gpr_rcx(w, rs2) ||
         !emit_cmp_rax_rcx(w) ||
-        !emit_jcc_rel32_placeholder(w, inverse_jcc, &fallthrough_disp) ||
-        !emit_store_pc_imm(w, target) ||
-        !emit_return_count(w, exit_count))
+        !emit_jcc_rel32_placeholder(w, inverse_jcc, &fallthrough_disp))
+    {
+        return false;
+    }
+
+    if (chain_safe && target == block_start_pc)
+    {
+        if (!emit_branch_chain_backedge(w, target, exit_count, block_start_native))
+        {
+            return false;
+        }
+        *branch_chained = true;
+    }
+    else if (!emit_store_pc_imm(w, target) ||
+             !(loop_count_needed ? emit_return_loop_count(w, exit_count)
+                                  : emit_return_count(w, exit_count)))
     {
         return false;
     }
@@ -698,32 +898,31 @@ static bool emit_branch(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
     return true;
 }
 
-/* Dispatch one supported RISC-V instruction to the native emitter. */
+/* Dispatch one supported non-branch RISC-V instruction to the native emitter. */
 static bool emit_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
                        uint32_t exit_count)
 {
-    const uint32_t opcode = instr & 0x7fu;
+    const uint32_t opcode = instr & RV64_OPCODE_MASK;
     const uint32_t rd = bits(instr, 11, 7);
 
     switch (opcode)
     {
-    case 0x13:
+    case RV64_OPCODE_OP_IMM: /* ADDI/SLTI/SLTIU/XORI/ORI/ANDI/SLLI/SRLI/SRAI. */
         return emit_op_imm(w, instr);
-    case 0x1b:
+    case RV64_OPCODE_OP_IMM_32: /* ADDIW/SLLIW/SRLIW/SRAIW. */
         return emit_op_imm32(w, instr);
-    case 0x33:
+    case RV64_OPCODE_OP: /* 64-bit register-register integer ALU subset. */
         return emit_op(w, instr);
-    case 0x3b:
+    case RV64_OPCODE_OP_32: /* W-form register-register integer ALU subset. */
         return emit_op32(w, instr);
-    case 0x37:
+    case RV64_OPCODE_LUI: /* LUI materialises the sign-extended U immediate. */
         return emit_movabs_rax(w, (uint64_t)imm_u_sext(instr)) &&
                emit_store_rax_gpr(w, rd);
-    case 0x17:
+    case RV64_OPCODE_AUIPC: /* AUIPC adds the sign-extended U immediate to PC. */
         return emit_movabs_rax(w, (uint64_t)(pc + imm_u_sext(instr))) &&
                emit_store_rax_gpr(w, rd);
-    case 0x63:
-        return emit_branch(w, instr, pc, exit_count);
     default:
+        (void)exit_count;
         return false;
     }
 }
@@ -731,7 +930,8 @@ static bool emit_instr(rv64_jit_writer_t *w, uint32_t instr, vaddr_t pc,
 /* Translate an instruction-fetch virtual PC to its physical source address. */
 static bool jit_translate_ifetch(vaddr_t pc, paddr_t *paddr)
 {
-    const int mmu = isa_mmu_check(pc, 4, MEM_TYPE_IFETCH);
+    /* Only 32-bit base instructions are compiled; compressed fetch is fallback. */
+    const int mmu = isa_mmu_check(pc, RV64_INSN_SIZE, MEM_TYPE_IFETCH);
 
     if (mmu == MMU_DIRECT)
     {
@@ -777,10 +977,69 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr)
         .pc = pc,
         .satp = cpu.csr.satp,
         .paddr_start = paddr,
-        .source_len = 4,
+        .source_len = RV64_INSN_SIZE,
         .insn_count = 0,
         .entry = NULL,
     };
+}
+
+/* Return true for opcodes that can appear inside a native chained loop body. */
+static bool jit_instr_can_chain_body(uint32_t instr)
+{
+    const uint32_t opcode = instr & RV64_OPCODE_MASK;
+
+    switch (opcode)
+    {
+    case RV64_OPCODE_OP_IMM:
+    case RV64_OPCODE_OP_IMM_32:
+    case RV64_OPCODE_OP:
+    case RV64_OPCODE_OP_32:
+    case RV64_OPCODE_AUIPC:
+    case RV64_OPCODE_LUI:
+    case RV64_OPCODE_BRANCH:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* Cheaply pre-scan whether this block has a branch back to its own start. */
+static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
+                                             paddr_t first_paddr)
+{
+    vaddr_t cur_pc = pc;
+    uint32_t count = 0;
+    uint32_t source_len = 0;
+
+    while (count < max_insns && count < RV64_JIT_BLOCK_MAX_INSNS)
+    {
+        paddr_t cur_paddr = 0;
+
+        if (!jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr) ||
+            cur_paddr != first_paddr + (paddr_t)source_len)
+        {
+            return false;
+        }
+
+        const uint32_t instr = (uint32_t)vaddr_ifetch(cur_pc, RV64_INSN_SIZE);
+        const uint32_t opcode = instr & RV64_OPCODE_MASK;
+
+        if (!jit_instr_can_chain_body(instr))
+        {
+            return false;
+        }
+
+        if (opcode == RV64_OPCODE_BRANCH && cur_pc + imm_b(instr) == pc)
+        {
+            return true;
+        }
+
+        cur_pc += RV64_INSN_SIZE;
+        source_len += RV64_INSN_SIZE;
+        count++;
+    }
+
+    return false;
 }
 
 /* Compile one straight-line block starting at the current guest PC. */
@@ -815,9 +1074,14 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         return NULL;
     }
 
+    const bool loop_count_needed =
+        jit_block_has_chainable_backedge(pc, max_insns, first_paddr);
+    const uint8_t *block_start_native = w.cur;
     vaddr_t cur_pc = pc;
     uint32_t count = 0;
     uint32_t source_len = 0;
+    bool chain_safe = loop_count_needed;
+    bool chained_loop = false;
 
     while (count < max_insns && count < RV64_JIT_BLOCK_MAX_INSNS)
     {
@@ -833,22 +1097,48 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
             break;
         }
 
-        const uint32_t instr = (uint32_t)vaddr_ifetch(cur_pc, 4);
+        const uint32_t instr = (uint32_t)vaddr_ifetch(cur_pc, RV64_INSN_SIZE);
+        const uint32_t opcode = instr & RV64_OPCODE_MASK;
         uint8_t *instr_start = w.cur;
+        bool end_block = false;
 
-        if (!emit_instr(&w, instr, cur_pc, count + 1u))
+        if (opcode == RV64_OPCODE_BRANCH)
+        {
+            bool branch_chained = false;
+
+            if (!emit_branch(&w, instr, cur_pc, pc, block_start_native,
+                             loop_count_needed, chain_safe, &branch_chained,
+                             count + 1u))
+            {
+                w.cur = instr_start;
+                break;
+            }
+
+            if (branch_chained)
+            {
+                chained_loop = true;
+                end_block = true;
+            }
+        }
+        else if (!emit_instr(&w, instr, cur_pc, count + 1u))
         {
             w.cur = instr_start;
             break;
         }
 
-        cur_pc += 4;
-        source_len += 4;
+        cur_pc += RV64_INSN_SIZE;
+        source_len += RV64_INSN_SIZE;
         count++;
 
-        if ((instr & 0x7fu) == 0x63)
+        /*
+         * A chained back-edge is both a taken-loop fast path and the natural end
+         * of this native block.  Its fall-through path returns below with
+         * `jit_loop_extra + count`, while taken laps jump back to
+         * `block_start_native` without re-running the prologue.
+         */
+        if (end_block)
         {
-            continue;
+            break;
         }
     }
 
@@ -858,7 +1148,9 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         return NULL;
     }
 
-    if (!emit_store_pc_imm(&w, cur_pc) || !emit_return_count(&w, count))
+    if (!emit_store_pc_imm(&w, cur_pc) ||
+        !(chained_loop ? emit_return_loop_count(&w, count)
+                       : emit_return_count(&w, count)))
     {
         return NULL;
     }
@@ -983,6 +1275,14 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
             break;
         }
 
+        /*
+         * Chained loops use these two globals as a tiny ABI between cpu_exec()
+         * and generated code. `jit_entry_budget` is the maximum work this entry
+         * may retire; `jit_loop_extra` starts at zero and accumulates completed
+         * native loop laps before the final block exit returns the total.
+         */
+        jit_entry_budget = remaining_budget;
+        jit_loop_extra = 0;
         const uint32_t ran = block->entry();
         Assert(ran > 0 && ran <= remaining_budget,
                "jit: invalid RV64 executed count %u", ran);
