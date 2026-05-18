@@ -13,7 +13,7 @@ export SDL_VIDEODRIVER=dummy
 
 BENCH_DIR="$ROOT/am-kernels/benchmarks/branchmark"
 INTERP_DEFCONFIG=riscv64-am-headless_defconfig
-JIT_DEFCONFIG=riscv64-am-headless-jit_defconfig
+JIT_DEFCONFIG=riscv64-am-headless-jit-stats_defconfig
 # A chained BranchMark loop should retire many guest instructions per native entry.
 MIN_AVG_JIT_ENTRY_INSNS=128
 
@@ -122,3 +122,5 @@ printf "%s\n" "$interp_line"
 printf "%s\n" "$jit_line"
 printf "avg_jit_entry_insns=%s\n" "$avg_block"
 printf "speedup=%sx\n" "$speedup"
+
+make -C "$NEMU_HOME" riscv64-am-headless-jit_defconfig >/dev/null

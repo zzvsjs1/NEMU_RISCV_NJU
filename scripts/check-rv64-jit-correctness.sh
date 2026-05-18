@@ -11,7 +11,8 @@ export ARCH=riscv64-nemu
 export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
 
-DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit_defconfig"
+DEFAULT_DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit_defconfig"
+DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit-stats_defconfig"
 TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-negative-cache riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-direct-link riscv64-jit-trace riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-sv39-cross-page riscv64-jit-mprv-ifetch riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data riscv64-jit-sv39-dtlb)
 
 fail() {
@@ -682,8 +683,9 @@ require_positive_guarded_direct_links() {
 
 cd "$ROOT"
 
+[ -f "$DEFAULT_DEFCONFIG" ] || fail "missing $DEFAULT_DEFCONFIG"
 [ -f "$DEFCONFIG" ] || fail "missing $DEFCONFIG"
-make -C "$NEMU_HOME" riscv64-am-headless-jit_defconfig >/dev/null
+make -C "$NEMU_HOME" riscv64-am-headless-jit-stats_defconfig >/dev/null
 
 for test_name in "${TESTS[@]}"; do
   out=$(mktemp)
@@ -776,4 +778,5 @@ for test_name in "${TESTS[@]}"; do
   trap - EXIT
 done
 
+make -C "$NEMU_HOME" riscv64-am-headless-jit_defconfig >/dev/null
 echo "RISC-V64 JIT correctness gate passed: ${TESTS[*]}"

@@ -224,6 +224,7 @@ typedef struct
     rv64_jit_source_segment_t source_segments[RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS];
     uint32_t insn_count;
     rv64_jit_entry_t entry;
+    rv64_jit_entry_t body_entry;
 } rv64_jit_block_t;
 
 typedef enum
@@ -2742,10 +2743,10 @@ static bool emit_call_abs(rv64_jit_writer_t *w, uintptr_t target)
            emit_u8(w, 0xff) && emit_u8(w, 0xd0);
 }
 
-/* Emit `call rax`, used by guarded direct links once the target entry is proven. */
-static bool emit_call_rax(rv64_jit_writer_t *w)
+/* Emit `jmp rax`, used by direct links to enter another block body. */
+static bool emit_jmp_rax(rv64_jit_writer_t *w)
 {
-    return emit_u8(w, 0xff) && emit_u8(w, 0xd0);
+    return emit_u8(w, 0xff) && emit_u8(w, 0xe0);
 }
 
 /* Emit a native-side increment for one 64-bit counter. */
@@ -2852,7 +2853,8 @@ static bool emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *re
         (uint32_t)offsetof(rv64_jit_block_t, ifetch_generation);
     const uint32_t insn_count_off =
         (uint32_t)offsetof(rv64_jit_block_t, insn_count);
-    const uint32_t entry_off = (uint32_t)offsetof(rv64_jit_block_t, entry);
+    const uint32_t body_entry_off =
+        (uint32_t)offsetof(rv64_jit_block_t, body_entry);
     const uint32_t data_state = jit_data_tlb_state(MEM_TYPE_READ);
     uint8_t *data_state_ok_disp = NULL;
     uint8_t *ifetch_generation_ok_disp = NULL;
@@ -2906,7 +2908,7 @@ static bool emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *re
     }
     patch_rel32(ifetch_generation_ok_disp, w->cur);
 
-    if (!emit_cmp_rdxq_field_imm8(w, entry_off, 0) ||
+    if (!emit_cmp_rdxq_field_imm8(w, body_entry_off, 0) ||
         !emit_direct_link_miss_jcc(w, 0x84, miss_disps, &miss_count) ||
         !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_loop_extra) ||
         !emit_mov_eax_m32_rdx(w) ||
@@ -2947,9 +2949,8 @@ static bool emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *re
         !(extra_taken_counter == NULL ||
           emit_inc_jit_stat_counter(w, extra_taken_counter)) ||
         !emit_movabs_rdx(w, (uint64_t)(uintptr_t)target) ||
-        !emit_mov_rax_rdxq_field(w, entry_off) ||
-        !emit_call_rax(w) ||
-        !emit_return_eax(w))
+        !emit_mov_rax_rdxq_field(w, body_entry_off) ||
+        !emit_jmp_rax(w))
     {
         return false;
     }
@@ -4349,6 +4350,7 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, bool translated)
         },
         .insn_count = 0,
         .entry = NULL,
+        .body_entry = NULL,
     };
     /*
      * Negative cache entries need source refs too.  If self-modifying code
@@ -4635,6 +4637,7 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         .source_segment_count = source.segment_count,
         .insn_count = count,
         .entry = (rv64_jit_entry_t)w.start,
+        .body_entry = (rv64_jit_entry_t)block_start_native,
     };
     memcpy(block->source_segments, source.segments, sizeof(source.segments));
     jit_source_chunks_ref(block);
