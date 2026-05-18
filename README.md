@@ -25,8 +25,7 @@ RISC-V project:
 - `fceux-am`: an AM port of the FCEUX NES emulator for native and RISC-V32 NEMU
   runs.
 
-The current `master` branch is the RISC-V32 JIT performance-improved version.
-The `riscv64` branch is the active RV64 NEMU/Nanos-lite bring-up branch. Older
+The current `master` branch is the RISC-V32 and RISC-V64 JIT performance-improved version. Older
 branches are kept as comparison points, so behaviour and speed can be compared
 across the original baseline, disk/ONScripter work, non-JIT performance work,
 the JIT version, and the RV64 bring-up work.
@@ -36,7 +35,6 @@ the JIT version, and the RV64 bring-up work.
 | Branch | Role |
 |--------|------|
 | `master` | Current RISC-V32 JIT performance version |
-| `riscv64` | Current RISC-V64 NEMU/Nanos-lite bring-up branch |
 | `legacy/baseline-master` | Original baseline before disk, ONScripter, performance, and JIT work |
 | `legacy/onscripter-disk` | Legacy disk-backed Navy/ONScripter branch |
 | `performance_improve` | Non-JIT performance baseline |

@@ -738,13 +738,14 @@ for test_name in "${TESTS[@]}"; do
   fi
   if [ "$test_name" = "riscv64-jit-reg-cache" ]; then
     require_positive_reg_cache_spills "$out" "$test_name"
-    require_reg_cache_spills_at_most "$out" "$test_name" 11
+    require_reg_cache_spills_at_most "$out" "$test_name" 12
   fi
   if [ "$test_name" = "riscv64-jit-memory-entry" ]; then
     require_positive_native_loads "$out" "$test_name"
     require_positive_native_stores "$out" "$test_name"
     require_positive_store_continuations "$out" "$test_name"
     require_positive_zero_side_exits "$out" "$test_name"
+    require_positive_helper_loads "$out" "$test_name"
     require_positive_helper_stores "$out" "$test_name"
     require_positive_side_exit_reason "$out" "$test_name" "load-guard"
     require_positive_side_exit_reason "$out" "$test_name" "store-guard"

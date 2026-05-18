@@ -91,6 +91,8 @@
 #define RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS \
     (((RV64_JIT_TRACE_MAX_INSNS * RV64_INSN_SIZE) + PAGE_SIZE - 1u) / \
      PAGE_SIZE + 1u)
+#define RV64_JIT_BLOCK_MAX_IFETCH_PT_PAGES \
+    (RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS * 3u)
 #define RV64_JIT_BLOCK_MAX_SOURCE_CHUNKS \
     (((RV64_JIT_TRACE_MAX_INSNS * RV64_INSN_SIZE) + \
       RV64_JIT_SOURCE_CHUNK_SIZE - 1u) / RV64_JIT_SOURCE_CHUNK_SIZE + \
@@ -205,6 +207,12 @@ typedef struct
     uint32_t source_len;
 } rv64_jit_source_builder_t;
 
+typedef struct
+{
+    paddr_t pages[RV64_JIT_BLOCK_MAX_IFETCH_PT_PAGES];
+    uint32_t count;
+} rv64_jit_ifetch_ref_builder_t;
+
 typedef char rv64_jit_data_tlb_entry_size_must_be_64[sizeof(rv64_jit_data_tlb_entry_t) == 64 ? 1 : -1];
 typedef char rv64_jit_pmem_mapping_must_be_page_aligned[((CONFIG_MBASE | CONFIG_MSIZE) & PAGE_MASK) == 0 ? 1 : -1];
 
@@ -225,6 +233,8 @@ typedef struct
     uint32_t insn_count;
     rv64_jit_entry_t entry;
     rv64_jit_entry_t body_entry;
+    uint32_t ifetch_pt_page_count;
+    paddr_t ifetch_pt_pages[RV64_JIT_BLOCK_MAX_IFETCH_PT_PAGES];
 } rv64_jit_block_t;
 
 typedef enum
@@ -319,6 +329,7 @@ typedef struct
 static rv64_jit_block_t jit_cache[RV64_JIT_CACHE_SIZE];
 static rv64_jit_data_tlb_entry_t jit_data_tlb[RV64_JIT_DATA_TLB_SIZE];
 static uint16_t jit_data_tlb_pt_page_refs[RV64_JIT_PMEM_PAGE_COUNT];
+static uint16_t jit_ifetch_pt_page_refs[RV64_JIT_PMEM_PAGE_COUNT];
 static uint16_t jit_source_chunk_refs[RV64_JIT_PMEM_CHUNK_COUNT];
 static uint32_t jit_source_chunk_heads[RV64_JIT_PMEM_CHUNK_COUNT];
 static rv64_jit_source_link_t jit_source_links[RV64_JIT_SOURCE_LINK_COUNT];
@@ -331,6 +342,7 @@ static uint64_t jit_ifetch_generation = 1;
 static bool jit_disabled = false;
 #endif
 static bool jit_env_disable = false;
+static bool jit_env_disable_direct_link = false;
 static bool jit_stats_enabled = false;
 static bool jit_runtime_options_ready = false;
 /* Current native-entry instruction budget, used by in-block chained loops. */
@@ -482,6 +494,8 @@ static void jit_init_runtime_options(void)
     if (!jit_runtime_options_ready)
     {
         jit_env_disable = jit_env_flag_enabled("NEMU_DISABLE_JIT");
+        jit_env_disable_direct_link =
+            jit_env_flag_enabled("NEMU_DISABLE_RV64_JIT_DIRECT_LINK");
         jit_stats_enabled = jit_env_flag_enabled("NEMU_JIT_STATS");
         jit_runtime_options_ready = true;
     }
@@ -492,6 +506,13 @@ static bool jit_runtime_disabled(void)
 {
     jit_init_runtime_options();
     return jit_env_disable;
+}
+
+/* Return whether cross-block direct links should be emitted for this process. */
+static bool jit_direct_link_enabled(void)
+{
+    jit_init_runtime_options();
+    return !jit_env_disable_direct_link;
 }
 
 /* Advance the generation that protects translated instruction-fetch mappings. */
@@ -554,6 +575,32 @@ static void jit_data_tlb_ref_page(paddr_t page)
     }
 }
 
+/* Record that one translated block depends on an instruction page-table page. */
+static void jit_ifetch_ref_page(paddr_t page)
+{
+    size_t idx = 0;
+
+    if (jit_data_pmem_page_index(page, &idx))
+    {
+        Assert(jit_ifetch_pt_page_refs[idx] != UINT16_MAX,
+               "jit: RV64 ifetch page-table refcount overflow");
+        jit_ifetch_pt_page_refs[idx]++;
+    }
+}
+
+/* Drop one translated-block dependency on an instruction page-table page. */
+static void jit_ifetch_unref_page(paddr_t page)
+{
+    size_t idx = 0;
+
+    if (jit_data_pmem_page_index(page, &idx))
+    {
+        Assert(jit_ifetch_pt_page_refs[idx] > 0,
+               "jit: RV64 ifetch page-table refcount underflow");
+        jit_ifetch_pt_page_refs[idx]--;
+    }
+}
+
 /* Drop one dependency ref for an overwritten data-TLB entry. */
 static void jit_data_tlb_unref_page(paddr_t page)
 {
@@ -572,6 +619,14 @@ static bool jit_data_tlb_refs_page(paddr_t page)
     size_t idx = 0;
     return jit_data_pmem_page_index(page, &idx) &&
            jit_data_tlb_pt_page_refs[idx] != 0;
+}
+
+/* Return whether a translated block depends on this page-table page. */
+static bool jit_ifetch_refs_page(paddr_t page)
+{
+    size_t idx = 0;
+    return jit_data_pmem_page_index(page, &idx) &&
+           jit_ifetch_pt_page_refs[idx] != 0;
 }
 
 /* Remove page-table dependency refs owned by one direct-mapped TLB slot. */
@@ -614,6 +669,39 @@ static bool jit_write_may_touch_data_tlb_page_table(paddr_t addr, int len)
          page += PAGE_SIZE)
     {
         if (jit_data_tlb_refs_page(page))
+        {
+            return true;
+        }
+
+        if (page > (paddr_t)-1 - PAGE_SIZE)
+        {
+            break;
+        }
+    }
+
+    return false;
+}
+
+/* Return whether a PMEM write may have changed an ifetch page table. */
+static bool jit_write_may_touch_ifetch_page_table(paddr_t addr, int len)
+{
+    if (len <= 0)
+    {
+        return false;
+    }
+
+    const paddr_t end = addr + (paddr_t)len - 1u;
+
+    if (end < addr)
+    {
+        return true;
+    }
+
+    for (paddr_t page = addr & ~(paddr_t)PAGE_MASK;
+         page <= (end & ~(paddr_t)PAGE_MASK);
+         page += PAGE_SIZE)
+    {
+        if (jit_ifetch_refs_page(page))
         {
             return true;
         }
@@ -1046,6 +1134,32 @@ static uint64_t jit_load_u32(vaddr_t addr)
     return jit_load_vaddr_raw(addr, 4) & 0xffffffffu;
 }
 
+/* Commit a proven PMEM store and invalidate only when the bytes are sensitive. */
+static uint32_t jit_store_pmem_direct_continue(paddr_t addr, uint32_t len,
+                                               uint64_t data)
+{
+    const bool touch_source = jit_write_may_touch_source_chunk(addr, (int)len);
+    const bool touch_page_table =
+        jit_write_may_touch_data_tlb_page_table(addr, (int)len) ||
+        jit_write_may_touch_ifetch_page_table(addr, (int)len);
+
+    /*
+     * Ordinary data stores do not need paddr_write()'s global invalidation hook.
+     * The JIT has already proved that this is PMEM, and tracing is not enabled
+     * for native JIT builds.  Sensitive writes still go through the exact
+     * invalidation path after the new bytes are visible, matching paddr_write()
+     * ordering for self-modifying code and page-table edits.
+     */
+    host_write(guest_to_host(addr), (int)len, (word_t)data);
+
+    if (touch_source || touch_page_table)
+    {
+        isa_jit_invalidate_paddr(addr, (int)len);
+    }
+
+    return (touch_source || touch_page_table) ? 0u : 1u;
+}
+
 /* Shared RV64 store helper that preserves MMIO, tracing, and invalidation. */
 static void jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data)
 {
@@ -1062,7 +1176,7 @@ static void jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data)
     if (jit_translate_pmem(addr, len, MEM_TYPE_WRITE, &paddr))
     {
         JIT_STAT_INC(data_tlb_direct_stores);
-        paddr_write(paddr, (int)len, (word_t)data);
+        (void)jit_store_pmem_direct_continue(paddr, len, data);
         return;
     }
 
@@ -1081,9 +1195,7 @@ static uint32_t jit_store_pmem_continue(paddr_t addr, uint32_t len, uint64_t dat
      */
     JIT_STAT_INC(helper_store_count);
 
-    const bool may_touch_source = jit_write_may_touch_source_chunk(addr, (int)len);
-    paddr_write(addr, (int)len, (word_t)data);
-    return may_touch_source ? 0u : 1u;
+    return jit_store_pmem_direct_continue(addr, len, data);
 }
 
 /* Sign-extend one 32-bit W-form result to the RV64 register width. */
@@ -1262,6 +1374,56 @@ static bool jit_source_builder_append(rv64_jit_source_builder_t *source,
     };
     source->source_len += len;
     return true;
+}
+
+/* Append one unique ifetch page-table page to a block-local dependency list. */
+static bool jit_ifetch_ref_builder_append(rv64_jit_ifetch_ref_builder_t *refs,
+                                          paddr_t page)
+{
+    for (uint32_t i = 0; i < refs->count; i++)
+    {
+        if (refs->pages[i] == page)
+        {
+            return true;
+        }
+    }
+
+    if (refs->count >= RV64_JIT_BLOCK_MAX_IFETCH_PT_PAGES)
+    {
+        return false;
+    }
+
+    refs->pages[refs->count++] = page;
+    return true;
+}
+
+/* Publish ifetch page-table refs owned by one translated native block. */
+static void jit_ifetch_refs_ref(const rv64_jit_block_t *block)
+{
+    for (uint32_t i = 0; i < block->ifetch_pt_page_count; i++)
+    {
+        jit_ifetch_ref_page(block->ifetch_pt_pages[i]);
+    }
+}
+
+/* Release ifetch page-table refs owned by one translated native block. */
+static void jit_ifetch_refs_unref(const rv64_jit_block_t *block)
+{
+    for (uint32_t i = 0; i < block->ifetch_pt_page_count; i++)
+    {
+        jit_ifetch_unref_page(block->ifetch_pt_pages[i]);
+    }
+}
+
+/* Replace a live block's ifetch dependency pages after successful revalidation. */
+static void jit_ifetch_refs_replace(rv64_jit_block_t *block,
+                                    const rv64_jit_ifetch_ref_builder_t *refs)
+{
+    jit_ifetch_refs_unref(block);
+    block->ifetch_pt_page_count = refs->count;
+    memcpy(block->ifetch_pt_pages, refs->pages,
+           refs->count * sizeof(refs->pages[0]));
+    jit_ifetch_refs_ref(block);
 }
 
 /* Find the physical source byte expected at one virtual block offset. */
@@ -1559,10 +1721,15 @@ static bool jit_write_may_touch_source_chunk(paddr_t addr, int len)
 /* Release one cache slot and its source refs, if it owns source bytes. */
 static void jit_block_discard(rv64_jit_block_t *block)
 {
-    if (block->valid && block->source_segment_count != 0)
+    if (block->valid)
     {
-        jit_source_reverse_map_remove(block);
-        jit_source_chunks_unref(block);
+        if (block->source_segment_count != 0)
+        {
+            jit_source_reverse_map_remove(block);
+            jit_source_chunks_unref(block);
+        }
+
+        jit_ifetch_refs_unref(block);
     }
 
     *block = (rv64_jit_block_t){0};
@@ -1604,6 +1771,7 @@ static void jit_cache_clear(void)
 {
     memset(jit_cache, 0, sizeof(jit_cache));
     memset(jit_source_chunk_refs, 0, sizeof(jit_source_chunk_refs));
+    memset(jit_ifetch_pt_page_refs, 0, sizeof(jit_ifetch_pt_page_refs));
     jit_source_reverse_map_reset();
 }
 
@@ -1736,6 +1904,24 @@ static bool emit_rex64(rv64_jit_writer_t *w, uint8_t reg, uint8_t rm)
     }
 
     return emit_u8(w, rex);
+}
+
+/* Emit a REX prefix only when a 32-bit instruction references r8-r15. */
+static bool emit_rex32_if_needed(rv64_jit_writer_t *w, uint8_t reg, uint8_t rm)
+{
+    uint8_t rex = 0x40;
+
+    if ((reg & 8u) != 0)
+    {
+        rex |= 0x04;
+    }
+
+    if ((rm & 8u) != 0)
+    {
+        rex |= 0x01;
+    }
+
+    return rex == 0x40 || emit_u8(w, rex);
 }
 
 /* Save all callee-saved host registers used as guest-register cache slots. */
@@ -1953,10 +2139,10 @@ static bool emit_sub_rdx_rax(rv64_jit_writer_t *w)
     return emit_u8(w, 0x48) && emit_u8(w, 0x29) && emit_u8(w, 0xc2);
 }
 
-/* Emit `add rdi, rcx`, converting a PMEM offset back to a physical address. */
-static bool emit_add_rdi_rcx(rv64_jit_writer_t *w)
+/* Emit `add rdi, rax`, converting a PMEM offset while RCX keeps store data. */
+static bool emit_add_rdi_rax(rv64_jit_writer_t *w)
 {
-    return emit_u8(w, 0x48) && emit_u8(w, 0x01) && emit_u8(w, 0xcf);
+    return emit_u8(w, 0x48) && emit_u8(w, 0x01) && emit_u8(w, 0xc7);
 }
 
 /* Emit `cmp rdx, rcx`, used by unsigned PMEM range guards. */
@@ -2273,6 +2459,40 @@ static bool emit_hreg_hreg_alu64(rv64_jit_writer_t *w, rv64_jit_hreg_t dst,
     return emit_rex64(w, src_reg, dst_reg) &&
            emit_u8(w, opcode) &&
            emit_u8(w, jit_modrm(3, src_reg, dst_reg));
+}
+
+/* Emit `dst32 op src32` directly between cached host registers. */
+static bool emit_hreg_hreg_alu32(rv64_jit_writer_t *w, rv64_jit_hreg_t dst,
+                                 rv64_jit_hreg_t src, uint8_t opcode)
+{
+    const uint8_t dst_reg = jit_hreg_x86_reg(dst);
+    const uint8_t src_reg = jit_hreg_x86_reg(src);
+
+    return emit_rex32_if_needed(w, src_reg, dst_reg) &&
+           emit_u8(w, opcode) &&
+           emit_u8(w, jit_modrm(3, src_reg, dst_reg));
+}
+
+/* Emit `imul dst32, src32`, keeping the low 32-bit product in dst32. */
+static bool emit_hreg_hreg_imul32(rv64_jit_writer_t *w, rv64_jit_hreg_t dst,
+                                  rv64_jit_hreg_t src)
+{
+    const uint8_t dst_reg = jit_hreg_x86_reg(dst);
+    const uint8_t src_reg = jit_hreg_x86_reg(src);
+
+    return emit_rex32_if_needed(w, dst_reg, src_reg) &&
+           emit_u8(w, 0x0f) && emit_u8(w, 0xaf) &&
+           emit_u8(w, jit_modrm(3, dst_reg, src_reg));
+}
+
+/* Sign-extend one cached 32-bit W-form result back to RV64 XLEN. */
+static bool emit_hreg_sext32(rv64_jit_writer_t *w, rv64_jit_hreg_t hreg)
+{
+    const uint8_t reg = jit_hreg_x86_reg(hreg);
+
+    return emit_rex64(w, reg, reg) &&
+           emit_u8(w, 0x63) &&
+           emit_u8(w, jit_modrm(3, reg, reg));
 }
 
 /* Emit one immediate shift directly into a cached 64-bit host register. */
@@ -2749,6 +2969,7 @@ static bool emit_jmp_rax(rv64_jit_writer_t *w)
     return emit_u8(w, 0xff) && emit_u8(w, 0xe0);
 }
 
+#if RV64_JIT_STATS
 /* Emit a native-side increment for one 64-bit counter. */
 static bool emit_inc_u64_counter(rv64_jit_writer_t *w, uint64_t *counter)
 {
@@ -2760,6 +2981,7 @@ static bool emit_inc_u64_counter(rv64_jit_writer_t *w, uint64_t *counter)
     return emit_movabs_rax(w, (uint64_t)(uintptr_t)counter) &&
            emit_u8(w, 0x48) && emit_u8(w, 0xff) && emit_u8(w, 0x00);
 }
+#endif
 
 /* Emit an optional native-side increment for one 64-bit JIT stat counter. */
 static bool emit_inc_jit_stat_counter(rv64_jit_writer_t *w, uint64_t *counter)
@@ -2771,13 +2993,6 @@ static bool emit_inc_jit_stat_counter(rv64_jit_writer_t *w, uint64_t *counter)
     (void)counter;
     return true;
 #endif
-}
-
-/* Conservatively mark translated instruction-fetch mappings as possibly stale. */
-static bool emit_ifetch_generation_bump(rv64_jit_writer_t *w)
-{
-    return emit_inc_u64_counter(w, &jit_ifetch_generation) &&
-           emit_inc_jit_stat_counter(w, &jit_stats.ifetch_generation_bumps);
 }
 
 /* Count one runtime load that completed through the inline translated-PMEM path. */
@@ -2824,6 +3039,15 @@ static bool emit_direct_link_miss_jcc(rv64_jit_writer_t *w, uint8_t jcc_opcode,
     Assert(*miss_count < RV64_JIT_DIRECT_LINK_MISS_PATCHES,
            "jit: RV64 direct-link miss patch list overflow");
     return emit_jcc_rel32_placeholder(w, jcc_opcode, &miss_disps[(*miss_count)++]);
+}
+
+/* Emit the conservative block exit used when cross-block direct links are off. */
+static bool emit_plain_block_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                                  vaddr_t target_pc, uint32_t completed_count)
+{
+    return jit_reg_emit_flush_all_dirty(w, regs) &&
+           emit_store_pc_imm(w, target_pc) &&
+           emit_return_loop_count(w, completed_count);
 }
 
 /* Emit a guarded call to a known-next-PC native block, otherwise return to C. */
@@ -3162,18 +3386,22 @@ static bool emit_store_source_chunk_guard(rv64_jit_writer_t *w, uint32_t len,
 
 /* Emit a guard that keeps inline stores away from cached page-table pages. */
 static bool emit_store_page_table_guard(rv64_jit_writer_t *w,
-                                        uint8_t **page_table_disp)
+                                        uint8_t **data_page_table_disp,
+                                        uint8_t **ifetch_page_table_disp)
 {
     /*
      * RDX is the PMEM byte offset.  A non-zero page-table refcount means a
-     * direct write could stale a data-TLB entry, so the helper must perform the
-     * store, flush the DTLB through isa_jit_invalidate_paddr(), and exit.
+     * direct write could stale a data-TLB entry or an instruction-fetch mapping,
+     * so the helper must perform the store and run the invalidation hook.
      */
     return emit_mov_r8d_edx(w) &&
            emit_shr_r8d_imm(w, PAGE_SHIFT) &&
            emit_movabs_rax(w, (uint64_t)(uintptr_t)jit_data_tlb_pt_page_refs) &&
            emit_cmp_ref_word_zero_rax_r8(w) &&
-           emit_jcc_rel32_placeholder(w, 0x85, page_table_disp);
+           emit_jcc_rel32_placeholder(w, 0x85, data_page_table_disp) &&
+           emit_movabs_rax(w, (uint64_t)(uintptr_t)jit_ifetch_pt_page_refs) &&
+           emit_cmp_ref_word_zero_rax_r8(w) &&
+           emit_jcc_rel32_placeholder(w, 0x85, ifetch_page_table_disp);
 }
 
 /* Emit an inline translated-PMEM store address proof through the RV64 data TLB. */
@@ -3301,6 +3529,7 @@ static bool emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     uintptr_t helper = 0;
     uint8_t *align_slow_disp = NULL;
     uint8_t *range_slow_disp = NULL;
+    uint8_t *helper_done_disp = NULL;
     uint8_t *done_disp = NULL;
     rv64_jit_reg_cache_t side_exit_regs;
 
@@ -3383,20 +3612,38 @@ static bool emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         return false;
     }
 
-    if (align_slow_disp != NULL)
-    {
-        patch_rel32(align_slow_disp, w->cur);
-    }
     patch_rel32(range_slow_disp, w->cur);
 
-    if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
-                                    loop_count_needed,
-                                    RV64_JIT_SIDE_EXIT_LOAD_GUARD))
+    /*
+     * An aligned out-of-PMEM bare-mode load may be MMIO.  Call the architectural
+     * helper and continue so device callbacks still run in order without forcing
+     * every polling loop back through the interpreter.
+     */
+    if (!jit_reg_emit_flush_all_dirty(w, regs) ||
+        !emit_mov_rdi_rax(w) ||
+        !emit_store_pc_imm(w, pc) ||
+        !emit_call_abs(w, helper) ||
+        !emit_load_cpu_base(w) ||
+        !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
+        !jit_reg_write_rax(w, regs, rd) ||
+        !emit_jmp_rel32_placeholder(w, &helper_done_disp))
     {
         return false;
     }
 
+    if (align_slow_disp != NULL)
+    {
+        patch_rel32(align_slow_disp, w->cur);
+        if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
+                                        loop_count_needed,
+                                        RV64_JIT_SIDE_EXIT_LOAD_GUARD))
+        {
+            return false;
+        }
+    }
+
     patch_rel32(done_disp, w->cur);
+    patch_rel32(helper_done_disp, w->cur);
     JIT_STAT_INC(native_loads);
     return true;
 }
@@ -3413,14 +3660,14 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
     uint8_t *align_slow_disp = NULL;
     uint8_t *cross_chunk_disp = NULL;
     uint8_t *source_chunk_disp = NULL;
-    uint8_t *page_table_disp = NULL;
+    uint8_t *data_page_table_disp = NULL;
+    uint8_t *ifetch_page_table_disp = NULL;
     uint8_t *fast_done_disp = NULL;
     uint8_t *done_disp = NULL;
     rv64_jit_tlb_guard_patch_t tlb_guard = {0};
     rv64_jit_reg_cache_t side_exit_regs;
 
-    if (!jit_reg_flush_all_dirty(w, regs) ||
-        !jit_reg_read_rax(w, regs, rs1) ||
+    if (!jit_reg_read_rax(w, regs, rs1) ||
         !emit_add_rax_imm32(w, imm))
     {
         return false;
@@ -3448,10 +3695,10 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
         !emit_paged_tlb_store_offset_rdx(w, len, &tlb_guard) ||
         !emit_store_source_chunk_guard(w, len, &cross_chunk_disp,
                                        &source_chunk_disp) ||
-        !emit_store_page_table_guard(w, &page_table_disp) ||
+        !emit_store_page_table_guard(w, &data_page_table_disp,
+                                     &ifetch_page_table_disp) ||
         !emit_inline_paged_store_hit_stats(w) ||
         !emit_direct_pmem_store_from_rcx(w, len) ||
-        !emit_ifetch_generation_bump(w) ||
         !emit_jmp_rel32_placeholder(w, &fast_done_disp))
     {
         return false;
@@ -3461,9 +3708,11 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
     patch_tlb_guard(&tlb_guard, slow_path);
     patch_rel32(cross_chunk_disp, slow_path);
     patch_rel32(source_chunk_disp, slow_path);
-    patch_rel32(page_table_disp, slow_path);
+    patch_rel32(data_page_table_disp, slow_path);
+    patch_rel32(ifetch_page_table_disp, slow_path);
 
-    if (!emit_mov_rdx_rcx(w) ||
+    if (!jit_reg_emit_flush_all_dirty(w, regs) ||
+        !emit_mov_rdx_rcx(w) ||
         !emit_mov_esi_imm32(w, len) ||
         !emit_store_pc_imm(w, pc) ||
         !emit_call_abs(w, (uintptr_t)jit_store_vaddr) ||
@@ -3509,7 +3758,7 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
     return true;
 }
 
-/* Emit one guarded bare-mode RV64 store that commits through paddr_write(). */
+/* Emit one guarded bare-mode RV64 store that normally commits inline. */
 static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
                              uint32_t instr, vaddr_t pc,
                              vaddr_t next_pc, uint32_t completed_count,
@@ -3522,8 +3771,14 @@ static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     uint32_t len = 0;
     uint8_t *align_slow_disp = NULL;
     uint8_t *range_slow_disp = NULL;
+    uint8_t *cross_chunk_disp = NULL;
+    uint8_t *source_chunk_disp = NULL;
+    uint8_t *data_page_table_disp = NULL;
+    uint8_t *ifetch_page_table_disp = NULL;
     uint8_t *exit_disp = NULL;
+    uint8_t *direct_done_disp = NULL;
     uint8_t *continue_disp = NULL;
+    rv64_jit_reg_cache_t side_exit_regs;
 
     switch (funct3)
     {
@@ -3549,12 +3804,13 @@ static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
                                       completed_count, loop_count_needed);
     }
 
-    if (!jit_reg_flush_all_dirty(w, regs) ||
-        !jit_reg_read_rax(w, regs, rs1) ||
+    if (!jit_reg_read_rax(w, regs, rs1) ||
         !emit_add_rax_imm32(w, imm))
     {
         return false;
     }
+
+    side_exit_regs = *regs;
 
     if (len > 1 &&
         (!emit_test_al_imm8(w, (uint8_t)(len - 1u)) ||
@@ -3574,18 +3830,33 @@ static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
 
     /*
-     * Convert the proven PMEM offset back to a physical address for paddr_write:
-     *   RDI = offset + CONFIG_MBASE, ESI = byte width, RDX = store data.
-     * The continuation helper returns zero when the write may have invalidated
-     * translated source bytes.  That path exits after the store; otherwise the
-     * native block reloads its base registers and keeps compiling after the
-     * safe data store.
+     * Ordinary PMEM stores can write directly and keep executing.  Stores that
+     * cross a source-tracking chunk, overlap compiled source, or touch cached
+     * page-table bytes use the helper so exact invalidation happens after the
+     * write and before any later translated fetch.
      */
-    if (!emit_mov_rdi_rdx(w) ||
-        !emit_movabs_rcx(w, (uint64_t)CONFIG_MBASE) ||
-        !emit_add_rdi_rcx(w) ||
-        !jit_reg_flush_all_dirty(w, regs) ||
-        !jit_reg_read_rdx(w, regs, rs2) ||
+    if (!jit_reg_read_rcx(w, regs, rs2) ||
+        !emit_store_source_chunk_guard(w, len, &cross_chunk_disp,
+                                       &source_chunk_disp) ||
+        !emit_store_page_table_guard(w, &data_page_table_disp,
+                                     &ifetch_page_table_disp) ||
+        !emit_direct_pmem_store_from_rcx(w, len) ||
+        !emit_jmp_rel32_placeholder(w, &direct_done_disp))
+    {
+        return false;
+    }
+
+    const uint8_t *helper_path = w->cur;
+    patch_rel32(cross_chunk_disp, helper_path);
+    patch_rel32(source_chunk_disp, helper_path);
+    patch_rel32(data_page_table_disp, helper_path);
+    patch_rel32(ifetch_page_table_disp, helper_path);
+
+    if (!jit_reg_emit_flush_all_dirty(w, regs) ||
+        !emit_mov_rdi_rdx(w) ||
+        !emit_movabs_rax(w, (uint64_t)CONFIG_MBASE) ||
+        !emit_add_rdi_rax(w) ||
+        !emit_mov_rdx_rcx(w) ||
         !emit_mov_esi_imm32(w, len) ||
         !emit_store_pc_imm(w, pc) ||
         !emit_call_abs(w, (uintptr_t)jit_store_pmem_continue) ||
@@ -3617,13 +3888,14 @@ static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
     patch_rel32(range_slow_disp, w->cur);
 
-    if (!emit_interpreter_side_exit(w, regs, pc, completed_count,
+    if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
                                     loop_count_needed,
                                     RV64_JIT_SIDE_EXIT_STORE_GUARD))
     {
         return false;
     }
 
+    patch_rel32(direct_done_disp, w->cur);
     patch_rel32(continue_disp, w->cur);
 
     JIT_STAT_INC(native_stores);
@@ -3777,6 +4049,81 @@ static bool emit_op_hreg(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
 
     if (!emit_hreg_hreg_alu64(w, dst->hreg, rhs->hreg, opcode))
+    {
+        return false;
+    }
+
+    jit_reg_mark_written(regs, dst);
+    return true;
+}
+
+/* Emit one commutative RV64 W-form op directly in cached host registers. */
+static bool emit_op32_hreg_commutative(rv64_jit_writer_t *w,
+                                       rv64_jit_reg_cache_t *regs,
+                                       uint32_t rd, uint32_t rs1,
+                                       uint32_t rs2, uint8_t opcode,
+                                       bool multiply)
+{
+    if (rd == 0)
+    {
+        return true;
+    }
+
+    if (rs1 == 0 || rs2 == 0)
+    {
+        return false;
+    }
+
+    rv64_jit_reg_slot_t *src1 = jit_reg_loaded_slot(w, regs, rs1);
+    rv64_jit_reg_slot_t *src2 = jit_reg_loaded_slot(w, regs, rs2);
+
+    if (src1 == NULL || src2 == NULL)
+    {
+        return false;
+    }
+
+    rv64_jit_reg_slot_t *dst = NULL;
+    rv64_jit_reg_slot_t *rhs = NULL;
+
+    if (rd == rs1)
+    {
+        dst = src1;
+        rhs = src2;
+    }
+    else if (rd == rs2)
+    {
+        dst = src2;
+        rhs = src1;
+    }
+    else
+    {
+        dst = jit_reg_alloc(w, regs, rd);
+        if (dst == NULL)
+        {
+            return false;
+        }
+
+        if (dst == src1)
+        {
+            rhs = src2;
+        }
+        else if (dst == src2)
+        {
+            rhs = src1;
+        }
+        else
+        {
+            if (!emit_mov_hreg_hreg(w, dst->hreg, src1->hreg))
+            {
+                return false;
+            }
+            rhs = src2;
+        }
+    }
+
+    if (!((multiply ? emit_hreg_hreg_imul32(w, dst->hreg, rhs->hreg)
+                    : emit_hreg_hreg_alu32(w, dst->hreg, rhs->hreg, opcode)) &&
+          emit_hreg_sext32(w, dst->hreg)))
     {
         return false;
     }
@@ -3972,6 +4319,25 @@ static bool emit_op32(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     const uint32_t rs2 = bits(instr, 24, 20);
     const uint32_t key = (bits(instr, 31, 25) << 3) | funct3;
 
+    switch (key)
+    {
+    case 0x000: /* ADDW */
+        if (rs1 != 0 && rs2 != 0)
+        {
+            return emit_op32_hreg_commutative(w, regs, rd, rs1, rs2, 0x01, false);
+        }
+        break;
+    case 0x008: /* MULW */
+        if (rs1 != 0 && rs2 != 0)
+        {
+            JIT_STAT_INC(native_m_ops);
+            return emit_op32_hreg_commutative(w, regs, rd, rs1, rs2, 0x00, true);
+        }
+        break;
+    default:
+        break;
+    }
+
     if (!jit_reg_read_rax(w, regs, rs1) || !jit_reg_read_rcx(w, regs, rs2))
     {
         return false;
@@ -4112,6 +4478,13 @@ static bool emit_branch(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         }
         *branch_chained = true;
     }
+    else if (!jit_direct_link_enabled())
+    {
+        if (!emit_plain_block_exit(w, regs, target, exit_count))
+        {
+            return false;
+        }
+    }
     else if (!emit_direct_link_exit(w, regs, target, exit_count,
                                     source_uses_data_state,
                                     &jit_stats.direct_branch_link_taken_count))
@@ -4147,8 +4520,10 @@ static bool emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         JIT_STAT_INC(native_jumps);
         return emit_movabs_rax(w, link) &&
                jit_reg_write_rax(w, regs, rd) &&
-               emit_direct_link_exit(w, regs, target, completed_count + 1u,
-                                     source_uses_data_state, NULL);
+               (jit_direct_link_enabled()
+                    ? emit_direct_link_exit(w, regs, target, completed_count + 1u,
+                                            source_uses_data_state, NULL)
+                    : emit_plain_block_exit(w, regs, target, completed_count + 1u));
     }
 
     if (opcode != RV64_OPCODE_JALR || bits(instr, 14, 12) != 0)
@@ -4225,8 +4600,38 @@ static bool emit_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
 }
 
-/* Translate an instruction-fetch virtual PC and report whether paging was used. */
-static bool jit_translate_ifetch_ex(vaddr_t pc, paddr_t *paddr, bool *translated)
+/* Return whether this leaf PTE permits instruction fetch at the current priv. */
+static bool jit_ifetch_leaf_allows(word_t pte)
+{
+    const bool user_page = (pte & RV64_JIT_PTE_U) != 0;
+
+    if ((pte & (RV64_JIT_PTE_A | RV64_JIT_PTE_X)) !=
+        (RV64_JIT_PTE_A | RV64_JIT_PTE_X))
+    {
+        return false;
+    }
+
+    if (cpu.prvi == RISCV64_PRIV_U)
+    {
+        return user_page;
+    }
+
+    if (cpu.prvi == RISCV64_PRIV_S)
+    {
+        /*
+         * SUM affects S-mode data access only.  S-mode instruction fetch from a
+         * user page remains illegal, matching the reference Sv39 walker.
+         */
+        return !user_page;
+    }
+
+    return false;
+}
+
+/* Translate an instruction fetch, optionally collecting page-table deps. */
+static bool jit_translate_ifetch_collect(vaddr_t pc, paddr_t *paddr,
+                                         bool *translated,
+                                         rv64_jit_ifetch_ref_builder_t *refs)
 {
     /* Only 32-bit base instructions are compiled; compressed fetch is fallback. */
     const int mmu = isa_mmu_check(pc, RV64_INSN_SIZE, MEM_TYPE_IFETCH);
@@ -4240,24 +4645,71 @@ static bool jit_translate_ifetch_ex(vaddr_t pc, paddr_t *paddr, bool *translated
 
     if (mmu == MMU_TRANSLATE)
     {
-        const paddr_t ret = isa_mmu_translate(pc, RV64_INSN_SIZE, MEM_TYPE_IFETCH);
-
-        /*
-         * `isa_mmu_translate()` stores the status code in the low page-offset
-         * bits and the 4 KiB physical page base in the upper bits.  The JIT only
-         * accepts the exact success code; page faults and cross-page compressed
-         * cases stay on the interpreter path where the normal trap behaviour is
-         * centralised.
-         */
-        if ((ret & (paddr_t)PAGE_MASK) == MEM_RET_OK)
+        if (!jit_data_sv39_canonical(pc) ||
+            jit_data_cross_page(pc, RV64_INSN_SIZE))
         {
-            *paddr = (ret & ~(paddr_t)PAGE_MASK) | (paddr_t)(pc & PAGE_MASK);
-            *translated = true;
-            return true;
+            return false;
+        }
+
+        const word_t vpn[3] = {
+            ((word_t)pc >> 12) & 0x1ffu,
+            ((word_t)pc >> 21) & 0x1ffu,
+            ((word_t)pc >> 30) & 0x1ffu,
+        };
+        paddr_t pt_base =
+            (paddr_t)((cpu.csr.satp & RV64_JIT_SATP_PPN_MASK) << PAGE_SHIFT);
+
+        for (int level = 2; level >= 0; --level)
+        {
+            const paddr_t pte_addr =
+                pt_base + (paddr_t)(vpn[level] * sizeof(uint64_t));
+
+            if (!jit_data_pmem_range(pte_addr, sizeof(uint64_t)) ||
+                (refs != NULL &&
+                 !jit_ifetch_ref_builder_append(refs, pt_base)))
+            {
+                return false;
+            }
+
+            const word_t pte = (word_t)paddr_read(pte_addr, 8);
+
+            if (!jit_data_pte_valid(pte))
+            {
+                return false;
+            }
+
+            const word_t ppn = jit_data_pte_ppn(pte);
+
+            if (jit_data_pte_leaf(pte))
+            {
+                if (!jit_data_superpage_aligned(ppn, level) ||
+                    !jit_ifetch_leaf_allows(pte))
+                {
+                    return false;
+                }
+
+                *paddr = jit_data_leaf_page_base(ppn, vpn, level) |
+                         (paddr_t)(pc & PAGE_MASK);
+                *translated = true;
+                return true;
+            }
+
+            if (level == 0 || (pte & RV64_JIT_PTE_NON_LEAF_RESERVED) != 0)
+            {
+                return false;
+            }
+
+            pt_base = (paddr_t)(ppn << PAGE_SHIFT);
         }
     }
 
     return false;
+}
+
+/* Translate an instruction-fetch virtual PC and report whether paging was used. */
+static bool jit_translate_ifetch_ex(vaddr_t pc, paddr_t *paddr, bool *translated)
+{
+    return jit_translate_ifetch_collect(pc, paddr, translated, NULL);
 }
 
 /* Check whether a cache slot still describes the current PC and source bytes. */
@@ -4294,6 +4746,7 @@ static bool jit_block_matches(rv64_jit_block_t *block, vaddr_t pc)
          * physical source bytes are still identical.
          */
         uint32_t offset = 0;
+        rv64_jit_ifetch_ref_builder_t refs = {0};
 
         while (offset < block->source_len)
         {
@@ -4303,7 +4756,7 @@ static bool jit_block_matches(rv64_jit_block_t *block, vaddr_t pc)
             bool translated = false;
 
             if (!jit_block_source_paddr_at(block, offset, &expected) ||
-                !jit_translate_ifetch_ex(check_pc, &now, &translated) ||
+                !jit_translate_ifetch_collect(check_pc, &now, &translated, &refs) ||
                 !translated ||
                 now != expected)
             {
@@ -4316,6 +4769,7 @@ static bool jit_block_matches(rv64_jit_block_t *block, vaddr_t pc)
             offset += page_left < remaining ? page_left : remaining;
         }
 
+        jit_ifetch_refs_replace(block, &refs);
         block->ifetch_generation = jit_ifetch_generation;
     }
 
@@ -4326,6 +4780,22 @@ static bool jit_block_matches(rv64_jit_block_t *block, vaddr_t pc)
 static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, bool translated)
 {
     JIT_STAT_INC(blocks_unsupported);
+
+    rv64_jit_ifetch_ref_builder_t refs = {0};
+
+    if (translated)
+    {
+        paddr_t checked_paddr = 0;
+        bool checked_translated = false;
+
+        if (!jit_translate_ifetch_collect(pc, &checked_paddr,
+                                          &checked_translated, &refs) ||
+            !checked_translated ||
+            checked_paddr != paddr)
+        {
+            return;
+        }
+    }
 
     rv64_jit_block_t *block = jit_cache_slot(pc);
     jit_block_discard(block);
@@ -4341,6 +4811,7 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, bool translated)
         .paddr_start = paddr,
         .source_len = RV64_INSN_SIZE,
         .source_segment_count = 1,
+        .ifetch_pt_page_count = translated ? refs.count : 0,
         .source_segments = {
             {
                 .paddr_start = paddr,
@@ -4352,11 +4823,14 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, bool translated)
         .entry = NULL,
         .body_entry = NULL,
     };
+    memcpy(block->ifetch_pt_pages, refs.pages,
+           block->ifetch_pt_page_count * sizeof(block->ifetch_pt_pages[0]));
     /*
      * Negative cache entries need source refs too.  If self-modifying code
      * rewrites an unsupported instruction into a supported one, exact
      * invalidation must remove this marker so the JIT can compile the new bytes.
      */
+    jit_ifetch_refs_ref(block);
     jit_source_chunks_ref(block);
     jit_source_reverse_map_add(block);
 }
@@ -4465,6 +4939,7 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     vaddr_t cur_pc = pc;
     uint32_t count = 0;
     rv64_jit_source_builder_t source = {0};
+    rv64_jit_ifetch_ref_builder_t ifetch_refs = {0};
     bool chain_safe = chain_safe_start;
     bool uses_data_state = false;
     rv64_jit_block_end_reason_t block_end_reason = RV64_JIT_BLOCK_END_BUDGET;
@@ -4478,11 +4953,14 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
          */
         paddr_t cur_paddr = 0;
         bool cur_translated = false;
+        rv64_jit_ifetch_ref_builder_t ifetch_refs_start = ifetch_refs;
 
-        if (!jit_translate_ifetch_ex(cur_pc, &cur_paddr, &cur_translated) ||
+        if (!jit_translate_ifetch_collect(cur_pc, &cur_paddr, &cur_translated,
+                                          &ifetch_refs) ||
             !in_pmem(cur_paddr) ||
             cur_translated != first_translated)
         {
+            ifetch_refs = ifetch_refs_start;
             block_end_reason = RV64_JIT_BLOCK_END_SOURCE_BOUNDARY;
             break;
         }
@@ -4496,6 +4974,7 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
         if (!jit_source_builder_append(&source, cur_paddr, RV64_INSN_SIZE))
         {
+            ifetch_refs = ifetch_refs_start;
             block_end_reason = RV64_JIT_BLOCK_END_SOURCE_BOUNDARY;
             break;
         }
@@ -4509,6 +4988,7 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
                 source = source_start;
+                ifetch_refs = ifetch_refs_start;
                 jit_stat_unsupported_opcode(instr);
                 block_end_reason = RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX;
                 break;
@@ -4529,6 +5009,7 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
                 source = source_start;
+                ifetch_refs = ifetch_refs_start;
                 jit_stat_unsupported_opcode(instr);
                 block_end_reason = RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX;
                 break;
@@ -4552,6 +5033,7 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
                 source = source_start;
+                ifetch_refs = ifetch_refs_start;
                 jit_stat_unsupported_opcode(instr);
                 block_end_reason = RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX;
                 break;
@@ -4572,6 +5054,7 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
                 source = source_start;
+                ifetch_refs = ifetch_refs_start;
                 jit_stat_unsupported_opcode(instr);
                 block_end_reason = RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX;
                 break;
@@ -4588,6 +5071,7 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
             w.cur = instr_start;
             jit_reg_cache_restore(&regs, &regs_start);
             source = source_start;
+            ifetch_refs = ifetch_refs_start;
             jit_stat_unsupported_opcode(instr);
             block_end_reason = RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX;
             break;
@@ -4614,7 +5098,9 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         return NULL;
     }
 
-    if (!emit_direct_link_exit(&w, &regs, cur_pc, count, uses_data_state, NULL))
+    if (!(jit_direct_link_enabled()
+              ? emit_direct_link_exit(&w, &regs, cur_pc, count, uses_data_state, NULL)
+              : emit_plain_block_exit(&w, &regs, cur_pc, count)))
     {
         return NULL;
     }
@@ -4635,11 +5121,15 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         .paddr_start = first_paddr,
         .source_len = source.source_len,
         .source_segment_count = source.segment_count,
+        .ifetch_pt_page_count = first_translated ? ifetch_refs.count : 0,
         .insn_count = count,
         .entry = (rv64_jit_entry_t)w.start,
         .body_entry = (rv64_jit_entry_t)block_start_native,
     };
     memcpy(block->source_segments, source.segments, sizeof(source.segments));
+    memcpy(block->ifetch_pt_pages, ifetch_refs.pages,
+           block->ifetch_pt_page_count * sizeof(block->ifetch_pt_pages[0]));
+    jit_ifetch_refs_ref(block);
     jit_source_chunks_ref(block);
     jit_source_reverse_map_add(block);
 

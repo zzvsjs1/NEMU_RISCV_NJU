@@ -4,29 +4,46 @@
 
 static IOMap maps[NR_MAP] = {};
 static int nr_map = 0;
+static IOMap *last_map = NULL;
 
 static IOMap *fetch_mmio_map(paddr_t addr)
 {
+    if (last_map != NULL && map_inside(last_map, addr))
+    {
+        difftest_skip_ref();
+        return last_map;
+    }
+
     int mapid = find_mapid_by_addr(maps, nr_map, addr);
-    return (mapid == -1 ? NULL : &maps[mapid]);
+
+    last_map = mapid == -1 ? NULL : &maps[mapid];
+    return last_map;
 }
 
 /* device interface */
-void add_mmio_map(const char *name, paddr_t addr, void *space, uint32_t len, io_callback_t callback)
+void add_mmio_map(const char *name, paddr_t addr, void *space, uint32_t len,
+                  io_callback_t callback)
 {
     assert(nr_map < NR_MAP);
 
     /*
-   * MMIO maps live in the physical address space and are selected by paddr.c
-   * when an access is outside PMEM.  Ranges are inclusive because map_read() and
-   * map_write() check the final byte address against high.
-   */
-    maps[nr_map] = (IOMap){.name = name, .low = addr, .high = addr + len - 1, .space = space, .callback = callback};
+     * MMIO maps live in the physical address space and are selected by paddr.c
+     * when an access is outside PMEM.  Ranges are inclusive because map_read()
+     * and map_write() check the final byte address against high.
+     */
+    maps[nr_map] = (IOMap){
+        .name = name,
+        .low = addr,
+        .high = addr + len - 1,
+        .space = space,
+        .callback = callback,
+    };
 
     Log("Add mmio map '%s' at [" FMT_PADDR ", " FMT_PADDR "]",
         maps[nr_map].name, maps[nr_map].low, maps[nr_map].high);
 
     nr_map++;
+    last_map = NULL;
 }
 
 /* bus interface */
