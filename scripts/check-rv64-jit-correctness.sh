@@ -12,7 +12,7 @@ export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
 
 DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit_defconfig"
-TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-negative-cache riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-sv39-cross-page riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data riscv64-jit-sv39-dtlb)
+TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-negative-cache riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-direct-link riscv64-jit-trace riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-sv39-cross-page riscv64-jit-mprv-ifetch riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data riscv64-jit-sv39-dtlb)
 
 fail() {
   echo "RISC-V64 JIT correctness check failed: $*" >&2
@@ -152,6 +152,44 @@ require_positive_translated_cross_page_blocks() {
   fi
 }
 
+require_positive_segmented_source_blocks() {
+  local log=$1
+  local test_name=$2
+  local segmented_source_blocks
+
+  segmented_source_blocks=$(sed -n 's/.*segmented source blocks = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$segmented_source_blocks" ]; then
+    echo "Failed to find segmented source-block stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$segmented_source_blocks" -le 0 ]; then
+    echo "Expected positive segmented source-block count for $test_name, got $segmented_source_blocks" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_trace_blocks() {
+  local log=$1
+  local test_name=$2
+  local trace_blocks
+
+  trace_blocks=$(sed -n 's/.*trace blocks = \([0-9][0-9]*\), trace instructions = [0-9][0-9]*.*/\1/p' "$log" | tail -n 1)
+  if [ -z "$trace_blocks" ]; then
+    echo "Failed to find trace-block stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$trace_blocks" -le 0 ]; then
+    echo "Expected positive trace-block count for $test_name, got $trace_blocks" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 require_positive_reg_cache_spills() {
   local log=$1
   local test_name=$2
@@ -166,6 +204,26 @@ require_positive_reg_cache_spills() {
 
   if [ "$reg_cache_spills" -le 0 ]; then
     echo "Expected positive register-cache spill count for $test_name, got $reg_cache_spills" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_reg_cache_spills_at_most() {
+  local log=$1
+  local test_name=$2
+  local max_spills=$3
+  local reg_cache_spills
+
+  reg_cache_spills=$(sed -n 's/.*reg cache spills = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$reg_cache_spills" ]; then
+    echo "Failed to find register-cache spill stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$reg_cache_spills" -gt "$max_spills" ]; then
+    echo "Expected register-cache spill count for $test_name to be <= $max_spills, got $reg_cache_spills" >&2
     cat "$log" >&2
     exit 1
   fi
@@ -242,6 +300,44 @@ require_positive_invalidated_blocks() {
 
   if [ "$invalidated_blocks" -le 0 ]; then
     echo "Expected positive invalidated block count for $test_name, got $invalidated_blocks" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_ifetch_generation_fast_hits() {
+  local log=$1
+  local test_name=$2
+  local fast_hits
+
+  fast_hits=$(sed -n 's/.*ifetch generation fast hits = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$fast_hits" ]; then
+    echo "Failed to find ifetch generation fast-hit stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$fast_hits" -le 0 ]; then
+    echo "Expected positive ifetch generation fast-hit count for $test_name, got $fast_hits" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_source_reverse_invalidations() {
+  local log=$1
+  local test_name=$2
+  local reverse_walks
+
+  reverse_walks=$(sed -n 's/.*source reverse invalidations = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$reverse_walks" ]; then
+    echo "Failed to find source reverse-invalidation stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$reverse_walks" -le 0 ]; then
+    echo "Expected positive source reverse-invalidation count for $test_name, got $reverse_walks" >&2
     cat "$log" >&2
     exit 1
   fi
@@ -418,6 +514,172 @@ require_positive_inline_paged_store_hits() {
   fi
 }
 
+require_positive_helper_loads() {
+  local log=$1
+  local test_name=$2
+  local helper_loads
+
+  helper_loads=$(sed -n 's/.*helper loads = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$helper_loads" ]; then
+    echo "Failed to find helper load stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$helper_loads" -le 0 ]; then
+    echo "Expected positive helper load count for $test_name, got $helper_loads" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_helper_stores() {
+  local log=$1
+  local test_name=$2
+  local helper_stores
+
+  helper_stores=$(sed -n 's/.*helper stores = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$helper_stores" ]; then
+    echo "Failed to find helper store stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$helper_stores" -le 0 ]; then
+    echo "Expected positive helper store count for $test_name, got $helper_stores" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_unsupported_opcode() {
+  local log=$1
+  local test_name=$2
+  local opcode=$3
+  local count
+
+  count=$(sed -n "s/.*unsupported opcode $opcode = \\([0-9][0-9]*\\).*/\\1/p" "$log" | tail -n 1)
+  if [ -z "$count" ]; then
+    echo "Failed to find unsupported opcode $opcode stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$count" -le 0 ]; then
+    echo "Expected positive unsupported opcode $opcode count for $test_name, got $count" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_block_end_reason() {
+  local log=$1
+  local test_name=$2
+  local reason=$3
+  local count
+
+  count=$(sed -n "s/.*block end $reason = \\([0-9][0-9]*\\).*/\\1/p" "$log" | tail -n 1)
+  if [ -z "$count" ]; then
+    echo "Failed to find block-end $reason stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$count" -le 0 ]; then
+    echo "Expected positive block-end $reason count for $test_name, got $count" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_side_exit_reason() {
+  local log=$1
+  local test_name=$2
+  local reason=$3
+  local count
+
+  count=$(sed -n "s/.*side exit $reason = \\([0-9][0-9]*\\).*/\\1/p" "$log" | tail -n 1)
+  if [ -z "$count" ]; then
+    echo "Failed to find side-exit $reason stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$count" -le 0 ]; then
+    echo "Expected positive side-exit $reason count for $test_name, got $count" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_direct_link_stats() {
+  local log=$1
+  local test_name=$2
+
+  if ! grep -q 'direct links taken = [0-9][0-9]*, misses = [0-9][0-9]*' "$log"; then
+    echo "Failed to find direct-link stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+}
+
+require_positive_direct_links() {
+  local log=$1
+  local test_name=$2
+  local count
+
+  count=$(sed -n 's/.*direct links taken = \([0-9][0-9]*\), misses = [0-9][0-9]*.*/\1/p' "$log" | tail -n 1)
+  if [ -z "$count" ]; then
+    echo "Failed to find direct-link taken stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$count" -le 0 ]; then
+    echo "Expected positive direct-link taken count for $test_name, got $count" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+}
+
+require_positive_direct_branch_links() {
+  local log=$1
+  local test_name=$2
+  local count
+
+  count=$(sed -n 's/.*direct branch links taken = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$count" ]; then
+    echo "Failed to find direct branch-link stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$count" -le 0 ]; then
+    echo "Expected positive direct branch-link taken count for $test_name, got $count" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+}
+
+require_positive_guarded_direct_links() {
+  local log=$1
+  local test_name=$2
+  local count
+
+  count=$(sed -n 's/.*direct guarded links taken = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$count" ]; then
+    echo "Failed to find guarded direct-link stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$count" -le 0 ]; then
+    echo "Expected positive guarded direct-link count for $test_name, got $count" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+}
+
 cd "$ROOT"
 
 [ -f "$DEFCONFIG" ] || fail "missing $DEFCONFIG"
@@ -442,9 +704,21 @@ for test_name in "${TESTS[@]}"; do
   fi
   if [ "$test_name" = "riscv64-jit-negative-cache" ]; then
     require_positive_invalidated_blocks "$out" "$test_name"
+    require_positive_source_reverse_invalidations "$out" "$test_name"
+    require_positive_unsupported_opcode "$out" "$test_name" "0x0f"
+    require_direct_link_stats "$out" "$test_name"
   fi
   if [ "$test_name" = "riscv64-jit-jump-fast" ]; then
     require_positive_native_jumps "$out" "$test_name"
+    require_positive_block_end_reason "$out" "$test_name" "jump"
+  fi
+  if [ "$test_name" = "riscv64-jit-direct-link" ]; then
+    require_positive_native_jumps "$out" "$test_name"
+    require_positive_direct_links "$out" "$test_name"
+    require_positive_direct_branch_links "$out" "$test_name"
+  fi
+  if [ "$test_name" = "riscv64-jit-trace" ]; then
+    require_positive_trace_blocks "$out" "$test_name"
   fi
   if [ "$test_name" = "riscv64-jit-m-fast" ]; then
     require_positive_native_m_ops "$out" "$test_name"
@@ -455,25 +729,38 @@ for test_name in "${TESTS[@]}"; do
   if [ "$test_name" = "riscv64-jit-sv39-cross-page" ]; then
     require_positive_translated_blocks "$out" "$test_name"
     require_positive_translated_cross_page_blocks "$out" "$test_name"
+    require_positive_segmented_source_blocks "$out" "$test_name"
+  fi
+  if [ "$test_name" = "riscv64-jit-mprv-ifetch" ]; then
+    require_positive_translated_blocks "$out" "$test_name"
   fi
   if [ "$test_name" = "riscv64-jit-reg-cache" ]; then
     require_positive_reg_cache_spills "$out" "$test_name"
+    require_reg_cache_spills_at_most "$out" "$test_name" 11
   fi
   if [ "$test_name" = "riscv64-jit-memory-entry" ]; then
     require_positive_native_loads "$out" "$test_name"
     require_positive_native_stores "$out" "$test_name"
     require_positive_store_continuations "$out" "$test_name"
     require_positive_zero_side_exits "$out" "$test_name"
+    require_positive_helper_stores "$out" "$test_name"
+    require_positive_side_exit_reason "$out" "$test_name" "load-guard"
+    require_positive_side_exit_reason "$out" "$test_name" "store-guard"
+    require_positive_side_exit_reason "$out" "$test_name" "store-source"
   fi
   if [ "$test_name" = "riscv64-jit-sv39-data" ]; then
     require_positive_translated_blocks "$out" "$test_name"
     require_positive_native_paged_loads "$out" "$test_name"
     require_positive_native_paged_stores "$out" "$test_name"
+    require_positive_guarded_direct_links "$out" "$test_name"
   fi
   if [ "$test_name" = "riscv64-jit-sv39-dtlb" ]; then
     require_positive_translated_blocks "$out" "$test_name"
+    require_positive_ifetch_generation_fast_hits "$out" "$test_name"
     require_positive_native_paged_loads "$out" "$test_name"
     require_positive_native_paged_stores "$out" "$test_name"
+    require_positive_helper_loads "$out" "$test_name"
+    require_positive_helper_stores "$out" "$test_name"
     require_positive_data_tlb_hits "$out" "$test_name"
     require_positive_data_tlb_fills "$out" "$test_name"
     require_positive_data_tlb_flushes "$out" "$test_name"
@@ -482,6 +769,7 @@ for test_name in "${TESTS[@]}"; do
     require_positive_inline_paged_stores "$out" "$test_name"
     require_positive_inline_paged_load_hits "$out" "$test_name"
     require_positive_inline_paged_store_hits "$out" "$test_name"
+    require_positive_side_exit_reason "$out" "$test_name" "paged-store-helper"
     require_positive_invalidated_blocks "$out" "$test_name"
   fi
   rm -f "$out"

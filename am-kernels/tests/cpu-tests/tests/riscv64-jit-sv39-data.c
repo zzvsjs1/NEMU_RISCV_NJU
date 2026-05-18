@@ -237,6 +237,31 @@ static void sv39_store_widths(uint8_t *alias)
         : "memory");
 }
 
+/* Force repeated native links between translated S-mode blocks. */
+static uint64_t sv39_direct_link_loop(uint8_t *alias)
+{
+    uint64_t out = 0;
+    uint64_t laps = 64;
+
+    asm volatile(
+        "1:\n"
+        "jal zero, 2f\n"
+        "3:\n"
+        "addi %[laps], %[laps], -1\n"
+        "bnez %[laps], 1b\n"
+        "jal zero, 4f\n"
+        "2:\n"
+        "ld t0, 16(%[alias])\n"
+        "add %[out], %[out], t0\n"
+        "jal zero, 3b\n"
+        "4:\n"
+        : [out] "+r"(out), [laps] "+r"(laps)
+        : [alias] "r"(alias)
+        : "t0", "memory");
+
+    return out;
+}
+
 /* Verify that Sv39 data loads and stores use the alias mapping, not VA==PA. */
 static void test_sv39_data_memory(void)
 {
@@ -259,6 +284,8 @@ static void test_sv39_data_memory(void)
 
     sv39_load_widths((uint8_t *)(uintptr_t)DATA_ALIAS_VA, loaded);
     sv39_store_widths((uint8_t *)(uintptr_t)DATA_ALIAS_VA);
+    const uint64_t linked_sum =
+        sv39_direct_link_loop((uint8_t *)(uintptr_t)DATA_ALIAS_VA);
 
     check(loaded[0] == 0xffffffffffffff80ull);
     check(loaded[1] == 0x80ull);
@@ -273,6 +300,7 @@ static void test_sv39_data_memory(void)
     check(raw[28] == 0x0bu && raw[29] == 0xfau &&
           raw[30] == 0xe9u && raw[31] == 0xd8u);
     check(data_page[4] == 0x1122334455667788ull);
+    check(linked_sum == data_page[2] * 64u);
 }
 
 #endif

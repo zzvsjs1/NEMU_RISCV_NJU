@@ -5,6 +5,7 @@
 #include <memory/vaddr.h>
 #include <utils.h>
 
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdlib.h>
 
@@ -54,8 +55,10 @@
 #define RV64_OPCODE_JALR 0x67u
 #define RV64_OPCODE_JAL 0x6fu
 
-/* Match RV32's longer block budget now that RV64 has register caching. */
+/* Keep 64 as the old basic-block threshold; longer native regions are traces. */
 #define RV64_JIT_BLOCK_MAX_INSNS 64u
+/* First trace stage: one fall-through superblock with side exits. */
+#define RV64_JIT_TRACE_MAX_INSNS 256u
 /* Match the CPU loop's device polling window; native code still returns bounded work. */
 #define RV64_JIT_BATCH_MAX_INSNS 65536u
 /* Power-of-two direct-mapped cache size, so `(size - 1)` is a valid index mask. */
@@ -66,10 +69,10 @@
 #define RV64_JIT_CODE_ALIGN 16u
 /* Conservative per-block free-space check for the worst native byte expansion. */
 /*
- * A 64-instruction block with register spills, guarded memory, helper calls and
- * side exits can be much larger than the early minimal emitter's blocks.
+ * A trace-length native region with register spills, guarded memory, helper
+ * calls and side exits can be much larger than early minimal-emitter blocks.
  */
-#define RV64_JIT_BLOCK_CODE_HEADROOM (32u * 1024u)
+#define RV64_JIT_BLOCK_CODE_HEADROOM (128u * 1024u)
 /*
  * Source invalidation is tracked in 128-byte chunks, matching RV32.  This is
  * fine-grained enough that normal data stores near code avoid a full cache scan.
@@ -80,6 +83,23 @@
 #define RV64_JIT_PMEM_CHUNK_COUNT \
     (((size_t)CONFIG_MSIZE + (size_t)RV64_JIT_SOURCE_CHUNK_SIZE - 1u) / \
      (size_t)RV64_JIT_SOURCE_CHUNK_SIZE)
+/*
+ * A 64-instruction 32-bit block covers at most 256 bytes, so it can cross at
+ * most one 4 KiB virtual page boundary.  Keep the formula explicit rather than
+ * hard-coding two segments.
+ */
+#define RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS \
+    (((RV64_JIT_TRACE_MAX_INSNS * RV64_INSN_SIZE) + PAGE_SIZE - 1u) / \
+     PAGE_SIZE + 1u)
+#define RV64_JIT_BLOCK_MAX_SOURCE_CHUNKS \
+    (((RV64_JIT_TRACE_MAX_INSNS * RV64_INSN_SIZE) + \
+      RV64_JIT_SOURCE_CHUNK_SIZE - 1u) / RV64_JIT_SOURCE_CHUNK_SIZE + \
+     RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS)
+#define RV64_JIT_SOURCE_LINK_NULL 0u
+#define RV64_JIT_SOURCE_LINK_COUNT \
+    (RV64_JIT_CACHE_SIZE * RV64_JIT_BLOCK_MAX_SOURCE_CHUNKS + 1u)
+/* Guard failures in one direct-link exit all jump to the same miss path. */
+#define RV64_JIT_DIRECT_LINK_MISS_PATCHES 10u
 /*
  * Keep the helper data TLB intentionally small: 256 direct-mapped entries cover
  * common hot pages while keeping the inline index mask to one byte of entropy.
@@ -133,6 +153,7 @@ typedef struct
 typedef enum
 {
     RV64_JIT_HREG_RBX = 0,
+    RV64_JIT_HREG_RBP,
     RV64_JIT_HREG_R12,
     RV64_JIT_HREG_R13,
     RV64_JIT_HREG_R14,
@@ -168,6 +189,22 @@ typedef struct
     bool valid;
 } rv64_jit_data_tlb_entry_t;
 
+typedef struct
+{
+    paddr_t paddr_start;
+    uint32_t source_offset;
+    uint32_t len;
+    uint32_t source_chunk_first;
+    uint32_t source_chunk_last;
+} rv64_jit_source_segment_t;
+
+typedef struct
+{
+    rv64_jit_source_segment_t segments[RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS];
+    uint32_t segment_count;
+    uint32_t source_len;
+} rv64_jit_source_builder_t;
+
 typedef char rv64_jit_data_tlb_entry_size_must_be_64[sizeof(rv64_jit_data_tlb_entry_t) == 64 ? 1 : -1];
 typedef char rv64_jit_pmem_mapping_must_be_page_aligned[((CONFIG_MBASE | CONFIG_MSIZE) & PAGE_MASK) == 0 ? 1 : -1];
 
@@ -175,14 +212,41 @@ typedef struct
 {
     bool valid;
     bool translated;
+    bool uses_data_state;
     vaddr_t pc;
     word_t satp;
+    uint32_t ifetch_state;
     uint32_t data_state;
+    uint64_t ifetch_generation;
     paddr_t paddr_start;
     uint32_t source_len;
+    uint32_t source_segment_count;
+    rv64_jit_source_segment_t source_segments[RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS];
     uint32_t insn_count;
     rv64_jit_entry_t entry;
 } rv64_jit_block_t;
+
+typedef enum
+{
+    RV64_JIT_BLOCK_END_BUDGET,
+    RV64_JIT_BLOCK_END_JUMP,
+    RV64_JIT_BLOCK_END_CHAINED_LOOP,
+    RV64_JIT_BLOCK_END_SOURCE_BOUNDARY,
+    RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX,
+    RV64_JIT_BLOCK_END_COUNT,
+} rv64_jit_block_end_reason_t;
+
+typedef enum
+{
+    RV64_JIT_SIDE_EXIT_LOAD_GUARD,
+    RV64_JIT_SIDE_EXIT_STORE_GUARD,
+    RV64_JIT_SIDE_EXIT_STORE_SOURCE,
+    RV64_JIT_SIDE_EXIT_PAGED_STORE_HELPER,
+    RV64_JIT_SIDE_EXIT_BRANCH_TAKEN,
+    RV64_JIT_SIDE_EXIT_CHAINED_OVER_BUDGET,
+    RV64_JIT_SIDE_EXIT_JALR_MISALIGNED,
+    RV64_JIT_SIDE_EXIT_COUNT,
+} rv64_jit_side_exit_reason_t;
 
 typedef struct
 {
@@ -201,6 +265,9 @@ typedef struct
     uint64_t native_m_ops;
     uint64_t translated_blocks;
     uint64_t translated_cross_page_blocks;
+    uint64_t segmented_source_blocks;
+    uint64_t trace_blocks;
+    uint64_t trace_insns;
     uint64_t reg_cache_spills;
     uint64_t native_store_continuations;
     uint64_t native_paged_loads;
@@ -217,10 +284,30 @@ typedef struct
     uint64_t inline_paged_stores;
     uint64_t inline_paged_load_hits;
     uint64_t inline_paged_store_hits;
+    uint64_t unsupported_by_opcode[RV64_OPCODE_MASK + 1u];
+    uint64_t block_end_by_reason[RV64_JIT_BLOCK_END_COUNT];
+    uint64_t side_exit_by_reason[RV64_JIT_SIDE_EXIT_COUNT];
+    uint64_t helper_load_count;
+    uint64_t helper_store_count;
+    uint64_t direct_link_taken_count;
+    uint64_t direct_link_miss_count;
+    uint64_t direct_branch_link_taken_count;
+    uint64_t direct_guarded_link_taken_count;
+    uint64_t ifetch_generation_fast_hits;
+    uint64_t ifetch_generation_revalidations;
+    uint64_t ifetch_generation_bumps;
+    uint64_t source_reverse_invalidations;
+    uint64_t source_full_invalidation_scans;
     uint64_t invalidation_requests;
     uint64_t invalidated_blocks;
     uint64_t arena_resets;
 } rv64_jit_stats_t;
+
+typedef struct
+{
+    uint32_t block_index;
+    uint32_t next;
+} rv64_jit_source_link_t;
 
 typedef struct
 {
@@ -232,9 +319,13 @@ static rv64_jit_block_t jit_cache[RV64_JIT_CACHE_SIZE];
 static rv64_jit_data_tlb_entry_t jit_data_tlb[RV64_JIT_DATA_TLB_SIZE];
 static uint16_t jit_data_tlb_pt_page_refs[RV64_JIT_PMEM_PAGE_COUNT];
 static uint16_t jit_source_chunk_refs[RV64_JIT_PMEM_CHUNK_COUNT];
+static uint32_t jit_source_chunk_heads[RV64_JIT_PMEM_CHUNK_COUNT];
+static rv64_jit_source_link_t jit_source_links[RV64_JIT_SOURCE_LINK_COUNT];
+static uint32_t jit_source_link_free_head = RV64_JIT_SOURCE_LINK_NULL;
 static uint8_t *jit_code = NULL;
 static size_t jit_code_used = 0;
 static rv64_jit_stats_t jit_stats;
+static uint64_t jit_ifetch_generation = 1;
 #if RV64_JIT_ENABLED
 static bool jit_disabled = false;
 #endif
@@ -274,6 +365,25 @@ bool isa_jit_invalidation_active = false;
         (void)(value); \
     } while (0)
 #endif
+
+/* Record why one candidate instruction could not be emitted by this JIT. */
+static void jit_stat_unsupported_opcode(uint32_t instr)
+{
+    const uint32_t opcode = instr & RV64_OPCODE_MASK;
+    JIT_STAT_INC(unsupported_by_opcode[opcode]);
+#if !RV64_JIT_STATS
+    (void)opcode;
+#endif
+}
+
+/* Record the reason a compiled native block stopped growing. */
+static void jit_stat_block_end(rv64_jit_block_end_reason_t reason)
+{
+    JIT_STAT_INC(block_end_by_reason[reason]);
+#if !RV64_JIT_STATS
+    (void)reason;
+#endif
+}
 
 /* Extract an inclusive bit range from a 32-bit RISC-V instruction. */
 static uint32_t bits(uint32_t value, int hi, int lo)
@@ -381,6 +491,15 @@ static bool jit_runtime_disabled(void)
 {
     jit_init_runtime_options();
     return jit_env_disable;
+}
+
+/* Advance the generation that protects translated instruction-fetch mappings. */
+static void jit_ifetch_generation_bump(void)
+{
+    Assert(jit_ifetch_generation != UINT64_MAX,
+           "jit: RV64 ifetch generation overflow");
+    jit_ifetch_generation++;
+    JIT_STAT_INC(ifetch_generation_bumps);
 }
 
 /* Clear the RV64 JIT data TLB and its page-table dependency refcounts. */
@@ -542,6 +661,16 @@ static uint32_t jit_data_tlb_state(int type)
     }
 
     return state;
+}
+
+/* Compact the state that changes instruction-fetch translation/protection. */
+static uint32_t jit_ifetch_state(void)
+{
+    /*
+     * MPRV, SUM, and MXR are data-access controls.  Instruction fetch only uses
+     * the current architectural privilege; satp is already stored separately.
+     */
+    return (uint32_t)cpu.prvi;
 }
 
 /* Return the satp mode field used by RV64 address translation. */
@@ -863,6 +992,8 @@ static uint64_t jit_load_vaddr_raw(vaddr_t addr, uint32_t len)
      */
     paddr_t paddr = 0;
 
+    JIT_STAT_INC(helper_load_count);
+
     if (jit_translate_pmem(addr, len, MEM_TYPE_READ, &paddr))
     {
         JIT_STAT_INC(data_tlb_direct_loads);
@@ -925,6 +1056,8 @@ static void jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data)
      */
     paddr_t paddr = 0;
 
+    JIT_STAT_INC(helper_store_count);
+
     if (jit_translate_pmem(addr, len, MEM_TYPE_WRITE, &paddr))
     {
         JIT_STAT_INC(data_tlb_direct_stores);
@@ -945,6 +1078,8 @@ static uint32_t jit_store_pmem_continue(paddr_t addr, uint32_t len, uint64_t dat
      * invalidation, while the source-chunk pre-check decides whether continuing
      * would risk executing stale native bytes.
      */
+    JIT_STAT_INC(helper_store_count);
+
     const bool may_touch_source = jit_write_may_touch_source_chunk(addr, (int)len);
     paddr_write(addr, (int)len, (word_t)data);
     return may_touch_source ? 0u : 1u;
@@ -1074,53 +1209,312 @@ static bool jit_paddr_to_source_chunk(paddr_t addr, size_t *chunk)
     return *chunk < RV64_JIT_PMEM_CHUNK_COUNT;
 }
 
-/* Add source-ref counts for the physical bytes backing one native block. */
-static void jit_source_chunks_ref(paddr_t addr, uint32_t len)
+/* Convert one physical source range to the chunk range that covers it. */
+static bool jit_source_chunk_range(paddr_t addr, uint32_t len,
+                                   size_t *first, size_t *last)
 {
     if (len == 0)
     {
-        return;
+        return false;
     }
 
-    size_t first = 0;
-    size_t last = 0;
+    const paddr_t end = addr + (paddr_t)len - 1u;
+    return end >= addr &&
+           jit_paddr_to_source_chunk(addr, first) &&
+           jit_paddr_to_source_chunk(end, last);
+}
 
-    if (!jit_paddr_to_source_chunk(addr, &first) ||
-        !jit_paddr_to_source_chunk(addr + (paddr_t)len - 1u, &last))
+/* Append one instruction's physical bytes to the current source-segment list. */
+static bool jit_source_builder_append(rv64_jit_source_builder_t *source,
+                                      paddr_t paddr, uint32_t len)
+{
+    if (len == 0)
+    {
+        return false;
+    }
+
+    const uint32_t source_offset = source->source_len;
+
+    if (source->segment_count != 0)
+    {
+        rv64_jit_source_segment_t *last =
+            &source->segments[source->segment_count - 1u];
+
+        if (last->source_offset + last->len == source_offset &&
+            last->paddr_start + (paddr_t)last->len == paddr)
+        {
+            last->len += len;
+            source->source_len += len;
+            return true;
+        }
+    }
+
+    if (source->segment_count >= RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS)
+    {
+        return false;
+    }
+
+    source->segments[source->segment_count++] = (rv64_jit_source_segment_t){
+        .paddr_start = paddr,
+        .source_offset = source_offset,
+        .len = len,
+    };
+    source->source_len += len;
+    return true;
+}
+
+/* Find the physical source byte expected at one virtual block offset. */
+static bool jit_block_source_paddr_at(const rv64_jit_block_t *block,
+                                      uint32_t source_offset, paddr_t *paddr)
+{
+    for (uint32_t i = 0; i < block->source_segment_count; i++)
+    {
+        const rv64_jit_source_segment_t *segment = &block->source_segments[i];
+
+        if (source_offset >= segment->source_offset &&
+            source_offset < segment->source_offset + segment->len)
+        {
+            *paddr = segment->paddr_start +
+                     (paddr_t)(source_offset - segment->source_offset);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* Return whether a PMEM write overlaps any physical segment of one block. */
+static bool jit_block_source_overlaps(const rv64_jit_block_t *block,
+                                      paddr_t addr, int len)
+{
+    for (uint32_t i = 0; i < block->source_segment_count; i++)
+    {
+        const rv64_jit_source_segment_t *segment = &block->source_segments[i];
+
+        if (jit_ranges_overlap(segment->paddr_start, segment->len, addr, len))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* Return whether an earlier segment in this block already covers a chunk. */
+static bool jit_block_source_chunk_seen_before(const rv64_jit_block_t *block,
+                                               uint32_t segment_idx,
+                                               uint32_t chunk)
+{
+    for (uint32_t i = 0; i < segment_idx; i++)
+    {
+        const rv64_jit_source_segment_t *segment = &block->source_segments[i];
+        size_t first = 0;
+        size_t last = 0;
+
+        if (jit_source_chunk_range(segment->paddr_start, segment->len,
+                                   &first, &last) &&
+            chunk >= first && chunk <= last)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* Rebuild the free list for reverse source-chunk map nodes. */
+static void jit_source_reverse_map_reset(void)
+{
+    memset(jit_source_chunk_heads, 0, sizeof(jit_source_chunk_heads));
+
+    for (uint32_t i = 1; i < RV64_JIT_SOURCE_LINK_COUNT - 1u; i++)
+    {
+        jit_source_links[i].next = i + 1u;
+        jit_source_links[i].block_index = 0;
+    }
+
+    jit_source_links[RV64_JIT_SOURCE_LINK_COUNT - 1u].next = RV64_JIT_SOURCE_LINK_NULL;
+    jit_source_links[RV64_JIT_SOURCE_LINK_COUNT - 1u].block_index = 0;
+    jit_source_link_free_head = 1u;
+}
+
+/* Allocate one node from the fixed reverse source map pool. */
+static uint32_t jit_source_link_alloc(void)
+{
+    Assert(jit_source_link_free_head != RV64_JIT_SOURCE_LINK_NULL,
+           "jit: RV64 source reverse-map node pool exhausted");
+
+    const uint32_t node = jit_source_link_free_head;
+    jit_source_link_free_head = jit_source_links[node].next;
+    jit_source_links[node].next = RV64_JIT_SOURCE_LINK_NULL;
+    return node;
+}
+
+/* Return one reverse source-map node to the free list. */
+static void jit_source_link_free(uint32_t node)
+{
+    Assert(node != RV64_JIT_SOURCE_LINK_NULL &&
+               node < RV64_JIT_SOURCE_LINK_COUNT,
+           "jit: invalid RV64 source reverse-map node %u", node);
+
+    jit_source_links[node].block_index = 0;
+    jit_source_links[node].next = jit_source_link_free_head;
+    jit_source_link_free_head = node;
+}
+
+/* Return the direct-mapped cache index for one block pointer. */
+static uint32_t jit_block_index(const rv64_jit_block_t *block)
+{
+    const uintptr_t block_addr = (uintptr_t)block;
+    const uintptr_t cache_start = (uintptr_t)jit_cache;
+    const uintptr_t cache_end = (uintptr_t)(jit_cache + RV64_JIT_CACHE_SIZE);
+
+    Assert(block_addr >= cache_start && block_addr < cache_end,
+           "jit: RV64 block pointer outside cache");
+    return (uint32_t)(block - jit_cache);
+}
+
+/* Add one block to every source chunk it references. */
+static void jit_source_reverse_map_add(rv64_jit_block_t *block)
+{
+    if (block->source_segment_count == 0)
     {
         return;
     }
 
-    for (size_t i = first; i <= last; i++)
+    const uint32_t block_index = jit_block_index(block);
+
+    for (uint32_t i = 0; i < block->source_segment_count; i++)
     {
-        Assert(jit_source_chunk_refs[i] != UINT16_MAX,
-               "jit: RV64 source chunk refcount overflow at %zu", i);
-        jit_source_chunk_refs[i]++;
+        rv64_jit_source_segment_t *segment = &block->source_segments[i];
+        size_t first = 0;
+        size_t last = 0;
+
+        if (!jit_source_chunk_range(segment->paddr_start, segment->len, &first, &last))
+        {
+            continue;
+        }
+
+        segment->source_chunk_first = (uint32_t)first;
+        segment->source_chunk_last = (uint32_t)last;
+
+        for (size_t chunk = first; chunk <= last; chunk++)
+        {
+            if (jit_block_source_chunk_seen_before(block, i, (uint32_t)chunk))
+            {
+                continue;
+            }
+
+            const uint32_t node = jit_source_link_alloc();
+            jit_source_links[node].block_index = block_index;
+            jit_source_links[node].next = jit_source_chunk_heads[chunk];
+            jit_source_chunk_heads[chunk] = node;
+        }
+    }
+}
+
+/* Remove one block from every reverse source-chunk list it references. */
+static void jit_source_reverse_map_remove(const rv64_jit_block_t *block)
+{
+    if (block->source_segment_count == 0)
+    {
+        return;
+    }
+
+    const uint32_t block_index = jit_block_index(block);
+
+    for (uint32_t i = 0; i < block->source_segment_count; i++)
+    {
+        const rv64_jit_source_segment_t *segment = &block->source_segments[i];
+        const uint32_t first = segment->source_chunk_first;
+        const uint32_t last = segment->source_chunk_last;
+
+        if (first >= RV64_JIT_PMEM_CHUNK_COUNT || last >= RV64_JIT_PMEM_CHUNK_COUNT)
+        {
+            continue;
+        }
+
+        for (uint32_t chunk = first; chunk <= last; chunk++)
+        {
+            if (jit_block_source_chunk_seen_before(block, i, chunk))
+            {
+                continue;
+            }
+
+            uint32_t *link = &jit_source_chunk_heads[chunk];
+
+            while (*link != RV64_JIT_SOURCE_LINK_NULL)
+            {
+                const uint32_t node = *link;
+
+                if (jit_source_links[node].block_index == block_index)
+                {
+                    *link = jit_source_links[node].next;
+                    jit_source_link_free(node);
+                    break;
+                }
+
+                link = &jit_source_links[node].next;
+            }
+        }
+    }
+}
+
+/* Add source-ref counts for the physical bytes backing one native block. */
+static void jit_source_chunks_ref(const rv64_jit_block_t *block)
+{
+    for (uint32_t segment_idx = 0; segment_idx < block->source_segment_count;
+         segment_idx++)
+    {
+        const rv64_jit_source_segment_t *segment = &block->source_segments[segment_idx];
+        size_t first = 0;
+        size_t last = 0;
+
+        if (!jit_source_chunk_range(segment->paddr_start, segment->len, &first, &last))
+        {
+            continue;
+        }
+
+        for (size_t i = first; i <= last; i++)
+        {
+            if (jit_block_source_chunk_seen_before(block, segment_idx, (uint32_t)i))
+            {
+                continue;
+            }
+
+            Assert(jit_source_chunk_refs[i] != UINT16_MAX,
+                   "jit: RV64 source chunk refcount overflow at %zu", i);
+            jit_source_chunk_refs[i]++;
+        }
     }
 }
 
 /* Remove source-ref counts when a native block is discarded. */
-static void jit_source_chunks_unref(paddr_t addr, uint32_t len)
+static void jit_source_chunks_unref(const rv64_jit_block_t *block)
 {
-    if (len == 0)
+    for (uint32_t segment_idx = 0; segment_idx < block->source_segment_count;
+         segment_idx++)
     {
-        return;
-    }
+        const rv64_jit_source_segment_t *segment = &block->source_segments[segment_idx];
+        size_t first = 0;
+        size_t last = 0;
 
-    size_t first = 0;
-    size_t last = 0;
+        if (!jit_source_chunk_range(segment->paddr_start, segment->len, &first, &last))
+        {
+            continue;
+        }
 
-    if (!jit_paddr_to_source_chunk(addr, &first) ||
-        !jit_paddr_to_source_chunk(addr + (paddr_t)len - 1u, &last))
-    {
-        return;
-    }
+        for (size_t i = first; i <= last; i++)
+        {
+            if (jit_block_source_chunk_seen_before(block, segment_idx, (uint32_t)i))
+            {
+                continue;
+            }
 
-    for (size_t i = first; i <= last; i++)
-    {
-        Assert(jit_source_chunk_refs[i] > 0,
-               "jit: RV64 source chunk refcount underflow at %zu", i);
-        jit_source_chunk_refs[i]--;
+            Assert(jit_source_chunk_refs[i] > 0,
+                   "jit: RV64 source chunk refcount underflow at %zu", i);
+            jit_source_chunk_refs[i]--;
+        }
     }
 }
 
@@ -1164,23 +1558,38 @@ static bool jit_write_may_touch_source_chunk(paddr_t addr, int len)
 /* Release one cache slot and its source refs, if it owns source bytes. */
 static void jit_block_discard(rv64_jit_block_t *block)
 {
-    if (block->valid && block->source_len != 0)
+    if (block->valid && block->source_segment_count != 0)
     {
-        jit_source_chunks_unref(block->paddr_start, block->source_len);
+        jit_source_reverse_map_remove(block);
+        jit_source_chunks_unref(block);
     }
 
     *block = (rv64_jit_block_t){0};
 }
 
-/* Hash the current address-space tag and guest PC into the direct-mapped cache. */
-static uint32_t jit_hash(vaddr_t pc, word_t satp)
+/* Hash one fetch context and guest PC into the direct-mapped cache. */
+static uint32_t jit_hash_context(vaddr_t pc, word_t satp, uint32_t ifetch_state)
 {
     /*
      * `pc >> 2` drops fixed 4-byte instruction-alignment zeros. `satp >> 12`
-     * mixes the PPN/ASID-like high bits with the raw CSR value. The cache size
-     * is a power of two, so `size - 1` is the direct-mapped slot mask.
+     * mixes the PPN/ASID-like high bits with the raw CSR value.  Include the
+     * fetch privilege so M/S/U entries for the same PC do not evict each other.
      */
-    return (uint32_t)(((pc >> 2) ^ satp ^ (satp >> 12)) & (RV64_JIT_CACHE_SIZE - 1u));
+    return (uint32_t)(((pc >> 2) ^ satp ^ (satp >> 12) ^ ifetch_state) &
+                      (RV64_JIT_CACHE_SIZE - 1u));
+}
+
+/* Hash the current fetch context and guest PC into the direct-mapped cache. */
+static uint32_t jit_hash(vaddr_t pc, word_t satp)
+{
+    return jit_hash_context(pc, satp, jit_ifetch_state());
+}
+
+/* Return the cache slot for a PC under an already-known fetch context. */
+static rv64_jit_block_t *jit_cache_slot_context(vaddr_t pc, word_t satp,
+                                                uint32_t ifetch_state)
+{
+    return &jit_cache[jit_hash_context(pc, satp, ifetch_state)];
 }
 
 /* Return the direct-mapped block-cache slot for the current PC. */
@@ -1194,6 +1603,7 @@ static void jit_cache_clear(void)
 {
     memset(jit_cache, 0, sizeof(jit_cache));
     memset(jit_source_chunk_refs, 0, sizeof(jit_source_chunk_refs));
+    jit_source_reverse_map_reset();
 }
 
 /* Allocate executable memory for generated x86-64 blocks. */
@@ -1222,6 +1632,7 @@ static bool jit_code_init(void)
 
     jit_code = (uint8_t *)mem;
     jit_code_used = 0;
+    jit_source_reverse_map_reset();
     isa_jit_invalidation_active = true;
     Log("jit: RISC-V64 native code arena = %zu bytes", (size_t)RV64_JIT_CODE_SIZE);
     return true;
@@ -1285,6 +1696,8 @@ static uint8_t jit_hreg_x86_reg(rv64_jit_hreg_t hreg)
     {
     case RV64_JIT_HREG_RBX:
         return 3;
+    case RV64_JIT_HREG_RBP:
+        return 5;
     case RV64_JIT_HREG_R12:
         return 12;
     case RV64_JIT_HREG_R13:
@@ -1328,24 +1741,33 @@ static bool emit_rex64(rv64_jit_writer_t *w, uint8_t reg, uint8_t rm)
 static bool emit_push_saved_hregs(rv64_jit_writer_t *w)
 {
     /*
-     * Push order is RBX, R12, R13, R14, R15.  Five 8-byte pushes also change
-     * the System V entry stack from rsp%16==8 to rsp%16==0, so helper calls are
-     * naturally aligned without a separate stack adjustment.
+     * Push order is RBX, RBP, R12, R13, R14, R15.  Six pushes would leave the
+     * System V entry stack at rsp%16==8, so an extra 8-byte pad keeps helper
+     * calls 16-byte aligned.
      */
     return emit_u8(w, 0x53) &&
+           emit_u8(w, 0x55) &&
            emit_u8(w, 0x41) && emit_u8(w, 0x54) &&
            emit_u8(w, 0x41) && emit_u8(w, 0x55) &&
            emit_u8(w, 0x41) && emit_u8(w, 0x56) &&
-           emit_u8(w, 0x41) && emit_u8(w, 0x57);
+           emit_u8(w, 0x41) && emit_u8(w, 0x57) &&
+           /* sub rsp, 8 */
+           emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
+           emit_u8(w, 0xec) && emit_u8(w, 0x08);
 }
 
 /* Restore callee-saved cache registers in the reverse of the push order. */
 static bool emit_pop_saved_hregs(rv64_jit_writer_t *w)
 {
-    return emit_u8(w, 0x41) && emit_u8(w, 0x5f) &&
+    return
+           /* add rsp, 8 */
+           emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
+           emit_u8(w, 0xc4) && emit_u8(w, 0x08) &&
+           emit_u8(w, 0x41) && emit_u8(w, 0x5f) &&
            emit_u8(w, 0x41) && emit_u8(w, 0x5e) &&
            emit_u8(w, 0x41) && emit_u8(w, 0x5d) &&
            emit_u8(w, 0x41) && emit_u8(w, 0x5c) &&
+           emit_u8(w, 0x5d) &&
            emit_u8(w, 0x5b);
 }
 
@@ -1420,6 +1842,12 @@ static bool emit_movabs_r10(rv64_jit_writer_t *w, uint64_t value)
 static bool emit_mov_eax_m32_rdx(rv64_jit_writer_t *w)
 {
     return emit_u8(w, 0x8b) && emit_u8(w, 0x02);
+}
+
+/* Emit `mov rax, [rax]`, loading one live 64-bit runtime guard value. */
+static bool emit_mov_rax_m64_rax(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x48) && emit_u8(w, 0x8b) && emit_u8(w, 0x00);
 }
 
 /* Emit `mov [rdx], eax`, storing one 32-bit JIT loop counter. */
@@ -1617,6 +2045,56 @@ static bool emit_cmp_r8d_field_imm32(rv64_jit_writer_t *w, uint32_t offset,
            emit_u8(w, 0x78) && emit_u8(w, (uint8_t)offset) && emit_u32(w, value);
 }
 
+/* Compare a byte field in the RDX-pointed direct-link block with an immediate. */
+static bool emit_cmp_rdxb_field_imm8(rv64_jit_writer_t *w, uint32_t offset,
+                                     uint8_t value)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 block byte field offset is too large");
+    return emit_u8(w, 0x80) && emit_u8(w, 0x7a) &&
+           emit_u8(w, (uint8_t)offset) && emit_u8(w, value);
+}
+
+/* Compare a dword field in the RDX-pointed direct-link block with an immediate. */
+static bool emit_cmp_rdxd_field_imm32(rv64_jit_writer_t *w, uint32_t offset,
+                                      uint32_t value)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 block dword field offset is too large");
+    return emit_u8(w, 0x81) && emit_u8(w, 0x7a) &&
+           emit_u8(w, (uint8_t)offset) && emit_u32(w, value);
+}
+
+/* Compare a qword field in the RDX-pointed direct-link block with RAX. */
+static bool emit_cmp_rdxq_field_rax(rv64_jit_writer_t *w, uint32_t offset)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 block qword field offset is too large");
+    return emit_u8(w, 0x48) && emit_u8(w, 0x39) &&
+           emit_u8(w, 0x42) && emit_u8(w, (uint8_t)offset);
+}
+
+/* Compare a qword field in the RDX-pointed direct-link block with a sign imm8. */
+static bool emit_cmp_rdxq_field_imm8(rv64_jit_writer_t *w, uint32_t offset,
+                                     uint8_t value)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 block qword field offset is too large");
+    return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
+           emit_u8(w, 0x7a) && emit_u8(w, (uint8_t)offset) && emit_u8(w, value);
+}
+
+/* Load a qword field from the RDX-pointed direct-link block into RAX. */
+static bool emit_mov_rax_rdxq_field(rv64_jit_writer_t *w, uint32_t offset)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 block qword field offset is too large");
+    return emit_u8(w, 0x48) && emit_u8(w, 0x8b) &&
+           emit_u8(w, 0x42) && emit_u8(w, (uint8_t)offset);
+}
+
+/* Add a dword field from the RDX-pointed direct-link block into ECX. */
+static bool emit_add_ecx_rdxd_field(rv64_jit_writer_t *w, uint32_t offset)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 block dword field offset is too large");
+    return emit_u8(w, 0x03) && emit_u8(w, 0x4a) && emit_u8(w, (uint8_t)offset);
+}
+
 /* Test permission bits in a dword field in the R8-pointed DTLB entry. */
 static bool emit_test_r8d_field_imm32(rv64_jit_writer_t *w, uint32_t offset,
                                       uint32_t value)
@@ -1770,6 +2248,42 @@ static bool emit_mov_hreg_hreg(rv64_jit_writer_t *w, rv64_jit_hreg_t dst,
     return emit_rex64(w, src_reg, dst_reg) &&
            emit_u8(w, 0x89) &&
            emit_u8(w, jit_modrm(3, src_reg, dst_reg));
+}
+
+/* Emit `hreg op imm32` using x86 group-1 immediate ALU operations. */
+static bool emit_hreg_imm32_alu64(rv64_jit_writer_t *w, rv64_jit_hreg_t hreg,
+                                  uint8_t subop, int32_t imm)
+{
+    const uint8_t dst = jit_hreg_x86_reg(hreg);
+
+    return emit_rex64(w, subop, dst) &&
+           emit_u8(w, 0x81) &&
+           emit_u8(w, jit_modrm(3, subop, dst)) &&
+           emit_u32(w, (uint32_t)imm);
+}
+
+/* Emit `dst op src` directly between two cached 64-bit host registers. */
+static bool emit_hreg_hreg_alu64(rv64_jit_writer_t *w, rv64_jit_hreg_t dst,
+                                 rv64_jit_hreg_t src, uint8_t opcode)
+{
+    const uint8_t dst_reg = jit_hreg_x86_reg(dst);
+    const uint8_t src_reg = jit_hreg_x86_reg(src);
+
+    return emit_rex64(w, src_reg, dst_reg) &&
+           emit_u8(w, opcode) &&
+           emit_u8(w, jit_modrm(3, src_reg, dst_reg));
+}
+
+/* Emit one immediate shift directly into a cached 64-bit host register. */
+static bool emit_shift_hreg_imm(rv64_jit_writer_t *w, rv64_jit_hreg_t hreg,
+                                uint8_t subop, uint8_t shamt)
+{
+    const uint8_t dst = jit_hreg_x86_reg(hreg);
+
+    return emit_rex64(w, subop, dst) &&
+           emit_u8(w, 0xc1) &&
+           emit_u8(w, jit_modrm(3, subop, dst)) &&
+           emit_u8(w, shamt);
 }
 
 /* Load a full-width constant into one cached host register. */
@@ -2058,6 +2572,15 @@ static bool jit_reg_write_imm(rv64_jit_writer_t *w,
     return true;
 }
 
+/* Mark a cache slot as the freshly written value of its assigned guest register. */
+static void jit_reg_mark_written(rv64_jit_reg_cache_t *regs,
+                                 rv64_jit_reg_slot_t *slot)
+{
+    slot->loaded = true;
+    slot->dirty = true;
+    slot->age = regs->next_age++;
+}
+
 /* Copy a guest register value to another cache slot without touching memory. */
 static bool jit_reg_copy(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
                          uint32_t dst_reg, uint32_t src_reg)
@@ -2141,13 +2664,6 @@ static bool emit_eax_ecx_alu32_sext(rv64_jit_writer_t *w, uint8_t opcode)
            emit_u8(w, 0x48) && emit_u8(w, 0x98);
 }
 
-/* Emit a 64-bit immediate shift of RAX. */
-static bool emit_shift_rax_imm(rv64_jit_writer_t *w, uint8_t subop, uint8_t shamt)
-{
-    /* Group-2 ModRM subops are e0=SHL, e8=SHR and f8=SAR on RAX. */
-    return emit_u8(w, 0x48) && emit_u8(w, 0xc1) && emit_u8(w, subop) && emit_u8(w, shamt);
-}
-
 /* Emit a 32-bit immediate shift of EAX, then sign-extend to 64 bits. */
 static bool emit_shift_eax_imm_sext(rv64_jit_writer_t *w, uint8_t subop, uint8_t shamt)
 {
@@ -2226,10 +2742,15 @@ static bool emit_call_abs(rv64_jit_writer_t *w, uintptr_t target)
            emit_u8(w, 0xff) && emit_u8(w, 0xd0);
 }
 
-/* Emit an optional native-side increment for one 64-bit JIT stat counter. */
-static bool emit_inc_jit_stat_counter(rv64_jit_writer_t *w, uint64_t *counter)
+/* Emit `call rax`, used by guarded direct links once the target entry is proven. */
+static bool emit_call_rax(rv64_jit_writer_t *w)
 {
-#if RV64_JIT_STATS
+    return emit_u8(w, 0xff) && emit_u8(w, 0xd0);
+}
+
+/* Emit a native-side increment for one 64-bit counter. */
+static bool emit_inc_u64_counter(rv64_jit_writer_t *w, uint64_t *counter)
+{
     /*
      * `48 ff 00` is `inc qword ptr [rax]`.  The helper deliberately clobbers
      * RAX; callers place it after address proof and before instructions that
@@ -2237,11 +2758,25 @@ static bool emit_inc_jit_stat_counter(rv64_jit_writer_t *w, uint64_t *counter)
      */
     return emit_movabs_rax(w, (uint64_t)(uintptr_t)counter) &&
            emit_u8(w, 0x48) && emit_u8(w, 0xff) && emit_u8(w, 0x00);
+}
+
+/* Emit an optional native-side increment for one 64-bit JIT stat counter. */
+static bool emit_inc_jit_stat_counter(rv64_jit_writer_t *w, uint64_t *counter)
+{
+#if RV64_JIT_STATS
+    return emit_inc_u64_counter(w, counter);
 #else
     (void)w;
     (void)counter;
     return true;
 #endif
+}
+
+/* Conservatively mark translated instruction-fetch mappings as possibly stale. */
+static bool emit_ifetch_generation_bump(rv64_jit_writer_t *w)
+{
+    return emit_inc_u64_counter(w, &jit_ifetch_generation) &&
+           emit_inc_jit_stat_counter(w, &jit_stats.ifetch_generation_bumps);
 }
 
 /* Count one runtime load that completed through the inline translated-PMEM path. */
@@ -2271,12 +2806,162 @@ static void patch_rel32(uint8_t *disp, const uint8_t *target)
 static bool emit_interpreter_side_exit(rv64_jit_writer_t *w,
                                        rv64_jit_reg_cache_t *regs, vaddr_t pc,
                                        uint32_t completed_count,
-                                       bool loop_count_needed)
+                                       bool loop_count_needed,
+                                       rv64_jit_side_exit_reason_t reason)
 {
     return jit_reg_emit_flush_all_dirty(w, regs) &&
            emit_store_pc_imm(w, pc) &&
+           emit_inc_jit_stat_counter(w, &jit_stats.side_exit_by_reason[reason]) &&
            (loop_count_needed ? emit_return_loop_count(w, completed_count)
                               : emit_return_count(w, completed_count));
+}
+
+/* Add one conditional jump to the shared direct-link miss path. */
+static bool emit_direct_link_miss_jcc(rv64_jit_writer_t *w, uint8_t jcc_opcode,
+                                      uint8_t **miss_disps, uint32_t *miss_count)
+{
+    Assert(*miss_count < RV64_JIT_DIRECT_LINK_MISS_PATCHES,
+           "jit: RV64 direct-link miss patch list overflow");
+    return emit_jcc_rel32_placeholder(w, jcc_opcode, &miss_disps[(*miss_count)++]);
+}
+
+/* Emit a guarded call to a known-next-PC native block, otherwise return to C. */
+static bool emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                                  vaddr_t target_pc, uint32_t completed_count,
+                                  bool source_uses_data_state,
+                                  uint64_t *extra_taken_counter)
+{
+    const word_t satp = cpu.csr.satp;
+    const uint32_t ifetch_state = jit_ifetch_state();
+    rv64_jit_block_t *target =
+        jit_cache_slot_context(target_pc, satp, ifetch_state);
+    uint8_t *miss_disps[RV64_JIT_DIRECT_LINK_MISS_PATCHES];
+    uint32_t miss_count = 0;
+
+    const uint32_t valid_off = (uint32_t)offsetof(rv64_jit_block_t, valid);
+    const uint32_t translated_off = (uint32_t)offsetof(rv64_jit_block_t, translated);
+    const uint32_t uses_data_state_off =
+        (uint32_t)offsetof(rv64_jit_block_t, uses_data_state);
+    const uint32_t pc_off = (uint32_t)offsetof(rv64_jit_block_t, pc);
+    const uint32_t satp_off = (uint32_t)offsetof(rv64_jit_block_t, satp);
+    const uint32_t ifetch_state_off =
+        (uint32_t)offsetof(rv64_jit_block_t, ifetch_state);
+    const uint32_t data_state_off =
+        (uint32_t)offsetof(rv64_jit_block_t, data_state);
+    const uint32_t ifetch_generation_off =
+        (uint32_t)offsetof(rv64_jit_block_t, ifetch_generation);
+    const uint32_t insn_count_off =
+        (uint32_t)offsetof(rv64_jit_block_t, insn_count);
+    const uint32_t entry_off = (uint32_t)offsetof(rv64_jit_block_t, entry);
+    const uint32_t data_state = jit_data_tlb_state(MEM_TYPE_READ);
+    uint8_t *data_state_ok_disp = NULL;
+    uint8_t *ifetch_generation_ok_disp = NULL;
+
+    /*
+     * The source block itself has already been matched by the C dispatcher.
+     * Direct links duplicate only the cheap part of that validation.  If a
+     * translated target may need source-page revalidation, the generation guard
+     * misses back to C so jit_block_matches() owns the full page walk.
+     */
+    if (!jit_reg_emit_flush_all_dirty(w, regs) ||
+        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)target) ||
+        !emit_cmp_rdxb_field_imm8(w, valid_off, 1) ||
+        !emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count) ||
+        !emit_movabs_rax(w, target_pc) ||
+        !emit_cmp_rdxq_field_rax(w, pc_off) ||
+        !emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count) ||
+        !emit_movabs_rax(w, satp) ||
+        !emit_cmp_rdxq_field_rax(w, satp_off) ||
+        !emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count) ||
+        !emit_cmp_rdxd_field_imm32(w, ifetch_state_off, ifetch_state) ||
+        !emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count) ||
+        !emit_cmp_rdxb_field_imm8(w, uses_data_state_off, 0))
+    {
+        return false;
+    }
+
+    if (source_uses_data_state)
+    {
+        if (!emit_jcc_rel32_placeholder(w, 0x84, &data_state_ok_disp) ||
+            !emit_cmp_rdxd_field_imm32(w, data_state_off, data_state) ||
+            !emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count))
+        {
+            return false;
+        }
+        patch_rel32(data_state_ok_disp, w->cur);
+    }
+    else if (!emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count))
+    {
+        return false;
+    }
+
+    if (!emit_cmp_rdxb_field_imm8(w, translated_off, 0) ||
+        !emit_jcc_rel32_placeholder(w, 0x84, &ifetch_generation_ok_disp) ||
+        !emit_movabs_rax(w, (uint64_t)(uintptr_t)&jit_ifetch_generation) ||
+        !emit_mov_rax_m64_rax(w) ||
+        !emit_cmp_rdxq_field_rax(w, ifetch_generation_off) ||
+        !emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count))
+    {
+        return false;
+    }
+    patch_rel32(ifetch_generation_ok_disp, w->cur);
+
+    if (!emit_cmp_rdxq_field_imm8(w, entry_off, 0) ||
+        !emit_direct_link_miss_jcc(w, 0x84, miss_disps, &miss_count) ||
+        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_loop_extra) ||
+        !emit_mov_eax_m32_rdx(w) ||
+        !emit_add_eax_imm32(w, completed_count) ||
+        !emit_mov_ecx_eax(w) ||
+        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)target) ||
+        !emit_add_ecx_rdxd_field(w, insn_count_off) ||
+        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_entry_budget) ||
+        !emit_cmp_ecx_m32_rdx(w) ||
+        !emit_direct_link_miss_jcc(w, 0x87, miss_disps, &miss_count) ||
+        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&jit_loop_extra) ||
+        !emit_mov_m32_rdx_eax(w))
+    {
+        return false;
+    }
+
+#if RV64_JIT_STATS
+    uint8_t *guarded_taken_disp = NULL;
+    uint8_t *guarded_done_disp = NULL;
+
+    if (!emit_movabs_rdx(w, (uint64_t)(uintptr_t)target) ||
+        !emit_cmp_rdxb_field_imm8(w, translated_off, 0) ||
+        !emit_jcc_rel32_placeholder(w, 0x85, &guarded_taken_disp) ||
+        !emit_cmp_rdxb_field_imm8(w, uses_data_state_off, 0) ||
+        !emit_jcc_rel32_placeholder(w, 0x84, &guarded_done_disp))
+    {
+        return false;
+    }
+    patch_rel32(guarded_taken_disp, w->cur);
+    if (!emit_inc_jit_stat_counter(w, &jit_stats.direct_guarded_link_taken_count))
+    {
+        return false;
+    }
+    patch_rel32(guarded_done_disp, w->cur);
+#endif
+
+    if (!emit_inc_jit_stat_counter(w, &jit_stats.direct_link_taken_count) ||
+        !(extra_taken_counter == NULL ||
+          emit_inc_jit_stat_counter(w, extra_taken_counter)) ||
+        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)target) ||
+        !emit_mov_rax_rdxq_field(w, entry_off) ||
+        !emit_call_rax(w) ||
+        !emit_return_eax(w))
+    {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < miss_count; i++)
+    {
+        patch_rel32(miss_disps[i], w->cur);
+    }
+
+    return emit_store_pc_imm(w, target_pc) &&
+           emit_inc_jit_stat_counter(w, &jit_stats.direct_link_miss_count) &&
+           emit_return_loop_count(w, completed_count);
 }
 
 /* Emit the x86 load instruction matching one RV64 load funct3 field. */
@@ -2586,7 +3271,9 @@ static bool emit_paged_load_instr(rv64_jit_writer_t *w,
         }
 
         patch_rel32(align_slow_disp, w->cur);
-        if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count, loop_count_needed))
+        if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
+                                        loop_count_needed,
+                                        RV64_JIT_SIDE_EXIT_LOAD_GUARD))
         {
             return false;
         }
@@ -2701,7 +3388,9 @@ static bool emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
     patch_rel32(range_slow_disp, w->cur);
 
-    if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count, loop_count_needed))
+    if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
+                                    loop_count_needed,
+                                    RV64_JIT_SIDE_EXIT_LOAD_GUARD))
     {
         return false;
     }
@@ -2761,6 +3450,7 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
         !emit_store_page_table_guard(w, &page_table_disp) ||
         !emit_inline_paged_store_hit_stats(w) ||
         !emit_direct_pmem_store_from_rcx(w, len) ||
+        !emit_ifetch_generation_bump(w) ||
         !emit_jmp_rel32_placeholder(w, &fast_done_disp))
     {
         return false;
@@ -2779,6 +3469,8 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
         !emit_load_cpu_base(w) ||
         !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
         !emit_store_pc_imm(w, next_pc) ||
+        !emit_inc_jit_stat_counter(w,
+                                   &jit_stats.side_exit_by_reason[RV64_JIT_SIDE_EXIT_PAGED_STORE_HELPER]) ||
         !(loop_count_needed ? emit_return_loop_count(w, completed_count + 1u)
                              : emit_return_count(w, completed_count + 1u)))
     {
@@ -2800,7 +3492,9 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
         }
 
         patch_rel32(align_slow_disp, w->cur);
-        if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count, loop_count_needed))
+        if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
+                                        loop_count_needed,
+                                        RV64_JIT_SIDE_EXIT_STORE_GUARD))
         {
             return false;
         }
@@ -2908,6 +3602,8 @@ static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
 
     if (!emit_load_cpu_base(w) ||
         !emit_store_pc_imm(w, next_pc) ||
+        !emit_inc_jit_stat_counter(w,
+                                   &jit_stats.side_exit_by_reason[RV64_JIT_SIDE_EXIT_STORE_SOURCE]) ||
         !(loop_count_needed ? emit_return_loop_count(w, completed_count + 1u)
                              : emit_return_count(w, completed_count + 1u)))
     {
@@ -2920,7 +3616,9 @@ static bool emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
     patch_rel32(range_slow_disp, w->cur);
 
-    if (!emit_interpreter_side_exit(w, regs, pc, completed_count, loop_count_needed))
+    if (!emit_interpreter_side_exit(w, regs, pc, completed_count,
+                                    loop_count_needed,
+                                    RV64_JIT_SIDE_EXIT_STORE_GUARD))
     {
         return false;
     }
@@ -2959,6 +3657,133 @@ static bool emit_m_helper(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     return true;
 }
 
+/* Emit a one-source integer op directly in the destination cache slot. */
+static bool emit_op_imm_hreg(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                             uint32_t rd, uint32_t rs1, uint8_t subop,
+                             int32_t imm)
+{
+    if (rd == 0)
+    {
+        return true;
+    }
+
+    if (rs1 == 0)
+    {
+        switch (subop)
+        {
+        case 0x0: /* ADD: 0 + imm */
+        case 0x1: /* OR: 0 | imm */
+        case 0x6: /* XOR: 0 ^ imm */
+            return jit_reg_write_imm(w, regs, rd, (uint64_t)(int64_t)imm);
+        case 0x4: /* AND: 0 & imm */
+            return jit_reg_write_imm(w, regs, rd, 0);
+        default:
+            return false;
+        }
+    }
+
+    rv64_jit_reg_slot_t *src = jit_reg_loaded_slot(w, regs, rs1);
+    if (src == NULL)
+    {
+        return false;
+    }
+
+    rv64_jit_reg_slot_t *dst = jit_reg_alloc(w, regs, rd);
+    if (dst == NULL ||
+        (dst != src && !emit_mov_hreg_hreg(w, dst->hreg, src->hreg)) ||
+        !emit_hreg_imm32_alu64(w, dst->hreg, subop, imm))
+    {
+        return false;
+    }
+
+    jit_reg_mark_written(regs, dst);
+    return true;
+}
+
+/* Emit a shift-immediate op directly in the destination cache slot. */
+static bool emit_shift_imm_hreg(rv64_jit_writer_t *w,
+                                rv64_jit_reg_cache_t *regs,
+                                uint32_t rd, uint32_t rs1,
+                                uint8_t subop, uint8_t shamt)
+{
+    if (rd == 0)
+    {
+        return true;
+    }
+
+    if (rs1 == 0)
+    {
+        return jit_reg_write_imm(w, regs, rd, 0);
+    }
+
+    rv64_jit_reg_slot_t *src = jit_reg_loaded_slot(w, regs, rs1);
+    if (src == NULL)
+    {
+        return false;
+    }
+
+    rv64_jit_reg_slot_t *dst = jit_reg_alloc(w, regs, rd);
+    if (dst == NULL ||
+        (dst != src && !emit_mov_hreg_hreg(w, dst->hreg, src->hreg)) ||
+        !emit_shift_hreg_imm(w, dst->hreg, subop, shamt))
+    {
+        return false;
+    }
+
+    jit_reg_mark_written(regs, dst);
+    return true;
+}
+
+/* Emit a two-source integer ALU op directly between cached host registers. */
+static bool emit_op_hreg(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                         uint32_t rd, uint32_t rs1, uint32_t rs2,
+                         uint8_t opcode, bool commutative)
+{
+    if (rd == 0)
+    {
+        return true;
+    }
+
+    rv64_jit_reg_slot_t *src1 = jit_reg_loaded_slot(w, regs, rs1);
+    rv64_jit_reg_slot_t *src2 = jit_reg_loaded_slot(w, regs, rs2);
+
+    if (src1 == NULL || src2 == NULL)
+    {
+        return false;
+    }
+
+    rv64_jit_reg_slot_t *dst = NULL;
+    rv64_jit_reg_slot_t *rhs = NULL;
+
+    if (rd == rs1)
+    {
+        dst = src1;
+        rhs = src2;
+    }
+    else if (commutative && rd == rs2)
+    {
+        dst = src2;
+        rhs = src1;
+    }
+    else
+    {
+        dst = jit_reg_alloc(w, regs, rd);
+        if (dst == NULL || !emit_mov_hreg_hreg(w, dst->hreg, src1->hreg))
+        {
+            return false;
+        }
+        rhs = src2;
+    }
+
+    if (!emit_hreg_hreg_alu64(w, dst->hreg, rhs->hreg, opcode))
+    {
+        return false;
+    }
+
+    jit_reg_mark_written(regs, dst);
+    return true;
+}
+
 /* Emit a 64-bit RISC-V OP-IMM instruction into native code. */
 static bool emit_op_imm(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
                         uint32_t instr)
@@ -2973,40 +3798,46 @@ static bool emit_op_imm(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         return jit_reg_copy(w, regs, rd, rs1);
     }
 
-    if (!jit_reg_read_rax(w, regs, rs1))
-    {
-        return false;
-    }
-
     switch (funct3)
     {
     case 0x0: /* ADDI */
-        return emit_add_rax_imm32(w, imm) && jit_reg_write_rax(w, regs, rd);
+        return emit_op_imm_hreg(w, regs, rd, rs1, 0x0, imm);
     case 0x2: /* SLTI, signed compare; SETL is opcode 0x9c. */
+        if (!jit_reg_read_rax(w, regs, rs1))
+        {
+            return false;
+        }
         return emit_cmp_rax_imm32(w, imm) && emit_setcc_rax(w, 0x9c) && jit_reg_write_rax(w, regs, rd);
     case 0x3: /* SLTIU, unsigned compare; SETB is opcode 0x92. */
+        if (!jit_reg_read_rax(w, regs, rs1))
+        {
+            return false;
+        }
         return emit_cmp_rax_imm32(w, imm) && emit_setcc_rax(w, 0x92) && jit_reg_write_rax(w, regs, rd);
-    case 0x4: /* XORI; `48 35 imm32` is XOR RAX, sign-extended imm32. */
-        return emit_u8(w, 0x48) && emit_u8(w, 0x35) && emit_u32(w, (uint32_t)imm) && jit_reg_write_rax(w, regs, rd);
-    case 0x6: /* ORI; `48 0d imm32` is OR RAX, sign-extended imm32. */
-        return emit_u8(w, 0x48) && emit_u8(w, 0x0d) && emit_u32(w, (uint32_t)imm) && jit_reg_write_rax(w, regs, rd);
-    case 0x7: /* ANDI; `48 25 imm32` is AND RAX, sign-extended imm32. */
-        return emit_u8(w, 0x48) && emit_u8(w, 0x25) && emit_u32(w, (uint32_t)imm) && jit_reg_write_rax(w, regs, rd);
+    case 0x4: /* XORI */
+        return emit_op_imm_hreg(w, regs, rd, rs1, 0x6, imm);
+    case 0x6: /* ORI */
+        return emit_op_imm_hreg(w, regs, rd, rs1, 0x1, imm);
+    case 0x7: /* ANDI */
+        return emit_op_imm_hreg(w, regs, rd, rs1, 0x4, imm);
     case 0x1: /* SLLI; funct6 must be 000000 for RV64 base shifts. */
         if (bits(instr, 31, 26) != 0x00)
         {
             return false;
         }
-        return emit_shift_rax_imm(w, 0xe0, (uint8_t)bits(instr, 25, 20)) && jit_reg_write_rax(w, regs, rd);
+        return emit_shift_imm_hreg(w, regs, rd, rs1, 0x4,
+                                   (uint8_t)bits(instr, 25, 20));
     case 0x5: /* SRLI/SRAI; funct6 selects logical versus arithmetic right shift. */
         if (bits(instr, 31, 26) == 0x00)
         {
-            return emit_shift_rax_imm(w, 0xe8, (uint8_t)bits(instr, 25, 20)) && jit_reg_write_rax(w, regs, rd);
+            return emit_shift_imm_hreg(w, regs, rd, rs1, 0x5,
+                                       (uint8_t)bits(instr, 25, 20));
         }
 
         if (bits(instr, 31, 26) == 0x10)
         {
-            return emit_shift_rax_imm(w, 0xf8, (uint8_t)bits(instr, 25, 20)) && jit_reg_write_rax(w, regs, rd);
+            return emit_shift_imm_hreg(w, regs, rd, rs1, 0x7,
+                                       (uint8_t)bits(instr, 25, 20));
         }
         return false;
     default:
@@ -3065,6 +3896,26 @@ static bool emit_op(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     const uint32_t rs1 = bits(instr, 19, 15);
     const uint32_t rs2 = bits(instr, 24, 20);
     const uint32_t key = (bits(instr, 31, 25) << 3) | funct3;
+
+    switch (key)
+    {
+    case 0x000: /* ADD */
+        return emit_op_hreg(w, regs, rd, rs1, rs2, 0x01, true);
+    case 0x100: /* SUB */
+        if (rd != rs2)
+        {
+            return emit_op_hreg(w, regs, rd, rs1, rs2, 0x29, false);
+        }
+        break;
+    case 0x004: /* XOR */
+        return emit_op_hreg(w, regs, rd, rs1, rs2, 0x31, true);
+    case 0x006: /* OR */
+        return emit_op_hreg(w, regs, rd, rs1, rs2, 0x09, true);
+    case 0x007: /* AND */
+        return emit_op_hreg(w, regs, rd, rs1, rs2, 0x21, true);
+    default:
+        break;
+    }
 
     if (!jit_reg_read_rax(w, regs, rs1) || !jit_reg_read_rcx(w, regs, rs2))
     {
@@ -3195,6 +4046,8 @@ static bool emit_branch_chain_backedge(rv64_jit_writer_t *w,
     return emit_mov_ecx_eax(w) &&
            jit_reg_emit_flush_all_dirty(w, regs) &&
            emit_store_pc_imm(w, target) &&
+           emit_inc_jit_stat_counter(w,
+                                     &jit_stats.side_exit_by_reason[RV64_JIT_SIDE_EXIT_CHAINED_OVER_BUDGET]) &&
            emit_mov_eax_ecx(w) &&
            emit_return_eax(w);
 }
@@ -3203,8 +4056,8 @@ static bool emit_branch_chain_backedge(rv64_jit_writer_t *w,
 static bool emit_branch(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
                         uint32_t instr, vaddr_t pc,
                         vaddr_t block_start_pc, const uint8_t *block_start_native,
-                        bool loop_count_needed, bool chain_safe,
-                        bool *branch_chained, uint32_t exit_count)
+                        bool chain_safe, bool *branch_chained,
+                        uint32_t exit_count, bool source_uses_data_state)
 {
     const uint32_t funct3 = bits(instr, 14, 12);
     const uint32_t rs1 = bits(instr, 19, 15);
@@ -3258,10 +4111,9 @@ static bool emit_branch(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         }
         *branch_chained = true;
     }
-    else if (!jit_reg_emit_flush_all_dirty(w, regs) ||
-             !emit_store_pc_imm(w, target) ||
-             !(loop_count_needed ? emit_return_loop_count(w, exit_count)
-                                  : emit_return_count(w, exit_count)))
+    else if (!emit_direct_link_exit(w, regs, target, exit_count,
+                                    source_uses_data_state,
+                                    &jit_stats.direct_branch_link_taken_count))
     {
         return false;
     }
@@ -3273,7 +4125,8 @@ static bool emit_branch(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
 /* Emit JAL or JALR, both of which end the current native block. */
 static bool emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
                             uint32_t instr, vaddr_t pc,
-                            uint32_t completed_count, bool loop_count_needed)
+                            uint32_t completed_count, bool loop_count_needed,
+                            bool source_uses_data_state)
 {
     const uint32_t opcode = instr & RV64_OPCODE_MASK;
     const uint32_t rd = bits(instr, 11, 7);
@@ -3293,10 +4146,8 @@ static bool emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         JIT_STAT_INC(native_jumps);
         return emit_movabs_rax(w, link) &&
                jit_reg_write_rax(w, regs, rd) &&
-               jit_reg_flush_all_dirty(w, regs) &&
-               emit_store_pc_imm(w, target) &&
-               (loop_count_needed ? emit_return_loop_count(w, completed_count + 1u)
-                                  : emit_return_count(w, completed_count + 1u));
+               emit_direct_link_exit(w, regs, target, completed_count + 1u,
+                                     source_uses_data_state, NULL);
     }
 
     if (opcode != RV64_OPCODE_JALR || bits(instr, 14, 12) != 0)
@@ -3334,7 +4185,9 @@ static bool emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
 
     patch_rel32(misaligned_disp, w->cur);
-    if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count, loop_count_needed))
+    if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
+                                    loop_count_needed,
+                                    RV64_JIT_SIDE_EXIT_JALR_MISALIGNED))
     {
         return false;
     }
@@ -3406,44 +4259,52 @@ static bool jit_translate_ifetch_ex(vaddr_t pc, paddr_t *paddr, bool *translated
     return false;
 }
 
-/* Translate an instruction-fetch virtual PC to its physical source address. */
-static bool jit_translate_ifetch(vaddr_t pc, paddr_t *paddr)
-{
-    bool translated = false;
-    return jit_translate_ifetch_ex(pc, paddr, &translated);
-}
-
 /* Check whether a cache slot still describes the current PC and source bytes. */
-static bool jit_block_matches(const rv64_jit_block_t *block, vaddr_t pc)
+static bool jit_block_matches(rv64_jit_block_t *block, vaddr_t pc)
 {
     if (!block->valid ||
         block->pc != pc ||
         block->satp != cpu.csr.satp ||
+        block->ifetch_state != jit_ifetch_state())
+    {
+        return false;
+    }
+
+    if (block->uses_data_state &&
         block->data_state != jit_data_tlb_state(MEM_TYPE_READ))
     {
         return false;
     }
 
-    /*
-     * Sv39 page tables can remap virtual instruction pages without changing
-     * satp.  Re-translate every virtual page touched by this block before
-     * trusting cached native code.  Most blocks fit in one page, while hot loops
-     * near a page boundary still keep their native block if the recorded
-     * physical source bytes are unchanged.
-     */
     if (block->translated)
     {
+        if (block->ifetch_generation == jit_ifetch_generation)
+        {
+            JIT_STAT_INC(ifetch_generation_fast_hits);
+            return true;
+        }
+
+        JIT_STAT_INC(ifetch_generation_revalidations);
+
+        /*
+         * Writes and SFENCE.VMA conservatively bump the global ifetch
+         * generation.  Only after such a bump do we re-translate the virtual
+         * pages touched by this block and refresh its generation if the
+         * physical source bytes are still identical.
+         */
         uint32_t offset = 0;
 
         while (offset < block->source_len)
         {
             const vaddr_t check_pc = pc + (vaddr_t)offset;
+            paddr_t expected = 0;
             paddr_t now = 0;
             bool translated = false;
 
-            if (!jit_translate_ifetch_ex(check_pc, &now, &translated) ||
+            if (!jit_block_source_paddr_at(block, offset, &expected) ||
+                !jit_translate_ifetch_ex(check_pc, &now, &translated) ||
                 !translated ||
-                now != block->paddr_start + (paddr_t)offset)
+                now != expected)
             {
                 return false;
             }
@@ -3453,6 +4314,8 @@ static bool jit_block_matches(const rv64_jit_block_t *block, vaddr_t pc)
             const uint32_t remaining = block->source_len - offset;
             offset += page_left < remaining ? page_left : remaining;
         }
+
+        block->ifetch_generation = jit_ifetch_generation;
     }
 
     return true;
@@ -3468,11 +4331,22 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, bool translated)
     *block = (rv64_jit_block_t){
         .valid = true,
         .translated = translated,
+        .uses_data_state = false,
         .pc = pc,
         .satp = cpu.csr.satp,
+        .ifetch_state = jit_ifetch_state(),
         .data_state = jit_data_tlb_state(MEM_TYPE_READ),
+        .ifetch_generation = jit_ifetch_generation,
         .paddr_start = paddr,
         .source_len = RV64_INSN_SIZE,
+        .source_segment_count = 1,
+        .source_segments = {
+            {
+                .paddr_start = paddr,
+                .source_offset = 0,
+                .len = RV64_INSN_SIZE,
+            },
+        },
         .insn_count = 0,
         .entry = NULL,
     };
@@ -3481,7 +4355,8 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, bool translated)
      * rewrites an unsupported instruction into a supported one, exact
      * invalidation must remove this marker so the JIT can compile the new bytes.
      */
-    jit_source_chunks_ref(paddr, RV64_INSN_SIZE);
+    jit_source_chunks_ref(block);
+    jit_source_reverse_map_add(block);
 }
 
 /* Return true for opcodes that can appear inside a native chained loop body. */
@@ -3508,18 +4383,19 @@ static bool jit_instr_can_chain_body(uint32_t instr)
 
 /* Cheaply pre-scan whether this block has a branch back to its own start. */
 static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
-                                             paddr_t first_paddr)
+                                             bool first_translated)
 {
     vaddr_t cur_pc = pc;
     uint32_t count = 0;
-    uint32_t source_len = 0;
 
-    while (count < max_insns && count < RV64_JIT_BLOCK_MAX_INSNS)
+    while (count < max_insns && count < RV64_JIT_TRACE_MAX_INSNS)
     {
         paddr_t cur_paddr = 0;
+        bool cur_translated = false;
 
-        if (!jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr) ||
-            cur_paddr != first_paddr + (paddr_t)source_len)
+        if (!jit_translate_ifetch_ex(cur_pc, &cur_paddr, &cur_translated) ||
+            !in_pmem(cur_paddr) ||
+            cur_translated != first_translated)
         {
             return false;
         }
@@ -3538,7 +4414,6 @@ static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
         }
 
         cur_pc += RV64_INSN_SIZE;
-        source_len += RV64_INSN_SIZE;
         count++;
     }
 
@@ -3581,16 +4456,18 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         return NULL;
     }
 
-    const bool loop_count_needed =
-        jit_block_has_chainable_backedge(pc, max_insns, first_paddr);
+    const bool chain_safe_start =
+        jit_block_has_chainable_backedge(pc, max_insns, first_translated);
+    const bool loop_count_needed = true;
     const uint8_t *block_start_native = w.cur;
     vaddr_t cur_pc = pc;
     uint32_t count = 0;
-    uint32_t source_len = 0;
-    bool chain_safe = loop_count_needed;
-    bool chained_loop = false;
+    rv64_jit_source_builder_t source = {0};
+    bool chain_safe = chain_safe_start;
+    bool uses_data_state = false;
+    rv64_jit_block_end_reason_t block_end_reason = RV64_JIT_BLOCK_END_BUDGET;
 
-    while (count < max_insns && count < RV64_JIT_BLOCK_MAX_INSNS)
+    while (count < max_insns && count < RV64_JIT_TRACE_MAX_INSNS)
     {
         /*
          * Re-translate every guest instruction, even inside one block. This keeps
@@ -3604,11 +4481,7 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
             !in_pmem(cur_paddr) ||
             cur_translated != first_translated)
         {
-            break;
-        }
-
-        if (cur_paddr != first_paddr + (paddr_t)source_len)
-        {
+            block_end_reason = RV64_JIT_BLOCK_END_SOURCE_BOUNDARY;
             break;
         }
 
@@ -3616,17 +4489,29 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         const uint32_t opcode = instr & RV64_OPCODE_MASK;
         uint8_t *instr_start = w.cur;
         rv64_jit_reg_cache_t regs_start = regs;
+        rv64_jit_source_builder_t source_start = source;
         bool end_block = false;
+
+        if (!jit_source_builder_append(&source, cur_paddr, RV64_INSN_SIZE))
+        {
+            block_end_reason = RV64_JIT_BLOCK_END_SOURCE_BOUNDARY;
+            break;
+        }
 
         if (opcode == RV64_OPCODE_JAL ||
             opcode == RV64_OPCODE_JALR)
         {
-            if (!emit_jump_instr(&w, &regs, instr, cur_pc, count, loop_count_needed))
+            if (!emit_jump_instr(&w, &regs, instr, cur_pc, count,
+                                 loop_count_needed, uses_data_state))
             {
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
+                source = source_start;
+                jit_stat_unsupported_opcode(instr);
+                block_end_reason = RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX;
                 break;
             }
+            block_end_reason = RV64_JIT_BLOCK_END_JUMP;
             end_block = true;
         }
         else if (opcode == RV64_OPCODE_LOAD)
@@ -3641,7 +4526,14 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
             {
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
+                source = source_start;
+                jit_stat_unsupported_opcode(instr);
+                block_end_reason = RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX;
                 break;
+            }
+            if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != 0)
+            {
+                uses_data_state = true;
             }
         }
         else if (opcode == RV64_OPCODE_STORE)
@@ -3657,7 +4549,14 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
             {
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
+                source = source_start;
+                jit_stat_unsupported_opcode(instr);
+                block_end_reason = RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX;
                 break;
+            }
+            if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != 0)
+            {
+                uses_data_state = true;
             }
         }
         else if (opcode == RV64_OPCODE_BRANCH)
@@ -3665,17 +4564,20 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
             bool branch_chained = false;
 
             if (!emit_branch(&w, &regs, instr, cur_pc, pc, block_start_native,
-                             loop_count_needed, chain_safe, &branch_chained,
-                             count + 1u))
+                             chain_safe, &branch_chained, count + 1u,
+                             uses_data_state))
             {
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
+                source = source_start;
+                jit_stat_unsupported_opcode(instr);
+                block_end_reason = RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX;
                 break;
             }
 
             if (branch_chained)
             {
-                chained_loop = true;
+                block_end_reason = RV64_JIT_BLOCK_END_CHAINED_LOOP;
                 end_block = true;
             }
         }
@@ -3683,11 +4585,13 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         {
             w.cur = instr_start;
             jit_reg_cache_restore(&regs, &regs_start);
+            source = source_start;
+            jit_stat_unsupported_opcode(instr);
+            block_end_reason = RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX;
             break;
         }
 
         cur_pc += RV64_INSN_SIZE;
-        source_len += RV64_INSN_SIZE;
         count++;
 
         /*
@@ -3708,10 +4612,7 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         return NULL;
     }
 
-    if (!jit_reg_flush_all_dirty(&w, &regs) ||
-        !emit_store_pc_imm(&w, cur_pc) ||
-        !(chained_loop ? emit_return_loop_count(&w, count)
-                       : emit_return_count(&w, count)))
+    if (!emit_direct_link_exit(&w, &regs, cur_pc, count, uses_data_state, NULL))
     {
         return NULL;
     }
@@ -3720,21 +4621,28 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
     rv64_jit_block_t *block = jit_cache_slot(pc);
     jit_block_discard(block);
-    jit_source_chunks_ref(first_paddr, source_len);
     *block = (rv64_jit_block_t){
         .valid = true,
         .translated = first_translated,
+        .uses_data_state = uses_data_state,
         .pc = pc,
         .satp = cpu.csr.satp,
+        .ifetch_state = jit_ifetch_state(),
         .data_state = jit_data_tlb_state(MEM_TYPE_READ),
+        .ifetch_generation = jit_ifetch_generation,
         .paddr_start = first_paddr,
-        .source_len = source_len,
+        .source_len = source.source_len,
+        .source_segment_count = source.segment_count,
         .insn_count = count,
         .entry = (rv64_jit_entry_t)w.start,
     };
+    memcpy(block->source_segments, source.segments, sizeof(source.segments));
+    jit_source_chunks_ref(block);
+    jit_source_reverse_map_add(block);
 
     jit_code_used = (size_t)(w.cur - jit_code);
     JIT_STAT_INC(blocks_compiled);
+    jit_stat_block_end(block_end_reason);
     if (first_translated)
     {
         JIT_STAT_INC(translated_blocks);
@@ -3742,6 +4650,15 @@ static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
         {
             JIT_STAT_INC(translated_cross_page_blocks);
         }
+    }
+    if (source.segment_count > 1u)
+    {
+        JIT_STAT_INC(segmented_source_blocks);
+    }
+    if (count > RV64_JIT_BLOCK_MAX_INSNS)
+    {
+        JIT_STAT_INC(trace_blocks);
+        JIT_STAT_ADD(trace_insns, count);
     }
     JIT_STAT_ADD(compiled_insns, count);
     return block;
@@ -3767,6 +4684,7 @@ void isa_jit_flush_all(void)
 void isa_jit_flush_data_tlb(void)
 {
     jit_data_tlb_flush();
+    jit_ifetch_generation_bump();
 }
 
 /* Invalidate native blocks whose physical source bytes overlap a PMEM write. */
@@ -3779,6 +4697,13 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
         return;
     }
 
+    /*
+     * This conservative generation bump covers page-table remaps for translated
+     * instruction fetches.  Exact source-byte invalidation below still discards
+     * native blocks whose physical code bytes changed.
+     */
+    jit_ifetch_generation_bump();
+
     if (jit_write_may_touch_data_tlb_page_table(addr, len))
     {
         JIT_STAT_INC(data_tlb_page_table_flushes);
@@ -3790,16 +4715,43 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
         return;
     }
 
+    size_t first = 0;
+    size_t last = 0;
+
+    if (jit_source_chunk_range(addr, (uint32_t)len, &first, &last))
+    {
+        JIT_STAT_INC(source_reverse_invalidations);
+
+        for (size_t chunk = first; chunk <= last; chunk++)
+        {
+            uint32_t node = jit_source_chunk_heads[chunk];
+
+            while (node != RV64_JIT_SOURCE_LINK_NULL)
+            {
+                const uint32_t next = jit_source_links[node].next;
+                rv64_jit_block_t *block = &jit_cache[jit_source_links[node].block_index];
+
+                if (block->valid &&
+                    jit_block_source_overlaps(block, addr, len))
+                {
+                    jit_block_discard(block);
+                    JIT_STAT_INC(invalidated_blocks);
+                }
+
+                node = next;
+            }
+        }
+
+        return;
+    }
+
+    JIT_STAT_INC(source_full_invalidation_scans);
     for (size_t i = 0; i < RV64_JIT_CACHE_SIZE; i++)
     {
         rv64_jit_block_t *block = &jit_cache[i];
 
-        if (!block->valid)
-        {
-            continue;
-        }
-
-        if (jit_ranges_overlap(block->paddr_start, block->source_len, addr, len))
+        if (block->valid &&
+            jit_block_source_overlaps(block, addr, len))
         {
             jit_block_discard(block);
             JIT_STAT_INC(invalidated_blocks);
@@ -3835,9 +4787,9 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
         uint32_t remaining_budget = batch_budget - total;
         uint32_t block_budget = remaining_budget;
 
-        if (block_budget > RV64_JIT_BLOCK_MAX_INSNS)
+        if (block_budget > RV64_JIT_TRACE_MAX_INSNS)
         {
-            block_budget = RV64_JIT_BLOCK_MAX_INSNS;
+            block_budget = RV64_JIT_TRACE_MAX_INSNS;
         }
 
         rv64_jit_block_t *block = jit_cache_slot(cpu.pc);
@@ -3913,6 +4865,24 @@ static uint64_t jit_percent_x100(uint64_t numerator, uint64_t denominator)
 
     return (numerator * 10000u + denominator / 2u) / denominator;
 }
+
+static const char *const jit_block_end_reason_names[RV64_JIT_BLOCK_END_COUNT] = {
+    "budget",
+    "jump",
+    "chained-loop",
+    "source-boundary",
+    "unsupported-after-prefix",
+};
+
+static const char *const jit_side_exit_reason_names[RV64_JIT_SIDE_EXIT_COUNT] = {
+    "load-guard",
+    "store-guard",
+    "store-source",
+    "paged-store-helper",
+    "branch-taken",
+    "chained-over-budget",
+    "jalr-misaligned",
+};
 #endif
 
 /* Print optional RV64 JIT counters at the end of execution. */
@@ -3939,6 +4909,15 @@ void isa_jit_dump_stats(void)
         jit_ratio_x100(jit_stats.compiled_insns, jit_stats.blocks_compiled);
     const uint64_t avg_exec_len =
         jit_ratio_x100(jit_stats.executed_insns, jit_stats.blocks_executed);
+    uint64_t unsupported_opcode_total = 0;
+    uint64_t unsupported_opcode_distinct = 0;
+
+    for (uint32_t opcode = 0; opcode <= RV64_OPCODE_MASK; opcode++)
+    {
+        const uint64_t count = jit_stats.unsupported_by_opcode[opcode];
+        unsupported_opcode_total += count;
+        unsupported_opcode_distinct += count != 0 ? 1u : 0u;
+    }
 
     Log("jit: exec requests = %" PRIu64
         ", cache hits = %" PRIu64
@@ -3983,6 +4962,12 @@ void isa_jit_dump_stats(void)
         jit_stats.translated_blocks);
     Log("jit: translated cross-page blocks = %" PRIu64,
         jit_stats.translated_cross_page_blocks);
+    Log("jit: segmented source blocks = %" PRIu64,
+        jit_stats.segmented_source_blocks);
+    Log("jit: trace blocks = %" PRIu64
+        ", trace instructions = %" PRIu64,
+        jit_stats.trace_blocks,
+        jit_stats.trace_insns);
     Log("jit: reg cache spills = %" PRIu64,
         jit_stats.reg_cache_spills);
     Log("jit: native store continuations = %" PRIu64,
@@ -4013,6 +4998,53 @@ void isa_jit_dump_stats(void)
         ", inline paged store hits = %" PRIu64,
         jit_stats.inline_paged_load_hits,
         jit_stats.inline_paged_store_hits);
+    Log("jit: helper loads = %" PRIu64
+        ", helper stores = %" PRIu64,
+        jit_stats.helper_load_count,
+        jit_stats.helper_store_count);
+    Log("jit: direct links taken = %" PRIu64
+        ", misses = %" PRIu64,
+        jit_stats.direct_link_taken_count,
+        jit_stats.direct_link_miss_count);
+    Log("jit: direct branch links taken = %" PRIu64,
+        jit_stats.direct_branch_link_taken_count);
+    Log("jit: direct guarded links taken = %" PRIu64,
+        jit_stats.direct_guarded_link_taken_count);
+    Log("jit: ifetch generation fast hits = %" PRIu64
+        ", revalidations = %" PRIu64
+        ", bumps = %" PRIu64,
+        jit_stats.ifetch_generation_fast_hits,
+        jit_stats.ifetch_generation_revalidations,
+        jit_stats.ifetch_generation_bumps);
+    Log("jit: source reverse invalidations = %" PRIu64
+        ", full scans = %" PRIu64,
+        jit_stats.source_reverse_invalidations,
+        jit_stats.source_full_invalidation_scans);
+    Log("jit: unsupported opcodes total = %" PRIu64
+        ", distinct = %" PRIu64,
+        unsupported_opcode_total,
+        unsupported_opcode_distinct);
+    for (uint32_t opcode = 0; opcode <= RV64_OPCODE_MASK; opcode++)
+    {
+        if (jit_stats.unsupported_by_opcode[opcode] != 0)
+        {
+            Log("jit: unsupported opcode 0x%02x = %" PRIu64,
+                opcode,
+                jit_stats.unsupported_by_opcode[opcode]);
+        }
+    }
+    for (uint32_t reason = 0; reason < RV64_JIT_BLOCK_END_COUNT; reason++)
+    {
+        Log("jit: block end %s = %" PRIu64,
+            jit_block_end_reason_names[reason],
+            jit_stats.block_end_by_reason[reason]);
+    }
+    for (uint32_t reason = 0; reason < RV64_JIT_SIDE_EXIT_COUNT; reason++)
+    {
+        Log("jit: side exit %s = %" PRIu64,
+            jit_side_exit_reason_names[reason],
+            jit_stats.side_exit_by_reason[reason]);
+    }
     Log("jit: zero side exits = %" PRIu64,
         jit_stats.zero_side_exits);
 #else
