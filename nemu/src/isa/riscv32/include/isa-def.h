@@ -8,7 +8,7 @@ typedef struct
     struct
     {
         rtlreg_t _32;
-    } gpr[32];
+    } gpr[MUXDEF(CONFIG_RVE, 16, 32)];
     vaddr_t pc;
 
     // Current, only use - Table 7. Currently allocated RISC-V machine-level CSR addresses

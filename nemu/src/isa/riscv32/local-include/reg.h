@@ -5,12 +5,7 @@
 
 static inline int check_reg_idx(int idx)
 {
-    /*
-     * Register-index checking is compiled in only for runtime-check builds.
-     * The helper remains in the gpr() macro in all builds so debug and release
-     * access paths stay textually identical.
-     */
-    IFDEF(CONFIG_RT_CHECK, assert(idx >= 0 && idx < 32));
+    IFDEF(CONFIG_RT_CHECK, assert(idx >= 0 && idx < MUXDEF(CONFIG_RVE, 16, 32)));
     return idx;
 }
 

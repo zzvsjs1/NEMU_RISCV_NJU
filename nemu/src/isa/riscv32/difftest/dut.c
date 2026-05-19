@@ -6,7 +6,7 @@
 
 bool isSameState(CPU_state *ref_r, vaddr_t pc)
 {
-    for (size_t i = 0; i < 32; i++)
+    for (size_t i = 0; i < MUXDEF(CONFIG_RVE, 16, 32); i++)
     {
         if (cpu.gpr[i]._32 != ref_r->gpr[i]._32)
         {
@@ -50,7 +50,7 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
     }
 
     /* GPR */
-    for (size_t i = 0; i < 32; i++)
+    for (size_t i = 0; i < MUXDEF(CONFIG_RVE, 16, 32); i++)
     {
         if (cpu.gpr[i]._32 != ref_r->gpr[i]._32)
         {

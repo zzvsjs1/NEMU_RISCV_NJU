@@ -94,7 +94,7 @@ void isa_reg_display()
     printf("\n");
 
     /* Print GPRs. */
-    for (size_t i = 0; i < ARRLEN(regs); i++)
+    for (size_t i = 0; i < MUXDEF(CONFIG_RVE, 16, 32); i++)
     {
         const word_t v = gpr(i);
         printf(REG_FMT, reg_name(i, 5), v, " ", v, " ", (sword_t)v);
@@ -143,7 +143,7 @@ word_t isa_reg_str2val(const char *s, bool *success)
         return gpr(0);
     }
 
-    for (size_t i = 0; i < ARRLEN(regs); i++)
+    for (size_t i = 0; i < MUXDEF(CONFIG_RVE, 16, 32); i++)
     {
         if (strcmp(regs[i], s) == 0)
         {
@@ -170,7 +170,7 @@ void isa_set_reg_val(const char *name, const word_t val)
         return;
     }
 
-    for (size_t i = 0; i < ARRLEN(regs); i++)
+    for (size_t i = 0; i < MUXDEF(CONFIG_RVE, 16, 32); i++)
     {
         if (strcmp(regs[i], name) == 0)
         {

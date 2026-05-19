@@ -20,7 +20,7 @@
 
 #ifdef CONFIG_ISA_riscv32
 #undef DEFAULT_ISA
-#define DEFAULT_ISA "RV32IM"
+#define DEFAULT_ISA MUXDEF(CONFIG_RVE, "RV32E", "RV32IM")
 #endif
 
 #ifdef CONFIG_ISA_riscv64
@@ -46,7 +46,7 @@ static debug_module_config_t difftest_dm_config = {
 
 struct diff_context_t
 {
-    word_t gpr[32];
+    word_t gpr[RISCV_GPR_NUM];
     word_t pc;
 
     struct
@@ -120,7 +120,7 @@ void sim_t::diff_step(uint64_t n)
 void sim_t::diff_get_regs(void *diff_context)
 {
     struct diff_context_t *ctx = (struct diff_context_t *)diff_context;
-    for (int i = 0; i < NXPR; i++)
+    for (int i = 0; i < RISCV_GPR_NUM; i++)
     {
         ctx->gpr[i] = state->XPR[i];
     }
@@ -142,7 +142,7 @@ void sim_t::diff_get_regs(void *diff_context)
 void sim_t::diff_set_regs(void *diff_context)
 {
     struct diff_context_t *ctx = (struct diff_context_t *)diff_context;
-    for (int i = 0; i < NXPR; i++)
+    for (int i = 0; i < RISCV_GPR_NUM; i++)
     {
         state->XPR.write(i, (sword_t)ctx->gpr[i]);
     }

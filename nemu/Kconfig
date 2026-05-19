@@ -292,6 +292,7 @@ endmenu
 
 menu "RISC-V32 JIT acceleration"
   depends on ISA_riscv32 && TARGET_NATIVE_ELF && ENGINE_INTERPRETER
+  depends on !RVE
   depends on !TRACE && !DIFFTEST && !WATCHPOINT && !MTRACE && !FTRACE
 
 config RV32_JIT
