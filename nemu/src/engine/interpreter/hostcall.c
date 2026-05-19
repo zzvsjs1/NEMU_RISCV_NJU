@@ -8,12 +8,14 @@ void pio_write(ioaddr_t addr, int len, uint32_t data);
 
 void set_nemu_state(int state, vaddr_t pc, int halt_ret)
 {
+    difftest_skip_ref();
     nemu_state.state = state;
     nemu_state.halt_pc = pc;
     nemu_state.halt_ret = halt_ret;
 }
 
-static void invalid_instr(vaddr_t thispc)
+__attribute__((noinline))
+void invalid_inst(vaddr_t thispc)
 {
     uint32_t temp[2];
     vaddr_t pc = thispc;
@@ -47,11 +49,10 @@ def_rtl(hostcall, uint32_t id, rtlreg_t *dest, const rtlreg_t *src1,
     switch (id)
     {
     case HOSTCALL_EXIT:
-        difftest_skip_ref();
         set_nemu_state(NEMU_END, s->pc, *src1);
         break;
     case HOSTCALL_INV:
-        invalid_instr(s->pc);
+        invalid_inst(s->pc);
         break;
 #ifdef CONFIG_HAS_PORT_IO
     case HOSTCALL_PIO:

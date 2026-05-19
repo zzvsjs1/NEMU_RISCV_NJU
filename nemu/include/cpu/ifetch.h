@@ -9,4 +9,9 @@ static inline uint32_t instr_fetch(vaddr_t *pc, int len)
     return instr;
 }
 
+static inline uint32_t inst_fetch(vaddr_t *pc, int len)
+{
+    return instr_fetch(pc, len);
+}
+
 #endif

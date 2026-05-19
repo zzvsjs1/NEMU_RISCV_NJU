@@ -159,4 +159,25 @@ finish:
 #define def_hex_INSTR_TABW(pattern, tab, width) def_hex_INSTR_IDTABW(pattern, empty, tab, width)
 #define def_hex_INSTR_TAB(pattern, tab) def_hex_INSTR_IDTABW(pattern, empty, tab, 0)
 
+// --- upstream-style pattern matching wrappers for direct execution ---
+#define INSTPAT(pattern, ...) \
+    do \
+    { \
+        uint32_t key, mask, shift; \
+        pattern_decode(pattern, STRLEN(pattern), &key, &mask, &shift); \
+        if ((((uint32_t)INSTPAT_INST(s) >> shift) & mask) == key) \
+        { \
+            INSTPAT_MATCH(s, ##__VA_ARGS__); \
+            goto *__instpat_end; \
+        } \
+    } while (0)
+
+#define INSTPAT_START() \
+    { \
+        const void *__instpat_end = &&__instpat_end_;
+
+#define INSTPAT_END() \
+    __instpat_end_:; \
+    }
+
 #endif

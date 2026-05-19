@@ -18,10 +18,10 @@
 #include MUXDEF(CONFIG_TIMER_GETTIMEOFDAY, <sys/time.h>, <time.h>)
 // clang-format on
 
-IFDEF(CONFIG_TIMER_CLOCK_GETTIME,
-      static_assert(CLOCKS_PER_SEC == 1000000, "CLOCKS_PER_SEC != 1000000"));
-IFDEF(CONFIG_TIMER_CLOCK_GETTIME,
-      static_assert(sizeof(clock_t) == 8, "sizeof(clock_t) != 8"));
+#ifdef CONFIG_TIMER_CLOCK_GETTIME
+static_assert(CLOCKS_PER_SEC == 1000000, "CLOCKS_PER_SEC != 1000000");
+static_assert(sizeof(clock_t) == 8, "sizeof(clock_t) != 8");
+#endif
 
 static uint64_t boot_time = 0;
 

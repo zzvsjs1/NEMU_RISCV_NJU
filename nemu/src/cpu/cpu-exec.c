@@ -1,7 +1,9 @@
 #include <cpu/cpu.h>
 #include <cpu/exec.h>
 #include <cpu/difftest.h>
+#ifndef CONFIG_ISA_riscv32
 #include <isa-all-instr.h>
+#endif
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
 #include <isa-jit.h>
 #endif
@@ -29,7 +31,9 @@ const rtlreg_t rzero = 0;
 rtlreg_t tmp_reg[6];
 
 void device_update();
+#ifndef CONFIG_ISA_riscv32
 void fetch_decode(Decode *s, vaddr_t pc);
+#endif
 
 static void trace_and_difftest(Decode *_this, vaddr_t dnpc)
 {
@@ -64,6 +68,7 @@ static void trace_and_difftest(Decode *_this, vaddr_t dnpc)
 #endif
 }
 
+#ifndef CONFIG_ISA_riscv32
 #include <isa-exec.h>
 
 #define FILL_EXEC_TABLE(name) [concat(EXEC_ID_, name)] = concat(exec_, name),
@@ -130,6 +135,43 @@ static inline void fetch_decode_exec_updatepc(Decode *s)
     exec_decoded_instr(idx, s);
     cpu.pc = s->dnpc;
 }
+#else
+static inline void fetch_decode_exec_updatepc(Decode *s)
+{
+    s->pc = cpu.pc;
+    s->snpc = cpu.pc;
+    isa_exec_once(s);
+    cpu.pc = s->dnpc;
+#ifdef CONFIG_ITRACE
+    char *p = s->logbuf;
+    p += snprintf(p, sizeof(s->logbuf), FMT_WORD ":", s->pc);
+    int ilen = s->snpc - s->pc;
+    int i;
+    uint8_t *inst = (uint8_t *)&s->isa.inst;
+
+    for (i = ilen - 1; i >= 0; i--)
+    {
+        p += snprintf(p, 4, " %02x", inst[i]);
+    }
+
+    int ilen_max = 4;
+    int space_len = ilen_max - ilen;
+
+    if (space_len < 0)
+    {
+        space_len = 0;
+    }
+
+    space_len = space_len * 3 + 1;
+    memset(p, ' ', space_len);
+    p += space_len;
+
+    void disassemble(char *str, int size, uint64_t pc, uint8_t *code, int nbyte);
+    disassemble(p, s->logbuf + sizeof(s->logbuf) - p,
+                s->pc, (uint8_t *)&s->isa.inst, ilen);
+#endif
+}
+#endif
 
 static void statistic()
 {
@@ -166,11 +208,13 @@ static bool should_dump_failure_registers()
            (nemu_state.state == NEMU_END && nemu_state.halt_ret != 0);
 }
 
+#ifndef CONFIG_ISA_riscv32
 void fetch_decode(Decode *s, vaddr_t pc)
 {
     int idx = fetch_decode_idx(s, pc);
     s->EHelper = g_exec_table[idx];
 }
+#endif
 
 static inline word_t query_pending_intr()
 {

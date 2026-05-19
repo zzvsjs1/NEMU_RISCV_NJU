@@ -50,7 +50,7 @@ CFLAGS_BUILD += $(if $(CONFIG_CC_DEBUG),-ggdb3,)
 CFLAGS_BUILD += $(if $(CONFIG_CC_ASAN),-fsanitize=address,)
 # Native NEMU is linked as PIC/shared code; disabling semantic interposition
 # lets the compiler generate tighter intra-NEMU calls without changing guest ISA behaviour.
-CFLAGS_BUILD += -fno-semantic-interposition
+CFLAGS_BUILD += $(if $(CONFIG_TARGET_AM),,-fno-semantic-interposition)
 CFLAGS_TRACE += -DITRACE_COND=$(if $(CONFIG_ITRACE_COND),$(call remove_quote,$(CONFIG_ITRACE_COND)),true)
 CFLAGS  += $(CFLAGS_BUILD) $(CFLAGS_TRACE) -D__GUEST_ISA__=$(GUEST_ISA)
 LDFLAGS += $(CFLAGS_BUILD)

@@ -579,9 +579,14 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
  */
 static bool jit_env_flag_enabled(const char *name)
 {
+#if RV32_JIT_ENABLED
     const char *value = getenv(name);
     return value != NULL && value[0] != '\0' &&
            !(value[0] == '0' && value[1] == '\0');
+#else
+    (void)name;
+    return false;
+#endif
 }
 
 /* Cache runtime environment switches once so hot dispatch does not call getenv(). */

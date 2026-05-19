@@ -20,7 +20,7 @@
 
 #ifdef CONFIG_ISA_riscv32
 #undef DEFAULT_ISA
-#define DEFAULT_ISA MUXDEF(CONFIG_RVE, "RV32E", "RV32IM")
+#define DEFAULT_ISA MUXDEF(CONFIG_RVE, "RV32EM_Zicsr_Zifencei", "RV32IM_Zicsr_Zifencei")
 #endif
 
 #ifdef CONFIG_ISA_riscv64

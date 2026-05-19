@@ -21,6 +21,7 @@ void isa_set_reg_val(const char *name, const word_t val);
 
 // exec
 struct Decode;
+int isa_exec_once(struct Decode *s);
 int isa_fetch_decode(struct Decode *s);
 
 // memory
