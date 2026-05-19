@@ -1,0 +1,16 @@
+menu "ISA-dependent Options for RISC-V"
+
+config RV64
+  bool
+  default y if ISA_riscv64
+
+config RVE
+  bool "Use RISC-V E extension"
+  depends on ISA_riscv32 && EXPERIMENTAL_UPSTREAM_ISA
+  default n
+  help
+    Upstream exposes the RVE option for reduced-register RISC-V targets. The
+    local RISC-V execution and DiffTest paths are still built around the normal
+    32-register ABI, so this option is scaffolded behind the experimental gate.
+
+endmenu

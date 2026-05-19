@@ -202,19 +202,19 @@ extern "C"
     __EXPORT void difftest_init(int port)
     {
         difftest_htif_args.push_back("");
-        cfg_t cfg(/*default_initrd_bounds=*/std::make_pair((reg_t)0, (reg_t)0),
-                  /*default_bootargs=*/nullptr,
-                  /*default_isa=*/DEFAULT_ISA,
-                  /*default_priv=*/DEFAULT_PRIV,
-                  /*default_varch=*/DEFAULT_VARCH,
-                  /*default_misaligned=*/false,
-                  /*default_endianness*/ endianness_little,
-                  /*default_pmpregions=*/16,
-                  /*default_mem_layout=*/std::vector<mem_cfg_t>(),
-                  /*default_hartids=*/std::vector<size_t>(1),
-                  /*default_real_time_clint=*/false,
-                  /*default_trigger_count=*/4);
-        s = new sim_t(&cfg, false,
+        cfg_t *cfg = new cfg_t(/*default_initrd_bounds=*/std::make_pair((reg_t)0, (reg_t)0),
+                               /*default_bootargs=*/nullptr,
+                               /*default_isa=*/DEFAULT_ISA,
+                               /*default_priv=*/DEFAULT_PRIV,
+                               /*default_varch=*/DEFAULT_VARCH,
+                               /*default_misaligned=*/false,
+                               /*default_endianness*/ endianness_little,
+                               /*default_pmpregions=*/16,
+                               /*default_mem_layout=*/std::vector<mem_cfg_t>(),
+                               /*default_hartids=*/std::vector<size_t>(1),
+                               /*default_real_time_clint=*/false,
+                               /*default_trigger_count=*/4);
+        s = new sim_t(cfg, false,
                       difftest_mem, difftest_plugin_devices, difftest_htif_args,
                       difftest_dm_config, nullptr, false, NULL,
                       false,

@@ -3,8 +3,8 @@
 # Add necessary options if the target is a shared library
 ifeq ($(SHARE),1)
 SO = -so
-CFLAGS  += -fPIC
-LDFLAGS += -rdynamic -shared -fPIC
+CFLAGS  += -fPIC -fvisibility=hidden
+LDFLAGS += -shared -fPIC
 endif
 
 WORK_DIR  = $(shell pwd)
@@ -13,7 +13,6 @@ BUILD_DIR = $(WORK_DIR)/build
 INC_PATH := $(WORK_DIR)/include $(INC_PATH)
 OBJ_DIR  = $(BUILD_DIR)/obj-$(NAME)$(SO)
 BINARY   = $(BUILD_DIR)/$(NAME)$(SO)
-PREPROCESS = $(BUILD_DIR)/$(NAME)$(SO)/preprocess
 
 # Compilation flags
 ifeq ($(CC),clang)
@@ -24,7 +23,6 @@ endif
 LD := $(CXX)
 INCLUDES = $(addprefix -I, $(INC_PATH))
 CFLAGS  := -g -MMD -Wall $(INCLUDES) $(CFLAGS)
-CFLAGS2 = $(filter-out -MMD -g,$(CFLAGS))
 LDFLAGS := -g $(LDFLAGS)
 
 OBJS = $(SRCS:%.c=$(OBJ_DIR)/%.o) $(CXXSRC:%.cc=$(OBJ_DIR)/%.o)
@@ -34,20 +32,15 @@ $(OBJ_DIR)/%.o: %.c
 	@echo + CC $<
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c -o $@ $<
-	@$(CXX) $(CFLAGS2) $(CXXFLAGS) -E $< > $@.c
 	$(call call_fixdep, $(@:.o=.d), $@)
 
 $(OBJ_DIR)/%.o: %.cc
 	@echo + CXX $<
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CFLAGS) $(CXXFLAGS) -c -o $@ $<
-	@$(CXX) $(CFLAGS2) $(CXXFLAGS) -E $< > $@.cc
 	$(call call_fixdep, $(@:.o=.d), $@)
 
-showf:
-	echo $(CFLAGS2)
-
-# Depencies
+# Dependencies
 -include $(OBJS:.o=.d)
 
 # Some convenient rules
