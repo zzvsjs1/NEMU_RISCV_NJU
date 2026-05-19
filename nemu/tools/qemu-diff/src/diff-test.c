@@ -12,6 +12,16 @@ void gdb_exit();
 
 void init_isa();
 
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
+static __attribute__((noreturn)) void riscv_qemu_difftest_unsupported(void)
+{
+    fprintf(stderr,
+            "RISC-V qemu-diff does not provide the CSR and privilege state "
+            "required by NEMU DiffTest; use spike-diff instead.\n");
+    abort();
+}
+#endif
+
 __EXPORT void difftest_memcpy(paddr_t addr, void *buf, size_t n, bool direction)
 {
     assert(direction == DIFFTEST_TO_REF);
@@ -25,6 +35,9 @@ __EXPORT void difftest_memcpy(paddr_t addr, void *buf, size_t n, bool direction)
 
 __EXPORT void difftest_regcpy(void *dut, bool direction)
 {
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
+    riscv_qemu_difftest_unsupported();
+#else
     union isa_gdb_regs qemu_r;
     gdb_getregs(&qemu_r);
 
@@ -37,6 +50,7 @@ __EXPORT void difftest_regcpy(void *dut, bool direction)
     {
         memcpy(dut, &qemu_r, DIFFTEST_REG_SIZE);
     }
+#endif
 }
 
 __EXPORT void difftest_exec(uint64_t n)
@@ -47,6 +61,9 @@ __EXPORT void difftest_exec(uint64_t n)
 
 __EXPORT void difftest_init(int port)
 {
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
+    riscv_qemu_difftest_unsupported();
+#else
     char buf[32];
     sprintf(buf, "tcp::%d", port);
 
@@ -94,6 +111,7 @@ __EXPORT void difftest_init(int port)
 
         init_isa();
     }
+#endif
 }
 
 __EXPORT void difftest_raise_intr(uint64_t NO)

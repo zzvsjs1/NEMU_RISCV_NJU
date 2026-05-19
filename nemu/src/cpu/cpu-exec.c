@@ -1,7 +1,7 @@
 #include <cpu/cpu.h>
 #include <cpu/exec.h>
 #include <cpu/difftest.h>
-#ifndef CONFIG_ISA_riscv32
+#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64)
 #include <isa-all-instr.h>
 #endif
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
@@ -31,7 +31,7 @@ const rtlreg_t rzero = 0;
 rtlreg_t tmp_reg[6];
 
 void device_update();
-#ifndef CONFIG_ISA_riscv32
+#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64)
 void fetch_decode(Decode *s, vaddr_t pc);
 #endif
 
@@ -68,7 +68,7 @@ static void trace_and_difftest(Decode *_this, vaddr_t dnpc)
 #endif
 }
 
-#ifndef CONFIG_ISA_riscv32
+#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64)
 #include <isa-exec.h>
 
 #define FILL_EXEC_TABLE(name) [concat(EXEC_ID_, name)] = concat(exec_, name),
@@ -149,10 +149,21 @@ static inline void fetch_decode_exec_updatepc(Decode *s)
     int i;
     uint8_t *inst = (uint8_t *)&s->isa.inst;
 
+#ifdef CONFIG_ISA_riscv64
+    /*
+     * RV64 used the table interpreter's little-endian byte display before this
+     * direct path was introduced, so keep its itrace byte column stable.
+     */
+    for (i = 0; i < ilen; i++)
+    {
+        p += snprintf(p, 4, " %02x", inst[i]);
+    }
+#else
     for (i = ilen - 1; i >= 0; i--)
     {
         p += snprintf(p, 4, " %02x", inst[i]);
     }
+#endif
 
     int ilen_max = 4;
     int space_len = ilen_max - ilen;
@@ -208,7 +219,7 @@ static bool should_dump_failure_registers()
            (nemu_state.state == NEMU_END && nemu_state.halt_ret != 0);
 }
 
-#ifndef CONFIG_ISA_riscv32
+#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64)
 void fetch_decode(Decode *s, vaddr_t pc)
 {
     int idx = fetch_decode_idx(s, pc);

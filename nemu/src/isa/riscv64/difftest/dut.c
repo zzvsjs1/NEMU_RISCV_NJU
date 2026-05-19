@@ -1,6 +1,22 @@
 #include <isa.h>
 #include <cpu/difftest.h>
 #include "../local-include/reg.h"
+#include <stddef.h>
+
+_Static_assert(sizeof(CPU_state) == DIFFTEST_REG_SIZE,
+               "RV64 DiffTest ABI must cover the full CPU_state");
+_Static_assert(offsetof(CPU_state, gpr) == offsetof(riscv_difftest_state_t, gpr),
+               "RV64 DiffTest GPR offset drifted");
+_Static_assert(offsetof(CPU_state, pc) == offsetof(riscv_difftest_state_t, pc),
+               "RV64 DiffTest PC offset drifted");
+_Static_assert(offsetof(CPU_state, csr.satp) == offsetof(riscv_difftest_state_t, csr.satp),
+               "RV64 DiffTest satp offset drifted");
+_Static_assert(offsetof(CPU_state, csr.mtval) == offsetof(riscv_difftest_state_t, csr.mtval),
+               "RV64 DiffTest mtval offset drifted");
+_Static_assert(offsetof(CPU_state, prvi) == offsetof(riscv_difftest_state_t, prvi),
+               "RV64 DiffTest privilege offset drifted");
+_Static_assert(offsetof(CPU_state, INTR) == offsetof(riscv_difftest_state_t, INTR),
+               "RV64 DiffTest interrupt-pending offset drifted");
 
 #define RV64_DIFF_MSTATUS_MASK (((word_t)1u << 3) | \
                                 ((word_t)1u << 7) | \
@@ -30,7 +46,8 @@ static bool riscv64_difftest_same_state(CPU_state *ref_r)
            riscv64_difftest_same_mstatus(ref_r->csr.mstatus, cpu.csr.mstatus) &&
            ref_r->csr.mtvec == cpu.csr.mtvec &&
            ref_r->csr.mscratch == cpu.csr.mscratch &&
-           ref_r->csr.mtval == cpu.csr.mtval;
+           ref_r->csr.mtval == cpu.csr.mtval &&
+           ref_r->prvi == cpu.prvi;
 }
 
 static void riscv64_difftest_print_reg(size_t idx, word_t ref, word_t dut)
@@ -96,6 +113,7 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
     riscv64_difftest_print_named("mepc", ref_r->csr.mepc, cpu.csr.mepc);
     riscv64_difftest_print_named("mcause", ref_r->csr.mcause, cpu.csr.mcause);
     riscv64_difftest_print_named("mtval", ref_r->csr.mtval, cpu.csr.mtval);
+    riscv64_difftest_print_named("prvi", ref_r->prvi, cpu.prvi);
 
     return false;
 }

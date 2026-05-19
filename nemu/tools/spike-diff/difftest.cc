@@ -44,46 +44,6 @@ static debug_module_config_t difftest_dm_config = {
     .support_haltgroups = true,
     .support_impebreak = true};
 
-struct diff_context_t
-{
-    word_t gpr[RISCV_GPR_NUM];
-    word_t pc;
-
-    struct
-    {
-        // Supervisor address translation and protection register.
-        // 0x180
-        rtlreg_t satp;
-
-        // Machine status register.
-        // 0x300
-        rtlreg_t mstatus;
-
-        // Machine trap-handler base address.
-        // 0x305
-        rtlreg_t mtvec;
-
-        // Machine scratch register.
-        // 0x340
-        rtlreg_t mscratch;
-
-        // Machine exception program counter.
-        // 0x341
-        rtlreg_t mepc;
-
-        // Machine trap cause
-        // 0x342
-        rtlreg_t mcause;
-
-        // Machine trap value.
-        // 0x343
-        rtlreg_t mtval;
-    } csr;
-
-    rtlreg_t prvi;
-    bool INTR;
-};
-
 static sim_t *s = NULL;
 static processor_t *p = NULL;
 static state_t *state = NULL;
@@ -112,14 +72,14 @@ void sim_t::diff_init(int port)
 void sim_t::diff_step(uint64_t n)
 {
     step(n);
-    struct diff_context_t ctx;
+    riscv_difftest_state_t ctx;
     s->diff_get_regs(&ctx);
     // printf("Spike PC = 0x%x\n", ctx.pc);
 }
 
 void sim_t::diff_get_regs(void *diff_context)
 {
-    struct diff_context_t *ctx = (struct diff_context_t *)diff_context;
+    riscv_difftest_state_t *ctx = (riscv_difftest_state_t *)diff_context;
     for (int i = 0; i < RISCV_GPR_NUM; i++)
     {
         ctx->gpr[i] = state->XPR[i];
@@ -141,7 +101,7 @@ void sim_t::diff_get_regs(void *diff_context)
 
 void sim_t::diff_set_regs(void *diff_context)
 {
-    struct diff_context_t *ctx = (struct diff_context_t *)diff_context;
+    riscv_difftest_state_t *ctx = (riscv_difftest_state_t *)diff_context;
     for (int i = 0; i < RISCV_GPR_NUM; i++)
     {
         state->XPR.write(i, (sword_t)ctx->gpr[i]);

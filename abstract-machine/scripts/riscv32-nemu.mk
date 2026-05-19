@@ -1,4 +1,5 @@
 include $(AM_HOME)/scripts/isa/riscv.mk
+NEMU_DEFCONFIG ?= riscv32-am-headless-jit_defconfig
 include $(AM_HOME)/scripts/platform/nemu.mk
 CFLAGS  += -DISA_H=\"riscv/riscv.h\"
 COMMON_CFLAGS += -march=rv32im_zicsr -mabi=ilp32   # overwrite

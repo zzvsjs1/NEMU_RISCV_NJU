@@ -685,6 +685,7 @@ cd "$ROOT"
 
 [ -f "$DEFAULT_DEFCONFIG" ] || fail "missing $DEFAULT_DEFCONFIG"
 [ -f "$DEFCONFIG" ] || fail "missing $DEFCONFIG"
+bash "$SCRIPT_DIR/check-rv64-new-interpreter.sh"
 make -C "$NEMU_HOME" riscv64-am-headless-jit-stats_defconfig >/dev/null
 
 for test_name in "${TESTS[@]}"; do

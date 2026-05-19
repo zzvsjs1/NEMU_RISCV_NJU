@@ -10,12 +10,70 @@
 #include <stdlib.h>
 
 /*
- * Minimal RISC-V64 JIT bring-up.
+ * RISC-V64 x86-64 JIT design.
  *
- * The native emitter compiles RV64 integer ALU, control-flow, and guarded memory
- * instructions into x86-64 code.  Bare PMEM loads/stores use direct guards;
- * Sv39 data memory uses helper calls that reuse the interpreter MMU. CSR/trap,
- * fence, and other sensitive instructions still fall back to the interpreter.
+ * This file accelerates a conservative subset of the RV64 direct interpreter.
+ * The interpreter in `inst.c` remains the architectural reference: every case
+ * that is hard to prove safe in native code falls back before the instruction
+ * can partially commit.  The JIT is therefore an optional fast path, not a
+ * second specification of the machine.
+ *
+ * Control flow through the JIT has five stages:
+ *
+ *   1. Availability and runtime gates
+ *      `isa_jit_available()` checks compile-time options, host architecture,
+ *      executable arena allocation, and environment flags.  Tracing,
+ *      watchpoints, memory/function tracing, and DiffTest disable this path
+ *      because they require per-instruction interpreter hooks.
+ *
+ *   2. Block lookup and context matching
+ *      `isa_jit_exec()` hashes the guest PC, `satp`, and fetch privilege into a
+ *      direct-mapped block cache.  `jit_block_matches()` revalidates the cached
+ *      block against the current instruction-fetch translation state, source
+ *      bytes, and page-table dependencies before entering native code.
+ *
+ *   3. Native block compilation
+ *      `jit_compile_block()` walks up to a bounded number of 32-bit RV64
+ *      instructions, records the physical source bytes behind those virtual
+ *      fetches, and emits x86-64 into a single executable arena.  Unsupported
+ *      instructions stop compilation.  If at least one instruction was emitted,
+ *      the native block returns an executed-instruction count and leaves the
+ *      next guest PC in `cpu.pc`.
+ *
+ *   4. Native execution and side exits
+ *      Generated code keeps hot guest registers in callee-saved host registers.
+ *      Before any helper call, block exit, or interpreter side exit, dirty
+ *      cached registers are written back to `CPU_state`.  Side exits always set
+ *      `cpu.pc` to the instruction that the interpreter must execute next and
+ *      return the number of already completed guest instructions, preserving
+ *      cpu_exec() budget accounting and device polling.
+ *
+ *   5. Invalidation and dependency tracking
+ *      Compiled source bytes are tracked by physical PMEM chunks.  Instruction
+ *      fetch translations and data-TLB entries also track page-table pages.
+ *      Writes to compiled source or relevant page tables invalidate blocks or
+ *      flush translation caches before stale native code can run again.
+ *
+ * Memory handling is intentionally tiered:
+ *
+ *   - Bare-mode PMEM loads/stores use inline range and alignment guards, then
+ *     read/write host memory directly.
+ *   - Bare-mode MMIO or out-of-range accesses call the normal vaddr helpers.
+ *   - Sv39 loads/stores can use an inline direct-mapped data-TLB hit when the
+ *     permission state, `satp`, VPN, page offset, and PMEM range all match.
+ *   - Any TLB miss, cross-page access, page fault, MMIO case, source-code write,
+ *     page-table write, or uncertain permission case returns to helper code.
+ *
+ * Direct links are another optional optimisation.  A block ending in a known
+ * target can jump to another block's body only after checking that the target
+ * slot is still valid for the same PC, `satp`, fetch privilege, data privilege
+ * state when required, and instruction-fetch generation.  A miss returns to the
+ * C dispatcher, which performs full revalidation or recompilation.
+ *
+ * The function comments below describe the local invariant each helper protects.
+ * Keep that style when adding emitters: the important part is not the x86 byte
+ * sequence alone, but the RISC-V architectural condition that must be true
+ * before those bytes can execute.
  */
 
 #if defined(__x86_64__) && defined(CONFIG_RV64_JIT) && \
@@ -143,6 +201,27 @@
 #define RV64_JIT_DATA_TLB_READ 0x1u
 #define RV64_JIT_DATA_TLB_WRITE 0x2u
 
+/*
+ * Native block data model.
+ *
+ * `entry` is the public entry point used by the C dispatcher.  It includes the
+ * prologue, saved-register setup and final epilogue.  `body_entry` skips the
+ * prologue and points at the first translated guest instruction, so another
+ * already-running native block can jump there after proving that the target
+ * slot still describes the same architectural context.
+ *
+ * `translated` records whether the block was fetched through Sv39 rather than
+ * bare PMEM.  Translated fetches must keep the page-table dependency list and
+ * the `ifetch_generation` value valid.  `uses_data_state` is separate because
+ * a block may be fetched physically but still contain translated data accesses
+ * when MPRV or lower privilege is active.
+ *
+ * Source segments record the physical bytes behind the guest PCs.  They are
+ * used both to compare current bytes against the compiled copy and to link the
+ * block into the reverse invalidation map.  Page-table references are stored as
+ * PMEM page numbers, because any store into one of those pages can change a
+ * translation even when the instruction bytes themselves are untouched.
+ */
 typedef uint32_t (*rv64_jit_entry_t)(void);
 
 typedef struct
@@ -715,6 +794,23 @@ static bool jit_write_may_touch_ifetch_page_table(paddr_t addr, int len)
     return false;
 }
 
+/*
+ * Data translation and TLB design.
+ *
+ * The fast path distinguishes three cases.  M-mode bare accesses are physical
+ * and may become direct PMEM loads/stores after alignment and range checks.
+ * Sv39 accesses are walked by `jit_translate_pmem()` using the same effective
+ * privilege rules as the architecture: MPRV can lower data privilege, SUM/MXR
+ * affect supervisor reads, and A/D/U/R/W/X bits must permit the access.  MMIO,
+ * faults, non-canonical addresses, cross-page accesses and uncertain reserved
+ * encodings all return to the normal vaddr helper.
+ *
+ * Successful Sv39 PMEM translations can fill a tiny direct-mapped data TLB.
+ * Each entry is tagged by `satp`, VPN, access type and the compact permission
+ * state.  The entry also remembers page-table pages touched by the walk; stores
+ * into those pages flush the data TLB so native code cannot reuse a stale
+ * translation after `sfence.vma`-like effects or explicit page-table writes.
+ */
 /* Return the privilege level that the architecture uses for this data access. */
 static word_t jit_data_effective_priv(int type)
 {
@@ -1291,6 +1387,17 @@ static uint64_t jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr)
     return 0;
 }
 
+/*
+ * Source invalidation model.
+ *
+ * A native block is valid only while every physical source byte still matches
+ * the bytes seen during compilation and every referenced ifetch page-table page
+ * is unchanged.  Source bytes are grouped into 128-byte PMEM chunks.  Each
+ * block publishes reverse links from those chunks to its cache slot, allowing a
+ * normal store or DMA write to discard affected blocks without scanning the
+ * whole cache in the common case.  The full scan fallback is still kept for
+ * oversized ranges and defensive overflow handling.
+ */
 /* Round a code offset up to the next power-of-two alignment boundary. */
 static size_t jit_align_up(size_t value, size_t align)
 {
@@ -1818,6 +1925,21 @@ static void jit_arena_reset(void)
     JIT_STAT_INC(arena_resets);
 }
 
+/*
+ * x86-64 emitter ABI.
+ *
+ * Generated code is a normal C-callable function returning a 32-bit retired
+ * guest-instruction count in EAX.  The prologue saves RBX, RBP and R12-R15 so
+ * they can cache guest registers for the whole block.  R11 always points at the
+ * global `CPU_state`, and R10 holds the PMEM host base for direct memory
+ * operations.  RAX, RCX, RDX and R8 are scratch unless a helper-specific comment
+ * says otherwise.
+ *
+ * The extra 8-byte stack adjustment keeps the System V stack aligned before
+ * helper calls.  Before any helper call, native block exit or interpreter side
+ * exit, dirty cached guest registers must be flushed so the C code observes a
+ * complete architectural state.
+ */
 /* Emit one byte into the current native block. */
 static bool emit_u8(rv64_jit_writer_t *w, uint8_t value)
 {
@@ -2531,6 +2653,22 @@ static bool emit_mov_hreg_imm64(rv64_jit_writer_t *w, rv64_jit_hreg_t hreg,
            emit_u64(w, value);
 }
 
+/*
+ * Guest-register cache.
+ *
+ * The register cache is a compile-time description of which guest GPR is
+ * currently held in each callee-saved host register.  `valid` means the slot is
+ * assigned to a guest register, `loaded` means native code has materialised its
+ * current value, and `dirty` means `CPU_state.gpr[]` is stale until a flush.
+ * The monotonically increasing age gives a simple spill choice when all slots
+ * are occupied.  Guest x0 is special: reads materialise zero and writes are
+ * discarded, so it never needs a dirty slot.
+ *
+ * Emitters snapshot this metadata before instructions that may fail emission.
+ * If a later byte write would exceed the arena or an unsupported sub-case is
+ * found, the snapshot is restored so the next fallback path still sees the
+ * register state that matches the bytes already emitted.
+ */
 /* Initialise per-block guest-register cache metadata. */
 static void jit_reg_cache_init(rv64_jit_reg_cache_t *regs)
 {
@@ -3018,6 +3156,21 @@ static void patch_rel32(uint8_t *disp, const uint8_t *target)
     memcpy(disp, &rel32, sizeof(rel32));
 }
 
+/*
+ * Block exits and direct links.
+ *
+ * Every exit has the same architectural contract: all completed guest
+ * instructions have committed, no later instruction has partially committed,
+ * dirty guest registers are visible in `CPU_state`, `cpu.pc` names the next
+ * instruction for C or the interpreter, and the return count includes any
+ * chained loop laps.
+ *
+ * A direct link may jump to another native block only after checking the cache
+ * slot still has the expected PC, `satp`, ifetch privilege, data privilege tag
+ * when relevant, body entry pointer and ifetch generation.  Any failed guard
+ * returns to the dispatcher; the dispatcher then performs the slower byte and
+ * page-table revalidation before running or recompiling the target.
+ */
 /* Flush cached registers and side-exit so the interpreter executes this PC. */
 static bool emit_interpreter_side_exit(rv64_jit_writer_t *w,
                                        rv64_jit_reg_cache_t *regs, vaddr_t pc,
@@ -3189,6 +3342,17 @@ static bool emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *re
            emit_return_loop_count(w, completed_count);
 }
 
+/*
+ * Inline memory emitters.
+ *
+ * Direct PMEM memory code is emitted only after earlier guards have proved
+ * alignment, ordinary RAM range and no source-code write hazard.  The paged
+ * variant adds an inline DTLB-hit proof: matching `satp`, VPN, permission state
+ * and access rights, plus a same-page range check.  The slow edge from any
+ * failed guard goes to the existing helper path, so page faults, MMIO, fresh
+ * walks, cross-page accesses and invalidation side effects remain centralised in
+ * the C implementation.
+ */
 /* Emit the x86 load instruction matching one RV64 load funct3 field. */
 static bool emit_direct_pmem_load_rax(rv64_jit_writer_t *w, uint32_t funct3)
 {
@@ -4370,6 +4534,17 @@ static bool emit_op32(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
 }
 
+/*
+ * Branch chaining.
+ *
+ * Simple counted loops are allowed to stay inside one native function when the
+ * taken target is the current block head and every instruction in the body can
+ * be re-entered safely.  The generated backedge accumulates retired
+ * instructions in `jit_loop_extra` and checks one more full lap against the
+ * cpu_exec() budget before jumping.  If the next lap would exceed the budget,
+ * the block returns to C with `cpu.pc` at the branch target, preserving bounded
+ * device polling and interrupt checks.
+ */
 /* Emit the taken side of a branch that can jump back to the native loop head. */
 static bool emit_branch_chain_backedge(rv64_jit_writer_t *w,
                                        rv64_jit_reg_cache_t *regs, vaddr_t target,
@@ -4600,6 +4775,16 @@ static bool emit_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
 }
 
+/*
+ * Block validation and cache matching.
+ *
+ * Cache lookup is deliberately only a hint.  A slot match must re-check the
+ * guest PC, `satp`, ifetch privilege, translation generation, source byte
+ * segments and page-table dependencies before native code runs.  This is the
+ * main safety net for self-modifying code, disk/DMA writes into PMEM and guest
+ * page-table edits.  Unsupported cached slots are kept as negative entries so
+ * the dispatcher does not repeatedly compile the same unsupported instruction.
+ */
 /* Return whether this leaf PTE permits instruction fetch at the current priv. */
 static bool jit_ifetch_leaf_allows(word_t pte)
 {
@@ -4896,6 +5081,21 @@ static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
     return false;
 }
 
+/*
+ * Compile one native region starting at the current guest PC.
+ *
+ * The compile pipeline is intentionally linear:
+ *   1. Allocate aligned arena space and translate the first fetch.
+ *   2. Emit the function prologue and initialise the register cache.
+ *   3. Walk guest instructions until budget, trace limit, unsupported opcode,
+ *      source-boundary change or terminating control flow.
+ *   4. For each instruction, record physical source bytes and ifetch page-table
+ *      refs before emitting bytes that can observe that instruction.
+ *   5. Emit either a normal block exit, a guarded direct link, a side exit or a
+ *      chained-loop backedge.
+ *   6. Publish the block metadata only after code emission, source copying and
+ *      reverse invalidation links are all complete.
+ */
 /* Compile one straight-line block starting at the current guest PC. */
 static rv64_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 {
@@ -5252,6 +5452,19 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
     }
 }
 
+/*
+ * Execute cached or newly compiled native RV64 blocks within the given budgets.
+ *
+ * This is the only entry point used by the generic CPU loop.  It first clamps
+ * work to both the remaining instruction budget and the device-polling budget.
+ * Each iteration then tries a direct cache hit, recompiles on a miss, or stops
+ * cleanly on an unsupported negative entry.  A native function returning zero is
+ * treated as a side exit that made no forward progress, so the interpreter can
+ * execute the current instruction and report the precise trap or helper effect.
+ *
+ * The tiny loop ABI uses `jit_entry_budget` and `jit_loop_extra` so generated
+ * chained loops can stay native while still returning exact retired counts.
+ */
 /* Execute cached or newly compiled native RV64 blocks within the given budgets. */
 bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed)
 {

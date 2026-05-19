@@ -1,40 +1,18 @@
 mainmenu "NEMU Configuration Menu"
 
-config EXPERIMENTAL_UPSTREAM_ISA
-  bool "Show experimental upstream ISA scaffolding"
-  default n
-  help
-    Expose upstream ISA source snapshots that are kept in the tree for future
-    ports. These targets are not part of the supported local RISC-V execution
-    path yet, so leave this disabled for normal builds.
-
-config UPSTREAM_ISA_COMPILE_TEST
-  bool
-  default n
-  help
-    Internal guard for ISA snapshots copied from upstream. Keep this disabled
-    until those ISAs are adapted to the local decode, monitor, and DiffTest
-    interfaces.
-
-comment "Upstream x86, mips32, and loongarch32r scaffolding is copied but not selectable yet"
-  depends on EXPERIMENTAL_UPSTREAM_ISA
-
 choice
   prompt "Base ISA"
   default ISA_riscv32
 config ISA_x86
   bool "x86"
-  depends on EXPERIMENTAL_UPSTREAM_ISA && UPSTREAM_ISA_COMPILE_TEST
 config ISA_mips32
   bool "mips32"
-  depends on EXPERIMENTAL_UPSTREAM_ISA && UPSTREAM_ISA_COMPILE_TEST
 config ISA_riscv32
   bool "riscv32"
 config ISA_riscv64
   bool "riscv64"
 config ISA_loongarch32r
   bool "loongarch32r"
-  depends on EXPERIMENTAL_UPSTREAM_ISA && UPSTREAM_ISA_COMPILE_TEST
 endchoice
 
 config ISA_riscv

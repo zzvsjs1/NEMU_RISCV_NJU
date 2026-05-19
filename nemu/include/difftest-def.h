@@ -16,6 +16,7 @@
 #ifndef __DIFFTEST_DEF_H__
 #define __DIFFTEST_DEF_H__
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <macro.h>
 #include <generated/autoconf.h>
@@ -34,7 +35,24 @@ enum
 #elif defined(CONFIG_ISA_riscv)
 #define RISCV_GPR_TYPE MUXDEF(CONFIG_RV64, uint64_t, uint32_t)
 #define RISCV_GPR_NUM  MUXDEF(CONFIG_RVE , 16, 32)
-#define DIFFTEST_REG_SIZE (sizeof(RISCV_GPR_TYPE) * (RISCV_GPR_NUM + 1)) // GPRs + pc
+typedef struct
+{
+    RISCV_GPR_TYPE gpr[RISCV_GPR_NUM];
+    RISCV_GPR_TYPE pc;
+    struct
+    {
+        RISCV_GPR_TYPE satp;
+        RISCV_GPR_TYPE mstatus;
+        RISCV_GPR_TYPE mtvec;
+        RISCV_GPR_TYPE mscratch;
+        RISCV_GPR_TYPE mepc;
+        RISCV_GPR_TYPE mcause;
+        RISCV_GPR_TYPE mtval;
+    } csr;
+    RISCV_GPR_TYPE prvi;
+    bool INTR;
+} riscv_difftest_state_t;
+#define DIFFTEST_REG_SIZE (sizeof(riscv_difftest_state_t))
 #elif defined(CONFIG_ISA_loongarch32r)
 #define DIFFTEST_REG_SIZE (sizeof(uint32_t) * 33) // GPRs + pc
 #else

@@ -15,7 +15,7 @@ RISC-V64 Nanos-lite bring-up. It adds practical work needed by this local
 RISC-V project:
 
 - `nemu`: the emulator core, RISC-V32/RISC-V64 executors, device models, and
-  optional RV32 JIT.
+  optional RISC-V JIT acceleration.
 - `abstract-machine`: the AM runtime and the RISC-V NEMU device abstraction.
 - `nanos-lite`: the small OS used to run Navy applications on NEMU for both
   RV32 and the active RV64 bring-up path.
@@ -25,16 +25,86 @@ RISC-V project:
 - `fceux-am`: an AM port of the FCEUX NES emulator for native and RISC-V32 NEMU
   runs.
 
-The current `master` branch is the RISC-V32 and RISC-V64 JIT performance-improved version. Older
-branches are kept as comparison points, so behaviour and speed can be compared
-across the original baseline, disk/ONScripter work, non-JIT performance work,
-the JIT version, and the RV64 bring-up work.
+The current `master` branch is the RISC-V32 and RISC-V64 performance-improved
+version. Older branches are kept as comparison points, so behaviour and speed
+can be compared across the original baseline, disk/ONScripter work, non-JIT
+performance work, the early JIT version, and the RV64 bring-up work.
+
+## RISC-V Execution Design
+
+The RISC-V side is split into a small architectural reference path and optional
+native acceleration paths. The reference path must stay correct first: it owns
+trap ordering, CSR side effects, privilege changes, device-visible memory
+behaviour, and DiffTest-visible CPU state. The JIT paths are fast paths on top
+of that reference model. They only execute native code when the current build
+and runtime state are simple enough to prove safe, and they fall back before an
+instruction can partially commit in uncertain cases.
+
+RV32 keeps the mature direct interpreter, fast executor, and x86-64 JIT used by
+the performance branches. RV64 now follows the newer direct-interpreter style as
+well. The old RV64 table/RTL split has been removed, so RV64 instruction
+semantics now live in one direct decode file:
+
+```text
+nemu/src/isa/riscv64/inst.c
+```
+
+That file fetches one 32-bit base instruction, decodes operands from the raw
+instruction word, and dispatches through direct `INSTPAT` patterns. Helper
+functions around the patterns are deliberately small and architectural:
+
+- immediate helpers build I/S/B/U/J/CSR operands with the same sign-extension
+  rules used by hardware;
+- alignment helpers raise visible instruction/load/store address-misaligned
+  traps before register writeback or memory write side effects;
+- CSR helpers perform implemented-CSR and privilege checks, normalise sensitive
+  `mstatus` fields, and skip the reference model where the local DiffTest path
+  cannot mirror the side effect exactly;
+- trap helpers write `mepc`, `mcause`, `mtval`, `mstatus`, and privilege state
+  before redirecting to `mtvec`;
+- multiply/divide helpers encode the RISC-V divide-by-zero and signed-overflow
+  results explicitly, which avoids relying on host undefined behaviour;
+- `mret`, `wfi`, `sfence.vma`, `fence`, `fence.i`, CSR instructions,
+  RV64I/RV64M, W-form integer instructions, jumps, branches, loads, stores,
+  `ecall`, `ebreak`, and the private `nemu_trap` are handled in the same decode
+  flow;
+- `x0` is restored to zero after each executed instruction, so helper bugs
+  cannot leak a write into the architectural zero register.
+
+RV64 also has an optional x86-64 JIT:
+
+```text
+nemu/src/isa/riscv64/jit.c
+```
+
+The RV64 JIT is conservative by design. It is available only for supported
+x86-64 native ELF builds with tracing, watchpoints, memory/function tracing and
+DiffTest disabled. Its compile pipeline records the physical source bytes behind
+guest fetches, records instruction-fetch page-table dependencies, emits a native
+block for a bounded instruction budget, and publishes the block only after the
+source/invalidation metadata is complete. Native blocks return the number of
+retired guest instructions and leave `cpu.pc` at the next instruction, so the
+generic CPU loop can keep device polling and interrupt checks bounded.
+
+The RV64 JIT has three important safety mechanisms:
+
+- Source invalidation tracks compiled instruction bytes by PMEM chunks. Stores
+  or disk/DMA writes into those chunks discard affected blocks before stale code
+  can run again.
+- Sv39 data translation uses a small tagged data TLB only after checking `satp`,
+  effective privilege, `SUM`, `MXR`, VPN, access type, page offset, A/D/U/R/W/X
+  permissions, and PMEM range. Misses, MMIO, faults, cross-page accesses and
+  uncertain PTEs fall back to C helpers.
+- Direct links and loop chaining are guarded. A block can jump to another native
+  block only if the target cache slot still matches PC, `satp`, fetch privilege,
+  data privilege state when needed, and instruction-fetch generation. A miss
+  returns to the C dispatcher for full validation.
 
 ## Branch Roles
 
 | Branch | Role |
 |--------|------|
-| `master` | Current RISC-V32 JIT performance version |
+| `master` | Current RISC-V32/RISC-V64 performance version |
 | `legacy/baseline-master` | Original baseline before disk, ONScripter, performance, and JIT work |
 | `legacy/onscripter-disk` | Legacy disk-backed Navy/ONScripter branch |
 | `performance_improve` | Non-JIT performance baseline |
@@ -236,16 +306,18 @@ disk device is present, it falls back to the embedded ramdisk symbols. For large
 aligned reads it batches multiple blocks to reduce MMIO traffic and host file
 operations.
 
-When a disk read writes into guest memory, the RISC-V32 JIT invalidates affected
-translated code-cache entries. This keeps self-loading or disk-loaded code
-consistent with the interpreter path.
+When a disk read writes into guest memory, the RISC-V JIT invalidation path
+discards affected translated code-cache entries. This keeps self-loading or
+disk-loaded code consistent with the interpreter path.
 
 ### JIT and Device Correctness
 
 The JIT only fast-paths ordinary RAM cases. MMIO, PIO, traps, unusual virtual
 memory cases, and device side effects fall back to the normal NEMU memory and
 execution helpers. This is important: a faster JIT must not skip guest-visible
-device behaviour.
+device behaviour. RV64 follows the same rule: direct PMEM loads/stores are
+guarded first, and translated/Sv39 cases either hit a fully tagged data-TLB
+entry or return to the helper path.
 
 ## Build and Run
 
@@ -277,7 +349,7 @@ soft-float userspace libraries. `compiler-rt` is part of the RV64 build because
 some toolchain-generated helper routines are needed even when no floating-point
 hardware ABI is used.
 
-For the current RV64 branch, configure and build NEMU, then rebuild the
+For the current RV64 path, configure and build NEMU, then rebuild the
 Nanos-lite disk image and run it under `riscv64-nemu`:
 
 ```bash
@@ -291,25 +363,42 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
 
 The current Nanos-lite RV64 process order starts ONScripter first, then FCEUX,
 then PAL. That order makes framebuffer, disk, audio, and large-app loader issues
-show up quickly while the branch is being brought up. The RV64 path does not
-currently have the RV32 x86-64 JIT; it uses the interpreter.
+show up quickly while the branch is being brought up. The normal RV64 bring-up
+configuration uses the direct interpreter. Use the RV64 JIT defconfigs below
+when testing native acceleration separately.
 
 ## JIT Configuration
 
-The RV32 JIT branches add RISC-V32 JIT options inside the `RISC-V32 JIT` menu in
-`nemu/menuconfig`. The menu is visible only for RISC-V32 native ELF
-interpreter builds when tracing, watchpoints, memory/function tracing, and
-DiffTest are disabled, because those features require interpreter
-per-instruction hooks.
+The RV32 and RV64 JIT menus live in `nemu/menuconfig`. They are visible only for
+native ELF interpreter builds on supported x86-64 hosts when tracing,
+watchpoints, memory/function tracing, and DiffTest are disabled, because those
+features require interpreter per-instruction hooks.
 
 ```text
 RISC-V32 JIT
   [*] Enable RISC-V32 x86-64 JIT
   [ ] Collect RISC-V32 JIT statistics
+
+RISC-V64 execution acceleration
+  [*] Enable RISC-V64 x86-64 JIT
+  [ ] Collect RISC-V64 JIT statistics
 ```
 
 Normal performance runs should keep JIT enabled and JIT statistics disabled.
 Statistics are useful for diagnosis, but the extra counters add overhead.
+
+For RV64, the common defconfigs are:
+
+```bash
+# Direct-interpreter RV64 headless run.
+make -C nemu riscv64-am-headless_defconfig
+
+# RV64 JIT without counters.
+make -C nemu riscv64-am-headless-jit_defconfig
+
+# RV64 JIT with counters for diagnostics.
+make -C nemu riscv64-am-headless-jit-stats_defconfig
+```
 
 Runtime controls:
 
@@ -318,16 +407,42 @@ Runtime controls:
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
   make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
 
-# Print JIT counters when CONFIG_RV32_JIT_STATS is enabled.
+# The same switch disables the RV64 JIT in an RV64 JIT build.
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
+  make -C am-kernels/benchmarks/coremark ARCH=riscv64-nemu run
+
+# Disable RV64 direct cross-block links while keeping the rest of the JIT.
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  NEMU_DISABLE_RV64_JIT_DIRECT_LINK=1 \
+  make -C am-kernels/benchmarks/coremark ARCH=riscv64-nemu run
+
+# Print JIT counters when CONFIG_RV32_JIT_STATS or CONFIG_RV64_JIT_STATS is enabled.
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_JIT_STATS=1 \
   make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_JIT_STATS=1 \
+  make -C am-kernels/benchmarks/coremark ARCH=riscv64-nemu run
 ```
 
-`NEMU_DISABLE_JIT=1` only disables JIT in a binary built with `CONFIG_RV32_JIT`.
-It is not a general "pure interpreter" switch. If the binary is built with
-`CONFIG_RV32_FAST_EXEC`, the CPU loop can still use the fast executor. For a
-guaranteed pure RV32 interpreter run, rebuild NEMU with the acceleration mode
-set to `CONFIG_RV32_ACCEL_NONE`.
+`NEMU_DISABLE_JIT=1` only disables JIT in a binary built with `CONFIG_RV32_JIT`
+or `CONFIG_RV64_JIT`. It is not a general "pure interpreter" switch. If an RV32
+binary is built with `CONFIG_RV32_FAST_EXEC`, the CPU loop can still use the
+fast executor. For a guaranteed pure RV32 interpreter run, rebuild NEMU with the
+acceleration mode set to `CONFIG_RV32_ACCEL_NONE`. For RV64, use
+`riscv64-am-headless_defconfig` or unset `CONFIG_RV64_JIT`.
+
+Useful correctness checks:
+
+```bash
+scripts/check-nemu-arch-config-selection.sh
+scripts/check-nemu-upstream-isa-selection.sh
+scripts/check-riscv-difftest-state.sh
+scripts/check-rv64-new-interpreter.sh
+scripts/check-rv64-jit-correctness.sh
+scripts/check-rv64-jit-io.sh
+scripts/check-rv64-jit-wop.sh
+scripts/check-rv64-jit-store-invalidation.sh
+scripts/check-rv64-jit-performance.sh
+```
 
 ## RISC-V Exception Model
 
@@ -340,7 +455,7 @@ does not necessarily observe architectural `mepc`, `mcause`, `mtval`,
 `mstatus`, `mtvec`, privilege checks, or `mret` ordering for every faulting
 instruction.
 
-The current RISC-V32 path uses real architectural trap delivery for normal
+The current RISC-V paths use real architectural trap delivery for normal
 exceptions. NEMU raises traps by writing the machine CSRs, updating privilege
 state, and jumping through `mtvec`. The AM RISC-V trap shim then saves a
 `Context`, calls the C trap handler, and returns through `mret`. Nanos-lite
@@ -359,11 +474,14 @@ that the interpreter would raise.
 
 ### Exception and JIT Limitations
 
-- The RISC-V support is focused on RV32IM system-mode work used by this tree.
-  It is not a complete privileged-platform model for every RISC-V extension.
-- RV64 support is a NEMU/Nanos-lite bring-up path for the local app set. The
-  detailed Sv32 and JIT limitations below are RV32-specific unless they say
-  otherwise.
+- The RISC-V support is focused on the RV32IM and RV64IM NEMU/Nanos-lite
+  workflows used by this tree. It is not a complete privileged-platform model
+  for every RISC-V extension.
+- RV64 support is a NEMU/Nanos-lite bring-up path for the local app set. It now
+  uses the direct interpreter as the reference path and can optionally use the
+  RV64 x86-64 JIT for supported native ELF runs. The detailed Sv32 limitations
+  below are RV32-specific unless they say otherwise; RV64 translated memory uses
+  separate Sv39 checks in the RV64 interpreter and JIT.
 - Machine-mode trap handling is the main target. U-mode entry, U-mode ecall,
   CSR privilege checks, `mret`, and Sv32 paths are implemented for the local
   Nanos-lite workflow, but this is not a full supervisor-mode or hypervisor
@@ -373,9 +491,9 @@ that the interpreter would raise.
   emulation should not assume that behaviour here.
 - The private `nemu_trap` instruction remains as the AM/NEMU test-exit
   convention. It is not a standard RISC-V exception.
-- The JIT is available only for supported x86-64 native ELF RISC-V32 builds with
-  tracing, watchpoints, memory/function tracing, and DiffTest disabled. Those
-  debugging features require per-instruction interpreter hooks.
+- The JIT is available only for supported x86-64 native ELF RISC-V32/RISC-V64
+  builds with tracing, watchpoints, memory/function tracing, and DiffTest
+  disabled. Those debugging features require per-instruction interpreter hooks.
 - The JIT fast path is intentionally conservative. MMIO, unsupported
   instructions, unusual translation cases, source-code writes, page-table
   writes, and trap-sensitive paths fall back to helpers or leave native code.
@@ -384,7 +502,7 @@ that the interpreter would raise.
 
 ### Current RISC-V Spec Differences
 
-The current RISC-V32 interpreter, fast executor, and JIT do not implement every
+The current RISC-V32/RISC-V64 interpreters and JITs do not implement every
 behaviour required by the RISC-V unprivileged and privileged specifications.
 The important differences are listed here so tests and workloads can choose the
 right execution path deliberately.
@@ -393,6 +511,10 @@ right execution path deliberately.
   `ebreak`, `mret`, and the private `nemu_trap` stop instruction. It does not
   decode the base `FENCE` instruction, Zifencei `FENCE.I`, `WFI`, `SRET`, or
   `SFENCE.VMA`; those encodings currently reach the illegal-instruction path.
+- The RV64 direct interpreter decodes RV64IM, W-form integer operations, CSR,
+  `ecall`, `ebreak`, `mret`, `wfi`, `sfence.vma`, `fence`, `fence.i`, and the
+  private `nemu_trap` stop instruction. It does not implement compressed,
+  floating-point, vector, atomic, supervisor-return, or hypervisor instructions.
 - The CSR model is a small machine-level subset: `satp`, `mstatus`, `mtvec`,
   `mscratch`, `mepc`, `mcause`, and `mtval`. Standard CSRs such as `misa`,
   `mie`, `mip`, `medeleg`, `mideleg`, `sstatus`, `stvec`, `sepc`, `scause`,
@@ -467,9 +589,11 @@ guest instructions for this workload (`358,947,764` versus `313,363,093`), but
 the RV64 interpreter path finishes sooner on this host. This should be treated
 as a local CoreMark result, not a promise that every RV64 application is faster.
 
-Compared with the RV32 JIT rows, RV64 is still much lower: roughly `1/18.5` of
-RV32 JIT MicroBench throughput and `1/26.2` of RV32 JITBench throughput. That
-mainly reflects that the RV64 acceleration work has not been ported.
+Compared with the RV32 JIT rows, the RV64 interpreter rows are still much lower:
+roughly `1/18.5` of RV32 JIT MicroBench throughput and `1/26.2` of RV32
+JITBench throughput. That comparison is intentionally interpreter versus JIT.
+Use `scripts/check-rv64-jit-performance.sh` for current RV64 JIT measurements on
+your host.
 
 The current strict JIT MicroBench score is about `8.16x` the same branch with
 JIT disabled, `8.63x` the non-JIT performance branch, and `39.05x` the original

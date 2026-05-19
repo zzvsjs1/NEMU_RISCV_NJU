@@ -29,6 +29,14 @@ GUEST_ISA ?= $(call remove_quote,$(CONFIG_ISA))
 ENGINE ?= $(call remove_quote,$(CONFIG_ENGINE))
 NAME    = $(GUEST_ISA)-nemu-$(ENGINE)
 
+ifneq ($(filter run run-env gdb,$(MAKECMDGOALS)),)
+ifeq ($(origin ISA),command line)
+ifeq ($(filter $(ISA),$(GUEST_ISA) $(if $(CONFIG_RVE),riscv32e)),)
+  $(error ISA=$(ISA) does not match current NEMU config CONFIG_ISA=$(GUEST_ISA); run a matching defconfig first)
+endif
+endif
+endif
+
 # Include all filelist.mk to merge file lists
 FILELIST_MK = $(shell find -L ./src -name "filelist.mk")
 include $(FILELIST_MK)

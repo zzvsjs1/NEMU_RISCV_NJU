@@ -1,6 +1,0 @@
-#include "../instr/compute.h"
-#include "../instr/ldst.h"
-#include "../instr/branch.h"
-#include "../instr/control-transfer.h"
-#include "../instr/csr.h"
-#include "../instr/special.h"

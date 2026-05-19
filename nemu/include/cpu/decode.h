@@ -33,7 +33,7 @@ typedef struct Decode
 #define id_src2 (&(s->src2))
 #define id_dest (&(s->dest))
 
-// `INSTR_LIST` is defined at src/isa/$ISA/include/isa-all-instr.h
+// Table-interpreter ISAs define `INSTR_LIST` in src/isa/$ISA/include/isa-all-instr.h.
 #define def_EXEC_ID(name) concat(EXEC_ID_, name),
 #define def_all_EXEC_ID() enum \
 { \
