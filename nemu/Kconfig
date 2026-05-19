@@ -253,37 +253,20 @@ config DIFFTEST_REF_NAME
   default "none"
 endmenu
 
-menu "RISC-V32 execution acceleration"
+menu "RISC-V32 JIT acceleration"
   depends on ISA_riscv32 && TARGET_NATIVE_ELF && ENGINE_INTERPRETER
   depends on !TRACE && !DIFFTEST && !WATCHPOINT && !MTRACE && !FTRACE
 
-choice
-  prompt "RISC-V32 acceleration mode"
-  default RV32_JIT
-
-config RV32_ACCEL_NONE
-  bool "No acceleration"
-  help
-    Execute every guest instruction through the normal interpreter path. This is
-    useful as the reference mode for correctness tests.
-
-config RV32_FAST_EXEC
-  bool "Enable RISC-V32 fast executor"
-  help
-    Execute supported RISC-V32 instructions through the inlined fast executor,
-    then fall back to the normal interpreter for unsupported or sensitive cases.
-
 config RV32_JIT
   bool "Enable RISC-V32 x86-64 JIT"
+  default y
   help
-    Translate supported RISC-V32 basic blocks to native x86-64 code. The JIT is
-    mutually exclusive with the fast executor so JIT tests fall back directly to
-    the normal interpreter for unsupported or sensitive cases.
+    Translate supported RISC-V32 basic blocks to native x86-64 code. When this
+    is disabled or unavailable at run time, execution uses the normal
+    interpreter path.
 
     The environment variable NEMU_DISABLE_JIT=1 can still disable this at run
     time for quick benchmark comparisons without changing the saved config.
-
-endchoice
 
 config RV32_JIT_STATS
   bool "Collect RISC-V32 JIT statistics"

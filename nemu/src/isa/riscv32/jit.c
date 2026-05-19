@@ -455,8 +455,8 @@ static uint32_t jit_required_perm(int type)
 /*
  * Translate a Sv32 virtual address to ordinary PMEM for JIT helper accesses.
  *
- * This deliberately mirrors the fast executor's small TLB, but it stays local to
- * the JIT helper path so generated code does not need to inline page walks.  A
+ * This deliberately keeps a small translation cache local to the JIT helper
+ * path so generated code does not need to inline page walks.  A
  * false result is not an error; it only means the existing vaddr path must handle
  * the edge case, such as MMIO, cross-page accesses, invalid PTEs, or superpages.
  * Permission checks intentionally match the simplified interpreter MMU in
@@ -3819,7 +3819,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
 
     /*
      * Physical writes are the common point shared by interpreter stores, JIT
-     * helper stores, fast-exec stores, and devices.  Two independent JIT caches
+     * helper stores, interpreter stores, and devices.  Two independent JIT caches
      * can become stale here:
      *
      *   1. native blocks translated from overwritten instruction bytes;

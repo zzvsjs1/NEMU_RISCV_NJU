@@ -2,9 +2,6 @@
 #include <cpu/exec.h>
 #include <cpu/difftest.h>
 #include <isa-all-instr.h>
-#ifdef CONFIG_ISA_riscv32
-#include <isa-fast-exec.h>
-#endif
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
 #include <isa-jit.h>
 #endif
@@ -179,7 +176,7 @@ static inline word_t query_pending_intr()
 {
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
     /*
-     * Most fast/JIT batches have no pending interrupt. Avoid the heavier ISA
+     * Most JIT batches have no pending interrupt. Avoid the heavier ISA
      * query unless the latched CPU flag says there is real work to inspect.
      */
 
@@ -211,17 +208,6 @@ static inline bool should_update_device_after(uint32_t *counter, uint32_t execut
 }
 #endif
 
-static inline bool can_fast_exec()
-{
-#if defined(CONFIG_RV32_FAST_EXEC) && !defined(CONFIG_TRACE) && \
-    !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
-    !defined(CONFIG_MTRACE) && !defined(CONFIG_FTRACE)
-    return !g_print_step;
-#else
-    return false;
-#endif
-}
-
 static inline bool can_jit_exec()
 {
 #if (defined(CONFIG_RV32_JIT) || defined(CONFIG_RV64_JIT)) && !defined(CONFIG_TRACE) && \
@@ -229,8 +215,8 @@ static inline bool can_jit_exec()
     !defined(CONFIG_MTRACE) && !defined(CONFIG_FTRACE)
     /*
      * The JIT bypasses per-instruction Decode objects, so keep it behind the
-     * same instrumentation boundary as the fast executor. If exact hooks are
-     * needed, the interpreter remains the source of behaviour.
+     * instrumentation boundary. If exact hooks are needed, the interpreter
+     * remains the source of behaviour.
      */
     return !g_print_step && isa_jit_available();
 #else
@@ -259,9 +245,6 @@ void cpu_exec(uint64_t n)
     Decode s;
 #ifdef CONFIG_DEVICE
     uint32_t device_update_counter = 0;
-#endif
-#ifdef CONFIG_ISA_riscv32
-    const bool fast_exec = can_fast_exec();
 #endif
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
     const bool jit_exec = can_jit_exec();
@@ -306,45 +289,11 @@ void cpu_exec(uint64_t n)
         }
         else
         {
-            bool fast_done = false;
-#ifdef CONFIG_ISA_riscv32
-            if (fast_exec)
-            {
-                uint32_t fast_budget = DEVICE_UPDATE_CHECK_INTERVAL;
-
-#ifdef CONFIG_DEVICE
-                fast_budget = DEVICE_UPDATE_CHECK_INTERVAL - device_update_counter;
-#endif
-                if (n < fast_budget)
-                {
-                    fast_budget = (uint32_t)n;
-                }
-
-                executed = isa_fast_exec_batch(fast_budget);
-                fast_done = executed != 0;
-            }
-#endif
-            if (!fast_done)
-            {
-                fetch_decode_exec_updatepc(&s);
-                executed = 1;
-#ifdef CONFIG_ISA_riscv32
-                /*
-                 * Unsupported instructions are handled by the interpreter and
-                 * may have changed page tables, satp, mstatus, or privilege
-                 * state. Drop the private fast-exec TLB before the next batch.
-                 */
-                rv32_fast_tlb_flush();
-#endif
-            }
-
+            fetch_decode_exec_updatepc(&s);
+            executed = 1;
             n -= executed;
             g_nr_guest_instr += executed;
-
-            if (!fast_done)
-            {
-                trace_and_difftest(&s, cpu.pc);
-            }
+            trace_and_difftest(&s, cpu.pc);
         }
 
         if (nemu_state.state != NEMU_RUNNING)

@@ -1,4 +1,5 @@
 #include <device/map.h>
+#include <memory/paddr.h>
 
 #define NR_MAP 16
 
@@ -20,11 +21,42 @@ static IOMap *fetch_mmio_map(paddr_t addr)
     return last_map;
 }
 
+static void report_mmio_overlap(const char *name1, paddr_t l1, paddr_t r1,
+                                const char *name2, paddr_t l2, paddr_t r2)
+{
+    panic("MMIO region %s@[" FMT_PADDR ", " FMT_PADDR "] is overlapped "
+          "with %s@[" FMT_PADDR ", " FMT_PADDR "]",
+          name1, l1, r1, name2, l2, r2);
+}
+
 /* device interface */
 void add_mmio_map(const char *name, paddr_t addr, void *space, uint32_t len,
                   io_callback_t callback)
 {
     assert(nr_map < NR_MAP);
+    assert(len > 0);
+
+    const paddr_t left = addr;
+    const paddr_t right = addr + len - 1u;
+    assert(right >= left);
+
+    const paddr_t pmem_left = (paddr_t)CONFIG_MBASE;
+    const paddr_t pmem_right = (paddr_t)CONFIG_MBASE + CONFIG_MSIZE;
+    if (in_pmem(left) || in_pmem(right) || in_pmem_range(left, len) ||
+        (left < pmem_left && right >= pmem_right))
+    {
+        report_mmio_overlap(name, left, right,
+                            "pmem", pmem_left, pmem_right - 1u);
+    }
+    
+    for (int i = 0; i < nr_map; i++)
+    {
+        if (left <= maps[i].high && right >= maps[i].low)
+        {
+            report_mmio_overlap(name, left, right,
+                                maps[i].name, maps[i].low, maps[i].high);
+        }
+    }
 
     /*
      * MMIO maps live in the physical address space and are selected by paddr.c
