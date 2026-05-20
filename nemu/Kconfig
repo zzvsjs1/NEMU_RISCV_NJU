@@ -299,11 +299,15 @@ endmenu
 menu "RISC-V64 execution acceleration"
   depends on ISA_riscv64 && TARGET_NATIVE_ELF && ENGINE_INTERPRETER
   depends on !TRACE && !DIFFTEST && !WATCHPOINT && !MTRACE && !FTRACE
+  depends on BROKEN
 
 config RV64_JIT
   bool "Enable RISC-V64 x86-64 JIT"
   default n
   help
+    Temporarily disabled while RV32 and RV64 share the interpreter tree. RV64
+    JIT will be re-enabled by the separate JIT merge.
+
     Translate supported RISC-V64 basic blocks to native x86-64 code. The first
     RV64 milestone is deliberately conservative: unsupported instructions,
     complex memory cases, traps, and debugging-sensitive behaviour fall back to

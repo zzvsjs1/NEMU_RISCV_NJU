@@ -4,197 +4,130 @@
 #include <stddef.h>
 
 _Static_assert(sizeof(CPU_state) == DIFFTEST_REG_SIZE,
-               "RV32 DiffTest ABI must cover the full CPU_state");
+               "RISC-V DiffTest ABI must cover the full CPU_state");
 _Static_assert(offsetof(CPU_state, gpr) == offsetof(riscv_difftest_state_t, gpr),
-               "RV32 DiffTest GPR offset drifted");
+               "RISC-V DiffTest GPR offset drifted");
 _Static_assert(offsetof(CPU_state, pc) == offsetof(riscv_difftest_state_t, pc),
-               "RV32 DiffTest PC offset drifted");
+               "RISC-V DiffTest PC offset drifted");
 _Static_assert(offsetof(CPU_state, csr.satp) == offsetof(riscv_difftest_state_t, csr.satp),
-               "RV32 DiffTest satp offset drifted");
+               "RISC-V DiffTest satp offset drifted");
 _Static_assert(offsetof(CPU_state, csr.mtval) == offsetof(riscv_difftest_state_t, csr.mtval),
-               "RV32 DiffTest mtval offset drifted");
+               "RISC-V DiffTest mtval offset drifted");
 _Static_assert(offsetof(CPU_state, prvi) == offsetof(riscv_difftest_state_t, prvi),
-               "RV32 DiffTest privilege offset drifted");
+               "RISC-V DiffTest privilege offset drifted");
 _Static_assert(offsetof(CPU_state, INTR) == offsetof(riscv_difftest_state_t, INTR),
-               "RV32 DiffTest interrupt-pending offset drifted");
+               "RISC-V DiffTest interrupt-pending offset drifted");
 
-#define REG_FMT ("%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n")
+#ifdef CONFIG_RV64
+#define RISCV_DIFF_GPR(state, idx) ((state)->gpr[idx]._64)
+#define RISCV_DIFF_REG_NAME_LEN 8
+#define RISCV_DIFF_MSTATUS_MASK (((word_t)1u << 3) | \
+                                 ((word_t)1u << 7) | \
+                                 ((word_t)0x3u << 11) | \
+                                 ((word_t)1u << 17) | \
+                                 ((word_t)1u << 18) | \
+                                 ((word_t)1u << 19))
+#else
+#define RISCV_DIFF_GPR(state, idx) ((state)->gpr[idx]._32)
+#define RISCV_DIFF_REG_NAME_LEN 4
+#endif
 
-bool isSameState(CPU_state *ref_r, vaddr_t pc)
+static bool riscv_difftest_same_mstatus(word_t ref, word_t dut)
 {
-    for (size_t i = 0; i < MUXDEF(CONFIG_RVE, 16, 32); i++)
+#ifdef CONFIG_RV64
+    return ((ref ^ dut) & RISCV_DIFF_MSTATUS_MASK) == 0;
+#else
+    return ref == dut;
+#endif
+}
+
+static bool riscv_difftest_same_state(CPU_state *ref_r)
+{
+    for (size_t i = 0; i < RISCV_GPR_NUM; i++)
     {
-        if (cpu.gpr[i]._32 != ref_r->gpr[i]._32)
+        if (gpr(i) != RISCV_DIFF_GPR(ref_r, i))
         {
             return false;
         }
     }
 
-    if (ref_r->pc != cpu.pc)
-    {
-        return false;
-    }
+    return ref_r->pc == cpu.pc &&
+           ref_r->csr.satp == cpu.csr.satp &&
+           ref_r->csr.mcause == cpu.csr.mcause &&
+           ref_r->csr.mepc == cpu.csr.mepc &&
+           riscv_difftest_same_mstatus(ref_r->csr.mstatus, cpu.csr.mstatus) &&
+           ref_r->csr.mtvec == cpu.csr.mtvec &&
+           ref_r->csr.mscratch == cpu.csr.mscratch &&
+           ref_r->csr.mtval == cpu.csr.mtval &&
+           ref_r->prvi == cpu.prvi;
+}
 
-    if (ref_r->csr.mcause != cpu.csr.mcause)
+static void riscv_difftest_print_reg(size_t idx, word_t ref, word_t dut)
+{
+    if (ref == dut)
     {
-        return false;
+        printf("%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN
+               "     DUT: " FMT_WORD "\n",
+               reg_name(idx, RISCV_DIFF_REG_NAME_LEN),
+               ref, " ", ref, " ",
+               (sword_t)ref,
+               dut);
     }
-
-    if (ref_r->csr.mepc != cpu.csr.mepc)
+    else
     {
-        return false;
+        PRI_ERR("%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN
+                "     DUT: " FMT_WORD "\n",
+                reg_name(idx, RISCV_DIFF_REG_NAME_LEN),
+                ref, " ", ref, " ",
+                (sword_t)ref,
+                dut);
     }
+}
 
-    if (ref_r->csr.mstatus != cpu.csr.mstatus)
+static void riscv_difftest_print_named(const char *name, word_t ref, word_t dut)
+{
+    if (ref == dut)
     {
-        return false;
+        printf("%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN
+               "     DUT: " FMT_WORD "\n",
+               name, ref, " ", ref, " ", (sword_t)ref, dut);
     }
-
-    if (ref_r->csr.mtvec != cpu.csr.mtvec)
+    else
     {
-        return false;
+        PRI_ERR("%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN
+                "     DUT: " FMT_WORD "\n",
+                name, ref, " ", ref, " ", (sword_t)ref, dut);
     }
-
-    if (ref_r->csr.satp != cpu.csr.satp)
-    {
-        return false;
-    }
-
-    if (ref_r->csr.mscratch != cpu.csr.mscratch)
-    {
-        return false;
-    }
-
-    if (ref_r->csr.mtval != cpu.csr.mtval)
-    {
-        return false;
-    }
-
-    if (ref_r->prvi != cpu.prvi)
-    {
-        return false;
-    }
-
-    return true;
 }
 
 bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
 {
-    if (isSameState(ref_r, pc))
+    (void)pc;
+
+    if (riscv_difftest_same_state(ref_r))
     {
         return true;
     }
 
-    /* GPR */
-    for (size_t i = 0; i < MUXDEF(CONFIG_RVE, 16, 32); i++)
+    /*
+     * Print the complete architectural state on mismatch.  This is noisy, but
+     * early shared-interpreter work benefits from seeing every nearby register.
+     */
+    for (size_t i = 0; i < RISCV_GPR_NUM; i++)
     {
-        if (cpu.gpr[i]._32 != ref_r->gpr[i]._32)
-        {
-            PRI_ERR(
-                "%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN
-                "     Original: " FMT_WORD "\n",
-                reg_name(i, 4),
-                ref_r->gpr[i]._32, " ", ref_r->gpr[i]._32, " ",
-                (sword_t)ref_r->gpr[i]._32,
-                cpu.gpr[i]._32);
-        }
-        else
-        {
-            printf(
-                REG_FMT,
-                reg_name(i, 4),
-                ref_r->gpr[i]._32, " ", ref_r->gpr[i]._32, " ",
-                (sword_t)ref_r->gpr[i]._32,
-                cpu.gpr[i]._32);
-        }
+        riscv_difftest_print_reg(i, RISCV_DIFF_GPR(ref_r, i), gpr(i));
     }
 
-    if (ref_r->pc != cpu.pc)
-    {
-        PRI_ERR(
-            "%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN
-            "     Original: " FMT_WORD "\n",
-            "PC",
-            ref_r->pc, " ", ref_r->pc, " ",
-            (sword_t)ref_r->pc,
-            cpu.pc);
-    }
+    riscv_difftest_print_named("pc", ref_r->pc, cpu.pc);
+    riscv_difftest_print_named("satp", ref_r->csr.satp, cpu.csr.satp);
+    riscv_difftest_print_named("mstatus", ref_r->csr.mstatus, cpu.csr.mstatus);
+    riscv_difftest_print_named("mtvec", ref_r->csr.mtvec, cpu.csr.mtvec);
+    riscv_difftest_print_named("mscratch", ref_r->csr.mscratch, cpu.csr.mscratch);
+    riscv_difftest_print_named("mepc", ref_r->csr.mepc, cpu.csr.mepc);
+    riscv_difftest_print_named("mcause", ref_r->csr.mcause, cpu.csr.mcause);
+    riscv_difftest_print_named("mtval", ref_r->csr.mtval, cpu.csr.mtval);
+    riscv_difftest_print_named("prvi", ref_r->prvi, cpu.prvi);
 
-    /* CSR */
-
-    if (ref_r->csr.mcause != cpu.csr.mcause)
-    {
-        PRI_ERR(
-            "%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n",
-            "mcause", ref_r->csr.mcause, " ", ref_r->csr.mcause, " ",
-            (sword_t)ref_r->csr.mcause,
-            cpu.csr.mcause);
-    }
-
-    if (ref_r->csr.mepc != cpu.csr.mepc)
-    {
-        PRI_ERR(
-            "%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n",
-            "mepc", ref_r->csr.mepc, " ", ref_r->csr.mepc, " ",
-            (sword_t)ref_r->csr.mepc,
-            cpu.csr.mepc);
-    }
-
-    if (ref_r->csr.mstatus != cpu.csr.mstatus)
-    {
-        PRI_ERR(
-            "%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n",
-            "mstatus", ref_r->csr.mstatus, " ", ref_r->csr.mstatus, " ",
-            (sword_t)ref_r->csr.mstatus,
-            cpu.csr.mstatus);
-    }
-
-    if (ref_r->csr.mtvec != cpu.csr.mtvec)
-    {
-        PRI_ERR(
-            "%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n",
-            "mtvec", ref_r->csr.mtvec, " ", ref_r->csr.mtvec, " ",
-            (sword_t)ref_r->csr.mtvec,
-            cpu.csr.mtvec);
-    }
-
-    if (ref_r->csr.satp != cpu.csr.satp)
-    {
-        PRI_ERR(
-            "%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n",
-            "satp", ref_r->csr.satp, " ", ref_r->csr.satp, " ",
-            (sword_t)ref_r->csr.satp,
-            cpu.csr.satp);
-    }
-
-    if (ref_r->csr.mscratch != cpu.csr.mscratch)
-    {
-        PRI_ERR(
-            "%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n",
-            "mscratch", ref_r->csr.mscratch, " ", ref_r->csr.mscratch, " ",
-            (sword_t)ref_r->csr.mscratch,
-            cpu.csr.mscratch);
-    }
-
-    if (ref_r->csr.mtval != cpu.csr.mtval)
-    {
-        PRI_ERR(
-            "%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n",
-            "mtval", ref_r->csr.mtval, " ", ref_r->csr.mtval, " ",
-            (sword_t)ref_r->csr.mtval,
-            cpu.csr.mtval);
-    }
-
-    if (ref_r->prvi != cpu.prvi)
-    {
-        PRI_ERR(
-            "%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "     Original: " FMT_WORD "\n",
-            "prvi", ref_r->prvi, " ", ref_r->prvi, " ",
-            (sword_t)ref_r->prvi,
-            cpu.prvi);
-    }
-
-    printf("\n\n");
     return false;
 }
 

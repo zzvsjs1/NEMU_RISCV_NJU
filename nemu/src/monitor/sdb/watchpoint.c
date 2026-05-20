@@ -1,7 +1,7 @@
 #include "sdb.h"
 #include "memory/vaddr.h"
 
-#define NR_WP (16)
+#define NR_WP (32)
 #define STR_BUF_SIZE (32)
 
 typedef struct watchpoint

@@ -7,7 +7,7 @@
 #endif
 #include <utils.h>
 
-#if defined(CONFIG_TARGET_AM)
+#if defined(CONFIG_PMEM_MALLOC)
 static uint8_t *pmem = NULL;
 #else
 static uint8_t pmem[CONFIG_MSIZE] PG_ALIGN = {};
@@ -53,7 +53,7 @@ bool pmem_load(FILE *fp)
 
 void init_mem()
 {
-#if defined(CONFIG_TARGET_AM)
+#if defined(CONFIG_PMEM_MALLOC)
     pmem = malloc(CONFIG_MSIZE);
     assert(pmem);
 #endif

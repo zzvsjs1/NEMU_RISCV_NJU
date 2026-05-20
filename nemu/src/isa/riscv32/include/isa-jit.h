@@ -1,11 +1,11 @@
-#ifndef __RISCV32_ISA_JIT_H__
-#define __RISCV32_ISA_JIT_H__
+#ifndef __RISCV_ISA_JIT_H__
+#define __RISCV_ISA_JIT_H__
 
 #include <common.h>
 #include <memory/paddr.h>
 
 /*
- * RISC-V32 JIT public hooks. The CPU loop owns scheduling, while memory and
+ * RISC-V JIT public hooks. The CPU loop owns scheduling, while memory and
  * devices report physical writes here so native blocks compiled from stale
  * source bytes can be discarded and JIT-local address translations can be
  * dropped before stale state is observed again.

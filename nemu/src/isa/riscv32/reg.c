@@ -1,9 +1,9 @@
 #include <isa.h>
 #include "local-include/reg.h"
-#include <string.h> // strcmp
-#include <stdio.h>  // printf
+#include <stdio.h> // printf
+#include <string.h>
 
-#define REG_FMT ("%-5s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "\n")
+#define REG_FMT ("%-8s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "\n")
 
 const char *regs[] = {
     "$0", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
@@ -11,14 +11,10 @@ const char *regs[] = {
     "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7",
     "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 
-const char *csrs[] = {
-    "mstatus", "mtvec", "mepc", "mcause", "mtval"};
-
-/* Use an explicit CSR list for display to avoid struct-layout scanning and OOB bugs. */
 typedef struct
 {
-    word_t addr;      /* CSR address */
-    const char *name; /* display name */
+    word_t addr;      // CSR address.
+    const char *name; // Display and debugger name.
 } csr_disp_t;
 
 static const csr_disp_t csr_list[] = {
@@ -34,6 +30,82 @@ static const csr_disp_t csr_list[] = {
 static size_t csr_list_len(void)
 {
     return sizeof(csr_list) / sizeof(csr_list[0]);
+}
+
+static bool str_eq(const char *a, const char *b)
+{
+    return strcmp(a, b) == 0;
+}
+
+static int reg_name_to_index(const char *name)
+{
+    if (name == NULL)
+    {
+        return -1;
+    }
+
+    if (str_eq(name, "0"))
+    {
+        return 0;
+    }
+
+    for (int i = 0; i < RISCV_GPR_NUM; i++)
+    {
+        if (str_eq(regs[i], name))
+        {
+            return i;
+        }
+    }
+
+    /*
+     * Accept architectural xN aliases as a small RISC-V quality-of-life path.
+     * ABI aliases above remain the primary display names, matching the RV32
+     * monitor output.
+     */
+    if (name[0] == 'x' && name[1] >= '0' && name[1] <= '9')
+    {
+        int idx = 0;
+
+        for (const char *p = name + 1; *p != '\0'; p++)
+        {
+            if (*p < '0' || *p > '9')
+            {
+                return -1;
+            }
+
+            idx = idx * 10 + (*p - '0');
+            if (idx >= RISCV_GPR_NUM)
+            {
+                return -1;
+            }
+        }
+
+        if (idx >= 0)
+        {
+            return idx;
+        }
+    }
+
+    return -1;
+}
+
+static bool csr_name_to_address(const char *name, word_t *addr)
+{
+    if (name == NULL || addr == NULL)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < csr_list_len(); i++)
+    {
+        if (str_eq(csr_list[i].name, name))
+        {
+            *addr = csr_list[i].addr;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 word_t getCSRValue(const word_t address)
@@ -61,7 +133,7 @@ rtlreg_t *getCSRAddress(const word_t address)
         return &cpu.csr.mtval;
     default:
         Assert(false, "Invalid csr address: " FMT_WORD "\n", address);
-        return NULL; /* keep compiler happy */
+        return NULL; // Keep the compiler happy after Assert().
     }
 }
 
@@ -81,34 +153,30 @@ bool isCSRImplemented(const word_t address)
 bool isCSRWriteable(const word_t csrAddr)
 {
     /*
-   * CSR bits [11:10] encode access type.
-   * 0b11 means read-only.
-   * Note, this is only a read-only check, not a full privilege check.
-   */
-    const uint32_t access_type = (csrAddr >> 10) & 0b11;
-    return access_type != 0b11;
+     * CSR bits [11:10] encode read/write capability.
+     * 0b11 marks read-only CSRs; privilege checks are handled separately.
+     */
+    const uint32_t access_type = (csrAddr >> 10) & 0x3u;
+    return access_type != 0x3u;
 }
 
 void isa_reg_display()
 {
     printf("\n");
 
-    /* Print GPRs. */
-    for (size_t i = 0; i < MUXDEF(CONFIG_RVE, 16, 32); i++)
+    for (int i = 0; i < RISCV_GPR_NUM; i++)
     {
         const word_t v = gpr(i);
-        printf(REG_FMT, reg_name(i, 5), v, " ", v, " ", (sword_t)v);
+        printf(REG_FMT, reg_name(i, 8), v, " ", v, " ", (sword_t)v);
     }
 
-    /* Print PC. */
     {
-        const word_t pc = ((riscv32_CPU_state *)&cpu)->pc;
+        const word_t pc = ((riscv_CPU_state *)&cpu)->pc;
         printf(REG_FMT, "pc", pc, " ", pc, " ", (sword_t)pc);
     }
 
     printf("\n\n");
 
-    /* Print selected CSRs by address list, avoids out-of-bounds and struct-layout assumptions. */
     for (size_t i = 0; i < csr_list_len(); i++)
     {
         const word_t v = getCSRValue(csr_list[i].addr);
@@ -128,31 +196,34 @@ word_t isa_reg_str2val(const char *s, bool *success)
     if (s == NULL)
     {
         *success = false;
+        PRI_ERR_E("Unknown register or CSR: NULL.\n");
         return (word_t)-1;
     }
 
-    if (strcmp(s, "pc") == 0)
-    {
-        *success = true; /* bug fix */
-        return ((riscv32_CPU_state *)&cpu)->pc;
-    }
-
-    if (strcmp(s, "0") == 0 || strcmp(s, "$0") == 0)
+    if (str_eq(s, "pc"))
     {
         *success = true;
-        return gpr(0);
+        return ((riscv_CPU_state *)&cpu)->pc;
     }
 
-    for (size_t i = 0; i < MUXDEF(CONFIG_RVE, 16, 32); i++)
+    const int reg_idx = reg_name_to_index(s);
+
+    if (reg_idx >= 0)
     {
-        if (strcmp(regs[i], s) == 0)
-        {
-            *success = true;
-            return gpr(i);
-        }
+        *success = true;
+        return gpr(reg_idx);
+    }
+
+    word_t csr_addr = 0;
+
+    if (csr_name_to_address(s, &csr_addr))
+    {
+        *success = true;
+        return getCSRValue(csr_addr);
     }
 
     *success = false;
+    PRI_ERR("Unknown register or CSR %s.\n", s);
     return (word_t)-1;
 }
 
@@ -160,29 +231,37 @@ void isa_set_reg_val(const char *name, const word_t val)
 {
     if (name == NULL)
     {
-        PRI_ERR_E("Failed to set value, register name is NULL.");
+        PRI_ERR_E("Failed to set value, register name is NULL.\n");
         return;
     }
 
-    if (strcmp("pc", name) == 0)
+    if (str_eq("pc", name))
     {
-        ((riscv32_CPU_state *)&cpu)->pc = val;
+        ((riscv_CPU_state *)&cpu)->pc = val;
         return;
     }
 
-    for (size_t i = 0; i < MUXDEF(CONFIG_RVE, 16, 32); i++)
+    const int reg_idx = reg_name_to_index(name);
+
+    if (reg_idx >= 0)
     {
-        if (strcmp(regs[i], name) == 0)
+        // RISC-V x0 is hard-wired to zero, so debugger writes are ignored.
+        if (reg_idx == 0)
         {
-            /* RISC-V x0 is hardwired to zero, ignore writes to $0. */
-
-            if (i == 0)
-                return;
-
-            gpr(i) = val;
             return;
         }
+
+        gpr(reg_idx) = val;
+        return;
     }
 
-    PRI_ERR("Failed to set value, unknown register %s.", name);
+    word_t csr_addr = 0;
+
+    if (csr_name_to_address(name, &csr_addr))
+    {
+        *getCSRAddress(csr_addr) = (csr_addr == 0x300) ? riscv_mstatus_normalise(val) : val;
+        return;
+    }
+
+    PRI_ERR("Failed to set value, unknown register or CSR %s.\n", name);
 }

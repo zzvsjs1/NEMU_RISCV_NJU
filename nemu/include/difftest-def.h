@@ -33,8 +33,12 @@ enum
 #elif defined(CONFIG_ISA_mips32)
 #define DIFFTEST_REG_SIZE (sizeof(uint32_t) * 38) // GRPs + status + lo + hi + badvaddr + cause + pc
 #elif defined(CONFIG_ISA_riscv)
+#ifndef RISCV_GPR_TYPE
 #define RISCV_GPR_TYPE MUXDEF(CONFIG_RV64, uint64_t, uint32_t)
+#endif
+#ifndef RISCV_GPR_NUM
 #define RISCV_GPR_NUM  MUXDEF(CONFIG_RVE , 16, 32)
+#endif
 typedef struct
 {
     RISCV_GPR_TYPE gpr[RISCV_GPR_NUM];

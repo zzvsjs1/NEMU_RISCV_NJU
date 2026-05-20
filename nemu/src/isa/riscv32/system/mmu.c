@@ -1,38 +1,54 @@
-#include "common.h"
-#include "debug.h"
 #include <isa.h>
 #include <memory/paddr.h>
 #include <memory/vaddr.h>
-#include <stdbool.h>
 
-/* Sv32 PTE bits */
-#define PTE_V 0x001u
-#define PTE_R 0x002u
-#define PTE_W 0x004u
-#define PTE_X 0x008u
-
-/* satp fields for Sv32 */
-#define SATP_MODE_MASK 0x80000000u
-#define SATP_PPN_MASK 0x003FFFFFu // low 22 bits
+#define PTE_V ((word_t)1u << 0)
+#define PTE_R ((word_t)1u << 1)
+#define PTE_W ((word_t)1u << 2)
+#define PTE_X ((word_t)1u << 3)
+#define PTE_U ((word_t)1u << 4)
+#define PTE_A ((word_t)1u << 6)
+#define PTE_D ((word_t)1u << 7)
+#define PTE_RWX (PTE_R | PTE_W | PTE_X)
+#define PTE_PPN_SHIFT 10u
 
 #define MSTATUS_MPRV ((word_t)1u << 17)
+#define MSTATUS_SUM ((word_t)1u << 18)
+#define MSTATUS_MXR ((word_t)1u << 19)
 #define MSTATUS_MPP_SHIFT 11u
 #define MSTATUS_MPP_MASK ((word_t)0x3u << MSTATUS_MPP_SHIFT)
+
+#ifdef CONFIG_RV64
+#define SATP_MODE_SHIFT 60u
+#define SATP_MODE_MASK ((word_t)0xfu << SATP_MODE_SHIFT)
+#define SATP_MODE_SV39 8u
+#define SATP_PPN_MASK (((word_t)1u << 44) - 1u)
+#define PTE_PPN_MASK (((word_t)1u << 44) - 1u)
+#define PTE_NON_LEAF_RESERVED (PTE_U | PTE_A | PTE_D)
+/*
+ * This NEMU target does not implement Svnapot or Svpbmt, and the remaining
+ * Sv39 PTE bits [60:54] are still reserved by the privileged spec.
+ */
+#define PTE_RESERVED_63_54_MASK (((word_t)0x3ffu) << 54)
+#else
+#define SATP_MODE_MASK 0x80000000u
+#define SATP_PPN_MASK 0x003fffffu
+#endif
 
 static bool is_cross_page(vaddr_t vaddr, int len)
 {
     const word_t off = (word_t)(vaddr & PAGE_MASK);
-    return off + (word_t)len > PAGE_SIZE;
+    return len <= 0 || off + (word_t)len > PAGE_SIZE;
 }
 
-static word_t riscv32_effective_mem_priv(int type)
+static word_t effective_mem_priv(int type)
 {
     if (type == MEM_TYPE_IFETCH)
     {
         return cpu.prvi;
     }
 
-    if (cpu.prvi == RISCV32_PRIV_M && (cpu.csr.mstatus & MSTATUS_MPRV) != 0)
+    if (cpu.prvi == RISCV_PRIV_M && (cpu.csr.mstatus & MSTATUS_MPRV) != 0)
     {
         return (cpu.csr.mstatus & MSTATUS_MPP_MASK) >> MSTATUS_MPP_SHIFT;
     }
@@ -40,92 +56,264 @@ static word_t riscv32_effective_mem_priv(int type)
     return cpu.prvi;
 }
 
-static bool riscv32_translation_active(int type)
+#ifdef CONFIG_RV64
+
+static word_t satp_mode(word_t satp)
 {
-    if ((cpu.csr.satp & SATP_MODE_MASK) == 0)
+    return (satp & SATP_MODE_MASK) >> SATP_MODE_SHIFT;
+}
+
+static bool sv39_active_for_access(int type)
+{
+    return satp_mode(cpu.csr.satp) == SATP_MODE_SV39 &&
+           effective_mem_priv(type) != RISCV_PRIV_M;
+}
+
+static bool is_sv39_canonical(vaddr_t vaddr)
+{
+    const uint64_t sign = ((uint64_t)vaddr >> 38) & 1u;
+    const uint64_t high = (uint64_t)vaddr >> 39;
+
+    return sign ? high == ((1ull << 25) - 1ull) : high == 0;
+}
+
+static bool pte_is_valid(word_t pte)
+{
+    return (pte & PTE_V) != 0 &&
+           (pte & (PTE_R | PTE_W)) != PTE_W &&
+           (pte & PTE_RESERVED_63_54_MASK) == 0;
+}
+
+static bool pte_is_leaf(word_t pte)
+{
+    return (pte & PTE_RWX) != 0;
+}
+
+static word_t pte_ppn(word_t pte)
+{
+    return (pte >> PTE_PPN_SHIFT) & PTE_PPN_MASK;
+}
+
+static bool superpage_aligned(word_t ppn, int level)
+{
+    if (level == 2)
+    {
+        return (ppn & 0x3ffffu) == 0;
+    }
+
+    if (level == 1)
+    {
+        return (ppn & 0x1ffu) == 0;
+    }
+
+    return true;
+}
+
+static bool pte_allows_priv(word_t pte, word_t priv, int type)
+{
+    const bool user_page = (pte & PTE_U) != 0;
+
+    if (priv == RISCV_PRIV_U)
+    {
+        return user_page;
+    }
+
+    if (priv == RISCV_PRIV_S)
+    {
+        if (!user_page)
+        {
+            return true;
+        }
+
+        /*
+         * SUM lets S-mode load/store user pages.  It never permits S-mode
+         * instruction fetch from a user page.
+         */
+        return type != MEM_TYPE_IFETCH && (cpu.csr.mstatus & MSTATUS_SUM) != 0;
+    }
+
+    return false;
+}
+
+static bool pte_allows_access(word_t pte, word_t priv, int type)
+{
+    if (!pte_allows_priv(pte, priv, type) || (pte & PTE_A) == 0)
     {
         return false;
     }
 
-    return riscv32_effective_mem_priv(type) != RISCV32_PRIV_M;
+    if (type == MEM_TYPE_IFETCH)
+    {
+        return (pte & PTE_X) != 0;
+    }
+
+    if (type == MEM_TYPE_READ)
+    {
+        return (pte & PTE_R) != 0 ||
+               ((cpu.csr.mstatus & MSTATUS_MXR) != 0 && (pte & PTE_X) != 0);
+    }
+
+    if (type == MEM_TYPE_WRITE)
+    {
+        return (pte & (PTE_W | PTE_D)) == (PTE_W | PTE_D);
+    }
+
+    return false;
+}
+
+static paddr_t leaf_page_base(word_t ppn, const word_t vpn[3], int level)
+{
+    word_t pa_ppn = ppn;
+
+    /*
+     * For a legal superpage leaf, the lower physical PPN fields come from the
+     * virtual page number.  The vaddr layer adds the original page offset.
+     */
+    if (level >= 1)
+    {
+        pa_ppn = (pa_ppn & ~0x1ffu) | vpn[0];
+    }
+
+    if (level >= 2)
+    {
+        pa_ppn = (pa_ppn & ~0x3ffffu) | (vpn[1] << 9) | vpn[0];
+    }
+
+    return (paddr_t)(pa_ppn << PAGE_SHIFT);
 }
 
 int isa_mmu_check(vaddr_t vaddr, int len, int type)
 {
-    /*
-     * Sv32 is active only when satp selects translation and the effective
-     * privilege for this access is S/U.  Detailed access checks are deferred to
-     * isa_mmu_translate(), so callers get a cheap direct/translate decision
-     * before doing any page-table walks.
-     */
-    return riscv32_translation_active(type) ? MMU_TRANSLATE : MMU_DIRECT;
+    (void)vaddr;
+    (void)len;
+
+    const word_t mode = satp_mode(cpu.csr.satp);
+
+    if (mode == 0)
+    {
+        return MMU_DIRECT;
+    }
+
+    if (mode != SATP_MODE_SV39)
+    {
+        return MMU_FAIL;
+    }
+
+    return effective_mem_priv(type) == RISCV_PRIV_M ? MMU_DIRECT : MMU_TRANSLATE;
 }
 
 paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
 {
-    /*
-     * The current memory helpers handle one translated page per access.  Report
-     * a cross-page status instead of partially walking two leaves; the vaddr
-     * layer owns deciding whether that case is supported.
-     */
+    if (!sv39_active_for_access(type) || !is_sv39_canonical(vaddr))
+    {
+        return (paddr_t)MEM_RET_FAIL;
+    }
 
     if (is_cross_page(vaddr, len))
     {
         return (paddr_t)MEM_RET_CROSS_PAGE;
     }
 
-    const rtlreg_t satp = cpu.csr.satp;
-    Assert(riscv32_translation_active(type), "Not in memory protection mode!");
+    const word_t vpn[3] = {
+        ((word_t)vaddr >> 12) & 0x1ffu,
+        ((word_t)vaddr >> 21) & 0x1ffu,
+        ((word_t)vaddr >> 30) & 0x1ffu,
+    };
+    const word_t priv = effective_mem_priv(type);
+    paddr_t pt_base = (paddr_t)((cpu.csr.satp & SATP_PPN_MASK) << PAGE_SHIFT);
 
-    // root page directory physical address
-    // mul by 4096 (<< 12)
-    // Let a be satp.ppn × PAGESIZE, and let i=LEVELS - 1. (For Sv32, PAGESIZE=2**12 and LEVELS=2.) The
-    // satp register must be active, i.e., the effective privilege mode must be S-mode or U-mode.
-    const paddr_t root = (paddr_t)((satp & SATP_PPN_MASK) * PAGE_SIZE);
+    for (int level = 2; level >= 0; --level)
+    {
+        const paddr_t pte_addr = pt_base + (paddr_t)(vpn[level] * sizeof(uint64_t));
+        const word_t pte = (word_t)paddr_read(pte_addr, 8);
+
+        if (!pte_is_valid(pte))
+        {
+            return (paddr_t)MEM_RET_FAIL;
+        }
+
+        const word_t ppn = pte_ppn(pte);
+
+        if (pte_is_leaf(pte))
+        {
+            if (!superpage_aligned(ppn, level) || !pte_allows_access(pte, priv, type))
+            {
+                return (paddr_t)MEM_RET_FAIL;
+            }
+
+            return leaf_page_base(ppn, vpn, level) | (paddr_t)MEM_RET_OK;
+        }
+
+        if (level == 0 || (pte & PTE_NON_LEAF_RESERVED) != 0)
+        {
+            return (paddr_t)MEM_RET_FAIL;
+        }
+
+        pt_base = (paddr_t)(ppn << PAGE_SHIFT);
+    }
+
+    return (paddr_t)MEM_RET_FAIL;
+}
+
+#else
+
+static bool sv32_active_for_access(int type)
+{
+    if ((cpu.csr.satp & SATP_MODE_MASK) == 0)
+    {
+        return false;
+    }
+
+    return effective_mem_priv(type) != RISCV_PRIV_M;
+}
+
+int isa_mmu_check(vaddr_t vaddr, int len, int type)
+{
+    (void)vaddr;
+    (void)len;
 
     /*
-     * Sv32 has two 10-bit VPN indexes.  vpn1 selects a level-1 PTE from the root
-     * page table in satp.ppn, then vpn0 selects the leaf PTE from that next
-     * level page table.
+     * Sv32 is active only when satp selects translation and the effective
+     * privilege for this access is S/U.  Detailed access checks are deferred to
+     * isa_mmu_translate(), matching the previous RV32 path.
      */
-    const word_t vpn1 = (word_t)((vaddr >> 22) & 0x3FFu);
-    const word_t vpn0 = (word_t)((vaddr >> 12) & 0x3FFu);
+    return sv32_active_for_access(type) ? MMU_TRANSLATE : MMU_DIRECT;
+}
 
-    paddr_t pte1_addr = root + (paddr_t)(vpn1 * 4u);
-    uint32_t pte1 = (uint32_t)paddr_read(pte1_addr, 4);
+paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
+{
+    if (is_cross_page(vaddr, len))
+    {
+        return (paddr_t)MEM_RET_CROSS_PAGE;
+    }
+
+    const rtlreg_t satp = cpu.csr.satp;
+    Assert(sv32_active_for_access(type), "Not in memory protection mode!");
+
+    const paddr_t root = (paddr_t)((satp & SATP_PPN_MASK) * PAGE_SIZE);
+    const word_t vpn1 = (word_t)((vaddr >> 22) & 0x3ffu);
+    const word_t vpn0 = (word_t)((vaddr >> 12) & 0x3ffu);
+
+    const paddr_t pte1_addr = root + (paddr_t)(vpn1 * 4u);
+    const uint32_t pte1 = (uint32_t)paddr_read(pte1_addr, 4);
 
     Assert((pte1 & PTE_V) != 0, "Not a valid pte at %u", (word_t)pte1_addr);
 
-    uint32_t pte1_rwx = pte1 & (PTE_R | PTE_W | PTE_X);
+    const uint32_t pte1_rwx = pte1 & PTE_RWX;
     /*
      * Superpages are deliberately not implemented here.  Requiring a non-leaf
-     * level-1 PTE keeps every successful translation on a normal 4 KiB leaf,
-     * which matches the packed return format used by vaddr.c.
+     * level-1 PTE keeps every successful translation on a normal 4 KiB leaf.
      */
     Assert(pte1_rwx == 0, "super page");
 
-    // next level page table base
-    // ppn * PAGE_SIZE
-    paddr_t l0_pt = (paddr_t)(((paddr_t)(pte1 >> 10)) * PAGE_SIZE);
-
-    // level-0 PTE
-    paddr_t pte0_addr = l0_pt + (paddr_t)(vpn0 * 4u);
-    uint32_t pte0 = (uint32_t)paddr_read(pte0_addr, 4);
-
-    // if (!(pte0 & PTE_V))
-    // {
-    //     printf("MMU: vaddr=0x%08x len=%d type=%d satp=0x%08x\n",
-    //         (uint32_t)vaddr, len, type, (uint32_t)cpu.csr.satp);
-    //     printf("MMU: vpn1=%u vpn0=%u root=0x%08x pte1_addr=0x%08x pte1=0x%08x\n",
-    //         vpn1, vpn0, (uint32_t)root, (uint32_t)pte1_addr, pte1);
-    //     printf("MMU: l0_base=0x%08x pte0_addr=0x%08x pte0=0x%08x\n",
-    //         (uint32_t)l0_pt, (uint32_t)pte0_addr, pte0);
-    // }
+    const paddr_t l0_pt = (paddr_t)(((paddr_t)(pte1 >> PTE_PPN_SHIFT)) * PAGE_SIZE);
+    const paddr_t pte0_addr = l0_pt + (paddr_t)(vpn0 * 4u);
+    const uint32_t pte0 = (uint32_t)paddr_read(pte0_addr, 4);
 
     Assert((pte0 & PTE_V) != 0, "PTE 0 invalid");
 
-    uint32_t pte0_rwx = pte0 & (PTE_R | PTE_W | PTE_X);
-    assert(pte0_rwx != 0); // must be leaf at level 0 in our assumption
+    const uint32_t pte0_rwx = pte0 & PTE_RWX;
+    assert(pte0_rwx != 0);
 
     if (type == MEM_TYPE_IFETCH)
     {
@@ -140,11 +328,8 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
         assert((pte0 & PTE_W) != 0);
     }
 
-    /*
-     * Return only the physical page base plus MEM_RET_OK.  The original page
-     * offset is ORed in by vaddr_read/write/ifetch after they have checked the
-     * status bits.
-     */
-    const paddr_t pg_paddr = (paddr_t)(((paddr_t)(pte0 >> 10)) << 12);
+    const paddr_t pg_paddr = (paddr_t)(((paddr_t)(pte0 >> PTE_PPN_SHIFT)) << PAGE_SHIFT);
     return pg_paddr | (paddr_t)MEM_RET_OK;
 }
+
+#endif

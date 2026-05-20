@@ -1,191 +1,88 @@
 #include <isa.h>
 
-// Define bit‐positions and widths for the fields we care about.
-
-#define MSTATUS_MIE_BIT 3    // Machine‑level interrupt enable
-#define MSTATUS_MPIE_BIT 7   // Machine‑level previous interrupt enable
-#define MSTATUS_MPP_SHIFT 11 // Machine‑level previous privilege (2 bits)
+#define MSTATUS_MIE_BIT 3
+#define MSTATUS_MPIE_BIT 7
+#define MSTATUS_MPP_SHIFT 11
 #define MSTATUS_MPP_WIDTH 2
-#define MSTATUS_MPRV_BIT 17 // Machine-Modify-Privilege bit
-#define MSTATUS_MPRV_WIDTH 1
-#define MSTATUS_GVA_BIT 18 // Guest VA valid on trap
+#define MSTATUS_MPRV_BIT 17
 
-#define IRQ_TIMER 0x80000007u
+#define IRQ_TIMER (RISCV_INTERRUPT_BIT | (word_t)7u)
 
 static inline uint64_t get_bit(uint64_t csr, unsigned bit)
 {
-    return (csr >> bit) & 1ULL;
+    return (csr >> bit) & 1ull;
 }
 
-static inline uint64_t set_bit(uint64_t csr, unsigned int bit, bool v)
+static inline uint64_t set_bit(uint64_t csr, unsigned bit, bool value)
 {
-    if (v)
+    if (value)
     {
-        return csr | (1ULL << bit);
+        return csr | (1ull << bit);
     }
-    else
-    {
-        return csr & ~(1ULL << bit);
-    }
+
+    return csr & ~(1ull << bit);
 }
 
-static inline uint64_t get_field(uint64_t csr, uint64_t shift, uint64_t width)
+static inline uint64_t set_field(uint64_t csr, uint64_t shift, uint64_t width, uint64_t value)
 {
-    // If width==0 or shift>=64, no bits to extract.
-    Assert(width > 0 || shift < 64, "get_field: width == 0 || shift >= 64\n");
+    Assert(width > 0 && shift < 64, "set_field: invalid field shift=%lu width=%lu", shift, width);
 
-    // If width+shift >= 64, we want all bits from 'shift'...63
-    uint64_t mask;
+    const uint64_t value_mask = (width == 64) ? ~0ull : ((1ull << width) - 1ull);
+    const uint64_t field_mask = value_mask << shift;
 
-    if (width >= 64 - shift)
-    {
-        // e.g., shift=4 → mask = 0x0FFFFFFFFFFFFFFF
-        mask = ~0ULL >> shift;
-    }
-    else
-    {
-        mask = (1ULL << width) - 1;
-    }
-
-    return (csr >> shift) & mask;
-}
-
-static inline uint64_t set_field(
-    uint64_t csr,
-    uint64_t shift,
-    uint64_t width,
-    uint64_t value)
-{
-    Assert(width > 0 || shift < 64, "set_field: width == 0 || shift >= 64\n");
-
-    // Build the field mask at its shifted position
-    uint64_t field_mask;
-
-    if (width >= 64 - shift)
-    {
-        // e.g., shift=60 → mask = 0xF000000000000000
-        field_mask = ~0ULL << shift;
-    }
-    else
-    {
-        field_mask = ((1ULL << width) - 1) << shift;
-    }
-
-    // Mask off any high bits in value beyond width.
-    uint64_t value_mask = (width >= 64 - shift)
-                              // full-width
-                              ? (~0ULL >> shift)
-                              : ((1ULL << width) - 1);
-
-    value &= value_mask;
-
-    // Clear the field in csr, then OR in the shifted value
     csr &= ~field_mask;
-    csr |= (value << shift) & field_mask;
+    csr |= (value & value_mask) << shift;
     return csr;
 }
 
-static void updateMstatus()
+static void update_mstatus_on_trap_entry(void)
 {
-    // 18.6.2. Trap Entry
-    // When a trap is taken into M-mode, virtualization mode V gets set to 0, and fields MPV and MPP in
-    // mstatus (or mstatush) are set according to Table 35. A trap into M-mode also writes fields GVA, MPIE,
-    // and MIE in mstatus/mstatush and writes CSRs mepc, mcause, mtval, mtval2, and mtinst.
-
     /*
-     * Trap entry snapshots the interrupt-enable and privilege state before
-     * switching to M-mode.  Keeping the bit manipulation local avoids spreading
-     * RISC-V's stacked mstatus rules across ecall, timer interrupt, and DiffTest
-     * paths.
+     * Trap entry snapshots the interrupted privilege and interrupt-enable state
+     * into mstatus before control enters the machine trap vector.
      */
+    uint64_t status = cpu.csr.mstatus;
 
-    // 1) Read the old mstatus
-    uint64_t s = cpu.csr.mstatus;
+    status = set_bit(status, MSTATUS_MPIE_BIT, get_bit(status, MSTATUS_MIE_BIT));
+    status = set_field(status, MSTATUS_MPP_SHIFT, MSTATUS_MPP_WIDTH, cpu.prvi);
+    status = set_bit(status, MSTATUS_MIE_BIT, false);
+#ifdef CONFIG_RV64
+    /*
+     * RV64's GVA bit lives in the high mstatus layout.  RV32 would need
+     * mstatush for that field, so the shared model leaves it untouched there.
+     */
+    status = set_bit(status, 38, false);
+#endif
 
-    // 2) Save old MIE into MPIE
-    s = set_bit(s, MSTATUS_MPIE_BIT, get_bit(cpu.csr.mstatus, MSTATUS_MIE_BIT));
-
-    // 3) Save current privilege into MPP.
-    s = set_field(s, MSTATUS_MPP_SHIFT, MSTATUS_MPP_WIDTH, cpu.prvi);
-
-    // 4) Disable interrupts (clear MIE)
-    s = set_bit(s, MSTATUS_MIE_BIT, false);
-
-    // 5) Save prior virtualization‐mode V into MPV.
-    // Leave MPRV unchanged so bit 17 retains its prior value
-    // s = set_field(s, MSTATUS_MPV_SHIFT, MSTATUS_MPV_WIDTH, 0);
-
-    // 6) Record whether the trap had a guest VA
-    // Always 0.
-    s = set_bit(s, MSTATUS_GVA_BIT, false);
-
-    // 7) Write it back
-    cpu.csr.mstatus = s;
-    cpu.prvi = 0x3;
+    cpu.csr.mstatus = riscv_mstatus_normalise(status);
+    cpu.prvi = RISCV_PRIV_M;
 }
 
 word_t isa_raise_intr_tval(word_t NO, vaddr_t epc, word_t tval)
 {
-    /* Trigger an interrupt/exception with ``NO''.
-    * Then return the address of the interrupt/exception vector.
-    */
-
-#ifdef CONFIG_E_TRACER
-    printf(ANSI_FMT(
-               "Exception mcause: " FMT_WORD "  Exception mepc: " FMT_WORD "  Exception mtvec: " FMT_WORD "\n",
-               ANSI_FG_YELLOW),
-           NO,
-           epc,
-           cpu.csr.mtvec);
-#endif
-
-    // bool interrupt = (NO & (1 << (32 - 1))) != 0;
-
     cpu.csr.mepc = epc;
-
-    // We don't check is interrupt now.
-    // TODO: May need interrupt support.
     cpu.csr.mcause = NO;
     cpu.csr.mtval = tval;
 
 #ifdef CONFIG_DIFFTEST
-    /*
-     * Keep the reference model at the same architectural trap entry.  The
-     * instruction helper decides whether the next normal DiffTest step should
-     * be skipped; asynchronous interrupts still compare the first handler
-     * instruction normally.
-     */
     extern void (*ref_difftest_raise_intr)(uint64_t NO);
     ref_difftest_raise_intr(NO);
 #endif
 
-    // Update mstatus.
-    updateMstatus();
+    update_mstatus_on_trap_entry();
 
-    // 3.1.7. Machine Trap-Vector Base-Address Register (mtvec)
-    //
-    // When MODE=Direct, all traps into machine
-    // mode cause the pc to be set to the address in the BASE field. When MODE=Vectored, all synchronous
-    // exceptions into machine mode cause the pc to be set to the address in the BASE field, whereas
-    // interrupts cause the pc to be set to the address in the BASE field plus four times the interrupt cause
-    // number. For example, a machine-mode timer interrupt (see Table 14) causes the pc to be set to
-    // BASE+0x1c.
-    // pc = (mtvec & ~0xF) + (I * 4)
-    word_t mtvec = cpu.csr.mtvec;
-    word_t mode = mtvec & 0x3;
-    word_t base = mtvec & ~0x3UL;
-    word_t interruptMask = (word_t)1 << (sizeof(word_t) * 8 - 1);
-    bool isInterrupt = (NO & interruptMask) != 0;
-    word_t cause = NO & ~interruptMask;
+    const word_t mtvec = cpu.csr.mtvec;
+    const word_t mode = mtvec & 0x3u;
+    const word_t base = mtvec & ~(word_t)0x3u;
+    const word_t interrupt_mask = RISCV_INTERRUPT_BIT;
+    const bool is_interrupt = (NO & interrupt_mask) != 0;
+    const word_t cause = NO & ~interrupt_mask;
 
-    // Vectored mode only offsets interrupts; synchronous exceptions go to BASE.
-
-    if (mode == 1 && isInterrupt)
+    if (mode == 1 && is_interrupt)
     {
-        return base + (cause * 4);
+        return base + cause * 4u;
     }
 
-    // direct
     return base;
 }
 
@@ -196,13 +93,7 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc)
 
 word_t isa_query_intr()
 {
-    /*
-     * The generic CPU loop asks the ISA for one pending interrupt between guest
-     * instructions.  Timer hardware sets cpu.INTR, and this function consumes it
-     * only when machine interrupts are enabled.
-     */
-
-    if (cpu.INTR && (cpu.csr.mstatus & (1u << MSTATUS_MIE_BIT)))
+    if (cpu.INTR && (cpu.csr.mstatus & ((word_t)1u << MSTATUS_MIE_BIT)))
     {
         cpu.INTR = false;
         return IRQ_TIMER;
