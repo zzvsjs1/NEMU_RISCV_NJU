@@ -93,6 +93,13 @@ CFLAGS   += -O2 -MMD $(INCFLAGS) -static -D__NAVY__ \
 CXXFLAGS +=  $(CFLAGS) -fno-rtti -fno-exceptions
 ASFLAGS  +=  $(CFLAGS)
 
+COMPILE_COMMANDS_SCRIPT ?= $(abspath $(NAVY_HOME)/../scripts/update_compile_commands.py)
+ifeq ($(COMPILE_COMMANDS),1)
+record_compile_command = @python3 "$(COMPILE_COMMANDS_SCRIPT)" add --directory "$(WORK_DIR)" --file "$(realpath $(1))" --output "$(abspath $(2))" -- $(3)
+else
+record_compile_command = @:
+endif
+
 ## 4. ISA-Specific Configurations
 
 ### Paste in ISA-specific configurations (e.g., from `scripts/x86.mk`)
@@ -104,21 +111,25 @@ ASFLAGS  +=  $(CFLAGS)
 $(DST_DIR)/%.o: %.c
 	@mkdir -p $(dir $@) && echo + CC $<
 	@$(CC) -std=gnu11 $(CFLAGS) -c -o $@ $(realpath $<)
+	$(call record_compile_command,$<,$@,$(CC) -std=gnu11 $(CFLAGS) -c -o $(abspath $@) $(realpath $<))
 
 ### Rule (compile): a single `.cc` -> `.o` (g++)
 $(DST_DIR)/%.o: %.cc
 	@mkdir -p $(dir $@) && echo + CXX $<
 	@$(CXX) -std=c++17 $(CXXFLAGS) -c -o $@ $(realpath $<)
+	$(call record_compile_command,$<,$@,$(CXX) -std=c++17 $(CXXFLAGS) -c -o $(abspath $@) $(realpath $<))
 
 ### Rule (compile): a single `.cpp` -> `.o` (g++)
 $(DST_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@) && echo + CXX $<
 	@$(CXX) -std=c++17 $(CXXFLAGS) -c -o $@ $(realpath $<)
+	$(call record_compile_command,$<,$@,$(CXX) -std=c++17 $(CXXFLAGS) -c -o $(abspath $@) $(realpath $<))
 
 ### Rule (compile): a single `.S` -> `.o` (gcc, which calls as)
 $(DST_DIR)/%.o: %.S
 	@mkdir -p $(dir $@) && echo + AS $<
 	@$(AS) $(ASFLAGS) -c -o $@ $(realpath $<)
+	$(call record_compile_command,$<,$@,$(AS) $(ASFLAGS) -c -o $(abspath $@) $(realpath $<))
 
 # $(1): library name
 define LIB_TEMPLATE =

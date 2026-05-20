@@ -99,6 +99,13 @@ CXXFLAGS +=  $(CFLAGS) -ffreestanding -fno-rtti -fno-exceptions
 ASFLAGS  += -MMD $(INCFLAGS)
 LDFLAGS  += -z noexecstack $(addprefix -T, $(LDSCRIPTS))
 
+COMPILE_COMMANDS_SCRIPT ?= $(abspath $(AM_HOME)/../scripts/update_compile_commands.py)
+ifeq ($(COMPILE_COMMANDS),1)
+record_compile_command = @python3 "$(COMPILE_COMMANDS_SCRIPT)" add --directory "$(WORK_DIR)" --file "$(realpath $(1))" --output "$(abspath $(2))" -- $(3)
+else
+record_compile_command = @:
+endif
+
 ## 4. Arch-Specific Configurations
 
 ### Paste in arch-specific configurations (e.g., from `scripts/x86_64-qemu.mk`)
@@ -110,21 +117,25 @@ LDFLAGS  += -z noexecstack $(addprefix -T, $(LDSCRIPTS))
 $(DST_DIR)/%.o: %.c
 	@mkdir -p $(dir $@) && echo + CC $<
 	@$(CC) -std=gnu11 $(CFLAGS) -c -o $@ $(realpath $<)
+	$(call record_compile_command,$<,$@,$(CC) -std=gnu11 $(CFLAGS) -c -o $(abspath $@) $(realpath $<))
 
 ### Rule (compile): a single `.cc` -> `.o` (g++)
 $(DST_DIR)/%.o: %.cc
 	@mkdir -p $(dir $@) && echo + CXX $<
 	@$(CXX) -std=c++17 $(CXXFLAGS) -c -o $@ $(realpath $<)
+	$(call record_compile_command,$<,$@,$(CXX) -std=c++17 $(CXXFLAGS) -c -o $(abspath $@) $(realpath $<))
 
 ### Rule (compile): a single `.cpp` -> `.o` (g++)
 $(DST_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@) && echo + CXX $<
 	@$(CXX) -std=c++17 $(CXXFLAGS) -c -o $@ $(realpath $<)
+	$(call record_compile_command,$<,$@,$(CXX) -std=c++17 $(CXXFLAGS) -c -o $(abspath $@) $(realpath $<))
 
 ### Rule (compile): a single `.S` -> `.o` (gcc, which preprocesses and calls as)
 $(DST_DIR)/%.o: %.S
 	@mkdir -p $(dir $@) && echo + AS $<
 	@$(AS) $(ASFLAGS) -c -o $@ $(realpath $<)
+	$(call record_compile_command,$<,$@,$(AS) $(ASFLAGS) -c -o $(abspath $@) $(realpath $<))
 
 ifeq ($(MAKECMDGOALS),archive)
 ### Rule (archive): objects (`*.o`) -> `ARCHIVE.a` (ar)

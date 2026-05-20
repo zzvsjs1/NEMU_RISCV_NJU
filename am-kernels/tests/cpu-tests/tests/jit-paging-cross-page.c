@@ -1,6 +1,8 @@
 #include "trap.h"
 #include <stdint.h>
 
+#if defined(__riscv) && __riscv_xlen == 32
+
 typedef int (*generated_fn_t)(void);
 
 /*
@@ -46,10 +48,10 @@ static uint32_t pte_for_page(const void *page, uint32_t flags)
 {
     const uintptr_t pa = (uintptr_t)page;
     /*
-   * Sv32 stores the page number in PTE bits [31:10].  The page buffers are
-   * aligned, so dropping the low 12 address bits and then shifting into the PTE
-   * field gives the encoded physical page number.
-   */
+     * Sv32 stores the page number in PTE bits [31:10].  The page buffers are
+     * aligned, so dropping the low 12 address bits and then shifting into the PTE
+     * field gives the encoded physical page number.
+     */
     return (uint32_t)((pa >> 12) << 10) | flags;
 }
 
@@ -63,6 +65,26 @@ static uint32_t addi_a0_a0_imm(uint32_t imm)
 {
     /* addi a0, a0, imm: rd=x10 and rs1=x10, used to make page 2 observable. */
     return ((imm & 0xfffu) << 20) | (10u << 15) | (10u << 7) | 0x13u;
+}
+
+static void local_fence_i(void)
+{
+    /*
+     * FENCE.I orders earlier data stores before later instruction fetches on
+     * the same hart. Use the raw encoding so the test does not depend on the
+     * toolchain ISA string naming the Zifencei extension.
+     */
+    asm volatile(".4byte 0x0000100f" : : : "memory");
+}
+
+static void local_sfence_vma(void)
+{
+    /*
+     * SFENCE.VMA x0, x0 makes later implicit page-table reads observe earlier
+     * explicit page-table writes. The raw encoding avoids assembler extension
+     * spelling differences for privileged instructions.
+     */
+    asm volatile(".4byte 0x12000073" : : : "memory");
 }
 
 static void clear_page_table(uint32_t *pt)
@@ -106,6 +128,7 @@ static void enable_sv32(void)
     const uintptr_t root_ppn = (uintptr_t)root_pt >> 12;
     const uint32_t satp = SATP_MODE_SV32 | (uint32_t)root_ppn;
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
+    local_sfence_vma();
 }
 
 static void enter_supervisor_mode(void)
@@ -140,19 +163,19 @@ static void enter_supervisor_mode(void)
 static void prepare_generated_code(void)
 {
     /*
-   * First mapping:
-   *   page 1 last word:  a0 = 7
-   *   page 2 word 0:     a0 += 1
-   *   page 2 word 1:     ret
-   *
-   * Remapped second page:
-   *   page 2 word 0:     a0 += 2
-   *   page 2 word 1:     ret
-   *
-   * The first instruction remains mapped to the same physical byte, so a cache
-   * hit that validates only the block's first instruction would incorrectly keep
-   * returning 8 after the second page is remapped.
-   */
+     * First mapping:
+     *   page 1 last word:  a0 = 7
+     *   page 2 word 0:     a0 += 1
+     *   page 2 word 1:     ret
+     *
+     * Remapped second page:
+     *   page 2 word 0:     a0 += 2
+     *   page 2 word 1:     ret
+     *
+     * The first instruction remains mapped to the same physical byte, so a cache
+     * hit that validates only the block's first instruction would incorrectly keep
+     * returning 8 after the second page is remapped.
+     */
     code_pair_a[WORDS_PER_PAGE - 1u] = addi_a0_zero_imm(7);
     code_pair_a[WORDS_PER_PAGE] = addi_a0_a0_imm(1);
     code_pair_a[WORDS_PER_PAGE + 1u] = 0x00008067u;
@@ -164,6 +187,7 @@ static void prepare_generated_code(void)
 int main()
 {
     prepare_generated_code();
+    local_fence_i();
     install_page_tables();
     enable_sv32();
     enter_supervisor_mode();
@@ -175,9 +199,19 @@ int main()
 
     alias_l0[((ALIAS_BASE >> 12) & 0x3ffu) + 1u] =
         pte_for_page(code_second_b, PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
+    local_sfence_vma();
 
     const int second = fn();
     check(second == 9);
 
     return 0;
 }
+
+#else
+
+int main()
+{
+    return 0;
+}
+
+#endif

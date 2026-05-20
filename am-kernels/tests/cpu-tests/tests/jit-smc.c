@@ -20,10 +20,20 @@ static uint32_t generated_code[2] __attribute__((aligned(16))) = {
 static uint32_t addi_a0_zero_imm(uint32_t imm)
 {
     /*
-   * ADDI's 12-bit immediate occupies bits [31:20].  rd is a0/x10, rs1 is
-   * zero/x0, funct3 is 0, and opcode 0x13 selects OP-IMM.
-   */
+     * ADDI's 12-bit immediate occupies bits [31:20].  rd is a0/x10, rs1 is
+     * zero/x0, funct3 is 0, and opcode 0x13 selects OP-IMM.
+     */
     return ((imm & 0xfffu) << 20) | (10u << 7) | 0x13u;
+}
+
+/* Issue FENCE.I after rewriting code bytes, matching the architectural contract. */
+static void local_fence_i(void)
+{
+    /*
+     * Some toolchains do not include zifencei in the default ISA string, so use
+     * FENCE.I's architectural encoding instead of the textual mnemonic.
+     */
+    asm volatile(".4byte 0x0000100f" : : : "memory");
 }
 
 int main()
@@ -34,12 +44,12 @@ int main()
     check(first == 1);
 
     /*
-   * After the first call, a JIT implementation may have cached native code for
-   * generated_code.  Patching the first guest instruction must invalidate that
-   * cached block; otherwise the second call would keep returning the stale
-   * value 1.
-   */
+     * After the first call, a JIT implementation may have cached native code for
+     * generated_code.  RISC-V requires FENCE.I after storing new instruction
+     * bytes before later instruction fetches are guaranteed to observe them.
+     */
     generated_code[0] = addi_a0_zero_imm(2);
+    local_fence_i();
 
     const int second = fn();
     check(second == 2);

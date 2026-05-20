@@ -6,3 +6,9 @@ scripts/codex-*.sh
 /docs
 /notes
 /nemu-master
+/.cache
+/.codex/.agents
+/.pytest_cache
+__pycache__/
+/compile_commands.json
+/.compile-commands/

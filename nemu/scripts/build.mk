@@ -27,17 +27,26 @@ LDFLAGS := -g $(LDFLAGS)
 
 OBJS = $(SRCS:%.c=$(OBJ_DIR)/%.o) $(CXXSRC:%.cc=$(OBJ_DIR)/%.o)
 
+COMPILE_COMMANDS_SCRIPT ?= $(abspath $(NEMU_HOME)/../scripts/update_compile_commands.py)
+ifeq ($(COMPILE_COMMANDS),1)
+record_compile_command = @python3 "$(COMPILE_COMMANDS_SCRIPT)" add --directory "$(WORK_DIR)" --file "$(abspath $(1))" --output "$(abspath $(2))" -- $(3)
+else
+record_compile_command = @:
+endif
+
 # Compilation patterns
 $(OBJ_DIR)/%.o: %.c
 	@echo + CC $<
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) -c -o $@ $<
+	$(call record_compile_command,$<,$@,$(CC) $(CFLAGS) -c -o $(abspath $@) $(abspath $<))
 	$(call call_fixdep, $(@:.o=.d), $@)
 
 $(OBJ_DIR)/%.o: %.cc
 	@echo + CXX $<
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CFLAGS) $(CXXFLAGS) -c -o $@ $<
+	$(call record_compile_command,$<,$@,$(CXX) $(CFLAGS) $(CXXFLAGS) -c -o $(abspath $@) $(abspath $<))
 	$(call call_fixdep, $(@:.o=.d), $@)
 
 # Dependencies
