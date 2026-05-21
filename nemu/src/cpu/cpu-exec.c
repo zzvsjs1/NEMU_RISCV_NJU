@@ -1,7 +1,7 @@
 #include <cpu/cpu.h>
 #include <cpu/exec.h>
 #include <cpu/difftest.h>
-#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64)
+#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86)
 #include <isa-all-instr.h>
 #endif
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
@@ -31,10 +31,16 @@ const rtlreg_t rzero = 0;
 rtlreg_t tmp_reg[6];
 
 void device_update();
-#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64)
+#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86)
 void fetch_decode(Decode *s, vaddr_t pc);
 #endif
 
+/*
+ * Finish one interpreted instruction after cpu.pc has been updated.  Tracing,
+ * DiffTest, and watchpoints all need the old pc from Decode plus the committed
+ * next pc, so this helper is deliberately called after fetch/decode/execute but
+ * before device polling and interrupt delivery.
+ */
 static void trace_and_difftest(Decode *_this, vaddr_t dnpc)
 {
 #ifdef CONFIG_IRINGBUF
@@ -68,9 +74,15 @@ static void trace_and_difftest(Decode *_this, vaddr_t dnpc)
 #endif
 }
 
-#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64)
+#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86)
 #include <isa-exec.h>
 
+/*
+ * Table-interpreter ISAs decode to a small execution id first.  The table keeps
+ * the old helper API available for disassembly or external decode users, while
+ * exec_decoded_instr() below uses a switch so normal builds do not rely on
+ * computed function-pointer calls.
+ */
 #define FILL_EXEC_TABLE(name) [concat(EXEC_ID_, name)] = concat(exec_, name),
 static const void *g_exec_table[TOTAL_INSTR] = {
     MAP(INSTR_LIST, FILL_EXEC_TABLE)};
@@ -82,6 +94,11 @@ static const void *g_exec_table[TOTAL_INSTR] = {
 
 static inline void exec_decoded_instr(int idx, Decode *s)
 {
+    /*
+     * Execute the helper selected by fetch_decode_idx().  Any unknown id falls
+     * back to exec_inv(), which gives the ISA-specific invalid-instruction path
+     * rather than silently advancing the PC.
+     */
     switch (idx)
     {
         MAP(INSTR_LIST, EXEC_DECODED_CASE)
@@ -93,6 +110,11 @@ static inline void exec_decoded_instr(int idx, Decode *s)
 
 static inline int fetch_decode_idx(Decode *s, vaddr_t pc)
 {
+    /*
+     * The table path fetches through isa_fetch_decode().  snpc starts at pc and
+     * is advanced by each ISA's fetch helper; dnpc defaults to that sequential
+     * address until an instruction helper overrides it.
+     */
     s->pc = pc;
     s->snpc = pc;
     int idx = isa_fetch_decode(s);
@@ -131,6 +153,10 @@ static inline int fetch_decode_idx(Decode *s, vaddr_t pc)
 
 static inline void fetch_decode_exec_updatepc(Decode *s)
 {
+    /*
+     * Table-interpreter step: decode the current instruction, run the selected
+     * helper, then publish dnpc as the architectural pc.
+     */
     int idx = fetch_decode_idx(s, cpu.pc);
     exec_decoded_instr(idx, s);
     cpu.pc = s->dnpc;
@@ -138,6 +164,13 @@ static inline void fetch_decode_exec_updatepc(Decode *s)
 #else
 static inline void fetch_decode_exec_updatepc(Decode *s)
 {
+    /*
+     * Direct-interpreter step: isa_exec_once() owns both fetch and
+     * execution, so the common CPU loop only copies the committed dnpc into
+     * cpu.pc and formats the trace line afterwards. RISC-V uses this for its
+     * pattern interpreter; PA x86 also uses it because x86 length decode is
+     * interleaved with instruction fetch.
+     */
     s->pc = cpu.pc;
     s->snpc = cpu.pc;
     isa_exec_once(s);
@@ -149,10 +182,10 @@ static inline void fetch_decode_exec_updatepc(Decode *s)
     int i;
     uint8_t *inst = (uint8_t *)&s->isa.inst;
 
-#ifdef CONFIG_ISA_riscv64
+#if defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
     /*
-     * RV64 used the table interpreter's little-endian byte display before this
-     * direct path was introduced, so keep its itrace byte column stable.
+     * RV64 and x86 conventionally print fetched bytes in memory order. RV32
+     * keeps its older word-order display below for trace compatibility.
      */
     for (i = 0; i < ilen; i++)
     {
@@ -165,7 +198,7 @@ static inline void fetch_decode_exec_updatepc(Decode *s)
     }
 #endif
 
-    int ilen_max = 4;
+    int ilen_max = MUXDEF(CONFIG_ISA_x86, 8, 4);
     int space_len = ilen_max - ilen;
 
     if (space_len < 0)
@@ -184,6 +217,11 @@ static inline void fetch_decode_exec_updatepc(Decode *s)
 }
 #endif
 
+/*
+ * Print aggregate execution counters when NEMU stops.  The timer is accumulated
+ * across cpu_exec() calls, so repeated `si' commands still contribute to the
+ * final simulated instruction frequency.
+ */
 static void statistic()
 {
     IFNDEF(CONFIG_TARGET_AM, setlocale(LC_NUMERIC, ""));
@@ -205,6 +243,10 @@ static void statistic()
 #endif
 }
 
+/*
+ * Assertion handling wants the same diagnostic order as an explicit abort:
+ * first recent instruction history, then register state, then aggregate counts.
+ */
 void assert_fail_msg()
 {
     /* Print the recent instruction window before register/statistic dumps. */
@@ -213,20 +255,31 @@ void assert_fail_msg()
     statistic();
 }
 
+/* Only dump registers for failures; a good trap has already reported success. */
 static bool should_dump_failure_registers()
 {
     return nemu_state.state == NEMU_ABORT ||
            (nemu_state.state == NEMU_END && nemu_state.halt_ret != 0);
 }
 
-#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64)
+#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86)
 void fetch_decode(Decode *s, vaddr_t pc)
 {
+    /*
+     * External users can request a decode without executing it.  Store the
+     * helper pointer selected by the table so callers can inspect or run it
+     * later under their own control.
+     */
     int idx = fetch_decode_idx(s, pc);
     s->EHelper = g_exec_table[idx];
 }
 #endif
 
+/*
+ * Ask the ISA layer for a pending interrupt.  RISC-V keeps a cheap latched flag
+ * in CPU_state so the hot JIT path avoids inspecting CSRs when no interrupt is
+ * pending.
+ */
 static inline word_t query_pending_intr()
 {
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
@@ -263,6 +316,11 @@ static inline bool should_update_device_after(uint32_t *counter, uint32_t execut
 }
 #endif
 
+/*
+ * Decide whether the fast RISC-V JIT path is allowed for this cpu_exec() call.
+ * Any feature that needs exact per-instruction hooks forces the interpreter so
+ * trace logs, watchpoints, memory traces, and DiffTest keep precise behaviour.
+ */
 static inline bool can_jit_exec()
 {
 #if (defined(CONFIG_RV32_JIT) || defined(CONFIG_RV64_JIT)) && !defined(CONFIG_TRACE) && \
@@ -279,7 +337,12 @@ static inline bool can_jit_exec()
 #endif
 }
 
-/* Simulate how the CPU works. */
+/*
+ * Simulate how the CPU works for at most n guest instructions.  Each loop
+ * iteration either retires one interpreter instruction or a JIT batch, then
+ * performs the common post-instruction duties: accounting, tracing/DiffTest,
+ * device polling, and interrupt delivery.
+ */
 void cpu_exec(uint64_t n)
 {
     g_print_step = n < MAX_INSTR_TO_PRINT;

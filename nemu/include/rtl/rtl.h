@@ -17,6 +17,11 @@ extern rtlreg_t tmp_reg[6];
 #define t2 (tmp_reg + 5)
 #define rz (&rzero)
 
+/*
+ * All RTL helpers share the current Decode pointer as their first argument.
+ * This lets helper code update s->dnpc or inspect decode metadata without
+ * passing those pieces separately through every table-interpreter call.
+ */
 #define def_rtl(name, ...) void concat(rtl_, name)(Decode * s, __VA_ARGS__)
 
 // relation operation

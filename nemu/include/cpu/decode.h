@@ -5,6 +5,12 @@
 
 typedef struct
 {
+    /*
+     * An Operand is the table-interpreter view of one decoded operand.  It can
+     * be a register pointer, an immediate value, or, for x86 only, a floating
+     * register/value pair.  Direct RISC-V execution keeps its operands local in
+     * inst.c, but the common Decode structure still carries these fields.
+     */
     union
     {
         IFDEF(CONFIG_ISA_x86, uint64_t *pfreg);
@@ -20,9 +26,19 @@ typedef struct
 
 typedef struct Decode
 {
+    /*
+     * pc is the address of the instruction being executed.  snpc is the static
+     * next PC computed by fetch length, while dnpc is the dynamic next PC after
+     * branches, jumps, traps, or interrupts redirect control flow.
+     */
     vaddr_t pc;
     vaddr_t snpc; // static next pc
     vaddr_t dnpc; // dynamic next pc
+    /*
+     * Table-interpreter ISAs fill EHelper and the generic Operand fields.
+     * Direct RISC-V execution fills isa.inst and runs the pattern body directly,
+     * so EHelper is only meaningful for non-RISC-V decode users.
+     */
     void (*EHelper)(struct Decode *);
     Operand dest, src1, src2;
     ISADecodeInfo isa;
@@ -59,6 +75,16 @@ __attribute__((always_inline)) static inline void pattern_decode(
     uint32_t *mask,
     uint32_t *shift)
 {
+    /*
+     * Convert a human-readable bit pattern such as
+     * "0000000 ????? ????? 000 ????? 01100 11" into:
+     *   key   - the fixed 0/1 bits after trailing don't-care bits are removed,
+     *   mask  - which remaining bits must match,
+     *   shift - how many trailing don't-care bits the instruction is shifted.
+     *
+     * Removing trailing '?' bits lets each INSTPAT compare only the meaningful
+     * field bits with one shift and mask operation.
+     */
     uint32_t __key = 0, __mask = 0, __shift = 0;
 #define macro(i) \
     if ((i) >= len) \
@@ -106,6 +132,11 @@ finish:
 __attribute__((always_inline)) static inline void pattern_decode_hex(const char *str, int len,
                                                                      uint32_t *key, uint32_t *mask, uint32_t *shift)
 {
+    /*
+     * Hex patterns serve the same purpose as bit patterns, but each non-space
+     * character contributes four bits.  This is mainly useful for ISAs whose
+     * instruction tables are clearer in hexadecimal opcode form.
+     */
     uint32_t __key = 0, __mask = 0, __shift = 0;
 #define macro(i) \
     if ((i) >= len) \
@@ -160,6 +191,12 @@ finish:
 #define def_hex_INSTR_TAB(pattern, tab) def_hex_INSTR_IDTABW(pattern, empty, tab, 0)
 
 // --- upstream-style pattern matching wrappers for direct execution ---
+/*
+ * INSTPAT is the direct-interpreter matcher.  The ISA file supplies
+ * INSTPAT_INST() to name the raw instruction word and INSTPAT_MATCH() to decode
+ * operands plus run the instruction body.  The computed goto exits the pattern
+ * block after the first match, so pattern order is architectural.
+ */
 #define INSTPAT(pattern, ...) \
     do \
     { \

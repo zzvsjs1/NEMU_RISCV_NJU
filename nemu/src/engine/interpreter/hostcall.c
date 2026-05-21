@@ -6,6 +6,12 @@
 uint32_t pio_read(ioaddr_t addr, int len);
 void pio_write(ioaddr_t addr, int len, uint32_t data);
 
+/*
+ * Centralise state transitions that are initiated by interpreted instructions.
+ * DiffTest cannot compare the following host-side bookkeeping with the
+ * reference model, so every explicit NEMU state change skips the next reference
+ * step before publishing halt_pc and halt_ret.
+ */
 void set_nemu_state(int state, vaddr_t pc, int halt_ret)
 {
     difftest_skip_ref();
@@ -14,6 +20,11 @@ void set_nemu_state(int state, vaddr_t pc, int halt_ret)
     nemu_state.halt_ret = halt_ret;
 }
 
+/*
+ * Report an opcode that reached the invalid-instruction host call.  Two words
+ * are fetched for context without changing the real CPU pc; this gives enough
+ * bytes for the user to find the failing instruction in the disassembly.
+ */
 __attribute__((noinline))
 void invalid_inst(vaddr_t thispc)
 {
@@ -46,12 +57,19 @@ void invalid_inst(vaddr_t thispc)
 def_rtl(hostcall, uint32_t id, rtlreg_t *dest, const rtlreg_t *src1,
         const rtlreg_t *src2, word_t imm)
 {
+    /*
+     * Host calls are the escape hatch from guest instruction semantics to NEMU
+     * services.  They are intentionally small: trap exit, invalid opcode
+     * reporting, and optional port I/O for ISAs that expose it.
+     */
     switch (id)
     {
     case HOSTCALL_EXIT:
+        /* NEMUTRAP reports its guest return code through src1. */
         set_nemu_state(NEMU_END, s->pc, *src1);
         break;
     case HOSTCALL_INV:
+        /* Decode reached an instruction that this interpreter cannot execute. */
         invalid_inst(s->pc);
         break;
 #ifdef CONFIG_HAS_PORT_IO
@@ -60,6 +78,11 @@ def_rtl(hostcall, uint32_t id, rtlreg_t *dest, const rtlreg_t *src1,
         int width = imm & 0xf;
         bool is_in = ((imm & ~0xf) != 0);
 
+        /*
+         * The low nibble carries byte width.  Any higher bit selects IN versus
+         * OUT, keeping the RTL call compact while still describing both the port
+         * address and data operand.
+         */
         if (is_in)
             *dest = pio_read(*src1, width);
         else

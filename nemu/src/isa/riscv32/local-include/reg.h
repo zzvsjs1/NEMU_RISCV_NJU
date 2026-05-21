@@ -3,6 +3,11 @@
 
 #include <isa.h>
 
+/*
+ * Keep register indexing checks in one place.  Release builds simply return the
+ * index, while CONFIG_RT_CHECK builds catch any helper that tries to access a
+ * GPR outside the configured RV32E/RV32/RV64 register file.
+ */
 static inline int check_reg_idx(int idx)
 {
     IFDEF(CONFIG_RT_CHECK, assert(idx >= 0 && idx < RISCV_GPR_NUM));
@@ -23,6 +28,11 @@ bool isCSRImplemented(const word_t address);
 
 bool isCSRWriteable(const word_t csrAddr);
 
+/*
+ * Return the ABI name used by tracing and the monitor.  Width is ignored for
+ * RISC-V because each architectural register has one name regardless of access
+ * size.
+ */
 static inline const char *reg_name(int idx, int width)
 {
     (void)width;

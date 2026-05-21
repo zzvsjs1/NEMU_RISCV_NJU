@@ -5,6 +5,11 @@
 
 #define c_shift_mask MUXDEF(CONFIG_ISA64, 0x3f, 0x1f)
 
+/*
+ * c_* operations are tiny host-C implementations of RTL arithmetic.  They do
+ * not fetch operands or update Decode state; the RTL wrappers in rtl-basic.h
+ * handle pointers, while these macros only describe the arithmetic itself.
+ */
 #define c_add(a, b) ((a) + (b))
 #define c_sub(a, b) ((a) - (b))
 #define c_and(a, b) ((a) & (b))
@@ -83,6 +88,11 @@ static inline word_t c_mulsu_hi_impl(word_t lhs, word_t rhs)
 
 static inline bool interpret_relop(const RELOP_TYPE relop, const rtlreg_t src1, const rtlreg_t src2)
 {
+    /*
+     * Evaluate a relation operator with explicit signedness.  The enum encodes
+     * more structure than this switch needs, but spelling out each case keeps
+     * the architectural comparison rule obvious at each branch instruction.
+     */
     switch (relop)
     {
     case RELOP_FALSE:
@@ -116,16 +126,19 @@ static inline bool interpret_relop(const RELOP_TYPE relop, const rtlreg_t src1, 
 
 static inline bool compareRegister(const RELOP_TYPE relop, const rtlreg_t *rs1, const rtlreg_t *rs2)
 {
+    /* Compare two decoded register operands without changing either source. */
     return interpret_relop(relop, *rs1, *rs2);
 }
 
 static inline bool compareRegisterI(const RELOP_TYPE relop, const rtlreg_t *rs, const rtlreg_t i)
 {
+    /* Compare a register operand against an already-decoded immediate value. */
     return interpret_relop(relop, *rs, i);
 }
 
 static inline bool compareIRegister(const RELOP_TYPE relop, const rtlreg_t i, const rtlreg_t *rs)
 {
+    /* Immediate-on-left comparison for ISAs whose condition encodes that order. */
     return interpret_relop(relop, i, *rs);
 }
 

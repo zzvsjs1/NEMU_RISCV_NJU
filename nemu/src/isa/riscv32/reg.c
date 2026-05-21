@@ -27,16 +27,23 @@ static const csr_disp_t csr_list[] = {
     {0x343, "mtval"},
 };
 
+/* Keep the CSR table length derived from the table itself to avoid drift. */
 static size_t csr_list_len(void)
 {
     return sizeof(csr_list) / sizeof(csr_list[0]);
 }
 
+/* Small equality wrapper keeps NULL handling explicit at the call sites. */
 static bool str_eq(const char *a, const char *b)
 {
     return strcmp(a, b) == 0;
 }
 
+/*
+ * Convert a monitor/debugger register name to a GPR index.  ABI names are
+ * accepted first because they are what isa_reg_display() prints; xN names are
+ * accepted afterwards for users who think in architectural register numbers.
+ */
 static int reg_name_to_index(const char *name)
 {
     if (name == NULL)
@@ -89,6 +96,11 @@ static int reg_name_to_index(const char *name)
     return -1;
 }
 
+/*
+ * Convert a supported CSR display name to its numeric address.  Only CSRs that
+ * are modelled in CPU_state are accepted, so the monitor never fabricates state
+ * for unimplemented registers.
+ */
 static bool csr_name_to_address(const char *name, word_t *addr)
 {
     if (name == NULL || addr == NULL)
@@ -108,11 +120,17 @@ static bool csr_name_to_address(const char *name, word_t *addr)
     return false;
 }
 
+/* Read a CSR by address after resolving it to the CPU_state storage slot. */
 word_t getCSRValue(const word_t address)
 {
     return (word_t)(*getCSRAddress(address));
 }
 
+/*
+ * Return the storage location for an implemented CSR.  Instruction execution
+ * should call isCSRImplemented()/permission checks before this; the Assert here
+ * catches internal misuse during development.
+ */
 rtlreg_t *getCSRAddress(const word_t address)
 {
     switch (address)
@@ -137,6 +155,7 @@ rtlreg_t *getCSRAddress(const word_t address)
     }
 }
 
+/* Check whether the CSR exists in this simplified RISC-V model. */
 bool isCSRImplemented(const word_t address)
 {
     for (size_t i = 0; i < csr_list_len(); i++)
@@ -160,6 +179,10 @@ bool isCSRWriteable(const word_t csrAddr)
     return access_type != 0x3u;
 }
 
+/*
+ * Print GPRs, pc, and modelled CSRs in hexadecimal plus signed/unsigned decimal.
+ * This is diagnostic output only; it must not normalise x0 or mutate CSR state.
+ */
 void isa_reg_display()
 {
     printf("\n");
@@ -186,6 +209,11 @@ void isa_reg_display()
     printf("\n\n");
 }
 
+/*
+ * Resolve a monitor expression token such as "$a0", "pc", or "mstatus" to the
+ * current value.  Unknown names report failure through the success flag and keep
+ * the sentinel return value for legacy callers.
+ */
 word_t isa_reg_str2val(const char *s, bool *success)
 {
     if (success == NULL)
@@ -227,6 +255,11 @@ word_t isa_reg_str2val(const char *s, bool *success)
     return (word_t)-1;
 }
 
+/*
+ * Debugger-side register write.  It accepts the same names as reads, preserves
+ * x0 as the hard-wired zero register, and applies mstatus normalisation for CSR
+ * writes so monitor changes obey the same WARL rule as guest instructions.
+ */
 void isa_set_reg_val(const char *name, const word_t val)
 {
     if (name == NULL)

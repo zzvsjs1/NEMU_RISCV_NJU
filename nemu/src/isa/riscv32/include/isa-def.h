@@ -95,6 +95,11 @@ enum
 
 #define RISCV64_MSTATUS_UXL_SXL (((word_t)2u << 32) | ((word_t)2u << 34))
 
+/*
+ * Apply the WARL parts of mstatus that this model currently implements.  WARL
+ * means "write any, read legal": software may write a reserved value, but the
+ * stored value must be normalised to one the architecture permits.
+ */
 static inline word_t riscv_mstatus_normalise(word_t value)
 {
     /*
@@ -116,6 +121,11 @@ static inline word_t riscv_mstatus_normalise(word_t value)
 
 #define riscv64_mstatus_normalise(value) riscv_mstatus_normalise(value)
 
+/*
+ * ECALL has a different exception cause for each current privilege level.  The
+ * direct interpreter calls this before trap delivery so mcause matches the mode
+ * that executed ECALL, not the mode entered by the trap.
+ */
 static inline word_t riscv_ecall_cause_from_priv(word_t priv)
 {
     if (priv == RISCV_PRIV_U)

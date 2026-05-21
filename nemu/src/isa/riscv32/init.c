@@ -24,6 +24,11 @@ static const uint32_t img[] = {
 #endif
 };
 
+/*
+ * Reset architectural RISC-V state to the power-on values used by NEMU.  Guest
+ * memory is loaded separately; this function only prepares pc, GPR/CSR state,
+ * privilege mode, and the pending-interrupt latch.
+ */
 static void restart()
 {
     /* Set the initial program counter. */
@@ -45,6 +50,10 @@ static void restart()
     cpu.INTR = false;
 }
 
+/*
+ * Install the built-in image at RESET_VECTOR, then initialise the CPU state.
+ * A real guest binary loaded by the monitor overwrites this image before run.
+ */
 void init_isa()
 {
     /* Load built-in image. */

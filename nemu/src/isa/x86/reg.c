@@ -54,8 +54,74 @@ void reg_test() {
 }
 
 void isa_reg_display() {
+  for (int i = R_EAX; i <= R_EDI; i ++) {
+    printf("%-3s " FMT_WORD "\n", regsl[i], reg_l(i));
+  }
+  printf("%-6s " FMT_WORD "\n", "eflags", cpu.eflags);
+  printf("%-6s " FMT_WORD "\n", "eip", cpu.pc);
 }
 
 word_t isa_reg_str2val(const char *s, bool *success) {
+  for (int i = R_EAX; i <= R_EDI; i ++) {
+    if (strcmp(s, regsl[i]) == 0) {
+      *success = true;
+      return reg_l(i);
+    }
+    if (strcmp(s, regsw[i]) == 0) {
+      *success = true;
+      return reg_w(i);
+    }
+  }
+
+  for (int i = R_AL; i <= R_BH; i ++) {
+    if (strcmp(s, regsb[i]) == 0) {
+      *success = true;
+      return reg_b(i);
+    }
+  }
+
+  if (strcmp(s, "eflags") == 0) {
+    *success = true;
+    return cpu.eflags;
+  }
+
+  if (strcmp(s, "eip") == 0 || strcmp(s, "pc") == 0) {
+    *success = true;
+    return cpu.pc;
+  }
+
+  *success = false;
   return 0;
+}
+
+void isa_set_reg_val(const char *name, const word_t val) {
+  for (int i = R_EAX; i <= R_EDI; i ++) {
+    if (strcmp(name, regsl[i]) == 0) {
+      reg_l(i) = val;
+      return;
+    }
+    if (strcmp(name, regsw[i]) == 0) {
+      reg_w(i) = val;
+      return;
+    }
+  }
+
+  for (int i = R_AL; i <= R_BH; i ++) {
+    if (strcmp(name, regsb[i]) == 0) {
+      reg_b(i) = val;
+      return;
+    }
+  }
+
+  if (strcmp(name, "eflags") == 0) {
+    cpu.eflags = val;
+    return;
+  }
+
+  if (strcmp(name, "eip") == 0 || strcmp(name, "pc") == 0) {
+    cpu.pc = val;
+    return;
+  }
+
+  printf("Unknown register: %s\n", name);
 }

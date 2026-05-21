@@ -6,12 +6,23 @@
 
 /* RTL basic instructions */
 
+/*
+ * Generate a register-register RTL helper.  The helper reads two rtlreg_t
+ * values, applies the matching c_* operation, and writes the result through the
+ * destination pointer.  Table-interpreter instruction helpers build most ALU
+ * operations from these small pieces.
+ */
 #define def_rtl_compute_reg(name) \
     static inline def_rtl(name, rtlreg_t *dest, const rtlreg_t *src1, const rtlreg_t *src2) \
     { \
         *dest = concat(c_, name)(*src1, *src2); \
     }
 
+/*
+ * Generate the immediate version of an RTL helper.  The immediate is already
+ * decoded and sign/zero-extended by the ISA decode helper, so this layer treats
+ * it as a normal host value.
+ */
 #define def_rtl_compute_imm(name) \
     static inline def_rtl(name##i, rtlreg_t *dest, const rtlreg_t *src1, const sword_t imm) \
     { \
@@ -47,12 +58,14 @@ def_rtl_compute_reg_imm(add)
                                                     static inline def_rtl(setrelop, uint32_t relop, rtlreg_t *dest,
                                                                           const rtlreg_t *src1, const rtlreg_t *src2)
 {
+    /* Convert a relation comparison into the architectural 0/1 integer result. */
     *dest = interpret_relop(relop, *src1, *src2);
 }
 
 static inline def_rtl(setrelopi, uint32_t relop, rtlreg_t *dest,
                       const rtlreg_t *src1, sword_t imm)
 {
+    /* Immediate variant of setrelop; useful for instructions such as SLTI. */
     *dest = interpret_relop(relop, *src1, imm);
 }
 
@@ -78,6 +91,11 @@ def_rtl_compute_reg(mulu_lo)
                                                     static inline def_rtl(div64u_q, rtlreg_t *dest,
                                                                           const rtlreg_t *src1_hi, const rtlreg_t *src1_lo, const rtlreg_t *src2)
 {
+    /*
+     * Divide a 64-bit unsigned value built from two 32-bit halves.  Some 32-bit
+     * ISAs decode long division into this helper rather than depending on the
+     * guest register width being large enough to hold the full dividend.
+     */
     uint64_t dividend = ((uint64_t)(*src1_hi) << 32) | (*src1_lo);
     uint32_t divisor = (*src2);
     *dest = dividend / divisor;
@@ -86,6 +104,7 @@ def_rtl_compute_reg(mulu_lo)
 static inline def_rtl(div64u_r, rtlreg_t *dest,
                       const rtlreg_t *src1_hi, const rtlreg_t *src1_lo, const rtlreg_t *src2)
 {
+    /* Remainder half of the unsigned 64-by-32 division helper above. */
     uint64_t dividend = ((uint64_t)(*src1_hi) << 32) | (*src1_lo);
     uint32_t divisor = (*src2);
     *dest = dividend % divisor;
@@ -94,6 +113,7 @@ static inline def_rtl(div64u_r, rtlreg_t *dest,
 static inline def_rtl(div64s_q, rtlreg_t *dest,
                       const rtlreg_t *src1_hi, const rtlreg_t *src1_lo, const rtlreg_t *src2)
 {
+    /* Signed quotient for a 64-bit dividend assembled from high/low halves. */
     int64_t dividend = ((uint64_t)(*src1_hi) << 32) | (*src1_lo);
     int32_t divisor = (*src2);
     *dest = dividend / divisor;
@@ -102,6 +122,7 @@ static inline def_rtl(div64s_q, rtlreg_t *dest,
 static inline def_rtl(div64s_r, rtlreg_t *dest,
                       const rtlreg_t *src1_hi, const rtlreg_t *src1_lo, const rtlreg_t *src2)
 {
+    /* Signed remainder for the same 64-by-32 division form. */
     int64_t dividend = ((uint64_t)(*src1_hi) << 32) | (*src1_lo);
     int32_t divisor = (*src2);
     *dest = dividend % divisor;
@@ -110,16 +131,22 @@ static inline def_rtl(div64s_r, rtlreg_t *dest,
 // memory
 static inline def_rtl(lm, rtlreg_t *dest, const rtlreg_t *addr, word_t offset, int len)
 {
+    /* Load len bytes from guest virtual memory at addr + offset without sign-extension. */
     *dest = vaddr_read(*addr + offset, len);
 }
 
 static inline def_rtl(sm, const rtlreg_t *src1, const rtlreg_t *addr, word_t offset, int len)
 {
+    /* Store the low len bytes of src1 to guest virtual memory at addr + offset. */
     vaddr_write(*addr + offset, len, *src1);
 }
 
 static inline def_rtl(lms, rtlreg_t *dest, const rtlreg_t *addr, word_t offset, int len)
 {
+    /*
+     * Signed memory load.  The raw guest value is first read with vaddr_read(),
+     * then widened through the host signed type that matches the access width.
+     */
     word_t val = vaddr_read(*addr + offset, len);
     switch (len)
     {
@@ -139,6 +166,11 @@ static inline def_rtl(lms, rtlreg_t *dest, const rtlreg_t *addr, word_t offset, 
 
 static inline def_rtl(host_lm, rtlreg_t *dest, const void *addr, int len)
 {
+    /*
+     * Host-memory load used for emulator-owned data structures, not guest
+     * virtual memory.  Width is explicit so helpers do not depend on C object
+     * type inference at the call site.
+     */
     switch (len)
     {
     case 4:
@@ -157,6 +189,7 @@ static inline def_rtl(host_lm, rtlreg_t *dest, const void *addr, int len)
 
 static inline def_rtl(host_sm, void *addr, const rtlreg_t *src1, int len)
 {
+    /* Host-memory store companion to host_lm(). */
     switch (len)
     {
     case 4:
@@ -176,11 +209,13 @@ static inline def_rtl(host_sm, void *addr, const rtlreg_t *src1, int len)
 // control
 static inline def_rtl(j, vaddr_t target)
 {
+    /* Unconditional jump: publish the dynamic next PC selected by the helper. */
     s->dnpc = target;
 }
 
 static inline def_rtl(jr, rtlreg_t *target)
 {
+    /* Register-indirect jump used by return and indirect-branch instructions. */
     s->dnpc = *target;
 }
 
@@ -191,6 +226,10 @@ static inline def_rtl(
     const rtlreg_t *src2,
     vaddr_t target)
 {
+    /*
+     * Conditional jump shared by table-interpreter ISAs.  If the relation is
+     * false, control falls through to snpc; otherwise dnpc receives target.
+     */
     bool is_jmp = interpret_relop(relop, *src1, *src2);
     rtl_j(s, (is_jmp ? target : s->snpc));
 }

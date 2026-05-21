@@ -8,11 +8,13 @@
 
 #define IRQ_TIMER (RISCV_INTERRUPT_BIT | (word_t)7u)
 
+/* Extract one mstatus bit as a boolean-sized integer. */
 static inline uint64_t get_bit(uint64_t csr, unsigned bit)
 {
     return (csr >> bit) & 1ull;
 }
 
+/* Return a CSR value with one bit set or cleared, leaving all other bits intact. */
 static inline uint64_t set_bit(uint64_t csr, unsigned bit, bool value)
 {
     if (value)
@@ -23,6 +25,10 @@ static inline uint64_t set_bit(uint64_t csr, unsigned bit, bool value)
     return csr & ~(1ull << bit);
 }
 
+/*
+ * Replace a contiguous bit field inside a CSR.  value is masked to the field
+ * width before insertion, so callers can pass the raw privilege value directly.
+ */
 static inline uint64_t set_field(uint64_t csr, uint64_t shift, uint64_t width, uint64_t value)
 {
     Assert(width > 0 && shift < 64, "set_field: invalid field shift=%lu width=%lu", shift, width);
@@ -35,6 +41,11 @@ static inline uint64_t set_field(uint64_t csr, uint64_t shift, uint64_t width, u
     return csr;
 }
 
+/*
+ * Apply the RISC-V trap-entry mstatus rules.  MIE is saved into MPIE, the
+ * interrupted privilege is saved into MPP, global machine interrupts are
+ * disabled, and execution enters M-mode.
+ */
 static void update_mstatus_on_trap_entry(void)
 {
     /*
@@ -58,6 +69,11 @@ static void update_mstatus_on_trap_entry(void)
     cpu.prvi = RISCV_PRIV_M;
 }
 
+/*
+ * Raise an exception or interrupt and return the trap-vector target.  tval is
+ * the instruction, address, or zero value that the specific trap type wants to
+ * expose through mtval.
+ */
 word_t isa_raise_intr_tval(word_t NO, vaddr_t epc, word_t tval)
 {
     cpu.csr.mepc = epc;
@@ -86,11 +102,17 @@ word_t isa_raise_intr_tval(word_t NO, vaddr_t epc, word_t tval)
     return base;
 }
 
+/* Raise a trap with no mtval payload. */
 word_t isa_raise_intr(word_t NO, vaddr_t epc)
 {
     return isa_raise_intr_tval(NO, epc, 0);
 }
 
+/*
+ * Report a pending timer interrupt only when the CPU interrupt latch is set and
+ * MIE allows delivery.  Consuming the latch here prevents the same timer event
+ * being delivered repeatedly without the device layer raising it again.
+ */
 word_t isa_query_intr()
 {
     if (cpu.INTR && (cpu.csr.mstatus & ((word_t)1u << MSTATUS_MIE_BIT)))
