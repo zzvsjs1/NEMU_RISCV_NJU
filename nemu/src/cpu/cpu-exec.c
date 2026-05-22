@@ -4,7 +4,7 @@
 #if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86)
 #include <isa-all-instr.h>
 #endif
-#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
 #include <isa-jit.h>
 #endif
 #include <locale.h>
@@ -238,7 +238,7 @@ static void statistic()
         Log("Finish running in less than 1 us and can not calculate the simulation frequency");
     }
 
-#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
     isa_jit_dump_stats();
 #endif
 }
@@ -317,13 +317,13 @@ static inline bool should_update_device_after(uint32_t *counter, uint32_t execut
 #endif
 
 /*
- * Decide whether the fast RISC-V JIT path is allowed for this cpu_exec() call.
+ * Decide whether the fast JIT path is allowed for this cpu_exec() call.
  * Any feature that needs exact per-instruction hooks forces the interpreter so
  * trace logs, watchpoints, memory traces, and DiffTest keep precise behaviour.
  */
 static inline bool can_jit_exec()
 {
-#if (defined(CONFIG_RV32_JIT) || defined(CONFIG_RV64_JIT)) && !defined(CONFIG_TRACE) && \
+#if (defined(CONFIG_RV32_JIT) || defined(CONFIG_RV64_JIT) || defined(CONFIG_X86_JIT)) && !defined(CONFIG_TRACE) && \
     !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
     !defined(CONFIG_MTRACE) && !defined(CONFIG_FTRACE)
     /*
@@ -364,7 +364,7 @@ void cpu_exec(uint64_t n)
 #ifdef CONFIG_DEVICE
     uint32_t device_update_counter = 0;
 #endif
-#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
     const bool jit_exec = can_jit_exec();
 #endif
 
@@ -372,7 +372,7 @@ void cpu_exec(uint64_t n)
     {
         uint32_t executed = 0;
         bool jit_done = false;
-#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
         if (jit_exec)
         {
             /*

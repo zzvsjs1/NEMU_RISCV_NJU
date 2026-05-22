@@ -37,7 +37,10 @@ void x86_vaddr_write_kernel(vaddr_t addr, int len, word_t data);
 
 static void push32(word_t val) {
   cpu.esp -= 4;
-  x86_vaddr_write_kernel(cpu.esp, 4, val);
+  Assert(cpu.esp + 3 <= cpu.seg_cache[X86_SREG_SS].limit,
+      "x86 interrupt stack push exceeds SS limit: esp=%#x limit=%#x",
+      cpu.esp, cpu.seg_cache[X86_SREG_SS].limit);
+  x86_vaddr_write_kernel(cpu.seg_cache[X86_SREG_SS].base + cpu.esp, 4, val);
 }
 
 static void read_gdt_desc(uint16_t selector, uint32_t *lo, uint32_t *hi) {
@@ -70,10 +73,9 @@ static bool desc_present(uint32_t hi) {
   return ((hi >> 15) & 0x1u) != 0;
 }
 
-static uint32_t interrupt_target_cpl(uint16_t selector, int old_cpl) {
+static uint32_t interrupt_target_cpl(uint16_t selector, int old_cpl, uint32_t *lo_out, uint32_t *hi_out) {
   uint32_t lo, hi;
   read_gdt_desc(selector, &lo, &hi);
-  (void)lo;
 
   uint32_t type = desc_type(hi);
   uint32_t dpl = desc_dpl(hi);
@@ -91,13 +93,14 @@ static uint32_t interrupt_target_cpl(uint16_t selector, int old_cpl) {
    * keeps the current CPL; AM uses non-conforming flat kernel/user segments, but
    * modelling both cases avoids deriving privilege from the selector RPL.
    */
+  *lo_out = lo;
+  *hi_out = hi;
   return conforming ? (uint32_t)old_cpl : dpl;
 }
 
-static void validate_interrupt_stack(uint16_t selector, int target_cpl) {
+static void validate_interrupt_stack(uint16_t selector, int target_cpl, uint32_t *lo_out, uint32_t *hi_out) {
   uint32_t lo, hi;
   read_gdt_desc(selector, &lo, &hi);
-  (void)lo;
 
   uint32_t type = desc_type(hi);
   uint32_t dpl = desc_dpl(hi);
@@ -111,6 +114,9 @@ static void validate_interrupt_stack(uint16_t selector, int target_cpl) {
   Assert((int)dpl == target_cpl && (int)rpl == target_cpl,
       "x86 interrupt stack selector %#x has DPL %u/RPL %u for target CPL %d",
       selector, dpl, rpl, target_cpl);
+
+  *lo_out = lo;
+  *hi_out = hi;
 }
 
 static word_t raise_intr(word_t NO, vaddr_t ret_addr, bool software,
@@ -141,7 +147,8 @@ static word_t raise_intr(word_t NO, vaddr_t ret_addr, bool software,
   word_t old_ss = cpu.ss;
   word_t old_esp = cpu.esp;
   int old_cpl = old_cs & 0x3;
-  int new_cpl = interrupt_target_cpl(selector, old_cpl);
+  uint32_t cs_lo, cs_hi;
+  int new_cpl = interrupt_target_cpl(selector, old_cpl, &cs_lo, &cs_hi);
 
   if (new_cpl < old_cpl) {
     Assert(cpu.tr != 0, "x86 interrupt from user mode without a loaded TSS");
@@ -158,10 +165,11 @@ static word_t raise_intr(word_t NO, vaddr_t ret_addr, bool software,
 
     word_t esp0 = x86_vaddr_read_kernel(cpu.tss_base + esp_off, 4);
     word_t ss0 = x86_vaddr_read_kernel(cpu.tss_base + ss_off, 4) & 0xffffu;
-    validate_interrupt_stack(ss0, new_cpl);
+    uint32_t ss_lo, ss_hi;
+    validate_interrupt_stack(ss0, new_cpl, &ss_lo, &ss_hi);
 
     cpu.esp = esp0;
-    cpu.ss = ss0;
+    x86_seg_load_from_descriptor(X86_SREG_SS, ss0, ss_lo, ss_hi);
     push32(old_ss);
     push32(old_esp);
   }
@@ -173,7 +181,7 @@ static word_t raise_intr(word_t NO, vaddr_t ret_addr, bool software,
     push32(error_code);
   }
 
-  cpu.cs = selector;
+  x86_seg_load_from_descriptor(X86_SREG_CS, selector, cs_lo, cs_hi);
   cpu.eflags &= ~(FLAG_TF | FLAG_NT | FLAG_RF | FLAG_VM);
   if (type == 0xe) {
     cpu.eflags &= ~FLAG_IF;

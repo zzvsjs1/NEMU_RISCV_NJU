@@ -1,5 +1,5 @@
 include $(AM_HOME)/scripts/isa/x86.mk
-NEMU_DEFCONFIG ?= x86-am_defconfig
+NEMU_DEFCONFIG ?= x86-am-jit_defconfig
 include $(AM_HOME)/scripts/platform/nemu.mk
 CFLAGS  += -mstringop-strategy=loop -DISA_H=\"x86/x86.h\"
 # overwrite _pmem_start and _entry_offset defined in nemu.mk

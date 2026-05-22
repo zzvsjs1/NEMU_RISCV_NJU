@@ -101,14 +101,6 @@ enum {
   X86_DWORD_BASE = 0x100000000ll,    // 2^32, used to combine EDX:EAX for signed division.
 };
 
-/* Segment-register ids encoded in the ModR/M reg field for MOV Sreg instructions. */
-enum {
-  X86_SREG_ES,
-  X86_SREG_CS,
-  X86_SREG_SS,
-  X86_SREG_DS,
-};
-
 /*
  * Control-register numbers are encoded in the ModR/M reg field for MOV CRn.
  * Only the registers modelled by this NEMU x86 subset are accepted.
@@ -174,6 +166,8 @@ typedef union {
   uint8_t val;
 } SIB;
 
+static uint32_t seg_linear(int idx, vaddr_t off, int len, const char *op);
+
 /*
  * Fetch instruction bytes and advance snpc.  With tracing enabled, also copy
  * the bytes into Decode::isa.inst so itrace/iqueue can print the original
@@ -182,7 +176,8 @@ typedef union {
 static word_t x86_inst_fetch(Decode *s, int len) {
 #if defined(CONFIG_ITRACE) || defined(CONFIG_IQUEUE)
   uint8_t *p = &s->isa.inst[s->snpc - s->pc];
-  word_t ret = inst_fetch(&s->snpc, len);
+  word_t ret = vaddr_ifetch(seg_linear(X86_SREG_CS, s->snpc, len, "ifetch"), len);
+  s->snpc += len;
   word_t ret_save = ret;
   int i;
   assert(s->snpc - s->pc < sizeof(s->isa.inst));
@@ -192,7 +187,9 @@ static word_t x86_inst_fetch(Decode *s, int len) {
   }
   return ret_save;
 #else
-  return inst_fetch(&s->snpc, len);
+  word_t ret = vaddr_ifetch(seg_linear(X86_SREG_CS, s->snpc, len, "ifetch"), len);
+  s->snpc += len;
+  return ret;
 #endif
 }
 
@@ -235,6 +232,72 @@ enum {
   CR3_PWT_PCD_MASK = 0x18u,
 };
 
+static uint32_t *sreg_visible_ptr(int idx) {
+  switch (idx) {
+    case X86_SREG_ES: return &cpu.es;
+    case X86_SREG_CS: return &cpu.cs;
+    case X86_SREG_SS: return &cpu.ss;
+    case X86_SREG_DS: return &cpu.ds;
+    default: assert(0);
+  }
+}
+
+void x86_seg_set_flat(int idx, uint16_t selector) {
+  *sreg_visible_ptr(idx) = selector;
+  cpu.seg_cache[idx].base = 0;
+  cpu.seg_cache[idx].limit = X86_DWORD_MASK;
+  cpu.seg_cache[idx].attr = 0;
+}
+
+/* Unpack the 32-bit descriptor base from the low and high descriptor dwords. */
+static uint32_t desc_base(uint32_t lo, uint32_t hi) {
+  return ((lo >> X86_WORD_BITS) & X86_WORD_MASK) |
+      ((hi & X86_BYTE_MASK) << X86_WORD_BITS) |
+      (hi & X86_DESC_BASE_HIGH_MASK);
+}
+
+/*
+ * Unpack the descriptor limit and expand it when the granularity bit is set.
+ * A page-granular limit stores 4 KiB units, so the byte limit gets the low
+ * 12 bits filled in.
+ */
+static uint32_t desc_limit(uint32_t lo, uint32_t hi) {
+  uint32_t limit = (lo & X86_WORD_MASK) |
+      (((hi >> X86_DESC_LIMIT_HIGH_SHIFT) & X86_DESC_TYPE_MASK) << X86_DESC_LIMIT_HIGH_SHIFT);
+  if ((hi & (1u << X86_DESC_GRANULARITY_SHIFT)) != 0) {
+    limit = (limit << X86_PAGE_SHIFT) | X86_PAGE_OFFSET_MASK;
+  }
+  return limit;
+}
+
+void x86_seg_load_from_descriptor(int idx, uint16_t selector, uint32_t lo, uint32_t hi) {
+  *sreg_visible_ptr(idx) = selector;
+  cpu.seg_cache[idx].base = desc_base(lo, hi);
+  cpu.seg_cache[idx].limit = desc_limit(lo, hi);
+  cpu.seg_cache[idx].attr = hi;
+}
+
+static uint32_t seg_linear(int idx, vaddr_t off, int len, const char *op) {
+  uint32_t selector = *sreg_visible_ptr(idx);
+  Assert(selector != 0 || idx == X86_SREG_CS,
+      "x86 %s through a null segment register at offset " FMT_WORD, op, off);
+
+  uint64_t end = (uint64_t)(uint32_t)off + (uint64_t)len - 1u;
+  Assert(end <= cpu.seg_cache[idx].limit,
+      "x86 %s segment limit violation: selector %#x offset " FMT_WORD
+      " len %d limit %#x", op, selector, off, len, cpu.seg_cache[idx].limit);
+
+  return cpu.seg_cache[idx].base + (uint32_t)off;
+}
+
+static word_t seg_read(int idx, vaddr_t off, int len) {
+  return vaddr_read(seg_linear(idx, off, len, "read"), len);
+}
+
+static void seg_write(int idx, vaddr_t off, int len, word_t data) {
+  vaddr_write(seg_linear(idx, off, len, "write"), len, data);
+}
+
 /* Return the visible selector value for the four segment registers implemented by this x86 subset. */
 static word_t sreg_read(Decode *s, int idx) {
   switch (idx) {
@@ -253,7 +316,7 @@ static word_t sreg_read(Decode *s, int idx) {
  * decoded as r32 here and get a zero-extended selector; memory destinations
  * remain a 16-bit store because the memory form is explicitly r/m16.
  */
-static void mov_sreg_to_rm(Decode *s, int sreg, int rd, word_t addr) {
+static void mov_sreg_to_rm(Decode *s, int sreg, int rd, word_t addr, int seg) {
   word_t selector = sreg_read(s, sreg) & X86_WORD_MASK;
 
   /*
@@ -262,14 +325,14 @@ static void mov_sreg_to_rm(Decode *s, int sreg, int rd, word_t addr) {
    * because the instruction stores only the visible selector there.
    */
   if (rd != -1) reg_write(rd, X86_WIDTH_DWORD, selector);
-  else vaddr_write(addr, X86_WIDTH_WORD, selector);
+  else seg_write(seg, addr, X86_WIDTH_WORD, selector);
 }
 
 /*
  * Load DS/ES/SS visible selector state and perform the protected-mode checks
- * AM/Nanos depend on.  This is still a flat-segment subset: it validates the
- * descriptor type, DPL, RPL, and present bit, but it does not install hidden
- * base/limit caches or support FS/GS/LDT addressing.
+ * AM/Nanos depend on.  FS/GS and LDT addressing remain outside this interpreter
+ * subset, but loaded descriptors now update the hidden base/limit cache used by
+ * segmented memory accesses.
  */
 static void sreg_write(Decode *s, int idx, word_t data) {
   uint16_t selector = data & X86_WORD_MASK;
@@ -278,8 +341,12 @@ static void sreg_write(Decode *s, int idx, word_t data) {
 
   if ((selector & ~X86_SELECTOR_RPL_MASK) == 0) {
     Assert(idx != X86_SREG_SS, "x86 loads a null SS selector at pc = " FMT_WORD, s->pc);
-    if (idx == X86_SREG_ES) cpu.es = 0;
-    else if (idx == X86_SREG_DS) cpu.ds = 0;
+    if (idx == X86_SREG_ES || idx == X86_SREG_DS) {
+      *sreg_visible_ptr(idx) = 0;
+      cpu.seg_cache[idx].base = 0;
+      cpu.seg_cache[idx].limit = 0;
+      cpu.seg_cache[idx].attr = 0;
+    }
     else INV(s->pc);
     return;
   }
@@ -294,6 +361,7 @@ static void sreg_write(Decode *s, int idx, word_t data) {
       selector, cpu.gdtr_limit, s->pc);
 
   vaddr_t desc_addr = cpu.gdtr_base + desc_off;
+  uint32_t lo = x86_vaddr_read_kernel(desc_addr, X86_WIDTH_DWORD);
   uint32_t hi = x86_vaddr_read_kernel(desc_addr + X86_DESC_HIGH_OFFSET, X86_WIDTH_DWORD);
   uint32_t type = (hi >> X86_DESC_TYPE_SHIFT) & X86_DESC_TYPE_MASK;
   uint32_t system = (hi >> X86_DESC_S_SHIFT) & X86_ONE_BIT_MASK;
@@ -316,8 +384,7 @@ static void sreg_write(Decode *s, int idx, word_t data) {
       Assert(cpl <= (int)dpl && rpl <= (int)dpl,
           "x86 loads selector %#x with DPL %u from CPL %d/RPL %d at pc = " FMT_WORD,
           selector, dpl, cpl, rpl, s->pc);
-      if (idx == X86_SREG_ES) cpu.es = selector;
-      else cpu.ds = selector;
+      x86_seg_load_from_descriptor(idx, selector, lo, hi);
       return;
     case X86_SREG_SS:
       Assert(!code && writable_or_readable,
@@ -326,12 +393,32 @@ static void sreg_write(Decode *s, int idx, word_t data) {
       Assert(rpl == cpl && (int)dpl == cpl,
           "x86 loads SS selector %#x with DPL %u from CPL %d/RPL %d at pc = " FMT_WORD,
           selector, dpl, cpl, rpl, s->pc);
-      cpu.ss = selector;
+      x86_seg_load_from_descriptor(idx, selector, lo, hi);
       return;
     default:
       INV(s->pc);
       return;
   }
+}
+
+static void load_seg_cache_from_gdt(int idx, uint16_t selector) {
+  if ((selector & ~X86_SELECTOR_RPL_MASK) == 0) {
+    *sreg_visible_ptr(idx) = selector;
+    cpu.seg_cache[idx].base = 0;
+    cpu.seg_cache[idx].limit = 0;
+    cpu.seg_cache[idx].attr = 0;
+    return;
+  }
+
+  Assert((selector & X86_SELECTOR_TI_MASK) == 0,
+      "x86 selector %#x uses the unsupported LDT table", selector);
+  uint32_t desc_off = (selector >> X86_SELECTOR_INDEX_SHIFT) * X86_DESC_SIZE;
+  Assert(desc_off + X86_DESC_LAST_BYTE <= cpu.gdtr_limit,
+      "x86 selector %#x exceeds GDT limit %#x", selector, cpu.gdtr_limit);
+  vaddr_t desc_addr = cpu.gdtr_base + desc_off;
+  uint32_t lo = x86_vaddr_read_kernel(desc_addr, X86_WIDTH_DWORD);
+  uint32_t hi = x86_vaddr_read_kernel(desc_addr + X86_DESC_HIGH_OFFSET, X86_WIDTH_DWORD);
+  x86_seg_load_from_descriptor(idx, selector, lo, hi);
 }
 
 /* EFLAGS status/control bits used by integer instructions and interrupt control. */
@@ -396,10 +483,13 @@ static inline int x86_iopl(uint32_t eflags) {
  * request many flag changes through the stack image, but IF and IOPL are
  * guarded by CPL and IOPL rules in protected mode.
  */
-static word_t eflags_write_protected(word_t requested) {
+static word_t eflags_write_protected_width(word_t requested, int width) {
   word_t old = cpu.eflags | X86_EFLAGS_FIXED_ONE;
   int cpl = cpu.cs & X86_SELECTOR_RPL_MASK;
 
+  if (width == X86_WIDTH_WORD) {
+    requested = (old & ~X86_WORD_MASK) | (requested & X86_WORD_MASK);
+  }
   requested |= X86_EFLAGS_FIXED_ONE;
 
   /*
@@ -415,6 +505,10 @@ static word_t eflags_write_protected(word_t requested) {
   }
 
   return requested;
+}
+
+static word_t eflags_write_protected(word_t requested) {
+  return eflags_write_protected_width(requested, X86_WIDTH_DWORD);
 }
 
 /* Shared privilege check for IN/OUT and for the IF-changing CLI/STI forms. */
@@ -589,25 +683,28 @@ static sword_t sext_width(word_t val, int width) {
   }
 }
 
-/* Push a 32-bit value on the current stack; this x86 subset runs a 32-bit stack model. */
-static void push32(word_t val) {
-  cpu.esp -= X86_WIDTH_DWORD;
-  vaddr_write(cpu.esp, X86_WIDTH_DWORD, val);
+/* Push a word or doubleword on the current 32-bit stack through SS:ESP. */
+static void push_width(int width, word_t val) {
+  cpu.esp -= width;
+  seg_write(X86_SREG_SS, cpu.esp, width, val);
 }
 
-/* Pop a 32-bit value from the current stack and advance ESP. */
-static word_t pop32() {
-  word_t val = vaddr_read(cpu.esp, X86_WIDTH_DWORD);
-  cpu.esp += X86_WIDTH_DWORD;
+/* Pop a word or doubleword from SS:ESP and advance ESP by the operand size. */
+static word_t pop_width(int width) {
+  word_t val = seg_read(X86_SREG_SS, cpu.esp, width);
+  cpu.esp += width;
   return val;
 }
+
+static word_t pop32() { return pop_width(X86_WIDTH_DWORD); }
 
 /*
  * Decode the memory-address part of a ModR/M operand.  A SIB byte follows when
  * R/M selects ESP; mod then decides whether the displacement is absent, 8-bit,
  * or 32-bit.  A base register of -1 means absolute displacement-only addressing.
  */
-static void load_addr(Decode *s, ModR_M *m, word_t *rm_addr) {
+static void load_addr32(Decode *s, ModR_M *m, word_t *rm_addr,
+    int *rm_seg, bool *addr_uses_esp) {
   assert(m->mod != 3);
 
   sword_t disp = 0;
@@ -640,6 +737,62 @@ static void load_addr(Decode *s, ModR_M *m, word_t *rm_addr) {
   if (base_reg != -1)  addr += reg_l(base_reg);
   if (index_reg != -1) addr += reg_l(index_reg) << scale;
   *rm_addr = addr;
+  *rm_seg = (base_reg == R_EBP || base_reg == R_ESP) ? X86_SREG_SS : X86_SREG_DS;
+  *addr_uses_esp = base_reg == R_ESP;
+}
+
+static uint16_t addr16_base(int rm, int mod, int *rm_seg) {
+  switch (rm) {
+    case 0: *rm_seg = X86_SREG_DS; return reg_w(R_BX) + reg_w(R_SI);
+    case 1: *rm_seg = X86_SREG_DS; return reg_w(R_BX) + reg_w(R_DI);
+    case 2: *rm_seg = X86_SREG_SS; return reg_w(R_BP) + reg_w(R_SI);
+    case 3: *rm_seg = X86_SREG_SS; return reg_w(R_BP) + reg_w(R_DI);
+    case 4: *rm_seg = X86_SREG_DS; return reg_w(R_SI);
+    case 5: *rm_seg = X86_SREG_DS; return reg_w(R_DI);
+    case 6:
+      *rm_seg = mod == 0 ? X86_SREG_DS : X86_SREG_SS;
+      return mod == 0 ? 0 : reg_w(R_BP);
+    case 7: *rm_seg = X86_SREG_DS; return reg_w(R_BX);
+    default: assert(0);
+  }
+}
+
+static void load_addr16(Decode *s, ModR_M *m, word_t *rm_addr, int *rm_seg) {
+  assert(m->mod != 3);
+
+  int disp_size = 0;
+  sword_t disp = 0;
+  uint16_t base = addr16_base(m->R_M, m->mod, rm_seg);
+
+  if (m->mod == 0) {
+    disp_size = (m->R_M == 6) ? X86_WIDTH_WORD : 0;
+  }
+  else if (m->mod == 1) {
+    disp_size = X86_WIDTH_BYTE;
+  }
+  else if (m->mod == 2) {
+    disp_size = X86_WIDTH_WORD;
+  }
+
+  if (disp_size != 0) {
+    disp = x86_inst_fetch(s, disp_size);
+    if (disp_size == X86_WIDTH_BYTE) {
+      disp = (int8_t)disp;
+    }
+  }
+
+  *rm_addr = (uint16_t)(base + disp);
+}
+
+static void load_addr(Decode *s, ModR_M *m, word_t *rm_addr,
+    int *rm_seg, bool *addr_uses_esp, bool addr_size_16) {
+  if (addr_size_16) {
+    *addr_uses_esp = false;
+    load_addr16(s, m, rm_addr, rm_seg);
+  }
+  else {
+    load_addr32(s, m, rm_addr, rm_seg, addr_uses_esp);
+  }
 }
 
 /*
@@ -647,12 +800,17 @@ static void load_addr(Decode *s, ModR_M *m, word_t *rm_addr) {
  * interpreter uses rm_reg == -1 as the memory sentinel; otherwise rm_reg is a
  * general-purpose register index.
  */
-static void decode_rm(Decode *s, int *rm_reg, word_t *rm_addr, int *reg, int width) {
+static void decode_rm(Decode *s, int *rm_reg, word_t *rm_addr, int *rm_seg,
+    bool *addr_uses_esp, int *reg, int width, bool addr_size_16) {
   ModR_M m;
   m.val = x86_inst_fetch(s, X86_WIDTH_BYTE);
   if (reg != NULL) *reg = m.reg;
-  if (m.mod == 3) *rm_reg = m.R_M;
-  else { load_addr(s, &m, rm_addr); *rm_reg = -1; }
+  if (m.mod == 3) {
+    *rm_reg = m.R_M;
+    *rm_seg = -1;
+    *addr_uses_esp = false;
+  }
+  else { load_addr(s, &m, rm_addr, rm_seg, addr_uses_esp, addr_size_16); *rm_reg = -1; }
 }
 
 /*
@@ -662,27 +820,27 @@ static void decode_rm(Decode *s, int *rm_reg, word_t *rm_addr, int *reg, int wid
  */
 #define Rr reg_read
 #define Rw reg_write
-#define Mr vaddr_read
-#define Mw vaddr_write
-#define RMr(reg, w)  (reg != -1 ? Rr(reg, w) : Mr(addr, w))
-#define RMw(data) do { if (rd != -1) Rw(rd, w, data); else Mw(addr, w, data); } while (0)
+#define Mr(off, seg, width) seg_read(seg, off, width)
+#define Mw(off, seg, width, data) seg_write(seg, off, width, data)
+#define RMr(reg, w)  (reg != -1 ? Rr(reg, w) : Mr(addr, seg, w))
+#define RMw(data) do { if (rd != -1) Rw(rd, w, data); else Mw(addr, seg, w, data); } while (0)
 
 /* Write through the register-or-memory abstraction produced by decode_rm(). */
-static inline void rm_write(int rm_reg, word_t rm_addr, int width, word_t data) {
+static inline void rm_write(int rm_reg, word_t rm_addr, int rm_seg, int width, word_t data) {
   if (rm_reg != -1) Rw(rm_reg, width, data);
-  else Mw(rm_addr, width, data);
+  else Mw(rm_addr, rm_seg, width, data);
 }
 
 /* Write r/m first, then commit flags, so a faulting memory destination leaves old EFLAGS visible. */
-static inline void rm_write_defer_flags(int rm_reg, word_t rm_addr, int width,
+static inline void rm_write_defer_flags(int rm_reg, word_t rm_addr, int rm_seg, int width,
     word_t data, word_t old_eflags, word_t new_eflags) {
   /*
    * A memory write can raise #PF.  Intel fault semantics are restartable: the
    * saved EFLAGS must be the value from before the faulting instruction, not the
    * ALU result that would have been committed after a successful write.
-   */
+  */
   cpu.eflags = old_eflags | X86_EFLAGS_FIXED_ONE;
-  rm_write(rm_reg, rm_addr, width, data);
+  rm_write(rm_reg, rm_addr, rm_seg, width, data);
   cpu.eflags = new_eflags | X86_EFLAGS_FIXED_ONE;
 }
 
@@ -726,10 +884,12 @@ enum {
  */
 #define INSTPAT_INST(s) opcode
 #define INSTPAT_MATCH(s, name, type, width, ... /* execute body */ ) { \
-  int rd = 0, rs = 0, gp_idx = 0; \
+  int rd = 0, rs = 0, gp_idx = 0, seg = -1; \
+  bool addr_uses_esp = false; \
   word_t src1 = 0, addr = 0, imm = 0; \
   int w = width == 0 ? (is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD) : width; \
-  decode_operand(s, opcode, &rd, &src1, &addr, &rs, &gp_idx, &imm, w, concat(TYPE_, type)); \
+  decode_operand(s, opcode, &rd, &src1, &addr, &seg, &addr_uses_esp, &rs, &gp_idx, &imm, w, concat(TYPE_, type), is_addr_size_16); \
+  if (seg_override >= 0 && seg >= 0) seg = seg_override; \
   s->dnpc = s->snpc; \
   __VA_ARGS__ ; \
 }
@@ -741,46 +901,47 @@ enum {
  * for memory operands, and imm for immediate/displacement operands.
  */
 static void decode_operand(Decode *s, uint8_t opcode, int *rd_, word_t *src1,
-    word_t *addr, int *rs, int *gp_idx, word_t *imm, int w, int type) {
+    word_t *addr, int *seg, bool *addr_uses_esp, int *rs, int *gp_idx,
+    word_t *imm, int w, int type, bool addr_size_16) {
   switch (type) {
     case TYPE_r:    destr(opcode & X86_OPCODE_REG_MASK); break;
     case TYPE_I:    imm(); break;
     case TYPE_SI:   simm(w); break;
     case TYPE_J:    simm(w); break;
-    case TYPE_E:    decode_rm(s, rd_, addr, gp_idx, w); break;
+    case TYPE_E:    decode_rm(s, rd_, addr, seg, addr_uses_esp, gp_idx, w, addr_size_16); break;
     case TYPE_I2r:  destr(opcode & X86_OPCODE_REG_MASK); imm(); break;
     case TYPE_I2a:  destr(R_EAX); imm(); break;
-    case TYPE_G2E:  decode_rm(s, rd_, addr, rs, w); src1r(*rs); break;
-    case TYPE_E2G:  decode_rm(s, rs, addr, rd_, w); break;
-    case TYPE_I2E:  decode_rm(s, rd_, addr, gp_idx, w); imm(); break;
-    case TYPE_Ib2E: decode_rm(s, rd_, addr, gp_idx, w); simm(X86_WIDTH_BYTE); break;
-    case TYPE_cl2E: decode_rm(s, rd_, addr, gp_idx, w); *src1 = Rr(R_CL, X86_WIDTH_BYTE); break;
-    case TYPE_1_E:  decode_rm(s, rd_, addr, gp_idx, w); *src1 = 1; break;
-    case TYPE_SI2E: decode_rm(s, rd_, addr, gp_idx, w); simm(X86_WIDTH_BYTE); break;
+    case TYPE_G2E:  decode_rm(s, rd_, addr, seg, addr_uses_esp, rs, w, addr_size_16); src1r(*rs); break;
+    case TYPE_E2G:  decode_rm(s, rs, addr, seg, addr_uses_esp, rd_, w, addr_size_16); break;
+    case TYPE_I2E:  decode_rm(s, rd_, addr, seg, addr_uses_esp, gp_idx, w, addr_size_16); imm(); break;
+    case TYPE_Ib2E: decode_rm(s, rd_, addr, seg, addr_uses_esp, gp_idx, w, addr_size_16); simm(X86_WIDTH_BYTE); break;
+    case TYPE_cl2E: decode_rm(s, rd_, addr, seg, addr_uses_esp, gp_idx, w, addr_size_16); *src1 = Rr(R_CL, X86_WIDTH_BYTE); break;
+    case TYPE_1_E:  decode_rm(s, rd_, addr, seg, addr_uses_esp, gp_idx, w, addr_size_16); *src1 = 1; break;
+    case TYPE_SI2E: decode_rm(s, rd_, addr, seg, addr_uses_esp, gp_idx, w, addr_size_16); simm(X86_WIDTH_BYTE); break;
     case TYPE_GP3:
-      decode_rm(s, rd_, addr, gp_idx, w);
+      decode_rm(s, rd_, addr, seg, addr_uses_esp, gp_idx, w, addr_size_16);
       if (*gp_idx == 0) imm();
       break;
-    case TYPE_Eb2G: decode_rm(s, rs, addr, rd_, X86_WIDTH_BYTE); break;
-    case TYPE_Ew2G: decode_rm(s, rs, addr, rd_, X86_WIDTH_WORD); break;
-    case TYPE_O2a:  destr(R_EAX); *addr = x86_inst_fetch(s, X86_WIDTH_DWORD); break;
-    case TYPE_a2O:  *rs = R_EAX;  *addr = x86_inst_fetch(s, X86_WIDTH_DWORD); break;
+    case TYPE_Eb2G: decode_rm(s, rs, addr, seg, addr_uses_esp, rd_, X86_WIDTH_BYTE, addr_size_16); break;
+    case TYPE_Ew2G: decode_rm(s, rs, addr, seg, addr_uses_esp, rd_, X86_WIDTH_WORD, addr_size_16); break;
+    case TYPE_O2a:  destr(R_EAX); *seg = X86_SREG_DS; *addr = x86_inst_fetch(s, addr_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD); break;
+    case TYPE_a2O:  *rs = R_EAX; *seg = X86_SREG_DS; *addr = x86_inst_fetch(s, addr_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD); break;
     case TYPE_P:    *imm = x86_inst_fetch(s, X86_WIDTH_BYTE); break;
     case TYPE_I_E2G:
-      decode_rm(s, rs, addr, rd_, w);
+      decode_rm(s, rs, addr, seg, addr_uses_esp, rd_, w, addr_size_16);
       imm();
       break;
     case TYPE_SI_E2G:
-      decode_rm(s, rs, addr, rd_, w);
+      decode_rm(s, rs, addr, seg, addr_uses_esp, rd_, w, addr_size_16);
       simm(X86_WIDTH_BYTE);
       break;
     case TYPE_Ib_G2E:
-      decode_rm(s, rd_, addr, rs, w);
+      decode_rm(s, rd_, addr, seg, addr_uses_esp, rs, w, addr_size_16);
       src1r(*rs);
       *imm = x86_inst_fetch(s, X86_WIDTH_BYTE);
       break;
     case TYPE_cl_G2E:
-      decode_rm(s, rd_, addr, rs, w);
+      decode_rm(s, rd_, addr, seg, addr_uses_esp, rs, w, addr_size_16);
       src1r(*rs);
       *imm = Rr(R_CL, X86_WIDTH_BYTE);
       break;
@@ -823,34 +984,39 @@ static bool cc_eval(int cc) {
 }
 
 /* Apply a relative conditional branch; x86 relative offsets are based on snpc after the instruction bytes. */
-static void jcc(Decode *s, int cc, word_t offset) {
-  if (cc_eval(cc)) s->dnpc = s->snpc + offset;
+static word_t branch_target(word_t base, word_t offset, int width) {
+  word_t target = base + offset;
+  return width == X86_WIDTH_WORD ? (target & X86_WORD_MASK) : target;
+}
+
+static void jcc(Decode *s, int cc, word_t offset, int width) {
+  if (cc_eval(cc)) s->dnpc = branch_target(s->snpc, offset, width);
 }
 
 /* Execute group-1 ALU opcodes 80/81/83, where the ModR/M reg field selects ADD/OR/ADC/SBB/AND/SUB/XOR/CMP. */
-static void gp1(Decode *s, int gp_idx, int rd, word_t addr, int w, word_t imm) {
+static void gp1(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w, word_t imm) {
   word_t lhs = RMr(rd, w);
   word_t old_eflags = cpu.eflags;
   word_t result = alu_exec(gp_idx, lhs, imm, w);
   if (gp_idx != ALU_CMP) {
     word_t new_eflags = cpu.eflags;
-    rm_write_defer_flags(rd, addr, w, result, old_eflags, new_eflags);
+    rm_write_defer_flags(rd, addr, seg, w, result, old_eflags, new_eflags);
   }
 }
 
 /* ALU form with register source and r/m destination; memory writes defer flag commit until after the write succeeds. */
-static void alu_rm_reg(int op, int rd, word_t addr, int w, word_t src) {
+static void alu_rm_reg(int op, int rd, word_t addr, int seg, int w, word_t src) {
   word_t lhs = RMr(rd, w);
   word_t old_eflags = cpu.eflags;
   word_t result = alu_exec(op, lhs, src, w);
   if (op != ALU_CMP) {
     word_t new_eflags = cpu.eflags;
-    rm_write_defer_flags(rd, addr, w, result, old_eflags, new_eflags);
+    rm_write_defer_flags(rd, addr, seg, w, result, old_eflags, new_eflags);
   }
 }
 
 /* ALU form with r/m source and register destination; no deferred memory write is needed. */
-static void alu_reg_rm(int op, int rd, int rs, word_t addr, int w) {
+static void alu_reg_rm(int op, int rd, int rs, word_t addr, int seg, int w) {
   word_t lhs = Rr(rd, w);
   word_t rhs = RMr(rs, w);
   word_t result = alu_exec(op, lhs, rhs, w);
@@ -862,14 +1028,14 @@ static void alu_reg_rm(int op, int rd, int rs, word_t addr, int w) {
  * architecturally preserved.  The deferred write keeps memory faults
  * restartable with the old flag image.
  */
-static void incdec_rm(int is_dec, int rd, word_t addr, int w) {
+static void incdec_rm(int is_dec, int rd, word_t addr, int seg, int w) {
   word_t old_eflags = cpu.eflags;
   bool old_cf = flag_get(FLAG_CF);
   word_t lhs = RMr(rd, w);
   word_t result = is_dec ? alu_exec(ALU_SUB, lhs, 1, w) : alu_exec(ALU_ADD, lhs, 1, w);
   flag_set(FLAG_CF, old_cf);
   word_t new_eflags = cpu.eflags;
-  rm_write_defer_flags(rd, addr, w, result, old_eflags, new_eflags);
+  rm_write_defer_flags(rd, addr, seg, w, result, old_eflags, new_eflags);
 }
 
 /*
@@ -877,7 +1043,7 @@ static void incdec_rm(int is_dec, int rd, word_t addr, int w) {
  * in 32-bit mode, then the ModR/M reg field selects ROL/ROR/SHL/SHR/SAR.  Only
  * a count of one defines OF for most of these instructions.
  */
-static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int w, word_t count) {
+static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w, word_t count) {
   count &= X86_SHIFT_COUNT_MASK;
   if (count == 0) return;
 
@@ -886,6 +1052,37 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int w, word_t c
   word_t result = lhs;
   bool cf = false;
   bool of = false;
+
+  if (gp_idx == 2 || gp_idx == 3) {
+    word_t rotate_count = (bits == X86_DWORD_BITS) ? count : (count % (bits + 1));
+    if (rotate_count == 0) return;
+
+    uint64_t operand_mask = width_mask(w);
+    uint64_t ring_mask = (1ull << (bits + 1)) - 1ull;
+    uint64_t ring = ((uint64_t)(flag_get(FLAG_CF) ? 1u : 0u) << bits) |
+        (mask_width(lhs, w) & operand_mask);
+
+    if (gp_idx == 2) {
+      ring = ((ring << rotate_count) | (ring >> ((bits + 1) - rotate_count))) & ring_mask;
+    }
+    else {
+      ring = ((ring >> rotate_count) | (ring << ((bits + 1) - rotate_count))) & ring_mask;
+    }
+
+    result = ring & operand_mask;
+    cf = ((ring >> bits) & 1u) != 0;
+    rm_write(rd, addr, seg, w, result);
+    flag_set(FLAG_CF, cf);
+    if (rotate_count == 1) {
+      if (gp_idx == 2) {
+        flag_set(FLAG_OF, (((result & sign_bit(w)) != 0) != cf));
+      }
+      else {
+        flag_set(FLAG_OF, ((result ^ (result << 1)) & sign_bit(w)) != 0);
+      }
+    }
+    return;
+  }
 
   if (gp_idx == 0 || gp_idx == 1) {
     word_t rotate_count = count % bits;
@@ -903,8 +1100,8 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int w, word_t c
       if (rotate_count == 1) of = ((result ^ (result << 1)) & sign_bit(w)) != 0;
     }
 
-    rm_write(rd, addr, w, result);
-    flag_set(FLAG_CF, cf);
+      rm_write(rd, addr, seg, w, result);
+      flag_set(FLAG_CF, cf);
     if (rotate_count == 1) flag_set(FLAG_OF, of);
     return;
   }
@@ -931,7 +1128,7 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int w, word_t c
       return;
   }
 
-  rm_write(rd, addr, w, result);
+    rm_write(rd, addr, seg, w, result);
   set_zsp_flags(result, w);
   flag_set(FLAG_CF, cf);
   if (count == 1) flag_set(FLAG_OF, of);
@@ -942,7 +1139,7 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int w, word_t c
  * shifted while bits flow in from the register source.  Counts above operand
  * width are treated as the local subset's chosen deterministic behaviour.
  */
-static void double_shift_rm(int is_right, int rd, word_t addr, int w, word_t src, word_t count) {
+static void double_shift_rm(int is_right, int rd, word_t addr, int seg, int w, word_t src, word_t count) {
   count &= X86_SHIFT_COUNT_MASK;
   if (count == 0) return;
 
@@ -967,7 +1164,7 @@ static void double_shift_rm(int is_right, int rd, word_t addr, int w, word_t src
   }
   result = mask_width(result, w);
 
-  rm_write(rd, addr, w, result);
+  rm_write(rd, addr, seg, w, result);
   set_zsp_flags(result, w);
   flag_set(FLAG_CF, cf);
   if (count == 1) {
@@ -975,43 +1172,57 @@ static void double_shift_rm(int is_right, int rd, word_t addr, int w, word_t src
   }
 }
 
-/* MOVS copies DS:ESI to ES:EDI in this flat model, then advances or retreats by width according to DF. */
-static void movs(int w) {
-  word_t data = Mr(cpu.esi, w);
-  Mw(cpu.edi, w, data);
+/* MOVS copies source-segment:(E)SI to ES:(E)DI, then applies DF by element width. */
+static void movs(int w, int src_seg, bool addr_size_16) {
+  word_t src = addr_size_16 ? reg_w(R_SI) : cpu.esi;
+  word_t dst = addr_size_16 ? reg_w(R_DI) : cpu.edi;
+  word_t data = Mr(src, src_seg, w);
+  Mw(dst, X86_SREG_ES, w, data);
   if (flag_get(FLAG_DF)) {
-    cpu.esi -= w;
-    cpu.edi -= w;
+    if (addr_size_16) {
+      reg_w(R_SI) -= w;
+      reg_w(R_DI) -= w;
+    }
+    else {
+      cpu.esi -= w;
+      cpu.edi -= w;
+    }
   }
   else {
-    cpu.esi += w;
-    cpu.edi += w;
+    if (addr_size_16) {
+      reg_w(R_SI) += w;
+      reg_w(R_DI) += w;
+    }
+    else {
+      cpu.esi += w;
+      cpu.edi += w;
+    }
   }
 }
 
-/* PUSHA saves the original ESP slot between EBX and EBP, following the 32-bit register order. */
-static void pusha32(void) {
+/* PUSHA/PUSHAD save the original stack pointer slot between BX/EBX and BP/EBP. */
+static void pusha_width(int width) {
   word_t old_esp = cpu.esp;
-  push32(cpu.eax);
-  push32(cpu.ecx);
-  push32(cpu.edx);
-  push32(cpu.ebx);
-  push32(old_esp);
-  push32(cpu.ebp);
-  push32(cpu.esi);
-  push32(cpu.edi);
+  push_width(width, Rr(R_EAX, width));
+  push_width(width, Rr(R_ECX, width));
+  push_width(width, Rr(R_EDX, width));
+  push_width(width, Rr(R_EBX, width));
+  push_width(width, width == X86_WIDTH_WORD ? (old_esp & X86_WORD_MASK) : old_esp);
+  push_width(width, Rr(R_EBP, width));
+  push_width(width, Rr(R_ESI, width));
+  push_width(width, Rr(R_EDI, width));
 }
 
-/* POPA restores the 32-bit register order and skips the saved ESP image rather than loading it. */
-static void popa32(void) {
-  cpu.edi = pop32();
-  cpu.esi = pop32();
-  cpu.ebp = pop32();
-  cpu.esp += 4; // POPA discards the saved ESP slot.
-  cpu.ebx = pop32();
-  cpu.edx = pop32();
-  cpu.ecx = pop32();
-  cpu.eax = pop32();
+/* POPA/POPAD restore the register order and skip the saved SP/ESP image. */
+static void popa_width(int width) {
+  Rw(R_EDI, width, pop_width(width));
+  Rw(R_ESI, width, pop_width(width));
+  Rw(R_EBP, width, pop_width(width));
+  cpu.esp += width; // POPA discards the saved SP/ESP slot.
+  Rw(R_EBX, width, pop_width(width));
+  Rw(R_EDX, width, pop_width(width));
+  Rw(R_ECX, width, pop_width(width));
+  Rw(R_EAX, width, pop_width(width));
 }
 
 /*
@@ -1037,11 +1248,11 @@ static void iret32(Decode *s) {
     word_t esp = pop32();
     word_t ss = pop32() & X86_WORD_MASK;
     cpu.esp = esp;
-    cpu.ss = ss;
+    load_seg_cache_from_gdt(X86_SREG_SS, ss);
   }
 
   s->dnpc = target;
-  cpu.cs = cs;
+  load_seg_cache_from_gdt(X86_SREG_CS, cs);
   cpu.eflags = eflags;
 }
 
@@ -1116,7 +1327,7 @@ static void mov_rm_to_cr(Decode *s, int cr_idx, int rd) {
  * a 16-bit limit followed by a 32-bit base.  The ModR/M reg field is /2 for
  * LGDT and /3 for LIDT.
  */
-static void load_desc_table(Decode *s, int gp_idx, int rd, word_t addr) {
+static void load_desc_table(Decode *s, int gp_idx, int rd, word_t addr, int seg) {
   require_kernel(s, gp_idx == X86_GROUP_LGDT_EXT ? "lgdt" : "lidt");
 
   if (rd != -1) {
@@ -1124,8 +1335,8 @@ static void load_desc_table(Decode *s, int gp_idx, int rd, word_t addr) {
     return;
   }
 
-  uint16_t limit = Mr(addr, X86_WIDTH_WORD);
-  uint32_t base = Mr(addr + X86_WIDTH_WORD, X86_WIDTH_DWORD);
+  uint16_t limit = Mr(addr, seg, X86_WIDTH_WORD);
+  uint32_t base = Mr(addr + X86_WIDTH_WORD, seg, X86_WIDTH_DWORD);
 
   switch (gp_idx) {
     case X86_GROUP_LGDT_EXT:
@@ -1142,33 +1353,12 @@ static void load_desc_table(Decode *s, int gp_idx, int rd, word_t addr) {
   }
 }
 
-/* Unpack the 32-bit descriptor base from the low and high descriptor dwords. */
-static uint32_t desc_base(uint32_t lo, uint32_t hi) {
-  return ((lo >> X86_WORD_BITS) & X86_WORD_MASK) |
-      ((hi & X86_BYTE_MASK) << X86_WORD_BITS) |
-      (hi & X86_DESC_BASE_HIGH_MASK);
-}
-
-/*
- * Unpack the descriptor limit and expand it when the granularity bit is set.
- * A page-granular limit stores 4 KiB units, so the byte limit gets the low
- * 12 bits filled in.
- */
-static uint32_t desc_limit(uint32_t lo, uint32_t hi) {
-  uint32_t limit = (lo & X86_WORD_MASK) |
-      (((hi >> X86_DESC_LIMIT_HIGH_SHIFT) & X86_DESC_TYPE_MASK) << X86_DESC_LIMIT_HIGH_SHIFT);
-  if ((hi & (1u << X86_DESC_GRANULARITY_SHIFT)) != 0) {
-    limit = (limit << X86_PAGE_SHIFT) | X86_PAGE_OFFSET_MASK;
-  }
-  return limit;
-}
-
 /*
  * Load the task register from a 16-bit selector.  LTR is encoded as group /3 of
  * 0F 00 and accepts only an available 32-bit TSS descriptor; after loading it
  * marks the descriptor busy in memory.
  */
-static void ltr(Decode *s, int gp_idx, int rd, word_t addr, int w) {
+static void ltr(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w) {
   require_kernel(s, "ltr");
 
   if (gp_idx != X86_GROUP_LTR_EXT) {
@@ -1213,7 +1403,7 @@ static void ltr(Decode *s, int gp_idx, int rd, word_t addr, int w) {
  * MUL, IMUL, DIV, and IDIV.  DIV/IDIV use x86's implicit accumulator pairs
  * (AX, DX:AX, or EDX:EAX) and raise #DE-like assertions for zero/overflow.
  */
-static void gp3(Decode *s, int gp_idx, int rd, word_t addr, int w, word_t imm) {
+static void gp3(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w, word_t imm) {
   word_t lhs = RMr(rd, w);
   switch (gp_idx) {
     case 0: // /0 TEST r/m, imm: updates flags only.
@@ -1227,7 +1417,7 @@ static void gp3(Decode *s, int gp_idx, int rd, word_t addr, int w, word_t imm) {
       word_t result = alu_exec(ALU_SUB, 0, lhs, w);
       flag_set(FLAG_CF, mask_width(lhs, w) != 0);
       word_t new_eflags = cpu.eflags;
-      rm_write_defer_flags(rd, addr, w, result, old_eflags, new_eflags);
+      rm_write_defer_flags(rd, addr, seg, w, result, old_eflags, new_eflags);
       break;
     }
     case 4: { // /4 MUL: unsigned multiply with implicit accumulator operands.
@@ -1365,31 +1555,35 @@ static void gp3(Decode *s, int gp_idx, int rd, word_t addr, int w, word_t imm) {
  * are implemented because those are the forms used by this 32-bit AM/Nanos
  * environment; each case reads r/m only when it needs the value.
  */
-static void gp5(Decode *s, int gp_idx, int rd, word_t addr, int w) {
+static word_t control_target(word_t target, int width) {
+  return width == X86_WIDTH_WORD ? (target & X86_WORD_MASK) : target;
+}
+
+static void gp5(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w) {
   switch (gp_idx) {
     case 0:
-      incdec_rm(0, rd, addr, w);
+      incdec_rm(0, rd, addr, seg, w);
       break;
     case 1:
-      incdec_rm(1, rd, addr, w);
+      incdec_rm(1, rd, addr, seg, w);
       break;
     case 2:
     {
       word_t target = RMr(rd, w);
-      push32(s->snpc);
-      s->dnpc = target;
+      push_width(w, s->snpc);
+      s->dnpc = control_target(target, w);
       break;
     }
     case 4:
     {
       word_t target = RMr(rd, w);
-      s->dnpc = target;
+      s->dnpc = control_target(target, w);
       break;
     }
     case 6:
     {
       word_t target = RMr(rd, w);
-      push32(target);
+      push_width(w, target);
       break;
     }
     default:
@@ -1399,13 +1593,13 @@ static void gp5(Decode *s, int gp_idx, int rd, word_t addr, int w) {
 }
 
 /* Execute FE group-4 byte INC/DEC operations. */
-static void gp4(Decode *s, int gp_idx, int rd, word_t addr, int w) {
+static void gp4(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w) {
   switch (gp_idx) {
     case 0:
-      incdec_rm(0, rd, addr, w);
+      incdec_rm(0, rd, addr, seg, w);
       break;
     case 1:
-      incdec_rm(1, rd, addr, w);
+      incdec_rm(1, rd, addr, seg, w);
       break;
     default:
       INV(s->pc);
@@ -1444,8 +1638,8 @@ static void xchg_reg_eax(int reg, int width) {
 }
 
 /* Handle the ModR/M XCHG form by swapping r/m and register operands. */
-static void xchg_rm_reg(int rm_reg, word_t rm_addr, int reg, int width) {
-  word_t old_rm = (rm_reg != -1) ? Rr(rm_reg, width) : Mr(rm_addr, width);
+static void xchg_rm_reg(int rm_reg, word_t rm_addr, int rm_seg, int reg, int width) {
+  word_t old_rm = (rm_reg != -1) ? Rr(rm_reg, width) : Mr(rm_addr, rm_seg, width);
   word_t old_reg = Rr(reg, width);
 
   /*
@@ -1453,7 +1647,7 @@ static void xchg_rm_reg(int rm_reg, word_t rm_addr, int reg, int width) {
    * register.  If the write raises #PF, the architectural register state still
    * describes the instruction before it ran, which keeps the fault restartable.
    */
-  rm_write(rm_reg, rm_addr, width, old_reg);
+  rm_write(rm_reg, rm_addr, rm_seg, width, old_reg);
   Rw(reg, width, old_rm);
 }
 
@@ -1490,19 +1684,19 @@ static void cwd_cdq(bool operand_size_16) {
  * second opcode byte in binary; the width column follows the local convention
  * where 0 means operand-size dependent, 1/2/4 are fixed byte widths.
  */
-void _2byte_esc(Decode *s, bool is_operand_size_16) {
+void _2byte_esc(Decode *s, bool is_operand_size_16, bool is_addr_size_16, int seg_override) {
   uint8_t opcode = x86_inst_fetch(s, X86_WIDTH_BYTE);
   INSTPAT_START();
-  INSTPAT("0000 0000", ltr,       E,    2, ltr(s, gp_idx, rd, addr, w));
-  INSTPAT("0000 0001", lgdt_lidt, E,    0, load_desc_table(s, gp_idx, rd, addr));
+  INSTPAT("0000 0000", ltr,       E,    2, ltr(s, gp_idx, rd, addr, seg, w));
+  INSTPAT("0000 0001", lgdt_lidt, E,    0, load_desc_table(s, gp_idx, rd, addr, seg));
   INSTPAT("0010 0000", mov_cr,    E,    4, mov_cr_to_rm(s, gp_idx, rd));
   INSTPAT("0010 0010", mov_cr,    E,    4, mov_rm_to_cr(s, gp_idx, rd));
-  INSTPAT("1000 ????", jcc,       J,    0, jcc(s, opcode & X86_COND_MASK, imm));
+  INSTPAT("1000 ????", jcc,       J,    0, jcc(s, opcode & X86_COND_MASK, imm, w));
   INSTPAT("1001 ????", setcc,     E,    1, RMw(cc_eval(opcode & X86_COND_MASK) ? 1 : 0));
-  INSTPAT("1010 0100", shld,      Ib_G2E, 0, double_shift_rm(0, rd, addr, w, src1, imm));
-  INSTPAT("1010 0101", shld,      cl_G2E, 0, double_shift_rm(0, rd, addr, w, src1, imm));
-  INSTPAT("1010 1100", shrd,      Ib_G2E, 0, double_shift_rm(1, rd, addr, w, src1, imm));
-  INSTPAT("1010 1101", shrd,      cl_G2E, 0, double_shift_rm(1, rd, addr, w, src1, imm));
+  INSTPAT("1010 0100", shld,      Ib_G2E, 0, double_shift_rm(0, rd, addr, seg, w, src1, imm));
+  INSTPAT("1010 0101", shld,      cl_G2E, 0, double_shift_rm(0, rd, addr, seg, w, src1, imm));
+  INSTPAT("1010 1100", shrd,      Ib_G2E, 0, double_shift_rm(1, rd, addr, seg, w, src1, imm));
+  INSTPAT("1010 1101", shrd,      cl_G2E, 0, double_shift_rm(1, rd, addr, seg, w, src1, imm));
   INSTPAT("1010 1111", imul,      E2G,  0, {
     int64_t product = (int64_t)sext_width(Rr(rd, w), w) * (int64_t)sext_width(RMr(rs, w), w);
     Rw(rd, w, product);
@@ -1540,6 +1734,8 @@ void _2byte_esc(Decode *s, bool is_operand_size_16) {
  */
 int isa_exec_once(Decode *s) {
   bool is_operand_size_16 = false;
+  bool is_addr_size_16 = false;
+  int seg_override = -1;
   uint8_t opcode = 0;
 
 again:
@@ -1547,63 +1743,68 @@ again:
 
   INSTPAT_START();
 
-  INSTPAT("0000 1111", 2byte_esc, N,    0, _2byte_esc(s, is_operand_size_16));
+  INSTPAT("0000 1111", 2byte_esc, N,    0, _2byte_esc(s, is_operand_size_16, is_addr_size_16, seg_override));
 
   INSTPAT("0110 0110", data_size, N,    0, is_operand_size_16 = true; goto again;);
+  INSTPAT("0110 0111", addr_size, N,    0, is_addr_size_16 = true; goto again;);
+  INSTPAT("0010 0110", es_prefix, N,    0, seg_override = X86_SREG_ES; goto again;);
+  INSTPAT("0010 1110", cs_prefix, N,    0, seg_override = X86_SREG_CS; goto again;);
+  INSTPAT("0011 0110", ss_prefix, N,    0, seg_override = X86_SREG_SS; goto again;);
+  INSTPAT("0011 1110", ds_prefix, N,    0, seg_override = X86_SREG_DS; goto again;);
 
-  INSTPAT("0000 0000", add,       G2E,  1, alu_rm_reg(ALU_ADD, rd, addr, w, src1));
-  INSTPAT("0000 0001", add,       G2E,  0, alu_rm_reg(ALU_ADD, rd, addr, w, src1));
-  INSTPAT("0000 0010", add,       E2G,  1, alu_reg_rm(ALU_ADD, rd, rs, addr, w));
-  INSTPAT("0000 0011", add,       E2G,  0, alu_reg_rm(ALU_ADD, rd, rs, addr, w));
+  INSTPAT("0000 0000", add,       G2E,  1, alu_rm_reg(ALU_ADD, rd, addr, seg, w, src1));
+  INSTPAT("0000 0001", add,       G2E,  0, alu_rm_reg(ALU_ADD, rd, addr, seg, w, src1));
+  INSTPAT("0000 0010", add,       E2G,  1, alu_reg_rm(ALU_ADD, rd, rs, addr, seg, w));
+  INSTPAT("0000 0011", add,       E2G,  0, alu_reg_rm(ALU_ADD, rd, rs, addr, seg, w));
   INSTPAT("0000 0100", add,       I2a,  1, Rw(R_EAX, w, alu_exec(ALU_ADD, Rr(R_EAX, w), imm, w)));
   INSTPAT("0000 0101", add,       I2a,  0, Rw(R_EAX, w, alu_exec(ALU_ADD, Rr(R_EAX, w), imm, w)));
 
-  INSTPAT("0000 1000", or,        G2E,  1, alu_rm_reg(ALU_OR, rd, addr, w, src1));
-  INSTPAT("0000 1001", or,        G2E,  0, alu_rm_reg(ALU_OR, rd, addr, w, src1));
-  INSTPAT("0000 1010", or,        E2G,  1, alu_reg_rm(ALU_OR, rd, rs, addr, w));
-  INSTPAT("0000 1011", or,        E2G,  0, alu_reg_rm(ALU_OR, rd, rs, addr, w));
+  INSTPAT("0000 1000", or,        G2E,  1, alu_rm_reg(ALU_OR, rd, addr, seg, w, src1));
+  INSTPAT("0000 1001", or,        G2E,  0, alu_rm_reg(ALU_OR, rd, addr, seg, w, src1));
+  INSTPAT("0000 1010", or,        E2G,  1, alu_reg_rm(ALU_OR, rd, rs, addr, seg, w));
+  INSTPAT("0000 1011", or,        E2G,  0, alu_reg_rm(ALU_OR, rd, rs, addr, seg, w));
   INSTPAT("0000 1100", or,        I2a,  1, Rw(R_EAX, w, alu_exec(ALU_OR, Rr(R_EAX, w), imm, w)));
   INSTPAT("0000 1101", or,        I2a,  0, Rw(R_EAX, w, alu_exec(ALU_OR, Rr(R_EAX, w), imm, w)));
 
-  INSTPAT("0001 0000", adc,       G2E,  1, alu_rm_reg(ALU_ADC, rd, addr, w, src1));
-  INSTPAT("0001 0001", adc,       G2E,  0, alu_rm_reg(ALU_ADC, rd, addr, w, src1));
-  INSTPAT("0001 0010", adc,       E2G,  1, alu_reg_rm(ALU_ADC, rd, rs, addr, w));
-  INSTPAT("0001 0011", adc,       E2G,  0, alu_reg_rm(ALU_ADC, rd, rs, addr, w));
+  INSTPAT("0001 0000", adc,       G2E,  1, alu_rm_reg(ALU_ADC, rd, addr, seg, w, src1));
+  INSTPAT("0001 0001", adc,       G2E,  0, alu_rm_reg(ALU_ADC, rd, addr, seg, w, src1));
+  INSTPAT("0001 0010", adc,       E2G,  1, alu_reg_rm(ALU_ADC, rd, rs, addr, seg, w));
+  INSTPAT("0001 0011", adc,       E2G,  0, alu_reg_rm(ALU_ADC, rd, rs, addr, seg, w));
   INSTPAT("0001 0100", adc,       I2a,  1, Rw(R_EAX, w, alu_exec(ALU_ADC, Rr(R_EAX, w), imm, w)));
   INSTPAT("0001 0101", adc,       I2a,  0, Rw(R_EAX, w, alu_exec(ALU_ADC, Rr(R_EAX, w), imm, w)));
 
-  INSTPAT("0001 1000", sbb,       G2E,  1, alu_rm_reg(ALU_SBB, rd, addr, w, src1));
-  INSTPAT("0001 1001", sbb,       G2E,  0, alu_rm_reg(ALU_SBB, rd, addr, w, src1));
-  INSTPAT("0001 1010", sbb,       E2G,  1, alu_reg_rm(ALU_SBB, rd, rs, addr, w));
-  INSTPAT("0001 1011", sbb,       E2G,  0, alu_reg_rm(ALU_SBB, rd, rs, addr, w));
+  INSTPAT("0001 1000", sbb,       G2E,  1, alu_rm_reg(ALU_SBB, rd, addr, seg, w, src1));
+  INSTPAT("0001 1001", sbb,       G2E,  0, alu_rm_reg(ALU_SBB, rd, addr, seg, w, src1));
+  INSTPAT("0001 1010", sbb,       E2G,  1, alu_reg_rm(ALU_SBB, rd, rs, addr, seg, w));
+  INSTPAT("0001 1011", sbb,       E2G,  0, alu_reg_rm(ALU_SBB, rd, rs, addr, seg, w));
   INSTPAT("0001 1100", sbb,       I2a,  1, Rw(R_EAX, w, alu_exec(ALU_SBB, Rr(R_EAX, w), imm, w)));
   INSTPAT("0001 1101", sbb,       I2a,  0, Rw(R_EAX, w, alu_exec(ALU_SBB, Rr(R_EAX, w), imm, w)));
 
-  INSTPAT("0010 0000", and,       G2E,  1, alu_rm_reg(ALU_AND, rd, addr, w, src1));
-  INSTPAT("0010 0001", and,       G2E,  0, alu_rm_reg(ALU_AND, rd, addr, w, src1));
-  INSTPAT("0010 0010", and,       E2G,  1, alu_reg_rm(ALU_AND, rd, rs, addr, w));
-  INSTPAT("0010 0011", and,       E2G,  0, alu_reg_rm(ALU_AND, rd, rs, addr, w));
+  INSTPAT("0010 0000", and,       G2E,  1, alu_rm_reg(ALU_AND, rd, addr, seg, w, src1));
+  INSTPAT("0010 0001", and,       G2E,  0, alu_rm_reg(ALU_AND, rd, addr, seg, w, src1));
+  INSTPAT("0010 0010", and,       E2G,  1, alu_reg_rm(ALU_AND, rd, rs, addr, seg, w));
+  INSTPAT("0010 0011", and,       E2G,  0, alu_reg_rm(ALU_AND, rd, rs, addr, seg, w));
   INSTPAT("0010 0100", and,       I2a,  1, Rw(R_EAX, w, alu_exec(ALU_AND, Rr(R_EAX, w), imm, w)));
   INSTPAT("0010 0101", and,       I2a,  0, Rw(R_EAX, w, alu_exec(ALU_AND, Rr(R_EAX, w), imm, w)));
 
-  INSTPAT("0010 1000", sub,       G2E,  1, alu_rm_reg(ALU_SUB, rd, addr, w, src1));
-  INSTPAT("0010 1001", sub,       G2E,  0, alu_rm_reg(ALU_SUB, rd, addr, w, src1));
-  INSTPAT("0010 1010", sub,       E2G,  1, alu_reg_rm(ALU_SUB, rd, rs, addr, w));
-  INSTPAT("0010 1011", sub,       E2G,  0, alu_reg_rm(ALU_SUB, rd, rs, addr, w));
+  INSTPAT("0010 1000", sub,       G2E,  1, alu_rm_reg(ALU_SUB, rd, addr, seg, w, src1));
+  INSTPAT("0010 1001", sub,       G2E,  0, alu_rm_reg(ALU_SUB, rd, addr, seg, w, src1));
+  INSTPAT("0010 1010", sub,       E2G,  1, alu_reg_rm(ALU_SUB, rd, rs, addr, seg, w));
+  INSTPAT("0010 1011", sub,       E2G,  0, alu_reg_rm(ALU_SUB, rd, rs, addr, seg, w));
   INSTPAT("0010 1100", sub,       I2a,  1, Rw(R_EAX, w, alu_exec(ALU_SUB, Rr(R_EAX, w), imm, w)));
   INSTPAT("0010 1101", sub,       I2a,  0, Rw(R_EAX, w, alu_exec(ALU_SUB, Rr(R_EAX, w), imm, w)));
 
-  INSTPAT("0011 0000", xor,       G2E,  1, alu_rm_reg(ALU_XOR, rd, addr, w, src1));
-  INSTPAT("0011 0001", xor,       G2E,  0, alu_rm_reg(ALU_XOR, rd, addr, w, src1));
-  INSTPAT("0011 0010", xor,       E2G,  1, alu_reg_rm(ALU_XOR, rd, rs, addr, w));
-  INSTPAT("0011 0011", xor,       E2G,  0, alu_reg_rm(ALU_XOR, rd, rs, addr, w));
+  INSTPAT("0011 0000", xor,       G2E,  1, alu_rm_reg(ALU_XOR, rd, addr, seg, w, src1));
+  INSTPAT("0011 0001", xor,       G2E,  0, alu_rm_reg(ALU_XOR, rd, addr, seg, w, src1));
+  INSTPAT("0011 0010", xor,       E2G,  1, alu_reg_rm(ALU_XOR, rd, rs, addr, seg, w));
+  INSTPAT("0011 0011", xor,       E2G,  0, alu_reg_rm(ALU_XOR, rd, rs, addr, seg, w));
   INSTPAT("0011 0100", xor,       I2a,  1, Rw(R_EAX, w, alu_exec(ALU_XOR, Rr(R_EAX, w), imm, w)));
   INSTPAT("0011 0101", xor,       I2a,  0, Rw(R_EAX, w, alu_exec(ALU_XOR, Rr(R_EAX, w), imm, w)));
 
-  INSTPAT("0011 1000", cmp,       G2E,  1, alu_rm_reg(ALU_CMP, rd, addr, w, src1));
-  INSTPAT("0011 1001", cmp,       G2E,  0, alu_rm_reg(ALU_CMP, rd, addr, w, src1));
-  INSTPAT("0011 1010", cmp,       E2G,  1, alu_reg_rm(ALU_CMP, rd, rs, addr, w));
-  INSTPAT("0011 1011", cmp,       E2G,  0, alu_reg_rm(ALU_CMP, rd, rs, addr, w));
+  INSTPAT("0011 1000", cmp,       G2E,  1, alu_rm_reg(ALU_CMP, rd, addr, seg, w, src1));
+  INSTPAT("0011 1001", cmp,       G2E,  0, alu_rm_reg(ALU_CMP, rd, addr, seg, w, src1));
+  INSTPAT("0011 1010", cmp,       E2G,  1, alu_reg_rm(ALU_CMP, rd, rs, addr, seg, w));
+  INSTPAT("0011 1011", cmp,       E2G,  0, alu_reg_rm(ALU_CMP, rd, rs, addr, seg, w));
   INSTPAT("0011 1100", cmp,       I2a,  1, alu_exec(ALU_CMP, Rr(R_EAX, w), imm, w));
   INSTPAT("0011 1101", cmp,       I2a,  0, alu_exec(ALU_CMP, Rr(R_EAX, w), imm, w));
 
@@ -1618,12 +1819,12 @@ again:
     flag_set(FLAG_CF, old_cf);
   });
 
-  INSTPAT("0101 0???", push,      r,    4, push32(Rr(rd, X86_WIDTH_DWORD)));
-  INSTPAT("0101 1???", pop,       r,    4, Rw(rd, 4, pop32()));
+  INSTPAT("0101 0???", push,      r,    0, push_width(w, Rr(rd, w)));
+  INSTPAT("0101 1???", pop,       r,    0, Rw(rd, w, pop_width(w)));
 
-  INSTPAT("0110 0000", pusha,     N,    0, pusha32());
-  INSTPAT("0110 0001", popa,      N,    0, popa32());
-  INSTPAT("0110 1000", push,      I,    4, push32(imm));
+  INSTPAT("0110 0000", pusha,     N,    0, pusha_width(is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD));
+  INSTPAT("0110 0001", popa,      N,    0, popa_width(is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD));
+  INSTPAT("0110 1000", push,      I,    0, push_width(w, imm));
   INSTPAT("0110 1001", imul,      I_E2G,0, {
     int64_t product = (int64_t)sext_width(RMr(rs, w), w) * (int64_t)sext_width(imm, w);
     Rw(rd, w, product);
@@ -1631,7 +1832,7 @@ again:
     flag_set(FLAG_CF, truncated);
     flag_set(FLAG_OF, truncated);
   });
-  INSTPAT("0110 1010", push,      SI,   1, push32(imm));
+  INSTPAT("0110 1010", push,      SI,   1, push_width(is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD, imm));
   INSTPAT("0110 1011", imul,      SI_E2G,0, {
     int64_t product = (int64_t)sext_width(RMr(rs, w), w) * (int64_t)sext_width(imm, w);
     Rw(rd, w, product);
@@ -1640,62 +1841,62 @@ again:
     flag_set(FLAG_OF, truncated);
   });
 
-  INSTPAT("0111 ????", jcc,       J,    1, jcc(s, opcode & X86_COND_MASK, imm));
+  INSTPAT("0111 ????", jcc,       J,    1, jcc(s, opcode & X86_COND_MASK, imm, X86_WIDTH_DWORD));
 
-  INSTPAT("1000 0000", gp1,       I2E,  1, gp1(s, gp_idx, rd, addr, w, imm));
-  INSTPAT("1000 0001", gp1,       I2E,  0, gp1(s, gp_idx, rd, addr, w, imm));
-  INSTPAT("1000 0011", gp1,       Ib2E, 0, gp1(s, gp_idx, rd, addr, w, imm));
+  INSTPAT("1000 0000", gp1,       I2E,  1, gp1(s, gp_idx, rd, addr, seg, w, imm));
+  INSTPAT("1000 0001", gp1,       I2E,  0, gp1(s, gp_idx, rd, addr, seg, w, imm));
+  INSTPAT("1000 0011", gp1,       Ib2E, 0, gp1(s, gp_idx, rd, addr, seg, w, imm));
   INSTPAT("1000 0100", test,      G2E,  1, set_logic_flags(RMr(rd, w) & src1, w));
   INSTPAT("1000 0101", test,      G2E,  0, set_logic_flags(RMr(rd, w) & src1, w));
-  INSTPAT("1000 0110", xchg,      G2E,  1, xchg_rm_reg(rd, addr, rs, w));
-  INSTPAT("1000 0111", xchg,      G2E,  0, xchg_rm_reg(rd, addr, rs, w));
-  INSTPAT("1000 1100", mov,       E,    2, mov_sreg_to_rm(s, gp_idx, rd, addr));
+  INSTPAT("1000 0110", xchg,      G2E,  1, xchg_rm_reg(rd, addr, seg, rs, w));
+  INSTPAT("1000 0111", xchg,      G2E,  0, xchg_rm_reg(rd, addr, seg, rs, w));
+  INSTPAT("1000 1100", mov,       E,    2, mov_sreg_to_rm(s, gp_idx, rd, addr, seg));
   INSTPAT("1000 1000", mov,       G2E,  1, RMw(src1));
   INSTPAT("1000 1001", mov,       G2E,  0, RMw(src1));
   INSTPAT("1000 1010", mov,       E2G,  1, Rw(rd, w, RMr(rs, w)));
   INSTPAT("1000 1011", mov,       E2G,  0, Rw(rd, w, RMr(rs, w)));
   INSTPAT("1000 1101", lea,       E2G,  0, if (rs == -1) Rw(rd, w, addr); else INV(s->pc));
   INSTPAT("1000 1110", mov,       E,    2, sreg_write(s, gp_idx, RMr(rd, w)));
-  INSTPAT("1000 1111", pop,       E,    0, if (gp_idx == 0) RMw(pop32()); else INV(s->pc));
+  INSTPAT("1000 1111", pop,       E,    0, if (gp_idx == 0) { word_t data = pop_width(w); if (rd != -1) Rw(rd, w, data); else Mw(addr + (addr_uses_esp ? w : 0), seg, w, data); } else INV(s->pc));
 
   INSTPAT("1001 0???", xchg,      r,    0, xchg_reg_eax(rd, w));
   INSTPAT("1001 1000", cbw_cwde,  N,    0, cbw_cwde(is_operand_size_16));
   INSTPAT("1001 1001", cwd_cdq,   N,    0, cwd_cdq(is_operand_size_16));
-  INSTPAT("1001 1100", pushf,     N,    0, push32(cpu.eflags | X86_EFLAGS_FIXED_ONE));
-  INSTPAT("1001 1101", popf,      N,    0, cpu.eflags = eflags_write_protected(pop32()));
+  INSTPAT("1001 1100", pushf,     N,    0, push_width(is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD, cpu.eflags | X86_EFLAGS_FIXED_ONE));
+  INSTPAT("1001 1101", popf,      N,    0, cpu.eflags = eflags_write_protected_width(pop_width(is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD), is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD));
 
-  INSTPAT("1010 0000", mov,       O2a,  1, Rw(R_EAX, X86_WIDTH_BYTE, Mr(addr, X86_WIDTH_BYTE)));
-  INSTPAT("1010 0001", mov,       O2a,  0, Rw(R_EAX, w, Mr(addr, w)));
-  INSTPAT("1010 0010", mov,       a2O,  1, Mw(addr, X86_WIDTH_BYTE, Rr(R_EAX, X86_WIDTH_BYTE)));
-  INSTPAT("1010 0011", mov,       a2O,  0, Mw(addr, w, Rr(R_EAX, w)));
-  INSTPAT("1010 0100", movs,      N,    1, movs(X86_WIDTH_BYTE));
-  INSTPAT("1010 0101", movs,      N,    0, movs(w));
+  INSTPAT("1010 0000", mov,       O2a,  1, Rw(R_EAX, X86_WIDTH_BYTE, Mr(addr, seg, X86_WIDTH_BYTE)));
+  INSTPAT("1010 0001", mov,       O2a,  0, Rw(R_EAX, w, Mr(addr, seg, w)));
+  INSTPAT("1010 0010", mov,       a2O,  1, Mw(addr, seg, X86_WIDTH_BYTE, Rr(R_EAX, X86_WIDTH_BYTE)));
+  INSTPAT("1010 0011", mov,       a2O,  0, Mw(addr, seg, w, Rr(R_EAX, w)));
+  INSTPAT("1010 0100", movs,      N,    1, movs(X86_WIDTH_BYTE, seg_override >= 0 ? seg_override : X86_SREG_DS, is_addr_size_16));
+  INSTPAT("1010 0101", movs,      N,    0, movs(w, seg_override >= 0 ? seg_override : X86_SREG_DS, is_addr_size_16));
   INSTPAT("1010 1000", test,      I2a,  1, set_logic_flags(Rr(R_EAX, w) & imm, w));
   INSTPAT("1010 1001", test,      I2a,  0, set_logic_flags(Rr(R_EAX, w) & imm, w));
 
   INSTPAT("1011 0???", mov,       I2r,  1, Rw(rd, 1, imm));
   INSTPAT("1011 1???", mov,       I2r,  0, Rw(rd, w, imm));
 
-  INSTPAT("1100 0000", shift,     I2E,  1, shift_rm(s, gp_idx, rd, addr, w, imm));
-  INSTPAT("1100 0001", shift,     Ib2E, 0, shift_rm(s, gp_idx, rd, addr, w, imm));
-  INSTPAT("1100 0010", ret,       I,    2, { word_t target = pop32(); cpu.esp += imm; s->dnpc = target; });
-  INSTPAT("1100 0011", ret,       N,    0, s->dnpc = pop32());
+  INSTPAT("1100 0000", shift,     I2E,  1, shift_rm(s, gp_idx, rd, addr, seg, w, imm));
+  INSTPAT("1100 0001", shift,     Ib2E, 0, shift_rm(s, gp_idx, rd, addr, seg, w, imm));
+  INSTPAT("1100 0010", ret,       I,    2, { int rw = is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD; word_t target = pop_width(rw); cpu.esp += imm; s->dnpc = control_target(target, rw); });
+  INSTPAT("1100 0011", ret,       N,    0, { int rw = is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD; s->dnpc = control_target(pop_width(rw), rw); });
   INSTPAT("1100 0110", mov,       I2E,  1, RMw(imm));
   INSTPAT("1100 0111", mov,       I2E,  0, RMw(imm));
   INSTPAT("1100 1001", leave,     N,    0, { cpu.esp = cpu.ebp; cpu.ebp = pop32(); });
   INSTPAT("1100 1100", nemu_trap, N,    0, { difftest_skip_ref(); NEMUTRAP(s->pc, cpu.eax); });
   INSTPAT("1100 1101", int,       I,    1, s->dnpc = isa_raise_intr_sw(imm, s->snpc));
-  INSTPAT("1101 0000", shift,     1_E,  1, shift_rm(s, gp_idx, rd, addr, w, src1));
-  INSTPAT("1101 0001", shift,     1_E,  0, shift_rm(s, gp_idx, rd, addr, w, src1));
-  INSTPAT("1101 0010", shift,     cl2E, 1, shift_rm(s, gp_idx, rd, addr, w, src1));
-  INSTPAT("1101 0011", shift,     cl2E, 0, shift_rm(s, gp_idx, rd, addr, w, src1));
+  INSTPAT("1101 0000", shift,     1_E,  1, shift_rm(s, gp_idx, rd, addr, seg, w, src1));
+  INSTPAT("1101 0001", shift,     1_E,  0, shift_rm(s, gp_idx, rd, addr, seg, w, src1));
+  INSTPAT("1101 0010", shift,     cl2E, 1, shift_rm(s, gp_idx, rd, addr, seg, w, src1));
+  INSTPAT("1101 0011", shift,     cl2E, 0, shift_rm(s, gp_idx, rd, addr, seg, w, src1));
   INSTPAT("1101 0110", nemu_trap, N,    0, { difftest_skip_ref(); NEMUTRAP(s->pc, cpu.eax); });
   INSTPAT("1110 0100", in,        P,    1, Rw(R_EAX, X86_WIDTH_BYTE, x86_pio_read(s, imm, X86_WIDTH_BYTE)));
   INSTPAT("1110 0101", in,        P,    0, Rw(R_EAX, w, x86_pio_read(s, imm, w)));
   INSTPAT("1110 0110", out,       P,    1, x86_pio_write(s, imm, X86_WIDTH_BYTE, Rr(R_EAX, X86_WIDTH_BYTE)));
   INSTPAT("1110 0111", out,       P,    0, x86_pio_write(s, imm, w, Rr(R_EAX, w)));
-  INSTPAT("1110 1000", call,      J,    4, { push32(s->snpc); s->dnpc = s->snpc + imm; });
-  INSTPAT("1110 1001", jmp,       J,    4, s->dnpc = s->snpc + imm);
+  INSTPAT("1110 1000", call,      J,    0, { push_width(w, s->snpc); s->dnpc = branch_target(s->snpc, imm, w); });
+  INSTPAT("1110 1001", jmp,       J,    0, s->dnpc = branch_target(s->snpc, imm, w));
   INSTPAT("1110 1011", jmp,       J,    1, s->dnpc = s->snpc + imm);
   INSTPAT("1110 1100", in,        N,    1, Rw(R_EAX, X86_WIDTH_BYTE, x86_pio_read(s, Rr(R_EDX, X86_WIDTH_WORD), X86_WIDTH_BYTE)));
   INSTPAT("1110 1101", in,        N,    0, Rw(R_EAX, w, x86_pio_read(s, Rr(R_EDX, X86_WIDTH_WORD), w)));
@@ -1713,13 +1914,13 @@ again:
       cpu.sti_shadow = 1;
     }
   });
-  INSTPAT("1111 0110", gp3,       GP3,  1, gp3(s, gp_idx, rd, addr, w, imm));
-  INSTPAT("1111 0111", gp3,       GP3,  0, gp3(s, gp_idx, rd, addr, w, imm));
+  INSTPAT("1111 0110", gp3,       GP3,  1, gp3(s, gp_idx, rd, addr, seg, w, imm));
+  INSTPAT("1111 0111", gp3,       GP3,  0, gp3(s, gp_idx, rd, addr, seg, w, imm));
   INSTPAT("1111 1100", cld,       N,    0, flag_set(FLAG_DF, false));
   INSTPAT("1111 1101", std,       N,    0, flag_set(FLAG_DF, true));
   INSTPAT("1100 1111", iret,      N,    0, iret32(s));
-  INSTPAT("1111 1110", gp4,       E,    1, gp4(s, gp_idx, rd, addr, w));
-  INSTPAT("1111 1111", gp5,       E,    0, gp5(s, gp_idx, rd, addr, w));
+  INSTPAT("1111 1110", gp4,       E,    1, gp4(s, gp_idx, rd, addr, seg, w));
+  INSTPAT("1111 1111", gp5,       E,    0, gp5(s, gp_idx, rd, addr, seg, w));
   INSTPAT("???? ????", inv,       N,    0, INV(s->pc));
   INSTPAT_END();
 

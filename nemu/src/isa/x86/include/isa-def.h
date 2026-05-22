@@ -18,6 +18,11 @@
 
 #include <common.h>
 
+typedef struct {
+  uint32_t base;
+  uint32_t limit;
+  uint32_t attr;
+} x86_SegCache;
 
 typedef struct {
   union {
@@ -35,11 +40,12 @@ typedef struct {
 
   uint32_t eflags;
   vaddr_t pc;
-  uint32_t cs;
-  uint32_t ds;
-  uint32_t es;
-  uint32_t ss;
-  uint32_t cr0;
+    uint32_t cs;
+    uint32_t ds;
+    uint32_t es;
+    uint32_t ss;
+    x86_SegCache seg_cache[4];
+    uint32_t cr0;
   uint32_t cr2;
   uint32_t cr3;
   uint32_t cr4;
@@ -64,5 +70,6 @@ typedef struct {
 enum { R_EAX, R_ECX, R_EDX, R_EBX, R_ESP, R_EBP, R_ESI, R_EDI };
 enum { R_AX, R_CX, R_DX, R_BX, R_SP, R_BP, R_SI, R_DI };
 enum { R_AL, R_CL, R_DL, R_BL, R_AH, R_CH, R_DH, R_BH };
+enum { X86_SREG_ES, X86_SREG_CS, X86_SREG_SS, X86_SREG_DS };
 
 #endif

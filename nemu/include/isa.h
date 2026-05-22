@@ -62,6 +62,8 @@ extern bool x86_exception_env_valid;
 extern vaddr_t x86_exception_target;
 void x86_mmu_clear_cpl_override(void);
 void x86_raise_page_fault(void) __attribute__((noreturn));
+void x86_seg_set_flat(int idx, uint16_t selector);
+void x86_seg_load_from_descriptor(int idx, uint16_t selector, uint32_t lo, uint32_t hi);
 #endif
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
 vaddr_t isa_raise_intr_tval(word_t NO, vaddr_t epc, word_t tval);

@@ -2,7 +2,7 @@
 #include <memory/paddr.h>
 #include <device/mmio.h>
 #include <isa.h>
-#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
 #include <isa-jit.h>
 #endif
 #include <utils.h>
@@ -131,7 +131,7 @@ void paddr_write(paddr_t addr, int len, word_t data)
         }
 #endif
         pmem_write(addr, len, data);
-#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
+#if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
         /*
          * PMEM writes are the common meeting point for interpreter stores and
          * any device path that writes through paddr_write(). Tell the JIT about

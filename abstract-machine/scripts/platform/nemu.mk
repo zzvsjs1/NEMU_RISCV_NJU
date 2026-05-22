@@ -20,15 +20,17 @@ CFLAGS += -DMAINARGS_MAX_LEN=$(MAINARGS_MAX_LEN) -DMAINARGS_PLACEHOLDER=\""$(MAI
 
 NEMU_CONFIG_ISA = $(if $(filter riscv32e,$(ISA)),riscv32,$(ISA))
 NEMU_CONFIG_STAMP = $(NEMU_HOME)/.config.defconfig
+NEMU_DEFCONFIG_FILE = $(NEMU_HOME)/configs/$(NEMU_DEFCONFIG)
+NEMU_CONFIG_STAMP_TEXT = $(NEMU_DEFCONFIG) $(wordlist 1,2,$(shell cksum "$(NEMU_DEFCONFIG_FILE)" 2>/dev/null))
 
 nemu-config:
 ifneq ($(NEMU_DEFCONFIG),)
 	@if ! grep -q '^CONFIG_ISA_$(NEMU_CONFIG_ISA)=y' "$(NEMU_HOME)/.config" 2>/dev/null || \
 	    { [ "$(ISA)" = "riscv32e" ] && ! grep -q '^CONFIG_RVE=y' "$(NEMU_HOME)/.config"; } || \
 	    { [ "$(ISA)" = "riscv32" ] && grep -q '^CONFIG_RVE=y' "$(NEMU_HOME)/.config"; } || \
-	    { [ ! -f "$(NEMU_CONFIG_STAMP)" ] || [ "$$(cat "$(NEMU_CONFIG_STAMP)")" != "$(NEMU_DEFCONFIG)" ]; }; then \
+	    { [ ! -f "$(NEMU_CONFIG_STAMP)" ] || [ "$$(cat "$(NEMU_CONFIG_STAMP)")" != "$(NEMU_CONFIG_STAMP_TEXT)" ]; }; then \
 		$(MAKE) -C "$(NEMU_HOME)" "$(NEMU_DEFCONFIG)"; \
-		printf '%s\n' "$(NEMU_DEFCONFIG)" > "$(NEMU_CONFIG_STAMP)"; \
+		printf '%s\n' "$(NEMU_CONFIG_STAMP_TEXT)" > "$(NEMU_CONFIG_STAMP)"; \
 	fi
 endif
 
