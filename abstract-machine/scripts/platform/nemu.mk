@@ -33,6 +33,46 @@ ifneq ($(NEMU_DEFCONFIG),)
 		printf '%s\n' "$(NEMU_CONFIG_STAMP_TEXT)" > "$(NEMU_CONFIG_STAMP)"; \
 	fi
 endif
+	@if ! grep -q '^CONFIG_ISA_$(NEMU_CONFIG_ISA)=y$$' "$(NEMU_HOME)/.config" 2>/dev/null || \
+	    { [ "$(ISA)" = "riscv32e" ] && ! grep -q '^CONFIG_RVE=y$$' "$(NEMU_HOME)/.config" 2>/dev/null; } || \
+	    { [ "$(ISA)" = "riscv32" ] && grep -q '^CONFIG_RVE=y$$' "$(NEMU_HOME)/.config" 2>/dev/null; }; then \
+		printf '%s\n' "NEMU config ISA does not match ARCH=$(ARCH)." >&2; \
+		printf '%s\n' "Update NEMU with make menuconfig or run a matching defconfig before launching AM." >&2; \
+		exit 1; \
+	fi
+	@if [ "$(ISA)" = "x86" ]; then \
+		if ! grep -q '^CONFIG_MBASE=0x0$$' "$(NEMU_HOME)/.config" 2>/dev/null || \
+		   ! grep -q '^CONFIG_PC_RESET_OFFSET=0x100000$$' "$(NEMU_HOME)/.config" 2>/dev/null; then \
+			printf '%s\n' "adjusting NEMU memory layout for ARCH=$(ARCH): MBASE=0x0 PC_RESET_OFFSET=0x100000"; \
+			if grep -q '^CONFIG_MBASE=' "$(NEMU_HOME)/.config" 2>/dev/null; then \
+				sed -i 's/^CONFIG_MBASE=.*/CONFIG_MBASE=0x0/' "$(NEMU_HOME)/.config"; \
+			else \
+				printf '%s\n' 'CONFIG_MBASE=0x0' >>"$(NEMU_HOME)/.config"; \
+			fi; \
+			if grep -q '^CONFIG_PC_RESET_OFFSET=' "$(NEMU_HOME)/.config" 2>/dev/null; then \
+				sed -i 's/^CONFIG_PC_RESET_OFFSET=.*/CONFIG_PC_RESET_OFFSET=0x100000/' "$(NEMU_HOME)/.config"; \
+			else \
+				printf '%s\n' 'CONFIG_PC_RESET_OFFSET=0x100000' >>"$(NEMU_HOME)/.config"; \
+			fi; \
+			$(MAKE) -C "$(NEMU_HOME)" syncconfig; \
+		fi; \
+	elif [ -n "$(filter riscv32 riscv32e riscv64,$(ISA))" ]; then \
+		if ! grep -q '^CONFIG_MBASE=0x80000000$$' "$(NEMU_HOME)/.config" 2>/dev/null || \
+		   ! grep -q '^CONFIG_PC_RESET_OFFSET=0$$' "$(NEMU_HOME)/.config" 2>/dev/null; then \
+			printf '%s\n' "adjusting NEMU memory layout for ARCH=$(ARCH): MBASE=0x80000000 PC_RESET_OFFSET=0"; \
+			if grep -q '^CONFIG_MBASE=' "$(NEMU_HOME)/.config" 2>/dev/null; then \
+				sed -i 's/^CONFIG_MBASE=.*/CONFIG_MBASE=0x80000000/' "$(NEMU_HOME)/.config"; \
+			else \
+				printf '%s\n' 'CONFIG_MBASE=0x80000000' >>"$(NEMU_HOME)/.config"; \
+			fi; \
+			if grep -q '^CONFIG_PC_RESET_OFFSET=' "$(NEMU_HOME)/.config" 2>/dev/null; then \
+				sed -i 's/^CONFIG_PC_RESET_OFFSET=.*/CONFIG_PC_RESET_OFFSET=0/' "$(NEMU_HOME)/.config"; \
+			else \
+				printf '%s\n' 'CONFIG_PC_RESET_OFFSET=0' >>"$(NEMU_HOME)/.config"; \
+			fi; \
+			$(MAKE) -C "$(NEMU_HOME)" syncconfig; \
+		fi; \
+	fi
 
 insert-arg: image
 	@python $(AM_HOME)/tools/insert-arg.py $(IMAGE).bin $(MAINARGS_MAX_LEN) "$(MAINARGS_PLACEHOLDER)" "$(mainargs)"
