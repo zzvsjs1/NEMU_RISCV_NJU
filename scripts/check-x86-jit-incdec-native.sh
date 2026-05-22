@@ -36,11 +36,13 @@ fi
 
 native_incdec=$(sed -n 's/.*native inc\/dec ops = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
 native_incdec_jcc=$(sed -n 's/.*native inc\/dec Jcc backedges = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
+native_incdec_resident=$(sed -n 's/.*native inc\/dec resident loops = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
 helper_incdec=$(sed -n 's/.*helper inc\/dec calls = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
 helper_incdec_reg=$(sed -n 's/.*helper inc\/dec register calls = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
 
 [ -n "$native_incdec" ] || fail "missing native inc/dec stats"
 [ -n "$native_incdec_jcc" ] || fail "missing native inc/dec Jcc backedge stats"
+[ -n "$native_incdec_resident" ] || fail "missing native inc/dec resident-loop stats"
 [ -n "$helper_incdec" ] || fail "missing helper inc/dec stats"
 [ -n "$helper_incdec_reg" ] || fail "missing helper register inc/dec stats"
 
@@ -52,8 +54,12 @@ if [ "$native_incdec_jcc" -lt 1 ]; then
   fail "expected native inc/dec Jcc backedge fusion, got $native_incdec_jcc"
 fi
 
+if [ "$native_incdec_resident" -lt 5 ]; then
+  fail "expected resident inc/dec loops, got $native_incdec_resident"
+fi
+
 if [ "$helper_incdec_reg" -ne 0 ]; then
   fail "expected 32-bit register inc/dec to avoid helper calls, got $helper_incdec_reg"
 fi
 
-echo "x86 JIT native inc/dec check passed: native=$native_incdec fused=$native_incdec_jcc helper=$helper_incdec helper_reg=$helper_incdec_reg"
+echo "x86 JIT native inc/dec check passed: native=$native_incdec fused=$native_incdec_jcc resident=$native_incdec_resident helper=$helper_incdec helper_reg=$helper_incdec_reg"
