@@ -93,7 +93,7 @@ static bool context_has_user_as(Context *ctx)
 
 #if defined(__ISA_X86__)
     return ctx->cr3 != NULL;
-#elif defined(__ISA_RISCV32__) || defined(__ISA_RISCV64__) || defined(__ISA_MIPS32__)
+#elif defined(__ISA_RISCV32__) || defined(__ISA_RISCV32E__) || defined(__ISA_RISCV64__) || defined(__ISA_MIPS32__)
     return ctx->pdir != NULL;
 #else
     return false;
@@ -173,17 +173,18 @@ void init_proc()
 #elif defined(NANOS_INIT_SINGLE)
     static char init_path[] = NANOS_INIT_PATH;
     static char *const argv_single[] = {init_path, NULL};
-    context_uload(&pcb[0], init_path, argv_single, envp_empty);
+    static char *const argv_onscripter[] = {"/bin/onscripter", "-r", "/share/games/ons", NULL};
+    char *const *argv = (strcmp(init_path, "/bin/onscripter") == 0) ? argv_onscripter : argv_single;
+    context_uload(&pcb[0], init_path, argv, envp_empty);
     fg_pcb = &pcb[0];
 #else
     static char *const argv_pal[] = {"/bin/pal", NULL};
     static char *const argv_bird[] = {"/bin/bird", NULL};
-    static char *const argv_nslider[] = {"/bin/nslider", NULL};
-    static char *const argv_hello[] = {"/bin/hello", NULL};
+    static char *const argv_onscripter[] = {"/bin/onscripter", "-r", "/share/games/ons", NULL};
     context_uload(&pcb[0], "/bin/pal", argv_pal, envp_empty);
-    context_uload(&pcb[1], "/bin/bird", argv_bird, envp_empty);
-    context_uload(&pcb[2], "/bin/nslider", argv_nslider, envp_empty);
-    context_uload(&pcb[HELLO_PROC], "/bin/hello", argv_hello, envp_empty);
+    context_uload(&pcb[1], "/bin/onscripter", argv_onscripter, envp_empty);
+    context_uload(&pcb[2], "/bin/bird", argv_bird, envp_empty);
+
     fg_pcb = &pcb[0];
 #endif
     foreground_budget = FOREGROUND_QUANTA;

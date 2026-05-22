@@ -16,7 +16,7 @@
 #define EXPECT_TYPE EM_386
 #elif defined(__ISA_MIPS32__)
 #define EXPECT_TYPE EF_MIPS_ARCH_32
-#elif defined(__ISA_RISCV32__) || defined(__ISA_RISCV64__)
+#elif defined(__ISA_RISCV32__) || defined(__ISA_RISCV32E__) || defined(__ISA_RISCV64__)
 #define EXPECT_TYPE EM_RISCV
 #else
 #error unsupported ISA __ISA__
@@ -315,7 +315,7 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
      * file, but they do not have enough ABI information here to initialise a
      * user stack pointer.
      */
-#if defined(__ISA_X86__) || defined(__ISA_RISCV32__) || defined(__ISA_RISCV64__)
+#if defined(__ISA_X86__) || defined(__ISA_RISCV32__) || defined(__ISA_RISCV32E__) || defined(__ISA_RISCV64__)
     pcb->cp->GPRSP = args_va;
 #endif
     pcb->cp->GPRx = args_va;

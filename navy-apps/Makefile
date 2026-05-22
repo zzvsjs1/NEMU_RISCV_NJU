@@ -198,13 +198,14 @@ $(CLEAN_ALL):
 .PHONY: clean-all $(CLEAN_ALL)
 
 ### Build fsimg and ramdisk for Nanos-lite
-APPS = pal bird nslider
-TESTS = hello
-FSIMG_GENERATED_DIRS = $(NAVY_HOME)/fsimg/bin $(NAVY_HOME)/fsimg/share/games
+APPS = pal onscripter bird
+TESTS =
+FSIMG_GENERATED_DIRS = $(NAVY_HOME)/fsimg/bin $(NAVY_HOME)/fsimg/share/games $(NAVY_HOME)/fsimg/share/slides
 
 ONS_GAME_SRC = $(NAVY_HOME)/apps/onscripter/game
 ONS_GAME_DST = $(NAVY_HOME)/fsimg/share/games/ons
 ONS_SCRIPT_FILES = 0.txt 00.txt nscript.dat nscript.___
+NSLIDER_SLIDES_DIR = $(NAVY_HOME)/apps/nslider/slides
 
 # ONScripter receives "-r /share/games/ons" from Nanos-lite, so at least one
 # NScripter script file must appear directly under that directory in the
@@ -242,10 +243,21 @@ ons-game-data:
 	@mkdir -p "$(dir $(ONS_GAME_DST))"
 	@ln -sfn -T "$(ONS_GAME_SRC)" "$(ONS_GAME_DST)"
 
+nslider-slides-data:
+	@echo + NSLIDES "->" /share/slides
+	@if [ ! -f "$(NSLIDER_SLIDES_DIR)/slides.pdf" ]; then \
+		echo "error: nslider slides source is missing: $(NSLIDER_SLIDES_DIR)/slides.pdf" >&2; \
+		exit 1; \
+	fi
+	@cd "$(NSLIDER_SLIDES_DIR)" && NAVY_HOME="$(NAVY_HOME)" bash ./convert.sh
+
 fsimg: $(addprefix apps/, $(APPS)) $(addprefix tests/, $(TESTS))
 	@rm -rf $(FSIMG_GENERATED_DIRS)
 	@mkdir -p $(FSIMG_GENERATED_DIRS)
 	for t in $^; do $(MAKE) -s -C $(NAVY_HOME)/$$t install || exit $$?; done
+ifneq ($(filter nslider,$(APPS)),)
+	@$(MAKE) -s -C $(NAVY_HOME) nslider-slides-data
+endif
 ifneq ($(filter onscripter,$(APPS)),)
 	@$(MAKE) -s -C $(NAVY_HOME) ons-game-data
 endif

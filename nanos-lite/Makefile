@@ -116,12 +116,6 @@ $(NANOS_CONFIG_STAMP): force
 
 $(OBJS): $(NANOS_CONFIG_STAMP)
 
-ifeq ($(ISA),riscv64)
-NAVY_APPS ?= pal bird nslider
-NAVY_TESTS ?= hello
-NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
-endif
-
 ./src/resources.S: $(RAMDISK_FILE)
 	@touch $@
 

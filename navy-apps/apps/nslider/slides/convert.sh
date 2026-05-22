@@ -12,5 +12,5 @@ convert slides.pdf \
 mkdir -p $NAVY_HOME/fsimg/share/slides/
 # The destination directory is regenerated as a complete slide set so stale
 # pages from an older PDF do not remain visible to nslider's fixed path pattern.
-rm $NAVY_HOME/fsimg/share/slides/*
+rm -f $NAVY_HOME/fsimg/share/slides/*
 mv *.bmp $NAVY_HOME/fsimg/share/slides/
