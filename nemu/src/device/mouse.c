@@ -373,6 +373,11 @@ void init_mouse(void)
     memset(mouse_base, 0, 7 * sizeof(uint32_t));
     mouse_latched = (MouseEvent){.type = MOUSE_EVENT_NONE};
 
+#ifdef CONFIG_HAS_PORT_IO
+    add_pio_map("mouse", CONFIG_MOUSE_DATA_PORT, mouse_base,
+                7 * sizeof(uint32_t), mouse_data_io_handler);
+#endif
+
     add_mmio_map("mouse", CONFIG_MOUSE_DATA_MMIO, mouse_base,
                  7 * sizeof(uint32_t), mouse_data_io_handler);
 

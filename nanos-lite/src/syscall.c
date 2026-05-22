@@ -37,6 +37,28 @@ static uint64_t monotonic_us(void)
     return io_read(AM_TIMER_UPTIME).us;
 }
 
+static void replace_current_image(const char *filename, char *const argv[], char *const envp[])
+{
+    context_uload(current, filename, argv, envp);
+
+    /*
+     * Return through the freshly built user context instead of the old syscall
+     * frame, which belongs to the image being replaced.  This flag is consumed
+     * by the CTE handler at the syscall boundary.
+     */
+    context_replaced = 1;
+}
+
+#ifdef NANOS_EXIT_RESTART_NTERM
+static void restart_foreground_as_nterm(void)
+{
+    static char *const argv_nterm[] = {"/bin/nterm", NULL};
+    static char *const envp_empty[] = {NULL};
+
+    replace_current_image("/bin/nterm", argv_nterm, envp_empty);
+}
+#endif
+
 // Called by do_event() to test and clear the reschedule request.
 int syscall_need_resched_and_clear(void)
 {
@@ -207,6 +229,14 @@ void do_syscall(Context *c)
 #ifdef STRACE
         /* SYS_exit halts before the common return-value trace can run. */
         Log("strace: exit(%d)", (int)arg1);
+#endif
+
+#ifdef NANOS_EXIT_RESTART_NTERM
+        if (current_pcb_index() == foreground_pcb_index())
+        {
+            restart_foreground_as_nterm();
+            return;
+        }
 #endif
 
         halt(arg1);
@@ -447,17 +477,13 @@ void do_syscall(Context *c)
 
         fs_close(fd);
 
-        context_uload(current, filename, (char *const *)argv, (char *const *)envp);
-
-        // Return through the freshly built user context instead of the old
-        // syscall frame, which belongs to the image being replaced. For execve()
-        // success there is no user-visible return value: the new program starts
-        // from its entry point. This also must not write c->GPRx after
-        // context_uload(), because the old syscall frame and the freshly-created
-        // ucontext for the same PCB are both placed at the top of the same kernel
-        // stack. Writing the old frame's a0 here would overwrite the new image's
-        // initial a0, which crt0 uses as the user stack pointer.
-        context_replaced = 1;
+        // For execve() success there is no user-visible return value: the new
+        // program starts from its entry point. This also must not write c->GPRx
+        // after context_uload(), because the old syscall frame and the
+        // freshly-created ucontext for the same PCB are both placed at the top of
+        // the same kernel stack. Writing the old frame's a0 here would overwrite
+        // the new image's initial a0, which crt0 uses as the user stack pointer.
+        replace_current_image(filename, (char *const *)argv, (char *const *)envp);
         return;
     }
 

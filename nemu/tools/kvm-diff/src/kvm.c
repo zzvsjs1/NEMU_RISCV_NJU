@@ -19,6 +19,23 @@
 #define RFLAGS_TF (1u << 8)
 #define RFLAGS_AF (1u << 4)
 #define RFLAGS_FIX_MASK (RFLAGS_ID | RFLAGS_AC | RFLAGS_RF | RFLAGS_TF | RFLAGS_AF)
+#define RFLAGS_ALWAYS_ON (1u << 1)
+
+static uint32_t nemu_eflags_to_kvm(uint32_t eflags)
+{
+    /*
+     * KVM single-steps the reference through TF, while NEMU's architectural
+     * state keeps TF clear for PA programs.  Keep bit 1 set, as required by
+     * x86, and let KVM observe the same arithmetic/control flags as the DUT
+     * when DiffTest re-synchronises after skipped device or trap operations.
+     */
+    return (eflags | RFLAGS_ALWAYS_ON | RFLAGS_TF);
+}
+
+static uint32_t kvm_eflags_to_nemu(uint64_t rflags)
+{
+    return ((uint32_t)rflags & ~RFLAGS_TF) | RFLAGS_ALWAYS_ON;
+}
 
 struct vm
 {
@@ -425,7 +442,7 @@ __EXPORT void difftest_regcpy(void *r, bool direction)
         ref->rsi = x86->esi;
         ref->rdi = x86->edi;
         ref->rip = x86->pc;
-        ref->rflags |= RFLAGS_TF;
+        ref->rflags = nemu_eflags_to_kvm(x86->eflags);
         vcpu.kvm_run->kvm_dirty_regs = KVM_SYNC_X86_REGS;
     }
     else
@@ -439,6 +456,8 @@ __EXPORT void difftest_regcpy(void *r, bool direction)
         x86->esi = ref->rsi;
         x86->edi = ref->rdi;
         x86->pc = ref->rip;
+        x86->eflags = kvm_eflags_to_nemu(ref->rflags);
+        x86->cs = vcpu.kvm_run->s.regs.sregs.cs.selector;
     }
 }
 

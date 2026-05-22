@@ -198,8 +198,9 @@ $(CLEAN_ALL):
 .PHONY: clean-all $(CLEAN_ALL)
 
 ### Build fsimg and ramdisk for Nanos-lite
-APPS = pal fceux onscripter
+APPS = pal bird nslider
 TESTS = hello
+FSIMG_GENERATED_DIRS = $(NAVY_HOME)/fsimg/bin $(NAVY_HOME)/fsimg/share/games
 
 ONS_GAME_SRC = $(NAVY_HOME)/apps/onscripter/game
 ONS_GAME_DST = $(NAVY_HOME)/fsimg/share/games/ons
@@ -242,8 +243,12 @@ ons-game-data:
 	@ln -sfn -T "$(ONS_GAME_SRC)" "$(ONS_GAME_DST)"
 
 fsimg: $(addprefix apps/, $(APPS)) $(addprefix tests/, $(TESTS))
+	@rm -rf $(FSIMG_GENERATED_DIRS)
+	@mkdir -p $(FSIMG_GENERATED_DIRS)
 	for t in $^; do $(MAKE) -s -C $(NAVY_HOME)/$$t install || exit $$?; done
+ifneq ($(filter onscripter,$(APPS)),)
 	@$(MAKE) -s -C $(NAVY_HOME) ons-game-data
+endif
 
 RAMDISK = build/ramdisk.img
 RAMDISK_H = build/ramdisk.h

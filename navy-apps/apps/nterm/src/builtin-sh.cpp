@@ -147,6 +147,12 @@ static void sh_print_apps()
     sh_printf("  selftest  run NTerm built-in checks\n");
 }
 
+static void sh_init_env()
+{
+    // Make PATH available to execvp and Busybox printenv.
+    setenv("PATH", "/bin", 0);
+}
+
 int nterm_selftest(bool to_terminal)
 {
     // Keep this test independent of the GUI event loop: it validates the shell
@@ -161,6 +167,14 @@ int nterm_selftest(bool to_terminal)
     ok = ok && strcmp(argv[0], "pal") == 0;
     ok = ok && strcmp(argv[1], "--skip") == 0;
     ok = ok && strcmp(argv[2], "quoted arg") == 0;
+
+    setenv("PATH", "/already-set", 1);
+    sh_init_env();
+    ok = ok && strcmp(getenv("PATH"), "/already-set") == 0;
+
+    unsetenv("PATH");
+    sh_init_env();
+    ok = ok && strcmp(getenv("PATH"), "/bin") == 0;
 
     const char *msg = ok ? "NTERM_SELFTEST: PASS\n" : "NTERM_SELFTEST: FAIL\n";
     printf("%s", msg);
@@ -344,8 +358,7 @@ void builtin_sh_run()
     sh_banner();
     sh_prompt();
 
-    // Make PATH available to execvp and Busybox printenv
-    setenv("PATH", "/bin:/usr/bin", 1);
+    sh_init_env();
 
     while (1)
     {

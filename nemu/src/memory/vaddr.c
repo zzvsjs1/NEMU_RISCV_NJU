@@ -46,6 +46,31 @@ static paddr_t mem_ret_pgaddr(paddr_t ret)
     return (paddr_t)(ret & ~(paddr_t)PAGE_MASK);
 }
 
+static void __attribute__((noreturn)) handle_translate_failure(int status, const char *caller)
+{
+#ifdef CONFIG_ISA_x86
+    if (status == MEM_RET_FAIL)
+    {
+        x86_raise_page_fault();
+    }
+#endif
+
+    panic("%s: mmu translate failed", caller);
+}
+
+static paddr_t translated_paddr_or_panic(vaddr_t addr, int len, int type, const char *caller)
+{
+    paddr_t ret = isa_mmu_translate(addr, len, type);
+    int st = mem_ret_status(ret);
+
+    if (st != MEM_RET_OK)
+    {
+        handle_translate_failure(st, caller);
+    }
+
+    return mem_ret_pgaddr(ret) | (paddr_t)(addr & PAGE_MASK);
+}
+
 word_t vaddr_ifetch(vaddr_t addr, int len)
 {
 #ifdef CONFIG_ISA_riscv32
@@ -94,11 +119,15 @@ word_t vaddr_ifetch(vaddr_t addr, int len)
 
         if (st == MEM_RET_CROSS_PAGE)
         {
-            panic("vaddr_ifetch: cross-page access not supported yet");
+            word_t data = 0;
+            for (int i = 0; i < len; i++)
+            {
+                data |= vaddr_ifetch(addr + (vaddr_t)i, 1) << (i * 8);
+            }
+            return data;
         }
 
-        // MEM_RET_FAIL or unknown code
-        panic("vaddr_ifetch: mmu translate failed");
+        handle_translate_failure(st, "vaddr_ifetch");
     }
 
     // MMU_FAIL or others
@@ -136,10 +165,15 @@ word_t vaddr_read(vaddr_t addr, int len)
 
         if (status == MEM_RET_CROSS_PAGE)
         {
-            panic("vaddr_read: cross-page access not supported yet");
+            word_t data = 0;
+            for (int i = 0; i < len; i++)
+            {
+                data |= vaddr_read(addr + (vaddr_t)i, 1) << (i * 8);
+            }
+            return data;
         }
 
-        panic("vaddr_read: mmu translate failed");
+        handle_translate_failure(status, "vaddr_read");
     }
 
     panic("vaddr_read: mmu check failed");
@@ -187,10 +221,19 @@ void vaddr_write(vaddr_t addr, int len, word_t data)
 
         if (st == MEM_RET_CROSS_PAGE)
         {
-            assert(0 && "vaddr_write: cross-page access not supported yet");
+            int first_len = PAGE_SIZE - (int)(addr & PAGE_MASK);
+            int second_len = len - first_len;
+            paddr_t first_pa = translated_paddr_or_panic(addr, first_len,
+                                                          MEM_TYPE_WRITE, "vaddr_write");
+            paddr_t second_pa = translated_paddr_or_panic(addr + (vaddr_t)first_len, second_len,
+                                                           MEM_TYPE_WRITE, "vaddr_write");
+
+            paddr_write(first_pa, first_len, data);
+            paddr_write(second_pa, second_len, data >> (first_len * 8));
+            return;
         }
 
-        assert(0 && "vaddr_write: mmu translate failed");
+        handle_translate_failure(st, "vaddr_write");
     }
 
     assert(0 && "vaddr_write: mmu check failed");

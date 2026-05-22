@@ -13,7 +13,7 @@
 #endif
 
 #if defined(__ISA_X86__)
-#define EXPECT_TYPE EM_X86_64
+#define EXPECT_TYPE EM_386
 #elif defined(__ISA_MIPS32__)
 #define EXPECT_TYPE EF_MIPS_ARCH_32
 #elif defined(__ISA_RISCV32__) || defined(__ISA_RISCV64__)
@@ -26,6 +26,11 @@
 // Provided by Nanos-lite memory system.
 extern Area heap;
 
+enum
+{
+    USTACK_PAGES = 8
+};
+
 static uintptr_t align_down(uintptr_t x, uintptr_t a)
 {
     return x & ~(a - 1);
@@ -34,6 +39,91 @@ static uintptr_t align_down(uintptr_t x, uintptr_t a)
 static uintptr_t align_up(uintptr_t x, uintptr_t a)
 {
     return (x + a - 1) & ~(a - 1);
+}
+
+static int elf_load_prot(uint32_t flags)
+{
+    return MMAP_READ | ((flags & PF_W) ? MMAP_WRITE : 0);
+}
+
+static void load_direct(int fd, const Elf_Phdr *phdr)
+{
+    uintptr_t seg_va = (uintptr_t)phdr->p_vaddr;
+
+    assert(phdr->p_filesz <= phdr->p_memsz);
+    assert(fs_lseek(fd, phdr->p_offset, SEEK_SET) != (size_t)-1);
+    assert(fs_read(fd, (void *)seg_va, phdr->p_filesz) == phdr->p_filesz);
+
+    if (phdr->p_memsz > phdr->p_filesz)
+    {
+        memset((void *)(seg_va + phdr->p_filesz), 0, phdr->p_memsz - phdr->p_filesz);
+    }
+}
+
+static uintptr_t load_mapped(PCB *pcb, int fd, const Elf_Phdr *phdr, uintptr_t max_end)
+{
+    uintptr_t seg_va = (uintptr_t)phdr->p_vaddr;
+    uintptr_t file_va_end = seg_va + phdr->p_filesz;
+    uintptr_t mem_va_end = seg_va + phdr->p_memsz;
+    int prot = elf_load_prot(phdr->p_flags);
+
+    assert(phdr->p_filesz <= phdr->p_memsz);
+
+    // Track the maximum end address of all loadable segments.
+    if (mem_va_end > max_end)
+    {
+        max_end = mem_va_end;
+    }
+
+    uintptr_t page_va_begin = align_down(seg_va, PGSIZE);
+    uintptr_t page_va_end = align_up(mem_va_end, PGSIZE);
+
+    for (uintptr_t page_va = page_va_begin; page_va < page_va_end; page_va += PGSIZE)
+    {
+        // Reuse an existing mapping if this page VA was already mapped by another segment.
+        // ELF segments can share a page at their boundary; allocating a
+        // fresh page here would lose bytes copied for the previous segment.
+        void *page_pa = nanos_pagewalk_lookup_page(pcb->as.ptr, page_va);
+
+        if (page_pa == NULL)
+        {
+            page_pa = new_page(1);
+            assert(page_pa != NULL);
+            memset(page_pa, 0, PGSIZE);
+            map(&pcb->as, (void *)page_va, page_pa, prot);
+        }
+#if defined(__ISA_X86__)
+        else if (prot & MMAP_WRITE)
+        {
+            /*
+             * Adjacent ELF segments can share one boundary page.  If a
+             * read-only segment mapped it first, a later writable segment must
+             * upgrade the same physical page rather than allocate a new one.
+             */
+            map(&pcb->as, (void *)page_va, page_pa, MMAP_NONE);
+            map(&pcb->as, (void *)page_va, page_pa, MMAP_READ | MMAP_WRITE);
+        }
+#endif
+
+        // Load file bytes that overlap with this page.
+        uintptr_t page_begin = page_va;
+        uintptr_t page_end = page_va + PGSIZE;
+
+        uintptr_t is = (page_begin > seg_va) ? page_begin : seg_va;
+        uintptr_t ie = (page_end < file_va_end) ? page_end : file_va_end;
+
+        if (is < ie)
+        {
+            size_t bytes = (size_t)(ie - is);
+            size_t inpage_off = (size_t)(is - page_begin);
+            size_t file_off = (size_t)phdr->p_offset + (size_t)(is - seg_va);
+
+            assert(fs_lseek(fd, file_off, SEEK_SET) != (size_t)-1);
+            assert(fs_read(fd, (void *)((uintptr_t)page_pa + inpage_off), bytes) == bytes);
+        }
+    }
+
+    return max_end;
 }
 
 static uintptr_t loader(PCB *pcb, const char *filename)
@@ -71,59 +161,25 @@ static uintptr_t loader(PCB *pcb, const char *filename)
             continue;
         }
 
-        uintptr_t seg_va = (uintptr_t)phdr.p_vaddr;
-        uintptr_t file_va_end = seg_va + phdr.p_filesz;
-        uintptr_t mem_va_end = seg_va + phdr.p_memsz;
-
-        // Track the maximum end address of all loadable segments.
-        if (mem_va_end > max_end)
+        if (pcb == NULL)
         {
-            max_end = mem_va_end;
+            load_direct(fd, &phdr);
         }
-
-        uintptr_t page_va_begin = align_down(seg_va, PGSIZE);
-        uintptr_t page_va_end = align_up(mem_va_end, PGSIZE);
-
-        for (uintptr_t page_va = page_va_begin; page_va < page_va_end; page_va += PGSIZE)
+        else
         {
-            // Reuse an existing mapping if this page VA was already mapped by another segment.
-            // ELF segments can share a page at their boundary; allocating a
-            // fresh page here would lose bytes copied for the previous segment.
-            void *page_pa = nanos_pagewalk_lookup_page(pcb->as.ptr, page_va);
-
-            if (page_pa == NULL)
-            {
-                page_pa = new_page(1);
-                assert(page_pa != NULL);
-                memset(page_pa, 0, PGSIZE);
-                map(&pcb->as, (void *)page_va, page_pa, 0);
-            }
-
-            // Load file bytes that overlap with this page.
-            uintptr_t page_begin = page_va;
-            uintptr_t page_end = page_va + PGSIZE;
-
-            uintptr_t is = (page_begin > seg_va) ? page_begin : seg_va;
-            uintptr_t ie = (page_end < file_va_end) ? page_end : file_va_end;
-
-            if (is < ie)
-            {
-                size_t bytes = (size_t)(ie - is);
-                size_t inpage_off = (size_t)(is - page_begin);
-                size_t file_off = (size_t)phdr.p_offset + (size_t)(is - seg_va);
-
-                assert(fs_lseek(fd, file_off, SEEK_SET) != (size_t)-1);
-                assert(fs_read(fd, (void *)((uintptr_t)page_pa + inpage_off), bytes) == bytes);
-            }
+            max_end = load_mapped(pcb, fd, &phdr, max_end);
         }
     }
 
     // Close fd.
     assert(fs_close(fd) == 0);
 
-    // Initialise max_brk to the end of loaded image, with a lower bound of user space start.
-    uintptr_t us = (uintptr_t)pcb->as.area.start;
-    pcb->max_brk = (max_end > us) ? max_end : us;
+    if (pcb != NULL)
+    {
+        // Initialise max_brk to the end of loaded image, with a lower bound of user space start.
+        uintptr_t us = (uintptr_t)pcb->as.area.start;
+        pcb->max_brk = (max_end > us) ? max_end : us;
+    }
 
     // Return entry point.
     return elfH.e_entry;
@@ -157,7 +213,8 @@ uintptr_t build_user_stack(uintptr_t ustack_va_end, uintptr_t ustack_pa_end, cha
     // Copy strings into the stack memory.
     // Writes go to physical addresses because the kernel is building another
     // address space. The saved argv/envp pointers must be user virtual
-    // addresses, because crt0 will dereference them after mret under satp.
+    // addresses, because crt0 will dereference them after trap return in that
+    // process address space.
     for (int i = 0; i < argc; i++)
     {
         const size_t len = strlen(argv[i]) + 1;
@@ -224,11 +281,6 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
     uintptr_t entry = loader(pcb, filename);
 
     // 3) Allocate and map user stack, 32KB = 8 pages.
-    enum
-    {
-        USTACK_PAGES = 8
-    };
-
     uintptr_t ustack_va_end = (uintptr_t)pcb->as.area.end;
     uintptr_t ustack_va_base = ustack_va_end - (uintptr_t)USTACK_PAGES * PGSIZE;
 
@@ -242,7 +294,7 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
             &pcb->as,
             (void *)(ustack_va_base + (uintptr_t)i * PGSIZE),
             (void *)((uintptr_t)ustack_pa_base + (uintptr_t)i * PGSIZE),
-            0);
+            MMAP_WRITE);
     }
 
     // 4) Build argc/argv/envp on the stack.
@@ -251,19 +303,27 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
 
     // 5) Create user context on kernel stack.
     // The Context itself must live on the PCB kernel stack, not on the user
-    // stack. trap.S and the scheduler need to read it while running in machine
-    // mode, even if satp is still pointing at a different process.
+    // stack. trap.S and the scheduler need to read it while still running on a
+    // kernel mapping, before the process address space is restored.
     Area kstack = (Area){.start = pcb->stack, .end = pcb + 1};
     pcb->cp = ucontext(&pcb->as, kstack, (void *)entry);
 
     // 6) Set user initial SP and the ABI argument pointer.
+    /*
+     * Only the actively supported PA4 targets expose GPRSP in their AM Context
+     * headers. Other historical NEMU ISA headers can still syntax-check this
+     * file, but they do not have enough ABI information here to initialise a
+     * user stack pointer.
+     */
+#if defined(__ISA_X86__) || defined(__ISA_RISCV32__) || defined(__ISA_RISCV64__)
     pcb->cp->GPRSP = args_va;
+#endif
     pcb->cp->GPRx = args_va;
 }
 
 void naive_uload(PCB *pcb, const char *filename)
 {
     uintptr_t entry = loader(pcb, filename);
-    Log("Jump to entry = %p", entry);
+    Log("Jump to entry = %p", (void *)entry);
     ((void (*)())entry)();
 }

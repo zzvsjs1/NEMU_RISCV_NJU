@@ -86,6 +86,21 @@ bool switch_fg_pcb(int index)
     return false;
 }
 
+#if defined(NANOS_INIT_HELLO_KTHREAD) || defined(NANOS_INIT_PAL_KTHREAD)
+static bool context_has_user_as(Context *ctx)
+{
+    assert(ctx != NULL);
+
+#if defined(__ISA_X86__)
+    return ctx->cr3 != NULL;
+#elif defined(__ISA_RISCV32__) || defined(__ISA_RISCV64__) || defined(__ISA_MIPS32__)
+    return ctx->pdir != NULL;
+#else
+    return false;
+#endif
+}
+#endif
+
 void context_kload(PCB *pcb, void (*entry)(void *), void *arg)
 {
     // Build an Area that describes this PCB's kernel stack range.
@@ -104,8 +119,8 @@ void context_kload(PCB *pcb, void (*entry)(void *), void *arg)
 // Must never return, otherwise, it will return 0 as the context.
 void hello_fun(void *arg)
 {
-    // Interpret arg as a C string, because pointer may have 32/64 bit issue in some cases.
-    // const char *name = (const char *)arg;
+    const char *name = (const char *)arg;
+    Log("Kernel thread %s started", name != NULL ? name : "(null)");
     // int j = 1;
     while (1)
     {
@@ -121,17 +136,56 @@ void init_proc()
 
     static char *const envp_empty[] = {NULL};
 
-    static char *const argv_pal[] = {"/bin/pal", NULL};
-    static char *const argv_fceux[] = {"/bin/fceux", "/share/games/nes/c.nes", NULL};
-    static char *const argv_onscripter[] = {"/bin/onscripter", "-r", "/share/games/ons", NULL};
-    // static char *const argv_nslider[] = { "/bin/nslider", NULL };
-    // static char *const argv_hello[] = { "/bin/hello", NULL };
-    context_uload(&pcb[0], "/bin/fceux", argv_fceux, envp_empty);
-    context_uload(&pcb[1], "/bin/onscripter", argv_onscripter, envp_empty);
-    context_uload(&pcb[2], "/bin/pal", argv_pal, envp_empty);
-    // context_uload(&pcb[2], "/bin/nslider", argv_nslider, envp_empty);
-    // context_uload(&pcb[3], "/bin/hello", argv_hello, envp_empty);
+#if defined(NANOS_INIT_DUMMY)
+    static char *const argv_dummy[] = {"/bin/dummy", NULL};
+    context_uload(&pcb[0], "/bin/dummy", argv_dummy, envp_empty);
     fg_pcb = &pcb[0];
+#elif defined(NANOS_INIT_HELLO)
+    static char *const argv_hello[] = {"/bin/hello", NULL};
+    context_uload(&pcb[0], "/bin/hello", argv_hello, envp_empty);
+    fg_pcb = &pcb[0];
+#elif defined(NANOS_INIT_PREEMPT)
+    static char *const argv_hello[] = {"/bin/hello", NULL};
+    static char *const argv_dummy[] = {"/bin/dummy", NULL};
+    context_uload(&pcb[0], "/bin/hello", argv_hello, envp_empty);
+    context_uload(&pcb[HELLO_PROC], "/bin/dummy", argv_dummy, envp_empty);
+    fg_pcb = &pcb[0];
+#elif defined(NANOS_INIT_HELLO_KTHREAD)
+    static char *const argv_hello[] = {"/bin/hello", NULL};
+    context_uload(&pcb[0], "/bin/hello", argv_hello, envp_empty);
+    context_kload(&pcb[HELLO_PROC], hello_fun, "hello-kthread");
+    fg_pcb = &pcb[0];
+#elif defined(NANOS_INIT_PAL_KTHREAD)
+    static char *const argv_pal[] = {"/bin/pal", NULL};
+    context_uload(&pcb[0], "/bin/pal", argv_pal, envp_empty);
+    context_kload(&pcb[HELLO_PROC], hello_fun, "pal-kthread");
+    fg_pcb = &pcb[0];
+#elif defined(NANOS_INIT_NTERM_HELLO)
+    static char *const argv_nterm[] = {"/bin/nterm", NULL};
+    static char *const argv_hello[] = {"/bin/hello", NULL};
+    context_uload(&pcb[0], "/bin/nterm", argv_nterm, envp_empty);
+    context_uload(&pcb[HELLO_PROC], "/bin/hello", argv_hello, envp_empty);
+    fg_pcb = &pcb[0];
+#elif defined(NANOS_INIT_NTERM_SELFTEST)
+    static char *const argv_nterm[] = {"/bin/nterm", "--selftest", NULL};
+    context_uload(&pcb[0], "/bin/nterm", argv_nterm, envp_empty);
+    fg_pcb = &pcb[0];
+#elif defined(NANOS_INIT_SINGLE)
+    static char init_path[] = NANOS_INIT_PATH;
+    static char *const argv_single[] = {init_path, NULL};
+    context_uload(&pcb[0], init_path, argv_single, envp_empty);
+    fg_pcb = &pcb[0];
+#else
+    static char *const argv_pal[] = {"/bin/pal", NULL};
+    static char *const argv_bird[] = {"/bin/bird", NULL};
+    static char *const argv_nslider[] = {"/bin/nslider", NULL};
+    static char *const argv_hello[] = {"/bin/hello", NULL};
+    context_uload(&pcb[0], "/bin/pal", argv_pal, envp_empty);
+    context_uload(&pcb[1], "/bin/bird", argv_bird, envp_empty);
+    context_uload(&pcb[2], "/bin/nslider", argv_nslider, envp_empty);
+    context_uload(&pcb[HELLO_PROC], "/bin/hello", argv_hello, envp_empty);
+    fg_pcb = &pcb[0];
+#endif
     foreground_budget = FOREGROUND_QUANTA;
 
     // Initialize current to the boot PCB,
@@ -176,6 +230,18 @@ Context *schedule(Context *prev)
     }
 
     assert(pcb_runnable(current));
+
+#if defined(NANOS_INIT_HELLO_KTHREAD) || defined(NANOS_INIT_PAL_KTHREAD)
+    if (current == &pcb[HELLO_PROC])
+    {
+        /*
+         * A kernel thread context must keep a NULL address-space marker.  PA4 VME
+         * relies on that marker so the trap return path keeps the currently active
+         * page table instead of treating the kernel thread as a user process.
+         */
+        assert(!context_has_user_as(current->cp));
+    }
+#endif
 
     if (current == fg_pcb)
     {

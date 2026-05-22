@@ -1,5 +1,6 @@
 HAS_NAVY = 1
 RAMDISK_FILE = build/ramdisk.img
+NANOS_INIT ?= games
 
 NAME = nanos-lite
 SRCS = $(shell find -L ./src/ -name "*.c" -o -name "*.cpp" -o -name "*.S")
@@ -47,8 +48,76 @@ else
 INC_PATH += include $(NAVY_HOME)/libs/libc/include $(NAVY_HOME)/libs/libos/src
 endif
 
+ifeq ($(NANOS_INIT),dummy)
+CFLAGS += -DNANOS_INIT_DUMMY=1
+NAVY_APPS ?=
+NAVY_TESTS ?= dummy
+NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
+else ifeq ($(NANOS_INIT),hello)
+CFLAGS += -DNANOS_INIT_HELLO=1
+NAVY_APPS ?=
+NAVY_TESTS ?= hello
+NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
+else ifeq ($(NANOS_INIT),preempt)
+CFLAGS += -DNANOS_INIT_PREEMPT=1
+NAVY_APPS ?=
+NAVY_TESTS ?= hello dummy
+NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
+else ifeq ($(NANOS_INIT),hello-kthread)
+CFLAGS += -DNANOS_INIT_HELLO_KTHREAD=1
+NAVY_APPS ?=
+NAVY_TESTS ?= hello
+NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
+else ifeq ($(NANOS_INIT),pal-kthread)
+CFLAGS += -DNANOS_INIT_PAL_KTHREAD=1
+NAVY_APPS ?= pal
+NAVY_TESTS ?=
+NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
+else ifeq ($(NANOS_INIT),nterm-hello)
+CFLAGS += -DNANOS_INIT_NTERM_HELLO=1 -DNANOS_EXIT_RESTART_NTERM=1
+NAVY_APPS ?= nterm pal
+NAVY_TESTS ?= hello
+NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
+else ifeq ($(NANOS_INIT),nterm-selftest)
+CFLAGS += -DNANOS_INIT_NTERM_SELFTEST=1 -DNANOS_EXIT_RESTART_NTERM=1
+NAVY_APPS ?= nterm
+NAVY_TESTS ?=
+NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
+else ifeq ($(NANOS_INIT),priv-test)
+CFLAGS += -DNANOS_INIT_SINGLE=1 -DNANOS_INIT_PRIV_TEST=1 -DNANOS_INIT_PATH=\"/bin/priv-test\"
+NAVY_APPS ?=
+NAVY_TESTS ?= priv-test
+NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
+else ifeq ($(NANOS_INIT),pf-cause-test)
+CFLAGS += -DNANOS_INIT_SINGLE=1 -DNANOS_INIT_PF_CAUSE_TEST=1 -DNANOS_INIT_PATH=\"/bin/pf-cause-test\"
+NAVY_APPS ?=
+NAVY_TESTS ?= pf-cause-test
+NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
+else ifeq ($(NANOS_INIT),games)
+CFLAGS += -DNANOS_INIT_GAMES=1
+else
+CFLAGS += -DNANOS_INIT_SINGLE=1 -DNANOS_INIT_PATH=\"/bin/$(NANOS_INIT)\"
+NAVY_APPS ?=
+NAVY_TESTS ?= $(NANOS_INIT)
+NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
+endif
+
+NANOS_CONFIG_STAMP = $(DST_DIR)/.nanos-config
+
+$(NANOS_CONFIG_STAMP): force
+	@mkdir -p $(dir $@)
+	@{ \
+		printf '%s\n' 'NANOS_INIT=$(NANOS_INIT)'; \
+		printf '%s\n' 'FS_MODE=$(FS_MODE)'; \
+		printf '%s\n' 'NAVY_APPS=$(NAVY_APPS)'; \
+		printf '%s\n' 'NAVY_TESTS=$(NAVY_TESTS)'; \
+	} > $@.tmp
+	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm -f $@.tmp; fi
+
+$(OBJS): $(NANOS_CONFIG_STAMP)
+
 ifeq ($(ISA),riscv64)
-NAVY_APPS ?= pal fceux onscripter
+NAVY_APPS ?= pal bird nslider
 NAVY_TESTS ?= hello
 NAVY_UPDATE_APP_ARGS = APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
 endif

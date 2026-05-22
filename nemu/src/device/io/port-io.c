@@ -1,4 +1,5 @@
 #include <device/map.h>
+#include <isa.h>
 
 #define PORT_IO_SPACE_MAX 65535
 
@@ -28,7 +29,7 @@ uint32_t pio_read(ioaddr_t addr, int len)
 {
     assert(addr + len - 1 < PORT_IO_SPACE_MAX);
     int mapid = find_mapid_by_addr(maps, nr_map, addr);
-    assert(mapid != -1);
+    Assert(mapid != -1, "unmapped port I/O read at port %#x, len %d, pc = " FMT_WORD, addr, len, cpu.pc);
     return map_read(addr, len, &maps[mapid]);
 }
 
@@ -36,6 +37,6 @@ void pio_write(ioaddr_t addr, int len, uint32_t data)
 {
     assert(addr + len - 1 < PORT_IO_SPACE_MAX);
     int mapid = find_mapid_by_addr(maps, nr_map, addr);
-    assert(mapid != -1);
+    Assert(mapid != -1, "unmapped port I/O write at port %#x, len %d, data %#x, pc = " FMT_WORD, addr, len, data, cpu.pc);
     map_write(addr, len, data, &maps[mapid]);
 }

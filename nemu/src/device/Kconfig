@@ -66,6 +66,11 @@ menuconfig HAS_MOUSE
   default y
 
 if HAS_MOUSE
+config MOUSE_DATA_PORT
+  hex "Port address of the mouse controller"
+  depends on HAS_PORT_IO
+  default 0x70
+
 config MOUSE_DATA_MMIO
   hex "MMIO address of the mouse controller"
   default 0xa0000070

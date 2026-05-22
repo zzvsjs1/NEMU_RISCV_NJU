@@ -407,11 +407,36 @@ void cpu_exec(uint64_t n)
         }
         else
         {
+#if defined(CONFIG_ISA_x86)
+            vaddr_t fault_pc = cpu.pc;
+            x86_exception_env_valid = true;
+            if (setjmp(x86_exception_env) == 0)
+            {
+                fetch_decode_exec_updatepc(&s);
+                x86_exception_env_valid = false;
+                executed = 1;
+                n -= executed;
+                g_nr_guest_instr += executed;
+                trace_and_difftest(&s, cpu.pc);
+            }
+            else
+            {
+                x86_mmu_clear_cpl_override();
+                x86_exception_env_valid = false;
+                cpu.pc = x86_exception_target;
+                executed = 1;
+                n -= executed;
+                g_nr_guest_instr += executed;
+                difftest_skip_ref();
+                difftest_step(fault_pc, cpu.pc);
+            }
+#else
             fetch_decode_exec_updatepc(&s);
             executed = 1;
             n -= executed;
             g_nr_guest_instr += executed;
             trace_and_difftest(&s, cpu.pc);
+#endif
         }
 
         if (nemu_state.state != NEMU_RUNNING)

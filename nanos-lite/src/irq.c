@@ -1,5 +1,10 @@
 #include <common.h>
 
+#ifdef NANOS_INIT_PRIV_TEST
+#define X86_EFLAGS_CF (1u << 0)
+#define X86_EFLAGS_ZF (1u << 6)
+#endif
+
 Context *schedule(Context *prev);
 
 // Provided by syscall.c
@@ -47,6 +52,43 @@ static Context *do_event(Event e, Context *c)
         // Timer IRQs are the pre-emptive path. They do not need a syscall return
         // value, only a scheduler decision based on the interrupted context.
         return schedule(c);
+    }
+
+    case EVENT_PAGEFAULT:
+    {
+#ifdef NANOS_INIT_PF_CAUSE_TEST
+        const uintptr_t expected_ref = 0x50000000u;
+
+        if (e.ref != expected_ref)
+        {
+            panic("pf-cause-test expected CR2 %p, got %p", (void *)expected_ref, (void *)e.ref);
+        }
+
+        if (e.cause != MMAP_WRITE)
+        {
+            panic("pf-cause-test expected write cause, got 0x%x", (unsigned)e.cause);
+        }
+
+        Log("pf-cause-test page fault at %p, cause = 0x%x", (void *)e.ref, (unsigned)e.cause);
+        halt(0);
+#elif defined(NANOS_INIT_PRIV_TEST)
+        /*
+         * priv-test deliberately writes to its read-only text page after all
+         * other checks.  Reaching this event means x86 delivered #PF with CR2
+         * instead of letting the write proceed.  The saved flags must still be
+         * from before the faulting instruction, because x86 faults are
+         * restartable.
+         */
+        if ((c->eflags & (X86_EFLAGS_CF | X86_EFLAGS_ZF)) != (X86_EFLAGS_CF | X86_EFLAGS_ZF))
+        {
+            panic("priv-test #PF committed EFLAGS before the fault: eflags = 0x%x", (unsigned)c->eflags);
+        }
+        Log("priv-test page fault at %p, cause = 0x%x", (void *)e.ref, (unsigned)e.cause);
+        halt(0);
+#else
+        panic("Unhandled page fault at %p, cause = 0x%x", (void *)e.ref, (unsigned)e.cause);
+#endif
+        break;
     }
 
     default:

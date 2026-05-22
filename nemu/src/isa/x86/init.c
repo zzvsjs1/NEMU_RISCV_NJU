@@ -34,6 +34,23 @@ static void restart() {
   cpu.pc = RESET_VECTOR;
   cpu.esp = CONFIG_MBASE + CONFIG_MSIZE;
   cpu.eflags = 0x2;
+  cpu.cs = 0x8;
+  cpu.ds = 0x10;
+  cpu.es = 0x10;
+  cpu.ss = 0x10;
+  cpu.cr0 = 0x60000011u;
+  cpu.cr2 = 0;
+  cpu.cr3 = 0;
+  cpu.cr4 = 0;
+  cpu.pf_errcode = 0;
+  cpu.idtr_base = 0;
+  cpu.idtr_limit = 0;
+  cpu.gdtr_base = 0;
+  cpu.gdtr_limit = 0;
+  cpu.tr = 0;
+  cpu.tss_base = 0;
+  cpu.tss_limit = 0;
+  cpu.sti_shadow = 0;
   cpu.INTR = false;
 }
 

@@ -26,6 +26,8 @@ _start:
 #elif defined(__ISA_X86__)
 
   movl $0, %ebp
+  movl %eax, %esp
+  pushl %eax
   call call_main
 
 #elif defined(__ISA_MIPS32__)

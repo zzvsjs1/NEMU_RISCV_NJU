@@ -40,7 +40,7 @@ void __am_irq_handle(struct trap_frame *tf) {
   // no ss/esp saved for DPL_KERNEL
   saved_ctx->esp = (tf->cs & DPL_USER ? tf->esp : (uint32_t)(tf + 1) - 8);
 #endif
-  saved_ctx->cr3    = (void *)get_cr3();
+  saved_ctx->cr3    = ((tf->cs & DPL_USER) == DPL_USER) ? (void *)get_cr3() : NULL;
 
   #define IRQ    T_IRQ0 +
   #define MSG(m) ev.msg = m;

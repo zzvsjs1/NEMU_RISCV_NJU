@@ -9,6 +9,11 @@ static void *pf = NULL;
 #define ROUNDUP(x, a) (((x) + (a) - 1) & ~((a) - 1))
 #endif
 
+enum
+{
+    USTACK_PAGES = 8
+};
+
 void *new_page(size_t nr_page)
 {
     // Simple bump allocator, returns a contiguous physical memory region.
@@ -64,8 +69,9 @@ int mm_brk(uintptr_t brk)
     // Basic sanity: brk should stay inside this process user space.
     uintptr_t us = (uintptr_t)current->as.area.start;
     uintptr_t ue = (uintptr_t)current->as.area.end;
+    uintptr_t stack_base = ue - (uintptr_t)USTACK_PAGES * PGSIZE;
 
-    if (brk < us || brk > ue)
+    if (brk < us || brk > stack_base)
     {
         // Return failure if user requests an invalid brk.
         return -1;
@@ -79,10 +85,9 @@ int mm_brk(uintptr_t brk)
         // New heap pages must be zero-filled.
         memset(pa, 0, PGSIZE);
 
-        // prot is ignored in this AM map() implementation. Passing 0 keeps the
-        // caller-side policy simple: any mapped user heap page receives the usual
-        // readable/writable/executable Sv32 leaf flags inside map().
-        map(&current->as, (void *)va, pa, 0);
+        // Heap pages must remain writable when AM map() starts honouring
+        // protection flags.
+        map(&current->as, (void *)va, pa, MMAP_WRITE);
     }
 
     current->max_brk = brk;

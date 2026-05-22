@@ -3,6 +3,9 @@
 
 // Located at src/isa/$(GUEST_ISA)/include/isa-def.h
 #include <isa-def.h>
+#if defined(CONFIG_ISA_x86)
+#include <setjmp.h>
+#endif
 
 // The macro `__GUEST_ISA__` is defined in $(CFLAGS).
 // It will be expanded as "x86" or "mips32" ...
@@ -51,6 +54,15 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type);
 
 // interrupt/exception
 vaddr_t isa_raise_intr(word_t NO, vaddr_t epc);
+#if defined(CONFIG_ISA_x86)
+vaddr_t isa_raise_intr_sw(word_t NO, vaddr_t epc);
+vaddr_t isa_raise_intr_err(word_t NO, vaddr_t epc, word_t errcode);
+extern jmp_buf x86_exception_env;
+extern bool x86_exception_env_valid;
+extern vaddr_t x86_exception_target;
+void x86_mmu_clear_cpl_override(void);
+void x86_raise_page_fault(void) __attribute__((noreturn));
+#endif
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
 vaddr_t isa_raise_intr_tval(word_t NO, vaddr_t epc, word_t tval);
 #endif

@@ -59,6 +59,18 @@ void isa_reg_display() {
   }
   printf("%-6s " FMT_WORD "\n", "eflags", cpu.eflags);
   printf("%-6s " FMT_WORD "\n", "eip", cpu.pc);
+  printf("%-6s " FMT_WORD "\n", "cs", cpu.cs);
+  printf("%-6s " FMT_WORD "\n", "ds", cpu.ds);
+  printf("%-6s " FMT_WORD "\n", "es", cpu.es);
+  printf("%-6s " FMT_WORD "\n", "ss", cpu.ss);
+  printf("%-6s " FMT_WORD "\n", "cr0", cpu.cr0);
+  printf("%-6s " FMT_WORD "\n", "cr2", cpu.cr2);
+  printf("%-6s " FMT_WORD "\n", "cr3", cpu.cr3);
+  printf("%-6s " FMT_WORD "\n", "cr4", cpu.cr4);
+  printf("%-6s " FMT_WORD "\n", "pferr", cpu.pf_errcode);
+  printf("%-6s " FMT_WORD " limit %#x\n", "idtr", cpu.idtr_base, cpu.idtr_limit);
+  printf("%-6s " FMT_WORD " limit %#x\n", "gdtr", cpu.gdtr_base, cpu.gdtr_limit);
+  printf("%-6s %#x base " FMT_WORD " limit %#x\n", "tr", cpu.tr, cpu.tss_base, cpu.tss_limit);
 }
 
 word_t isa_reg_str2val(const char *s, bool *success) {
@@ -88,6 +100,86 @@ word_t isa_reg_str2val(const char *s, bool *success) {
   if (strcmp(s, "eip") == 0 || strcmp(s, "pc") == 0) {
     *success = true;
     return cpu.pc;
+  }
+
+  if (strcmp(s, "cs") == 0) {
+    *success = true;
+    return cpu.cs;
+  }
+
+  if (strcmp(s, "ds") == 0) {
+    *success = true;
+    return cpu.ds;
+  }
+
+  if (strcmp(s, "es") == 0) {
+    *success = true;
+    return cpu.es;
+  }
+
+  if (strcmp(s, "ss") == 0) {
+    *success = true;
+    return cpu.ss;
+  }
+
+  if (strcmp(s, "cr0") == 0) {
+    *success = true;
+    return cpu.cr0;
+  }
+
+  if (strcmp(s, "cr2") == 0) {
+    *success = true;
+    return cpu.cr2;
+  }
+
+  if (strcmp(s, "cr3") == 0) {
+    *success = true;
+    return cpu.cr3;
+  }
+
+  if (strcmp(s, "cr4") == 0) {
+    *success = true;
+    return cpu.cr4;
+  }
+
+  if (strcmp(s, "pf_errcode") == 0 || strcmp(s, "pferr") == 0) {
+    *success = true;
+    return cpu.pf_errcode;
+  }
+
+  if (strcmp(s, "idtr_base") == 0) {
+    *success = true;
+    return cpu.idtr_base;
+  }
+
+  if (strcmp(s, "idtr_limit") == 0) {
+    *success = true;
+    return cpu.idtr_limit;
+  }
+
+  if (strcmp(s, "gdtr_base") == 0) {
+    *success = true;
+    return cpu.gdtr_base;
+  }
+
+  if (strcmp(s, "gdtr_limit") == 0) {
+    *success = true;
+    return cpu.gdtr_limit;
+  }
+
+  if (strcmp(s, "tr") == 0) {
+    *success = true;
+    return cpu.tr;
+  }
+
+  if (strcmp(s, "tss_base") == 0) {
+    *success = true;
+    return cpu.tss_base;
+  }
+
+  if (strcmp(s, "tss_limit") == 0) {
+    *success = true;
+    return cpu.tss_limit;
   }
 
   *success = false;
@@ -120,6 +212,86 @@ void isa_set_reg_val(const char *name, const word_t val) {
 
   if (strcmp(name, "eip") == 0 || strcmp(name, "pc") == 0) {
     cpu.pc = val;
+    return;
+  }
+
+  if (strcmp(name, "cs") == 0) {
+    cpu.cs = val;
+    return;
+  }
+
+  if (strcmp(name, "ds") == 0) {
+    cpu.ds = val;
+    return;
+  }
+
+  if (strcmp(name, "es") == 0) {
+    cpu.es = val;
+    return;
+  }
+
+  if (strcmp(name, "ss") == 0) {
+    cpu.ss = val;
+    return;
+  }
+
+  if (strcmp(name, "cr0") == 0) {
+    cpu.cr0 = val;
+    return;
+  }
+
+  if (strcmp(name, "cr2") == 0) {
+    cpu.cr2 = val;
+    return;
+  }
+
+  if (strcmp(name, "cr3") == 0) {
+    cpu.cr3 = val;
+    return;
+  }
+
+  if (strcmp(name, "cr4") == 0) {
+    cpu.cr4 = val;
+    return;
+  }
+
+  if (strcmp(name, "pf_errcode") == 0 || strcmp(name, "pferr") == 0) {
+    cpu.pf_errcode = val;
+    return;
+  }
+
+  if (strcmp(name, "idtr_base") == 0) {
+    cpu.idtr_base = val;
+    return;
+  }
+
+  if (strcmp(name, "idtr_limit") == 0) {
+    cpu.idtr_limit = val;
+    return;
+  }
+
+  if (strcmp(name, "gdtr_base") == 0) {
+    cpu.gdtr_base = val;
+    return;
+  }
+
+  if (strcmp(name, "gdtr_limit") == 0) {
+    cpu.gdtr_limit = val;
+    return;
+  }
+
+  if (strcmp(name, "tr") == 0) {
+    cpu.tr = val;
+    return;
+  }
+
+  if (strcmp(name, "tss_base") == 0) {
+    cpu.tss_base = val;
+    return;
+  }
+
+  if (strcmp(name, "tss_limit") == 0) {
+    cpu.tss_limit = val;
     return;
   }
 

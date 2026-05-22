@@ -41,7 +41,7 @@ Context *vm_handler(Event ev, Context *ctx)
     case EVENT_PAGEFAULT:
         printf("PF: %x %s%s%s\n",
                ev.ref,
-               (ev.cause & MMAP_NONE) ? "[not present]" : "",
+               (ev.cause == MMAP_NONE) ? "[not present]" : "",
                (ev.cause & MMAP_READ) ? "[read fail]" : "",
                (ev.cause & MMAP_WRITE) ? "[write fail]" : "");
         break;

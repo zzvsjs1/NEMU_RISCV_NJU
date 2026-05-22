@@ -19,13 +19,16 @@ MAINARGS_PLACEHOLDER = the_insert-arg_rule_in_Makefile_will_insert_mainargs_here
 CFLAGS += -DMAINARGS_MAX_LEN=$(MAINARGS_MAX_LEN) -DMAINARGS_PLACEHOLDER=\""$(MAINARGS_PLACEHOLDER)"\"
 
 NEMU_CONFIG_ISA = $(if $(filter riscv32e,$(ISA)),riscv32,$(ISA))
+NEMU_CONFIG_STAMP = $(NEMU_HOME)/.config.defconfig
 
 nemu-config:
 ifneq ($(NEMU_DEFCONFIG),)
 	@if ! grep -q '^CONFIG_ISA_$(NEMU_CONFIG_ISA)=y' "$(NEMU_HOME)/.config" 2>/dev/null || \
 	    { [ "$(ISA)" = "riscv32e" ] && ! grep -q '^CONFIG_RVE=y' "$(NEMU_HOME)/.config"; } || \
-	    { [ "$(ISA)" = "riscv32" ] && grep -q '^CONFIG_RVE=y' "$(NEMU_HOME)/.config"; }; then \
+	    { [ "$(ISA)" = "riscv32" ] && grep -q '^CONFIG_RVE=y' "$(NEMU_HOME)/.config"; } || \
+	    { [ ! -f "$(NEMU_CONFIG_STAMP)" ] || [ "$$(cat "$(NEMU_CONFIG_STAMP)")" != "$(NEMU_DEFCONFIG)" ]; }; then \
 		$(MAKE) -C "$(NEMU_HOME)" "$(NEMU_DEFCONFIG)"; \
+		printf '%s\n' "$(NEMU_DEFCONFIG)" > "$(NEMU_CONFIG_STAMP)"; \
 	fi
 endif
 

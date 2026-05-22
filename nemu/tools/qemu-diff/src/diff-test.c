@@ -12,6 +12,55 @@ void gdb_exit();
 
 void init_isa();
 
+#if defined(CONFIG_ISA_x86)
+#define X86_EFLAGS_ALWAYS_ON (1u << 1)
+
+typedef struct
+{
+    union
+    {
+        uint32_t gpr[8];
+        struct
+        {
+            uint32_t eax, ecx, edx, ebx, esp, ebp, esi, edi;
+        };
+    };
+    uint32_t eflags;
+    uint32_t pc;
+    uint32_t cs;
+} x86_nemu_state;
+
+static void x86_regcpy_to_qemu(union isa_gdb_regs *qemu_r, const x86_nemu_state *dut)
+{
+    qemu_r->eax = dut->eax;
+    qemu_r->ecx = dut->ecx;
+    qemu_r->edx = dut->edx;
+    qemu_r->ebx = dut->ebx;
+    qemu_r->esp = dut->esp;
+    qemu_r->ebp = dut->ebp;
+    qemu_r->esi = dut->esi;
+    qemu_r->edi = dut->edi;
+    qemu_r->eip = dut->pc;
+    qemu_r->eflags = dut->eflags | X86_EFLAGS_ALWAYS_ON;
+    qemu_r->cs = dut->cs;
+}
+
+static void x86_regcpy_to_dut(x86_nemu_state *dut, const union isa_gdb_regs *qemu_r)
+{
+    dut->eax = qemu_r->eax;
+    dut->ecx = qemu_r->ecx;
+    dut->edx = qemu_r->edx;
+    dut->ebx = qemu_r->ebx;
+    dut->esp = qemu_r->esp;
+    dut->ebp = qemu_r->ebp;
+    dut->esi = qemu_r->esi;
+    dut->edi = qemu_r->edi;
+    dut->pc = qemu_r->eip;
+    dut->eflags = qemu_r->eflags | X86_EFLAGS_ALWAYS_ON;
+    dut->cs = qemu_r->cs;
+}
+#endif
+
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
 static __attribute__((noreturn)) void riscv_qemu_difftest_unsupported(void)
 {
@@ -43,12 +92,20 @@ __EXPORT void difftest_regcpy(void *dut, bool direction)
 
     if (direction == DIFFTEST_TO_REF)
     {
+#if defined(CONFIG_ISA_x86)
+        x86_regcpy_to_qemu(&qemu_r, (const x86_nemu_state *)dut);
+#else
         memcpy(&qemu_r, dut, DIFFTEST_REG_SIZE);
+#endif
         gdb_setregs(&qemu_r);
     }
     else
     {
+#if defined(CONFIG_ISA_x86)
+        x86_regcpy_to_dut((x86_nemu_state *)dut, &qemu_r);
+#else
         memcpy(dut, &qemu_r, DIFFTEST_REG_SIZE);
+#endif
     }
 #endif
 }
