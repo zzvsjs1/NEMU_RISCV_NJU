@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-NEMU_HOME="$ROOT/nemu"
+export NEMU_HOME="$ROOT/nemu"
 OUT=$(mktemp)
 
 cleanup() {
@@ -14,6 +14,11 @@ fail() {
     echo "check-nemu-arch-config-selection: $*" >&2
     exit 1
 }
+
+if grep -R -n '^NEMU_DEFCONFIG[[:space:]]*?=' "$ROOT/abstract-machine/scripts" >"$OUT"; then
+    cat "$OUT" >&2
+    fail "AM scripts must not choose a NEMU defconfig by default"
+fi
 
 make -C "$NEMU_HOME" riscv32-am-headless-jit_defconfig >/dev/null
 if make -C "$NEMU_HOME" -n ISA=riscv64 run >"$OUT" 2>&1; then

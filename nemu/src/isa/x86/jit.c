@@ -1,5 +1,6 @@
 #include <generated/autoconf.h>
 
+#include "local-include/reg.h"
 #include <isa-jit.h>
 #include <isa.h>
 #include <memory/host.h>
@@ -15,18 +16,18 @@
  * First x86 JIT milestone.
  *
  * The interpreter in inst.c remains the architectural reference.  This file
- * only translates a tiny fault-free IA-32 subset into x86-64 code:
+ * started by translating a tiny fault-free IA-32 subset into x86-64 code:
  *
  *   - MOV r32, imm32
  *   - MOV r32, r32
  *   - LEA r32, m
  *   - NOP
  *
- * Everything else returns to the interpreter before the unsupported
- * instruction commits.  This keeps the initial native path useful for proving
- * the code-cache, CPU-loop, statistics, and invalidation contracts without
- * taking correctness risks around flags, memory faults, segmentation, or
- * paging.  Later milestones can widen the subset behind the same fallback
+ * The second milestone adds predecoded helper-backed instructions for the
+ * common IA-32 integer core used by AM CPU tests: stack traffic, 32-bit
+ * memory/register ALU, EFLAGS, calls, returns, and short/direct branches.  The
+ * generated block still returns to the interpreter before any unsupported
+ * instruction commits, so wider coverage does not weaken the fallback
  * boundary.
  */
 
@@ -49,13 +50,45 @@
 
 #define X86_CR0_PG 0x80000000u
 #define X86_DWORD_LIMIT 0xffffffffu
+#define X86_BYTE_MASK 0xffu
+#define X86_WORD_MASK 0xffffu
+#define X86_EFLAGS_FIXED_ONE (1u << 1)
+#define X86_AUX_CARRY_BIT 0x10u
+#define X86_PARITY_FOLD_NIBBLE_MASK 0xfu
+#define X86_PARITY_FOLD_TABLE 0x6996u
+
+#define X86_FLAG_CF (1u << 0)
+#define X86_FLAG_PF (1u << 2)
+#define X86_FLAG_AF (1u << 4)
+#define X86_FLAG_ZF (1u << 6)
+#define X86_FLAG_SF (1u << 7)
+#define X86_FLAG_OF (1u << 11)
+#define X86_EFLAGS_STATUS_MASK \
+  (X86_FLAG_CF | X86_FLAG_PF | X86_FLAG_AF | \
+      X86_FLAG_ZF | X86_FLAG_SF | X86_FLAG_OF)
+#define X86_EFLAGS_LOGIC_COPY_MASK (X86_FLAG_PF | X86_FLAG_ZF | X86_FLAG_SF)
+
+#define X86_WIDTH_BYTE 1u
+#define X86_WIDTH_WORD 2u
+#define X86_WIDTH_DWORD 4u
+#define X86_SHIFT_COUNT_MASK 0x1fu
+#define X86_BITS_PER_BYTE 8u
+#define X86_WORD_BITS 16u
+#define X86_DWORD_BITS 32u
+#define X86_DWORD_BASE 0x100000000ll
 
 #define X86_JIT_BLOCK_MAX_INSNS 16u
+#define X86_JIT_BATCH_MAX_INSNS 65536u
 #define X86_JIT_CACHE_SIZE 4096u
 #define X86_JIT_CODE_SIZE (16u * 1024u * 1024u)
 #define X86_JIT_BLOCK_CODE_HEADROOM 4096u
 #define X86_JIT_CODE_ALIGN 16u
 #define X86_JIT_MAX_SOURCE_BYTES 128u
+#define X86_JIT_SOURCE_PAGE_SHIFT 12u
+#define X86_JIT_SOURCE_PAGE_SIZE (1u << X86_JIT_SOURCE_PAGE_SHIFT)
+#define X86_JIT_SOURCE_PAGE_COUNT \
+  (((size_t)CONFIG_MSIZE + X86_JIT_SOURCE_PAGE_SIZE - 1u) / \
+      X86_JIT_SOURCE_PAGE_SIZE)
 
 typedef uint32_t (*x86_jit_entry_t)(void);
 
@@ -82,13 +115,73 @@ typedef enum {
   X86_JIT_OP_MOV_IMM_REG,
   X86_JIT_OP_MOV_REG_REG,
   X86_JIT_OP_LEA,
+  X86_JIT_OP_ALU_REG_REG,
+  X86_JIT_OP_ALU_IMM_REG,
+  X86_JIT_OP_TEST_REG_REG,
+  X86_JIT_OP_TEST_EAX_IMM,
+  X86_JIT_OP_JMP_REL,
+  X86_JIT_OP_JCC_REL,
+  X86_JIT_OP_HELPER,
 } x86_jit_op_t;
+
+typedef enum {
+  X86_JIT_HELPER_NONE,
+  X86_JIT_HELPER_MOV_RM_REG,
+  X86_JIT_HELPER_MOV_REG_RM,
+  X86_JIT_HELPER_MOV_IMM_RM,
+  X86_JIT_HELPER_MOV_EAX_MOFFS,
+  X86_JIT_HELPER_MOV_MOFFS_EAX,
+  X86_JIT_HELPER_ALU_RM_REG,
+  X86_JIT_HELPER_ALU_REG_RM,
+  X86_JIT_HELPER_ALU_IMM_RM,
+  X86_JIT_HELPER_ALU_EAX_IMM,
+  X86_JIT_HELPER_TEST_RM_REG,
+  X86_JIT_HELPER_TEST_EAX_IMM,
+  X86_JIT_HELPER_PUSH_REG,
+  X86_JIT_HELPER_PUSH_IMM,
+  X86_JIT_HELPER_PUSH_RM,
+  X86_JIT_HELPER_POP_REG,
+  X86_JIT_HELPER_CALL_REL,
+  X86_JIT_HELPER_CALL_RM,
+  X86_JIT_HELPER_RET,
+  X86_JIT_HELPER_LEAVE,
+  X86_JIT_HELPER_JMP_REL,
+  X86_JIT_HELPER_JMP_RM,
+  X86_JIT_HELPER_JCC_REL,
+  X86_JIT_HELPER_INCDEC_REG,
+  X86_JIT_HELPER_INCDEC_RM,
+  X86_JIT_HELPER_NOT_RM,
+  X86_JIT_HELPER_NEG_RM,
+  X86_JIT_HELPER_TEST_IMM_RM,
+  X86_JIT_HELPER_MUL_RM,
+  X86_JIT_HELPER_IMUL_ACC_RM,
+  X86_JIT_HELPER_DIV_RM,
+  X86_JIT_HELPER_IDIV_RM,
+  X86_JIT_HELPER_SETCC_RM8,
+  X86_JIT_HELPER_MOVZX_REG_RM8,
+  X86_JIT_HELPER_MOVZX_REG_RM16,
+  X86_JIT_HELPER_MOVSX_REG_RM8,
+  X86_JIT_HELPER_MOVSX_REG_RM16,
+  X86_JIT_HELPER_SHIFT_RM,
+  X86_JIT_HELPER_IMUL_REG_RM,
+} x86_jit_helper_t;
 
 typedef struct {
   x86_jit_op_t op;
+  x86_jit_helper_t helper;
+  vaddr_t pc;
+  vaddr_t next_pc;
+  bool rm_is_reg;
+  bool ends_block;
+  bool count_from_cl;
   uint8_t dst;
   uint8_t src;
+  uint8_t rm_reg;
+  uint8_t width;
+  uint8_t alu_op;
+  uint8_t cc;
   uint32_t imm;
+  int32_t rel;
   x86_jit_ea_t ea;
 } x86_jit_insn_t;
 
@@ -98,8 +191,10 @@ typedef struct {
   vaddr_t pc;
   uint32_t source_len;
   uint8_t source[X86_JIT_MAX_SOURCE_BYTES];
+  uint8_t unsupported_opcode2;
   x86_jit_entry_t entry;
   uint32_t guest_insns;
+  x86_jit_insn_t insns[X86_JIT_BLOCK_MAX_INSNS];
 } x86_jit_block_t;
 
 typedef struct {
@@ -112,10 +207,48 @@ typedef struct {
   uint64_t blocks_executed;
   uint64_t executed_insns;
   uint64_t unsupported_hits;
+  uint64_t native_alu_ops;
+  uint64_t native_branch_ops;
   uint64_t invalidation_requests;
+  uint64_t invalidation_page_skips;
+  uint64_t precise_invalidation_scans;
   uint64_t invalidated_blocks;
   uint64_t arena_resets;
+  uint64_t unsupported_by_opcode[256];
+  uint64_t unsupported_hits_by_opcode[256];
+  uint64_t unsupported_0f_by_opcode[256];
+  uint64_t unsupported_0f_hits_by_opcode[256];
 } x86_jit_stats_t;
+
+enum {
+  X86_ALU_ADD,
+  X86_ALU_OR,
+  X86_ALU_ADC,
+  X86_ALU_SBB,
+  X86_ALU_AND,
+  X86_ALU_SUB,
+  X86_ALU_XOR,
+  X86_ALU_CMP,
+};
+
+enum {
+  X86_CC_O  = 0x0,
+  X86_CC_NO = 0x1,
+  X86_CC_B  = 0x2,
+  X86_CC_AE = 0x3,
+  X86_CC_Z  = 0x4,
+  X86_CC_NZ = 0x5,
+  X86_CC_BE = 0x6,
+  X86_CC_A  = 0x7,
+  X86_CC_S  = 0x8,
+  X86_CC_NS = 0x9,
+  X86_CC_P  = 0xa,
+  X86_CC_NP = 0xb,
+  X86_CC_L  = 0xc,
+  X86_CC_GE = 0xd,
+  X86_CC_LE = 0xe,
+  X86_CC_G  = 0xf,
+};
 
 bool isa_jit_invalidation_active = false;
 
@@ -125,26 +258,57 @@ static x86_jit_block_t jit_cache[X86_JIT_CACHE_SIZE];
 static uint8_t *jit_code = NULL;
 static size_t jit_code_used = 0;
 static bool jit_runtime_options_init = false;
-static bool jit_env_disable = false;
+static bool jit_env_force_disable = false;
+static bool jit_env_enable = false;
 static bool jit_stats_enabled = false;
+static bool jit_helpers_enabled = false;
+static bool jit_verify_source_enabled = false;
+static volatile uint32_t jit_entry_budget = 0;
+static volatile uint32_t jit_loop_extra = 0;
+static volatile uint32_t jit_chain_abort = 0;
+static bool jit_source_page_has_code[X86_JIT_SOURCE_PAGE_COUNT];
 static x86_jit_stats_t jit_stats;
+
+#define JIT_STAT_INC(field) \
+  do { \
+    if (jit_stats_enabled) jit_stats.field++; \
+  } while (0)
+
+#define JIT_STAT_ADD(field, value) \
+  do { \
+    if (jit_stats_enabled) jit_stats.field += (value); \
+  } while (0)
 
 static bool jit_env_flag_enabled(const char *name) {
   const char *value = getenv(name);
   return value != NULL && value[0] != '\0' && strcmp(value, "0") != 0;
 }
 
+static bool jit_env_flag_disabled(const char *name) {
+  const char *value = getenv(name);
+  return value != NULL && value[0] != '\0' && strcmp(value, "0") == 0;
+}
+
 static void jit_init_runtime_options(void) {
   if (!jit_runtime_options_init) {
-    jit_env_disable = jit_env_flag_enabled("NEMU_DISABLE_JIT");
+    jit_env_force_disable = jit_env_flag_enabled("NEMU_DISABLE_JIT");
     jit_stats_enabled = jit_env_flag_enabled("NEMU_JIT_STATS");
+    jit_helpers_enabled = !jit_env_flag_disabled("NEMU_X86_JIT_HELPERS");
+    jit_verify_source_enabled =
+        jit_env_flag_enabled("NEMU_X86_JIT_VERIFY_SOURCE");
+    jit_env_enable = !jit_env_flag_disabled("NEMU_X86_JIT");
     jit_runtime_options_init = true;
   }
 }
 
 static bool jit_runtime_disabled(void) {
   jit_init_runtime_options();
-  return jit_env_disable;
+  return jit_env_force_disable || !jit_env_enable;
+}
+
+static bool jit_helper_translation_enabled(void) {
+  jit_init_runtime_options();
+  return jit_helpers_enabled;
 }
 
 static uint64_t jit_ratio_x100(uint64_t numerator, uint64_t denominator) {
@@ -187,6 +351,13 @@ static bool jit_read_u32(x86_jit_reader_t *r, uint32_t *value) {
   return true;
 }
 
+static bool jit_read_u16(x86_jit_reader_t *r, uint32_t *value) {
+  if (!jit_linear_in_pmem(r->cur, 2)) return false;
+  *value = host_read(guest_to_host((paddr_t)r->cur), 2);
+  r->cur += 2;
+  return true;
+}
+
 static bool jit_read_i8(x86_jit_reader_t *r, int32_t *value) {
   uint8_t raw = 0;
   if (!jit_read_u8(r, &raw)) return false;
@@ -198,6 +369,737 @@ static bool jit_copy_source(vaddr_t pc, uint32_t len, uint8_t *dst) {
   if (len > X86_JIT_MAX_SOURCE_BYTES || !jit_linear_in_pmem(pc, len)) return false;
   memcpy(dst, guest_to_host((paddr_t)pc), len);
   return true;
+}
+
+static bool jit_paddr_source_page(paddr_t addr, size_t *page) {
+  if (!in_pmem(addr)) return false;
+
+  const paddr_t offset = addr - (paddr_t)CONFIG_MBASE;
+  const size_t idx = (size_t)(offset >> X86_JIT_SOURCE_PAGE_SHIFT);
+  if (idx >= X86_JIT_SOURCE_PAGE_COUNT) return false;
+
+  *page = idx;
+  return true;
+}
+
+static void jit_mark_source_pages(vaddr_t pc, uint32_t len) {
+  if (!jit_linear_in_pmem(pc, len)) return;
+
+  size_t first = 0, last = 0;
+  if (!jit_paddr_source_page((paddr_t)pc, &first) ||
+      !jit_paddr_source_page((paddr_t)pc + (paddr_t)len - 1u, &last)) {
+    return;
+  }
+
+  for (size_t page = first; page <= last; page++) {
+    jit_source_page_has_code[page] = true;
+  }
+}
+
+static bool jit_range_may_touch_source_pages(paddr_t addr, int len) {
+  if (len <= 0) return false;
+
+  const paddr_t end = addr + (paddr_t)len - 1u;
+  if (end < addr) return true;
+
+  const paddr_t pmem_start = (paddr_t)CONFIG_MBASE;
+  const paddr_t pmem_end = pmem_start + (paddr_t)CONFIG_MSIZE - 1u;
+  if (end < pmem_start || addr > pmem_end) return false;
+
+  const paddr_t first_addr = addr < pmem_start ? pmem_start : addr;
+  const paddr_t last_addr = end > pmem_end ? pmem_end : end;
+  size_t first = 0, last = 0;
+  if (!jit_paddr_source_page(first_addr, &first) ||
+      !jit_paddr_source_page(last_addr, &last)) {
+    return true;
+  }
+
+  for (size_t page = first; page <= last; page++) {
+    if (jit_source_page_has_code[page]) return true;
+  }
+
+  return false;
+}
+
+static uint32_t jit_width_mask(uint8_t width) {
+  return width == X86_WIDTH_DWORD ? X86_DWORD_LIMIT :
+      ((1u << (width * 8u)) - 1u);
+}
+
+static uint32_t jit_sign_bit(uint8_t width) {
+  return 1u << (width * 8u - 1u);
+}
+
+static uint32_t jit_mask_width(uint32_t val, uint8_t width) {
+  return val & jit_width_mask(width);
+}
+
+static uint32_t jit_sign_extend(uint32_t val, uint8_t width) {
+  switch (width) {
+    case X86_WIDTH_BYTE: return (uint32_t)(int32_t)(int8_t)val;
+    case X86_WIDTH_WORD: return (uint32_t)(int32_t)(int16_t)val;
+    case X86_WIDTH_DWORD: return val;
+    default: panic("x86 JIT helper bad sign-extension width %u", width);
+  }
+}
+
+static int64_t jit_signed_width(uint32_t val, uint8_t width) {
+  switch (width) {
+    case X86_WIDTH_BYTE: return (int8_t)val;
+    case X86_WIDTH_WORD: return (int16_t)val;
+    case X86_WIDTH_DWORD: return (int32_t)val;
+    default: panic("x86 JIT helper bad signed width %u", width);
+  }
+}
+
+static bool jit_flag_get(uint32_t flag) {
+  return (cpu.eflags & flag) != 0;
+}
+
+static void jit_flag_set(uint32_t flag, bool val) {
+  if (val) cpu.eflags |= flag;
+  else cpu.eflags &= ~flag;
+  cpu.eflags |= X86_EFLAGS_FIXED_ONE;
+}
+
+static bool jit_parity_even(uint8_t val) {
+  val ^= val >> 4;
+  val &= X86_PARITY_FOLD_NIBBLE_MASK;
+  return ((X86_PARITY_FOLD_TABLE >> val) & 1u) == 0;
+}
+
+static void jit_set_zsp_flags(uint32_t result, uint8_t width) {
+  result = jit_mask_width(result, width);
+  jit_flag_set(X86_FLAG_ZF, result == 0);
+  jit_flag_set(X86_FLAG_SF, (result & jit_sign_bit(width)) != 0);
+  jit_flag_set(X86_FLAG_PF, jit_parity_even(result & X86_BYTE_MASK));
+}
+
+static void jit_set_add_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
+    uint8_t width) {
+  const uint32_t mask = jit_width_mask(width);
+  const uint32_t sign = jit_sign_bit(width);
+  const uint32_t l = lhs & mask;
+  const uint32_t r = rhs & mask;
+  const uint32_t res = result & mask;
+  const uint64_t raw = (uint64_t)l + (uint64_t)r;
+
+  jit_set_zsp_flags(res, width);
+  jit_flag_set(X86_FLAG_CF, raw > mask);
+  jit_flag_set(X86_FLAG_AF, ((l ^ r ^ res) & X86_AUX_CARRY_BIT) != 0);
+  jit_flag_set(X86_FLAG_OF, ((~(l ^ r) & (l ^ res) & sign) != 0));
+}
+
+static void jit_set_sub_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
+    uint8_t width) {
+  const uint32_t mask = jit_width_mask(width);
+  const uint32_t sign = jit_sign_bit(width);
+  const uint32_t l = lhs & mask;
+  const uint32_t r = rhs & mask;
+  const uint32_t res = result & mask;
+
+  jit_set_zsp_flags(res, width);
+  jit_flag_set(X86_FLAG_CF, l < r);
+  jit_flag_set(X86_FLAG_AF, ((l ^ r ^ res) & X86_AUX_CARRY_BIT) != 0);
+  jit_flag_set(X86_FLAG_OF, (((l ^ r) & (l ^ res) & sign) != 0));
+}
+
+static void jit_set_logic_flags(uint32_t result, uint8_t width) {
+  jit_set_zsp_flags(result, width);
+  jit_flag_set(X86_FLAG_CF, false);
+  jit_flag_set(X86_FLAG_OF, false);
+  jit_flag_set(X86_FLAG_AF, false);
+}
+
+static uint32_t jit_reg_read(uint8_t reg, uint8_t width);
+static void jit_reg_write(uint8_t reg, uint8_t width, uint32_t data);
+static uint32_t jit_rm_read(const x86_jit_insn_t *insn, uint8_t width);
+static void jit_rm_write_defer_flags(const x86_jit_insn_t *insn, uint8_t width,
+    uint32_t data, uint32_t old_eflags, uint32_t new_eflags);
+
+static uint32_t jit_alu_exec(uint8_t op, uint32_t lhs, uint32_t rhs,
+    uint8_t width) {
+  uint32_t result = 0;
+
+  switch (op) {
+    case X86_ALU_ADD:
+      result = lhs + rhs;
+      jit_set_add_flags(lhs, rhs, result, width);
+      break;
+    case X86_ALU_OR:
+      result = lhs | rhs;
+      jit_set_logic_flags(result, width);
+      break;
+    case X86_ALU_ADC:
+    case X86_ALU_SBB:
+      panic("x86 JIT helper reached unsupported carry-dependent ALU op %u", op);
+      break;
+    case X86_ALU_AND:
+      result = lhs & rhs;
+      jit_set_logic_flags(result, width);
+      break;
+    case X86_ALU_SUB:
+    case X86_ALU_CMP:
+      result = lhs - rhs;
+      jit_set_sub_flags(lhs, rhs, result, width);
+      break;
+    case X86_ALU_XOR:
+      result = lhs ^ rhs;
+      jit_set_logic_flags(result, width);
+      break;
+    default:
+      panic("x86 JIT helper bad ALU op %u", op);
+  }
+
+  return jit_mask_width(result, width);
+}
+
+static void jit_shift_rm(const x86_jit_insn_t *insn) {
+  uint32_t count = insn->count_from_cl ? reg_b(R_ECX) : insn->imm;
+  count &= X86_SHIFT_COUNT_MASK;
+  if (count == 0) return;
+
+  const uint32_t bits = insn->width * X86_BITS_PER_BYTE;
+  uint32_t lhs = jit_rm_read(insn, insn->width);
+  uint32_t result = lhs;
+  bool cf = false;
+  bool of = false;
+  const uint32_t old_eflags = cpu.eflags;
+
+  if (insn->alu_op == 2 || insn->alu_op == 3) {
+    uint32_t rotate_count = bits == X86_DWORD_BITS ?
+        count : count % (bits + 1u);
+    if (rotate_count == 0) return;
+
+    const uint64_t operand_mask = jit_width_mask(insn->width);
+    const uint64_t ring_mask = (1ull << (bits + 1u)) - 1ull;
+    uint64_t ring = ((uint64_t)(jit_flag_get(X86_FLAG_CF) ? 1u : 0u) << bits) |
+        (jit_mask_width(lhs, insn->width) & operand_mask);
+
+    if (insn->alu_op == 2) {
+      ring = ((ring << rotate_count) |
+          (ring >> ((bits + 1u) - rotate_count))) & ring_mask;
+    }
+    else {
+      ring = ((ring >> rotate_count) |
+          (ring << ((bits + 1u) - rotate_count))) & ring_mask;
+    }
+
+    result = (uint32_t)(ring & operand_mask);
+    cf = ((ring >> bits) & 1u) != 0;
+    jit_flag_set(X86_FLAG_CF, cf);
+    if (rotate_count == 1) {
+      if (insn->alu_op == 2) {
+        jit_flag_set(X86_FLAG_OF,
+            (((result & jit_sign_bit(insn->width)) != 0) != cf));
+      }
+      else {
+        jit_flag_set(X86_FLAG_OF,
+            ((result ^ (result << 1)) & jit_sign_bit(insn->width)) != 0);
+      }
+    }
+
+    const uint32_t new_eflags = cpu.eflags;
+    jit_rm_write_defer_flags(insn, insn->width, result,
+        old_eflags, new_eflags);
+    return;
+  }
+
+  if (insn->alu_op == 0 || insn->alu_op == 1) {
+    uint32_t rotate_count = count % bits;
+    if (rotate_count == 0) return;
+
+    lhs = jit_mask_width(lhs, insn->width);
+    if (insn->alu_op == 0) {
+      result = jit_mask_width((lhs << rotate_count) |
+          (lhs >> (bits - rotate_count)), insn->width);
+      cf = (result & 1u) != 0;
+      if (rotate_count == 1) {
+        of = (((result & jit_sign_bit(insn->width)) != 0) != cf);
+      }
+    }
+    else {
+      result = jit_mask_width((lhs >> rotate_count) |
+          (lhs << (bits - rotate_count)), insn->width);
+      cf = (result & jit_sign_bit(insn->width)) != 0;
+      if (rotate_count == 1) {
+        of = ((result ^ (result << 1)) & jit_sign_bit(insn->width)) != 0;
+      }
+    }
+
+    jit_flag_set(X86_FLAG_CF, cf);
+    if (rotate_count == 1) jit_flag_set(X86_FLAG_OF, of);
+    const uint32_t new_eflags = cpu.eflags;
+    jit_rm_write_defer_flags(insn, insn->width, result,
+        old_eflags, new_eflags);
+    return;
+  }
+
+  switch (insn->alu_op) {
+    case 4:
+    case 6:
+      result = jit_mask_width(lhs << count, insn->width);
+      if (count <= bits) cf = ((lhs >> (bits - count)) & 1u) != 0;
+      if (count == 1) {
+        of = (((result ^ lhs) & jit_sign_bit(insn->width)) != 0);
+      }
+      break;
+    case 5:
+      result = jit_mask_width(lhs, insn->width) >> count;
+      cf = ((lhs >> (count - 1u)) & 1u) != 0;
+      if (count == 1) of = (lhs & jit_sign_bit(insn->width)) != 0;
+      break;
+    case 7:
+      result = jit_mask_width(
+          (uint32_t)((int32_t)jit_sign_extend(lhs, insn->width) >> count),
+          insn->width);
+      cf = ((lhs >> (count - 1u)) & 1u) != 0;
+      of = false;
+      break;
+    default:
+      panic("x86 JIT helper bad shift op %u", insn->alu_op);
+  }
+
+  jit_set_zsp_flags(result, insn->width);
+  jit_flag_set(X86_FLAG_CF, cf);
+  if (count == 1) jit_flag_set(X86_FLAG_OF, of);
+  const uint32_t new_eflags = cpu.eflags;
+  jit_rm_write_defer_flags(insn, insn->width, result,
+      old_eflags, new_eflags);
+}
+
+static void jit_imul_reg_rm(const x86_jit_insn_t *insn) {
+  const int64_t lhs = jit_signed_width(jit_reg_read(insn->dst, insn->width),
+      insn->width);
+  const int64_t rhs = jit_signed_width(jit_rm_read(insn, insn->width),
+      insn->width);
+  const int64_t product = lhs * rhs;
+  const uint32_t low = jit_mask_width((uint32_t)product, insn->width);
+  const bool truncated = product != jit_signed_width(low, insn->width);
+
+  jit_reg_write(insn->dst, insn->width, low);
+  jit_flag_set(X86_FLAG_CF, truncated);
+  jit_flag_set(X86_FLAG_OF, truncated);
+}
+
+static void jit_mul_rm(const x86_jit_insn_t *insn) {
+  const uint32_t lhs = jit_rm_read(insn, insn->width);
+  bool high_nonzero = false;
+
+  if (insn->width == X86_WIDTH_BYTE) {
+    const uint16_t product = (uint8_t)reg_b(R_AL) * (uint8_t)lhs;
+    reg_w(R_AX) = product;
+    high_nonzero = (product >> X86_BITS_PER_BYTE) != 0;
+  }
+  else if (insn->width == X86_WIDTH_WORD) {
+    const uint32_t product = (uint16_t)reg_w(R_AX) * (uint16_t)lhs;
+    reg_w(R_AX) = product;
+    reg_w(R_DX) = product >> X86_WORD_BITS;
+    high_nonzero = (product >> X86_WORD_BITS) != 0;
+  }
+  else {
+    const uint64_t product = (uint64_t)cpu.eax *
+        (uint64_t)jit_mask_width(lhs, X86_WIDTH_DWORD);
+    cpu.eax = product;
+    cpu.edx = product >> X86_DWORD_BITS;
+    high_nonzero = cpu.edx != 0;
+  }
+
+  jit_flag_set(X86_FLAG_CF, high_nonzero);
+  jit_flag_set(X86_FLAG_OF, high_nonzero);
+}
+
+static void jit_imul_acc_rm(const x86_jit_insn_t *insn) {
+  const uint32_t lhs = jit_rm_read(insn, insn->width);
+  bool truncated = false;
+
+  if (insn->width == X86_WIDTH_BYTE) {
+    const int16_t product = (int16_t)((int8_t)reg_b(R_AL) * (int8_t)lhs);
+    reg_w(R_AX) = (uint16_t)product;
+    truncated = product != (int16_t)(int8_t)product;
+  }
+  else if (insn->width == X86_WIDTH_WORD) {
+    const int32_t product = (int32_t)((int16_t)reg_w(R_AX) * (int16_t)lhs);
+    reg_w(R_AX) = (uint16_t)product;
+    reg_w(R_DX) = (uint32_t)product >> X86_WORD_BITS;
+    truncated = product != (int32_t)(int16_t)product;
+  }
+  else {
+    const int64_t product = (int64_t)(int32_t)cpu.eax *
+        (int64_t)(int32_t)lhs;
+    cpu.eax = product;
+    cpu.edx = (uint64_t)product >> X86_DWORD_BITS;
+    truncated = product != (int64_t)(int32_t)cpu.eax;
+  }
+
+  jit_flag_set(X86_FLAG_CF, truncated);
+  jit_flag_set(X86_FLAG_OF, truncated);
+}
+
+static void jit_div_rm(const x86_jit_insn_t *insn) {
+  const uint32_t lhs = jit_rm_read(insn, insn->width);
+
+  if (insn->width == X86_WIDTH_BYTE) {
+    const uint16_t dividend = reg_w(R_AX);
+    const uint8_t divisor = lhs;
+    Assert(divisor != 0, "x86 JIT div by zero at pc = " FMT_WORD, cpu.pc);
+    const uint16_t quotient = dividend / divisor;
+    const uint8_t remainder = dividend % divisor;
+    Assert(quotient <= X86_BYTE_MASK,
+        "x86 JIT div quotient overflow at pc = " FMT_WORD, cpu.pc);
+    reg_b(R_AL) = quotient;
+    reg_b(R_AH) = remainder;
+  }
+  else if (insn->width == X86_WIDTH_WORD) {
+    const uint32_t dividend = ((uint32_t)reg_w(R_DX) << X86_WORD_BITS) |
+        reg_w(R_AX);
+    const uint16_t divisor = lhs;
+    Assert(divisor != 0, "x86 JIT div by zero at pc = " FMT_WORD, cpu.pc);
+    const uint32_t quotient = dividend / divisor;
+    const uint16_t remainder = dividend % divisor;
+    Assert(quotient <= X86_WORD_MASK,
+        "x86 JIT div quotient overflow at pc = " FMT_WORD, cpu.pc);
+    reg_w(R_AX) = quotient;
+    reg_w(R_DX) = remainder;
+  }
+  else {
+    const uint64_t dividend = ((uint64_t)cpu.edx << X86_DWORD_BITS) | cpu.eax;
+    const uint32_t divisor = lhs;
+    Assert(divisor != 0, "x86 JIT div by zero at pc = " FMT_WORD, cpu.pc);
+    const uint64_t quotient = dividend / divisor;
+    Assert(quotient <= X86_DWORD_LIMIT,
+        "x86 JIT div quotient overflow at pc = " FMT_WORD, cpu.pc);
+    cpu.eax = quotient;
+    cpu.edx = dividend % divisor;
+  }
+}
+
+static void jit_idiv_rm(const x86_jit_insn_t *insn) {
+  const uint32_t lhs = jit_rm_read(insn, insn->width);
+
+  if (insn->width == X86_WIDTH_BYTE) {
+    const int16_t dividend = (int16_t)reg_w(R_AX);
+    const int8_t divisor = lhs;
+    Assert(divisor != 0, "x86 JIT idiv by zero at pc = " FMT_WORD, cpu.pc);
+    Assert(!(dividend == INT16_MIN && divisor == -1),
+        "x86 JIT idiv quotient overflow at pc = " FMT_WORD, cpu.pc);
+    const int16_t quotient = dividend / divisor;
+    const int8_t remainder = dividend % divisor;
+    Assert(quotient >= INT8_MIN && quotient <= INT8_MAX,
+        "x86 JIT idiv quotient overflow at pc = " FMT_WORD, cpu.pc);
+    reg_b(R_AL) = quotient;
+    reg_b(R_AH) = remainder;
+  }
+  else if (insn->width == X86_WIDTH_WORD) {
+    const int32_t dividend = (int32_t)(((uint32_t)reg_w(R_DX) << X86_WORD_BITS) |
+        reg_w(R_AX));
+    const int16_t divisor = lhs;
+    Assert(divisor != 0, "x86 JIT idiv by zero at pc = " FMT_WORD, cpu.pc);
+    Assert(!(dividend == INT32_MIN && divisor == -1),
+        "x86 JIT idiv quotient overflow at pc = " FMT_WORD, cpu.pc);
+    const int32_t quotient = dividend / divisor;
+    const int16_t remainder = dividend % divisor;
+    Assert(quotient >= INT16_MIN && quotient <= INT16_MAX,
+        "x86 JIT idiv quotient overflow at pc = " FMT_WORD, cpu.pc);
+    reg_w(R_AX) = quotient;
+    reg_w(R_DX) = remainder;
+  }
+  else {
+    const int64_t dividend =
+        (int64_t)(int32_t)cpu.edx * X86_DWORD_BASE + cpu.eax;
+    const int32_t divisor = lhs;
+    Assert(divisor != 0, "x86 JIT idiv by zero at pc = " FMT_WORD, cpu.pc);
+    Assert(!(dividend == INT64_MIN && divisor == -1),
+        "x86 JIT idiv quotient overflow at pc = " FMT_WORD, cpu.pc);
+    const int64_t quotient = dividend / divisor;
+    Assert(quotient >= INT32_MIN && quotient <= INT32_MAX,
+        "x86 JIT idiv quotient overflow at pc = " FMT_WORD, cpu.pc);
+    cpu.eax = quotient;
+    cpu.edx = dividend % divisor;
+  }
+}
+
+static bool jit_cc_eval(uint8_t cc) {
+  const bool cf = jit_flag_get(X86_FLAG_CF);
+  const bool zf = jit_flag_get(X86_FLAG_ZF);
+  const bool sf = jit_flag_get(X86_FLAG_SF);
+  const bool of = jit_flag_get(X86_FLAG_OF);
+  const bool pf = jit_flag_get(X86_FLAG_PF);
+
+  switch (cc & 0xfu) {
+    case X86_CC_O:  return of;
+    case X86_CC_NO: return !of;
+    case X86_CC_B:  return cf;
+    case X86_CC_AE: return !cf;
+    case X86_CC_Z:  return zf;
+    case X86_CC_NZ: return !zf;
+    case X86_CC_BE: return cf || zf;
+    case X86_CC_A:  return !cf && !zf;
+    case X86_CC_S:  return sf;
+    case X86_CC_NS: return !sf;
+    case X86_CC_P:  return pf;
+    case X86_CC_NP: return !pf;
+    case X86_CC_L:  return sf != of;
+    case X86_CC_GE: return sf == of;
+    case X86_CC_LE: return zf || (sf != of);
+    case X86_CC_G:  return !zf && (sf == of);
+    default: panic("x86 JIT helper bad condition code %u", cc);
+  }
+}
+
+static uint32_t jit_reg_read(uint8_t reg, uint8_t width) {
+  switch (width) {
+    case X86_WIDTH_BYTE: return reg_b(reg);
+    case X86_WIDTH_WORD: return reg_w(reg);
+    case X86_WIDTH_DWORD: return reg_l(reg);
+    default: panic("x86 JIT helper bad register width %u", width);
+  }
+}
+
+static void jit_reg_write(uint8_t reg, uint8_t width, uint32_t data) {
+  switch (width) {
+    case X86_WIDTH_BYTE: reg_b(reg) = data; return;
+    case X86_WIDTH_WORD: reg_w(reg) = data; return;
+    case X86_WIDTH_DWORD: reg_l(reg) = data; return;
+    default: panic("x86 JIT helper bad register width %u", width);
+  }
+}
+
+static uint32_t jit_ea_addr(const x86_jit_insn_t *insn) {
+  uint32_t addr = insn->ea.disp;
+
+  if (insn->ea.base_reg >= 0) {
+    addr += reg_l(insn->ea.base_reg);
+  }
+  if (insn->ea.index_reg >= 0) {
+    addr += reg_l(insn->ea.index_reg) << insn->ea.scale;
+  }
+
+  return addr;
+}
+
+static uint32_t jit_rm_read(const x86_jit_insn_t *insn, uint8_t width) {
+  if (insn->rm_is_reg) {
+    return jit_reg_read(insn->rm_reg, width);
+  }
+
+  return paddr_read(jit_ea_addr(insn), width);
+}
+
+static void jit_rm_write(const x86_jit_insn_t *insn, uint8_t width,
+    uint32_t data) {
+  if (insn->rm_is_reg) {
+    jit_reg_write(insn->rm_reg, width, data);
+  }
+  else {
+    paddr_write(jit_ea_addr(insn), width, data);
+  }
+}
+
+static void jit_rm_write_defer_flags(const x86_jit_insn_t *insn, uint8_t width,
+    uint32_t data, uint32_t old_eflags, uint32_t new_eflags) {
+  if (insn->rm_is_reg) {
+    jit_rm_write(insn, width, data);
+    cpu.eflags = new_eflags | X86_EFLAGS_FIXED_ONE;
+  }
+  else {
+    cpu.eflags = old_eflags | X86_EFLAGS_FIXED_ONE;
+    jit_rm_write(insn, width, data);
+    cpu.eflags = new_eflags | X86_EFLAGS_FIXED_ONE;
+  }
+}
+
+static void jit_push32(uint32_t data) {
+  cpu.esp -= X86_WIDTH_DWORD;
+  paddr_write(cpu.esp, X86_WIDTH_DWORD, data);
+}
+
+static uint32_t jit_pop32(void) {
+  uint32_t data = paddr_read(cpu.esp, X86_WIDTH_DWORD);
+  cpu.esp += X86_WIDTH_DWORD;
+  return data;
+}
+
+static uint32_t jit_branch_target(const x86_jit_insn_t *insn) {
+  return (uint32_t)(insn->next_pc + insn->rel);
+}
+
+static void jit_helper_exec(const x86_jit_insn_t *insn) {
+  uint32_t lhs = 0, rhs = 0, result = 0;
+  uint32_t old_eflags = 0, new_eflags = 0;
+
+  cpu.pc = insn->pc;
+
+  switch (insn->helper) {
+    case X86_JIT_HELPER_MOV_RM_REG:
+      jit_rm_write(insn, insn->width, jit_reg_read(insn->src, insn->width));
+      return;
+    case X86_JIT_HELPER_MOV_REG_RM:
+      jit_reg_write(insn->dst, insn->width, jit_rm_read(insn, insn->width));
+      return;
+    case X86_JIT_HELPER_MOV_IMM_RM:
+      jit_rm_write(insn, insn->width, insn->imm);
+      return;
+    case X86_JIT_HELPER_MOV_EAX_MOFFS:
+      jit_reg_write(R_EAX, insn->width, paddr_read(insn->imm, insn->width));
+      return;
+    case X86_JIT_HELPER_MOV_MOFFS_EAX:
+      paddr_write(insn->imm, insn->width, jit_reg_read(R_EAX, insn->width));
+      return;
+    case X86_JIT_HELPER_ALU_RM_REG:
+      lhs = jit_rm_read(insn, insn->width);
+      rhs = jit_reg_read(insn->src, insn->width);
+      old_eflags = cpu.eflags;
+      result = jit_alu_exec(insn->alu_op, lhs, rhs, insn->width);
+      if (insn->alu_op != X86_ALU_CMP) {
+        new_eflags = cpu.eflags;
+        jit_rm_write_defer_flags(insn, insn->width, result,
+            old_eflags, new_eflags);
+      }
+      return;
+    case X86_JIT_HELPER_ALU_REG_RM:
+      lhs = jit_reg_read(insn->dst, insn->width);
+      rhs = jit_rm_read(insn, insn->width);
+      result = jit_alu_exec(insn->alu_op, lhs, rhs, insn->width);
+      if (insn->alu_op != X86_ALU_CMP) {
+        jit_reg_write(insn->dst, insn->width, result);
+      }
+      return;
+    case X86_JIT_HELPER_ALU_IMM_RM:
+      lhs = jit_rm_read(insn, insn->width);
+      old_eflags = cpu.eflags;
+      result = jit_alu_exec(insn->alu_op, lhs, insn->imm, insn->width);
+      if (insn->alu_op != X86_ALU_CMP) {
+        new_eflags = cpu.eflags;
+        jit_rm_write_defer_flags(insn, insn->width, result,
+            old_eflags, new_eflags);
+      }
+      return;
+    case X86_JIT_HELPER_ALU_EAX_IMM:
+      lhs = jit_reg_read(R_EAX, insn->width);
+      result = jit_alu_exec(insn->alu_op, lhs, insn->imm, insn->width);
+      if (insn->alu_op != X86_ALU_CMP) {
+        jit_reg_write(R_EAX, insn->width, result);
+      }
+      return;
+    case X86_JIT_HELPER_TEST_RM_REG:
+      lhs = jit_rm_read(insn, insn->width);
+      rhs = jit_reg_read(insn->src, insn->width);
+      jit_set_logic_flags(lhs & rhs, insn->width);
+      return;
+    case X86_JIT_HELPER_TEST_EAX_IMM:
+      lhs = jit_reg_read(R_EAX, insn->width);
+      jit_set_logic_flags(lhs & insn->imm, insn->width);
+      return;
+    case X86_JIT_HELPER_PUSH_REG:
+      jit_push32(jit_reg_read(insn->src, X86_WIDTH_DWORD));
+      return;
+    case X86_JIT_HELPER_PUSH_IMM:
+      jit_push32(insn->imm);
+      return;
+    case X86_JIT_HELPER_PUSH_RM:
+      jit_push32(jit_rm_read(insn, X86_WIDTH_DWORD));
+      return;
+    case X86_JIT_HELPER_POP_REG:
+      jit_reg_write(insn->dst, X86_WIDTH_DWORD, jit_pop32());
+      return;
+    case X86_JIT_HELPER_CALL_REL:
+      jit_push32(insn->next_pc);
+      cpu.pc = jit_branch_target(insn);
+      return;
+    case X86_JIT_HELPER_CALL_RM:
+      result = jit_rm_read(insn, X86_WIDTH_DWORD);
+      jit_push32(insn->next_pc);
+      cpu.pc = result;
+      return;
+    case X86_JIT_HELPER_RET:
+      cpu.pc = jit_pop32();
+      return;
+    case X86_JIT_HELPER_LEAVE:
+      cpu.esp = cpu.ebp;
+      cpu.ebp = jit_pop32();
+      return;
+    case X86_JIT_HELPER_JMP_REL:
+      cpu.pc = jit_branch_target(insn);
+      return;
+    case X86_JIT_HELPER_JMP_RM:
+      cpu.pc = jit_rm_read(insn, X86_WIDTH_DWORD);
+      return;
+    case X86_JIT_HELPER_JCC_REL:
+      cpu.pc = jit_cc_eval(insn->cc) ? jit_branch_target(insn) : insn->next_pc;
+      return;
+    case X86_JIT_HELPER_INCDEC_REG:
+      old_eflags = cpu.eflags;
+      lhs = jit_reg_read(insn->dst, insn->width);
+      result = jit_alu_exec(insn->alu_op, lhs, 1u, insn->width);
+      jit_flag_set(X86_FLAG_CF, (old_eflags & X86_FLAG_CF) != 0);
+      jit_reg_write(insn->dst, insn->width, result);
+      return;
+    case X86_JIT_HELPER_INCDEC_RM:
+      old_eflags = cpu.eflags;
+      lhs = jit_rm_read(insn, insn->width);
+      result = jit_alu_exec(insn->alu_op, lhs, 1u, insn->width);
+      jit_flag_set(X86_FLAG_CF, (old_eflags & X86_FLAG_CF) != 0);
+      new_eflags = cpu.eflags;
+      jit_rm_write_defer_flags(insn, insn->width, result,
+          old_eflags, new_eflags);
+      return;
+    case X86_JIT_HELPER_NOT_RM:
+      jit_rm_write(insn, insn->width, ~jit_rm_read(insn, insn->width));
+      return;
+    case X86_JIT_HELPER_NEG_RM:
+      old_eflags = cpu.eflags;
+      lhs = jit_rm_read(insn, insn->width);
+      result = jit_alu_exec(X86_ALU_SUB, 0, lhs, insn->width);
+      jit_flag_set(X86_FLAG_CF, jit_mask_width(lhs, insn->width) != 0);
+      new_eflags = cpu.eflags;
+      jit_rm_write_defer_flags(insn, insn->width, result,
+          old_eflags, new_eflags);
+      return;
+    case X86_JIT_HELPER_TEST_IMM_RM:
+      jit_set_logic_flags(jit_rm_read(insn, insn->width) & insn->imm,
+          insn->width);
+      return;
+    case X86_JIT_HELPER_MUL_RM:
+      jit_mul_rm(insn);
+      return;
+    case X86_JIT_HELPER_IMUL_ACC_RM:
+      jit_imul_acc_rm(insn);
+      return;
+    case X86_JIT_HELPER_DIV_RM:
+      jit_div_rm(insn);
+      return;
+    case X86_JIT_HELPER_IDIV_RM:
+      jit_idiv_rm(insn);
+      return;
+    case X86_JIT_HELPER_SETCC_RM8:
+      jit_rm_write(insn, X86_WIDTH_BYTE, jit_cc_eval(insn->cc) ? 1u : 0u);
+      return;
+    case X86_JIT_HELPER_MOVZX_REG_RM8:
+      jit_reg_write(insn->dst, X86_WIDTH_DWORD,
+          jit_rm_read(insn, X86_WIDTH_BYTE));
+      return;
+    case X86_JIT_HELPER_MOVZX_REG_RM16:
+      jit_reg_write(insn->dst, X86_WIDTH_DWORD,
+          jit_rm_read(insn, X86_WIDTH_WORD));
+      return;
+    case X86_JIT_HELPER_MOVSX_REG_RM8:
+      jit_reg_write(insn->dst, X86_WIDTH_DWORD,
+          jit_sign_extend(jit_rm_read(insn, X86_WIDTH_BYTE), X86_WIDTH_BYTE));
+      return;
+    case X86_JIT_HELPER_MOVSX_REG_RM16:
+      jit_reg_write(insn->dst, X86_WIDTH_DWORD,
+          jit_sign_extend(jit_rm_read(insn, X86_WIDTH_WORD), X86_WIDTH_WORD));
+      return;
+    case X86_JIT_HELPER_SHIFT_RM:
+      jit_shift_rm(insn);
+      return;
+    case X86_JIT_HELPER_IMUL_REG_RM:
+      jit_imul_reg_rm(insn);
+      return;
+    default:
+      panic("x86 JIT helper bad helper op %u", insn->helper);
+  }
 }
 
 static bool emit_u8(x86_jit_writer_t *w, uint8_t value) {
@@ -222,6 +1124,28 @@ static bool emit_u64(x86_jit_writer_t *w, uint64_t value) {
 
 static bool emit_movabs_rdx(x86_jit_writer_t *w, uint64_t value) {
   return emit_u8(w, 0x48) && emit_u8(w, 0xba) && emit_u64(w, value);
+}
+
+static bool emit_movabs_rax(x86_jit_writer_t *w, uint64_t value) {
+  return emit_u8(w, 0x48) && emit_u8(w, 0xb8) && emit_u64(w, value);
+}
+
+static bool emit_movabs_rdi(x86_jit_writer_t *w, uint64_t value) {
+  return emit_u8(w, 0x48) && emit_u8(w, 0xbf) && emit_u64(w, value);
+}
+
+static bool emit_sub_rsp_imm8(x86_jit_writer_t *w, uint8_t value) {
+  return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
+         emit_u8(w, 0xec) && emit_u8(w, value);
+}
+
+static bool emit_add_rsp_imm8(x86_jit_writer_t *w, uint8_t value) {
+  return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
+         emit_u8(w, 0xc4) && emit_u8(w, value);
+}
+
+static bool emit_call_rax(x86_jit_writer_t *w) {
+  return emit_u8(w, 0xff) && emit_u8(w, 0xd0);
 }
 
 static bool emit_mov_eax_imm32(x86_jit_writer_t *w, uint32_t value) {
@@ -254,6 +1178,74 @@ static bool emit_shl_ecx_imm(x86_jit_writer_t *w, uint8_t value) {
 
 static bool emit_add_eax_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x01) && emit_u8(w, 0xc8);
+}
+
+static bool emit_add_eax_imm32(x86_jit_writer_t *w, uint32_t value) {
+  return emit_u8(w, 0x05) && emit_u32(w, value);
+}
+
+static bool emit_add_edx_imm32(x86_jit_writer_t *w, uint32_t value) {
+  return emit_u8(w, 0x81) && emit_u8(w, 0xc2) && emit_u32(w, value);
+}
+
+static bool emit_mov_edx_eax(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x89) && emit_u8(w, 0xc2);
+}
+
+static bool emit_cmp_edx_ecx(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x39) && emit_u8(w, 0xca);
+}
+
+static bool emit_test_ecx_ecx(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x85) && emit_u8(w, 0xc9);
+}
+
+static bool emit_pushfq(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x9c);
+}
+
+static bool emit_pop_rax(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x58);
+}
+
+static bool emit_test_eax_imm32(x86_jit_writer_t *w, uint32_t value) {
+  return emit_u8(w, 0xa9) && emit_u32(w, value);
+}
+
+static bool emit_test_eax_ecx(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x85) && emit_u8(w, 0xc8);
+}
+
+static bool emit_or_eax_ecx(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x09) && emit_u8(w, 0xc8);
+}
+
+static bool emit_ret(x86_jit_writer_t *w) {
+  return emit_u8(w, 0xc3);
+}
+
+static bool emit_jcc_rel32_placeholder(x86_jit_writer_t *w, uint8_t cc,
+    uint8_t **disp) {
+  if (!emit_u8(w, 0x0f) || !emit_u8(w, 0x80u | (cc & 0xfu))) return false;
+  *disp = w->cur;
+  return emit_u32(w, 0);
+}
+
+static bool emit_jmp_rel32_placeholder(x86_jit_writer_t *w, uint8_t **disp) {
+  if (!emit_u8(w, 0xe9)) return false;
+  *disp = w->cur;
+  return emit_u32(w, 0);
+}
+
+static bool patch_rel32(uint8_t *disp, const uint8_t *target) {
+  const int64_t rel = (int64_t)(target - (disp + 4));
+  if (rel < INT32_MIN || rel > INT32_MAX) return false;
+
+  const uint32_t encoded = (uint32_t)(int32_t)rel;
+  for (uint32_t i = 0; i < 4; i++) {
+    disp[i] = (uint8_t)(encoded >> (i * 8));
+  }
+  return true;
 }
 
 static bool emit_ret_count(x86_jit_writer_t *w, uint32_t count) {
@@ -314,6 +1306,298 @@ static bool emit_lea(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
   return emit_store_reg_eax(w, insn->dst);
 }
 
+static bool emit_helper_call(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
+  return emit_sub_rsp_imm8(w, 8) &&
+         emit_movabs_rdi(w, (uintptr_t)insn) &&
+         emit_movabs_rax(w, (uintptr_t)jit_helper_exec) &&
+         emit_call_rax(w) &&
+         emit_add_rsp_imm8(w, 8);
+}
+
+static bool emit_load_loop_extra_eax(x86_jit_writer_t *w) {
+  return emit_movabs_rdx(w, (uintptr_t)&jit_loop_extra) &&
+         emit_mov_eax_m32_rdx(w);
+}
+
+static bool emit_store_loop_extra_eax(x86_jit_writer_t *w) {
+  return emit_movabs_rdx(w, (uintptr_t)&jit_loop_extra) &&
+         emit_mov_m32_rdx_eax(w);
+}
+
+static bool emit_load_entry_budget_ecx(x86_jit_writer_t *w) {
+  return emit_movabs_rdx(w, (uintptr_t)&jit_entry_budget) &&
+         emit_mov_ecx_m32_rdx(w);
+}
+
+static bool emit_load_chain_abort_ecx(x86_jit_writer_t *w) {
+  return emit_movabs_rdx(w, (uintptr_t)&jit_chain_abort) &&
+         emit_mov_ecx_m32_rdx(w);
+}
+
+static bool emit_load_eflags_eax(x86_jit_writer_t *w) {
+  return emit_movabs_rdx(w, (uintptr_t)&cpu.eflags) &&
+         emit_mov_eax_m32_rdx(w);
+}
+
+static bool emit_load_eflags_ecx(x86_jit_writer_t *w) {
+  return emit_movabs_rdx(w, (uintptr_t)&cpu.eflags) &&
+         emit_mov_ecx_m32_rdx(w);
+}
+
+static bool emit_store_eflags_eax(x86_jit_writer_t *w) {
+  return emit_movabs_rdx(w, (uintptr_t)&cpu.eflags) &&
+         emit_mov_m32_rdx_eax(w);
+}
+
+static bool emit_alu_rm32_r32(x86_jit_writer_t *w, uint8_t alu_op,
+    uint8_t rm, uint8_t reg) {
+  uint8_t opcode = 0;
+  switch (alu_op) {
+    case X86_ALU_ADD: opcode = 0x01; break;
+    case X86_ALU_OR:  opcode = 0x09; break;
+    case X86_ALU_AND: opcode = 0x21; break;
+    case X86_ALU_SUB: opcode = 0x29; break;
+    case X86_ALU_XOR: opcode = 0x31; break;
+    case X86_ALU_CMP: opcode = 0x39; break;
+    default: return false;
+  }
+
+  return emit_u8(w, opcode) &&
+         emit_u8(w, (uint8_t)(0xc0u | ((reg & 0x7u) << 3) | (rm & 0x7u)));
+}
+
+static bool emit_alu_reg_imm32(x86_jit_writer_t *w, uint8_t alu_op,
+    uint8_t reg, uint32_t imm) {
+  if (alu_op == X86_ALU_ADC || alu_op == X86_ALU_SBB) return false;
+  return emit_u8(w, 0x81) &&
+         emit_u8(w, (uint8_t)(0xc0u | ((alu_op & 0x7u) << 3) |
+             (reg & 0x7u))) &&
+         emit_u32(w, imm);
+}
+
+static bool emit_alu_eax_imm32(x86_jit_writer_t *w, uint8_t alu_op,
+    uint32_t imm) {
+  return emit_alu_reg_imm32(w, alu_op, R_EAX, imm);
+}
+
+static bool emit_capture_status_flags(x86_jit_writer_t *w,
+    uint32_t copy_mask) {
+  return emit_pushfq(w) &&
+         emit_pop_rax(w) &&
+         emit_alu_eax_imm32(w, X86_ALU_AND, copy_mask) &&
+         emit_load_eflags_ecx(w) &&
+         emit_alu_reg_imm32(w, X86_ALU_AND, R_ECX,
+             ~X86_EFLAGS_STATUS_MASK) &&
+         emit_or_eax_ecx(w) &&
+         emit_alu_eax_imm32(w, X86_ALU_OR, X86_EFLAGS_FIXED_ONE) &&
+         emit_store_eflags_eax(w);
+}
+
+static bool emit_return_completed(x86_jit_writer_t *w, vaddr_t pc,
+    uint32_t count) {
+  return emit_store_pc_imm(w, pc) &&
+         emit_load_loop_extra_eax(w) &&
+         emit_add_eax_imm32(w, count) &&
+         emit_ret(w);
+}
+
+static bool jit_backedge_flag_test(uint8_t cc, uint32_t *flag,
+    uint8_t *host_cc) {
+  switch (cc & 0xfu) {
+    case X86_CC_O:  *flag = X86_FLAG_OF; *host_cc = X86_CC_NZ; return true;
+    case X86_CC_NO: *flag = X86_FLAG_OF; *host_cc = X86_CC_Z;  return true;
+    case X86_CC_B:  *flag = X86_FLAG_CF; *host_cc = X86_CC_NZ; return true;
+    case X86_CC_AE: *flag = X86_FLAG_CF; *host_cc = X86_CC_Z;  return true;
+    case X86_CC_Z:  *flag = X86_FLAG_ZF; *host_cc = X86_CC_NZ; return true;
+    case X86_CC_NZ: *flag = X86_FLAG_ZF; *host_cc = X86_CC_Z;  return true;
+    case X86_CC_S:  *flag = X86_FLAG_SF; *host_cc = X86_CC_NZ; return true;
+    case X86_CC_NS: *flag = X86_FLAG_SF; *host_cc = X86_CC_Z;  return true;
+    case X86_CC_P:  *flag = X86_FLAG_PF; *host_cc = X86_CC_NZ; return true;
+    case X86_CC_NP: *flag = X86_FLAG_PF; *host_cc = X86_CC_Z;  return true;
+    default: return false;
+  }
+}
+
+static bool jit_jcc_fast_test(uint8_t cc, uint32_t *mask, uint8_t *host_cc) {
+  if (jit_backedge_flag_test(cc, mask, host_cc)) return true;
+
+  switch (cc & 0xfu) {
+    case X86_CC_BE:
+      *mask = X86_FLAG_CF | X86_FLAG_ZF;
+      *host_cc = X86_CC_NZ;
+      return true;
+    case X86_CC_A:
+      *mask = X86_FLAG_CF | X86_FLAG_ZF;
+      *host_cc = X86_CC_Z;
+      return true;
+    default:
+      return false;
+  }
+}
+
+static bool emit_jcc_condition_jump(x86_jit_writer_t *w, uint8_t cc,
+    uint8_t **taken_disp) {
+  uint32_t mask = 0;
+  uint8_t host_cc = 0;
+  if (!jit_jcc_fast_test(cc, &mask, &host_cc)) return false;
+
+  return emit_load_eflags_eax(w) &&
+         emit_test_eax_imm32(w, mask) &&
+         emit_jcc_rel32_placeholder(w, host_cc, taken_disp);
+}
+
+static bool emit_jcc_backedge(x86_jit_writer_t *w, const x86_jit_insn_t *insn,
+    const uint8_t *native_target, uint32_t count) {
+  uint8_t *taken_disp = NULL;
+  uint8_t *budget_exit_disp = NULL;
+  uint8_t *abort_exit_disp = NULL;
+  uint8_t *loop_disp = NULL;
+  uint32_t flag = 0;
+  uint8_t host_cc = 0;
+
+  if (!jit_backedge_flag_test(insn->cc, &flag, &host_cc)) return false;
+
+  if (!emit_load_eflags_eax(w) ||
+      !emit_test_eax_imm32(w, flag) ||
+      !emit_jcc_rel32_placeholder(w, host_cc, &taken_disp) ||
+      !emit_return_completed(w, insn->next_pc, count)) {
+    return false;
+  }
+
+  uint8_t *taken_native = w->cur;
+  if (!patch_rel32(taken_disp, taken_native)) return false;
+
+  if (!emit_load_loop_extra_eax(w) ||
+      !emit_add_eax_imm32(w, count) ||
+      !emit_store_loop_extra_eax(w) ||
+      !emit_load_entry_budget_ecx(w) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_add_edx_imm32(w, count) ||
+      !emit_cmp_edx_ecx(w) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_A, &budget_exit_disp) ||
+      !emit_load_chain_abort_ecx(w) ||
+      !emit_test_ecx_ecx(w) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &abort_exit_disp) ||
+      !emit_jmp_rel32_placeholder(w, &loop_disp)) {
+    return false;
+  }
+
+  if (!patch_rel32(loop_disp, native_target)) return false;
+
+  uint8_t *exit_native = w->cur;
+  if (!patch_rel32(budget_exit_disp, exit_native) ||
+      !patch_rel32(abort_exit_disp, exit_native)) {
+    return false;
+  }
+
+  return emit_store_pc_imm(w, jit_branch_target(insn)) && emit_ret(w);
+}
+
+static bool emit_native_jmp_rel(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  JIT_STAT_INC(native_branch_ops);
+  return emit_store_pc_imm(w, jit_branch_target(insn));
+}
+
+static bool emit_native_jcc_rel(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  uint8_t *taken_disp = NULL;
+  uint8_t *done_disp = NULL;
+
+  if (!emit_jcc_condition_jump(w, insn->cc, &taken_disp) ||
+      !emit_store_pc_imm(w, insn->next_pc) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp)) {
+    return false;
+  }
+
+  uint8_t *taken_native = w->cur;
+  if (!patch_rel32(taken_disp, taken_native) ||
+      !emit_store_pc_imm(w, jit_branch_target(insn))) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_branch_ops);
+  return patch_rel32(done_disp, w->cur);
+}
+
+static bool jit_native_alu_writes_result(uint8_t alu_op) {
+  return alu_op != X86_ALU_CMP;
+}
+
+static uint32_t jit_native_alu_flag_copy_mask(uint8_t alu_op) {
+  switch (alu_op) {
+    case X86_ALU_OR:
+    case X86_ALU_AND:
+    case X86_ALU_XOR:
+      /*
+       * Intel leaves AF undefined for logical instructions.  The existing x86
+       * interpreter/JIT helper clears AF, so native lowering keeps that local
+       * contract instead of copying the host's undefined AF value.
+       */
+      return X86_EFLAGS_LOGIC_COPY_MASK;
+    default:
+      return X86_EFLAGS_STATUS_MASK;
+  }
+}
+
+static bool emit_native_alu_reg_reg(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  if (!emit_load_reg_eax(w, insn->dst) ||
+      !emit_load_reg_ecx(w, insn->src) ||
+      !emit_alu_rm32_r32(w, insn->alu_op, R_EAX, R_ECX)) {
+    return false;
+  }
+
+  if (jit_native_alu_writes_result(insn->alu_op) &&
+      !emit_store_reg_eax(w, insn->dst)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_alu_ops);
+  return emit_capture_status_flags(w,
+      jit_native_alu_flag_copy_mask(insn->alu_op));
+}
+
+static bool emit_native_alu_imm_reg(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  if (!emit_load_reg_eax(w, insn->dst) ||
+      !emit_alu_eax_imm32(w, insn->alu_op, insn->imm)) {
+    return false;
+  }
+
+  if (jit_native_alu_writes_result(insn->alu_op) &&
+      !emit_store_reg_eax(w, insn->dst)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_alu_ops);
+  return emit_capture_status_flags(w,
+      jit_native_alu_flag_copy_mask(insn->alu_op));
+}
+
+static bool emit_native_test_reg_reg(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  if (!emit_load_reg_eax(w, insn->dst) ||
+      !emit_load_reg_ecx(w, insn->src) ||
+      !emit_test_eax_ecx(w)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_alu_ops);
+  return emit_capture_status_flags(w, X86_EFLAGS_LOGIC_COPY_MASK);
+}
+
+static bool emit_native_test_eax_imm(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  if (!emit_load_reg_eax(w, R_EAX) ||
+      !emit_test_eax_imm32(w, insn->imm)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_alu_ops);
+  return emit_capture_status_flags(w, X86_EFLAGS_LOGIC_COPY_MASK);
+}
+
 static bool emit_insn(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
   switch (insn->op) {
     case X86_JIT_OP_NOP:
@@ -324,9 +1608,35 @@ static bool emit_insn(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
       return emit_load_reg_eax(w, insn->src) && emit_store_reg_eax(w, insn->dst);
     case X86_JIT_OP_LEA:
       return emit_lea(w, insn);
+    case X86_JIT_OP_ALU_REG_REG:
+      return emit_native_alu_reg_reg(w, insn);
+    case X86_JIT_OP_ALU_IMM_REG:
+      return emit_native_alu_imm_reg(w, insn);
+    case X86_JIT_OP_TEST_REG_REG:
+      return emit_native_test_reg_reg(w, insn);
+    case X86_JIT_OP_TEST_EAX_IMM:
+      return emit_native_test_eax_imm(w, insn);
+    case X86_JIT_OP_JMP_REL:
+      return emit_native_jmp_rel(w, insn);
+    case X86_JIT_OP_JCC_REL:
+      return emit_native_jcc_rel(w, insn);
+    case X86_JIT_OP_HELPER:
+      return emit_helper_call(w, insn);
     default:
       return false;
   }
+}
+
+static bool jit_is_chainable_jcc_backedge(const x86_jit_insn_t *insn,
+    vaddr_t block_pc) {
+  uint32_t flag = 0;
+  uint8_t host_cc = 0;
+  const bool is_jcc = (insn->op == X86_JIT_OP_JCC_REL) ||
+      (insn->op == X86_JIT_OP_HELPER &&
+          insn->helper == X86_JIT_HELPER_JCC_REL);
+  return is_jcc &&
+         jit_backedge_flag_test(insn->cc, &flag, &host_cc) &&
+         jit_branch_target(insn) == block_pc;
 }
 
 static bool jit_decode_modrm(x86_jit_reader_t *r, uint8_t *mod, uint8_t *reg,
@@ -380,40 +1690,164 @@ static bool jit_decode_ea32(x86_jit_reader_t *r, uint8_t mod, uint8_t rm,
   return true;
 }
 
+static bool jit_decode_rm_operand(x86_jit_reader_t *r, uint8_t mod,
+    uint8_t rm, x86_jit_insn_t *out) {
+  out->rm_is_reg = mod == 3;
+  out->rm_reg = rm;
+  if (mod == 3) return true;
+  return jit_decode_ea32(r, mod, rm, &out->ea);
+}
+
+static bool jit_finish_decode(x86_jit_reader_t *r, x86_jit_insn_t *out) {
+  out->next_pc = r->cur;
+  return true;
+}
+
+static void jit_mark_helper(x86_jit_insn_t *out, x86_jit_helper_t helper) {
+  out->op = X86_JIT_OP_HELPER;
+  out->helper = helper;
+}
+
+static int jit_alu_from_opcode(uint8_t opcode) {
+  switch (opcode & 0x38u) {
+    case 0x00: return X86_ALU_ADD;
+    case 0x08: return X86_ALU_OR;
+    case 0x20: return X86_ALU_AND;
+    case 0x28: return X86_ALU_SUB;
+    case 0x30: return X86_ALU_XOR;
+    case 0x38: return X86_ALU_CMP;
+    default: return -1;
+  }
+}
+
 static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
+  memset(out, 0, sizeof(*out));
+  out->pc = r->cur;
+  out->width = X86_WIDTH_DWORD;
+
   uint8_t opcode = 0;
   if (!jit_read_u8(r, &opcode)) return false;
 
-  memset(out, 0, sizeof(*out));
+  if (opcode == 0x66) {
+    out->width = X86_WIDTH_WORD;
+    if (!jit_read_u8(r, &opcode)) return false;
+  }
 
   if (opcode == 0x90) {
     out->op = X86_JIT_OP_NOP;
-    return true;
+    return jit_finish_decode(r, out);
   }
 
   if (opcode >= 0xb8 && opcode <= 0xbf) {
-    out->op = X86_JIT_OP_MOV_IMM_REG;
     out->dst = opcode & 0x7u;
-    return jit_read_u32(r, &out->imm);
+    if (out->width == X86_WIDTH_DWORD) {
+      out->op = X86_JIT_OP_MOV_IMM_REG;
+      return jit_read_u32(r, &out->imm) && jit_finish_decode(r, out);
+    }
+
+    out->rm_is_reg = true;
+    out->rm_reg = out->dst;
+    jit_mark_helper(out, X86_JIT_HELPER_MOV_IMM_RM);
+    return jit_read_u16(r, &out->imm) && jit_finish_decode(r, out);
+  }
+
+  if (opcode >= 0x40 && opcode <= 0x47) {
+    jit_mark_helper(out, X86_JIT_HELPER_INCDEC_REG);
+    out->dst = opcode & 0x7u;
+    out->alu_op = X86_ALU_ADD;
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode >= 0x48 && opcode <= 0x4f) {
+    jit_mark_helper(out, X86_JIT_HELPER_INCDEC_REG);
+    out->dst = opcode & 0x7u;
+    out->alu_op = X86_ALU_SUB;
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode >= 0x50 && opcode <= 0x57) {
+    if (out->width != X86_WIDTH_DWORD) return false;
+    jit_mark_helper(out, X86_JIT_HELPER_PUSH_REG);
+    out->src = opcode & 0x7u;
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode >= 0x58 && opcode <= 0x5f) {
+    if (out->width != X86_WIDTH_DWORD) return false;
+    jit_mark_helper(out, X86_JIT_HELPER_POP_REG);
+    out->dst = opcode & 0x7u;
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode >= 0x70 && opcode <= 0x7f) {
+    if (out->width != X86_WIDTH_DWORD) return false;
+    int32_t rel = 0;
+    if (!jit_read_i8(r, &rel)) return false;
+    out->cc = opcode & 0xfu;
+    out->rel = rel;
+    out->ends_block = true;
+    uint32_t mask = 0;
+    uint8_t host_cc = 0;
+    if (jit_jcc_fast_test(out->cc, &mask, &host_cc)) {
+      out->op = X86_JIT_OP_JCC_REL;
+    }
+    else {
+      jit_mark_helper(out, X86_JIT_HELPER_JCC_REL);
+    }
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0x88 || opcode == 0x8a) {
+    uint8_t mod = 0, reg = 0, rm = 0;
+    if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+        !jit_decode_rm_operand(r, mod, rm, out)) {
+      return false;
+    }
+
+    out->width = X86_WIDTH_BYTE;
+    if (opcode == 0x88) {
+      out->src = reg;
+      jit_mark_helper(out, X86_JIT_HELPER_MOV_RM_REG);
+    }
+    else {
+      out->dst = reg;
+      jit_mark_helper(out, X86_JIT_HELPER_MOV_REG_RM);
+    }
+    return jit_finish_decode(r, out);
   }
 
   if (opcode == 0x89 || opcode == 0x8b) {
     uint8_t mod = 0, reg = 0, rm = 0;
-    if (!jit_decode_modrm(r, &mod, &reg, &rm) || mod != 3) return false;
+    if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+        !jit_decode_rm_operand(r, mod, rm, out)) {
+      return false;
+    }
 
-    out->op = X86_JIT_OP_MOV_REG_REG;
     if (opcode == 0x89) {
-      out->dst = rm;
       out->src = reg;
+      if (mod == 3 && out->width == X86_WIDTH_DWORD) {
+        out->op = X86_JIT_OP_MOV_REG_REG;
+        out->dst = rm;
+      }
+      else {
+        jit_mark_helper(out, X86_JIT_HELPER_MOV_RM_REG);
+      }
     }
     else {
       out->dst = reg;
-      out->src = rm;
+      if (mod == 3 && out->width == X86_WIDTH_DWORD) {
+        out->op = X86_JIT_OP_MOV_REG_REG;
+        out->src = rm;
+      }
+      else {
+        jit_mark_helper(out, X86_JIT_HELPER_MOV_REG_RM);
+      }
     }
-    return true;
+    return jit_finish_decode(r, out);
   }
 
   if (opcode == 0x8d) {
+    if (out->width != X86_WIDTH_DWORD) return false;
     uint8_t mod = 0, reg = 0, rm = 0;
     if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
         !jit_decode_ea32(r, mod, rm, &out->ea)) {
@@ -422,7 +1856,401 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
 
     out->op = X86_JIT_OP_LEA;
     out->dst = reg;
-    return true;
+    return jit_finish_decode(r, out);
+  }
+
+  const int alu_op = jit_alu_from_opcode(opcode);
+  if (opcode < 0x40 && alu_op >= 0 &&
+      ((opcode & 0x07u) <= 0x03u)) {
+    uint8_t mod = 0, reg = 0, rm = 0;
+    if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+        !jit_decode_rm_operand(r, mod, rm, out)) {
+      return false;
+    }
+
+    out->alu_op = (uint8_t)alu_op;
+    const uint8_t form = opcode & 0x07u;
+    if (form == 0x00u || form == 0x02u) {
+      out->width = X86_WIDTH_BYTE;
+    }
+    if (form == 0x00u || form == 0x01u) {
+      out->src = reg;
+      if (mod == 3 && out->width == X86_WIDTH_DWORD) {
+        out->op = X86_JIT_OP_ALU_REG_REG;
+        out->dst = rm;
+      }
+      else {
+        jit_mark_helper(out, X86_JIT_HELPER_ALU_RM_REG);
+      }
+    }
+    else {
+      out->src = rm;
+      out->dst = reg;
+      if (mod == 3 && out->width == X86_WIDTH_DWORD) {
+        out->op = X86_JIT_OP_ALU_REG_REG;
+      }
+      else {
+        out->src = reg;
+        jit_mark_helper(out, X86_JIT_HELPER_ALU_REG_RM);
+      }
+    }
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0x83 || opcode == 0x81 || opcode == 0x80) {
+    uint8_t mod = 0, reg = 0, rm = 0;
+    if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+        !jit_decode_rm_operand(r, mod, rm, out)) {
+      return false;
+    }
+
+    if (reg == X86_ALU_ADC || reg == X86_ALU_SBB) return false;
+
+    out->alu_op = reg;
+    out->width = opcode == 0x80 ? X86_WIDTH_BYTE : out->width;
+    if (opcode == 0x81) {
+      if (out->width == X86_WIDTH_DWORD) {
+        if (!jit_read_u32(r, &out->imm)) return false;
+      }
+      else if (!jit_read_u16(r, &out->imm)) {
+        return false;
+      }
+    }
+    else if (opcode == 0x83) {
+      int32_t imm = 0;
+      if (!jit_read_i8(r, &imm)) return false;
+      out->imm = (uint32_t)imm;
+    }
+    else {
+      uint8_t imm = 0;
+      if (!jit_read_u8(r, &imm)) return false;
+      out->imm = imm;
+    }
+
+    if (out->width == X86_WIDTH_DWORD && out->rm_is_reg) {
+      out->op = X86_JIT_OP_ALU_IMM_REG;
+      out->dst = rm;
+    }
+    else {
+      jit_mark_helper(out, X86_JIT_HELPER_ALU_IMM_RM);
+    }
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0xc0 || opcode == 0xc1 ||
+      opcode == 0xd0 || opcode == 0xd1 ||
+      opcode == 0xd2 || opcode == 0xd3) {
+    uint8_t mod = 0, reg = 0, rm = 0;
+    if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+        !jit_decode_rm_operand(r, mod, rm, out)) {
+      return false;
+    }
+
+    out->width = (opcode == 0xc0 || opcode == 0xd0 || opcode == 0xd2) ?
+        X86_WIDTH_BYTE : out->width;
+    out->alu_op = reg;
+    if (opcode == 0xc0 || opcode == 0xc1) {
+      uint8_t imm = 0;
+      if (!jit_read_u8(r, &imm)) return false;
+      out->imm = imm;
+    }
+    else if (opcode == 0xd2 || opcode == 0xd3) {
+      out->count_from_cl = true;
+    }
+    else {
+      out->imm = 1;
+    }
+    jit_mark_helper(out, X86_JIT_HELPER_SHIFT_RM);
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0xc7 || opcode == 0xc6) {
+    uint8_t mod = 0, reg = 0, rm = 0;
+    if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+        reg != 0 ||
+        !jit_decode_rm_operand(r, mod, rm, out)) {
+      return false;
+    }
+
+    out->width = opcode == 0xc6 ? X86_WIDTH_BYTE : out->width;
+    if (out->width == X86_WIDTH_DWORD) {
+      if (!jit_read_u32(r, &out->imm)) return false;
+    }
+    else if (out->width == X86_WIDTH_WORD) {
+      if (!jit_read_u16(r, &out->imm)) return false;
+    }
+    else {
+      uint8_t imm = 0;
+      if (!jit_read_u8(r, &imm)) return false;
+      out->imm = imm;
+    }
+    jit_mark_helper(out, X86_JIT_HELPER_MOV_IMM_RM);
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0x84 || opcode == 0x85) {
+    uint8_t mod = 0, reg = 0, rm = 0;
+    if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+        !jit_decode_rm_operand(r, mod, rm, out)) {
+      return false;
+    }
+
+    out->width = opcode == 0x84 ? X86_WIDTH_BYTE : out->width;
+    out->src = reg;
+    if (mod == 3 && out->width == X86_WIDTH_DWORD) {
+      out->op = X86_JIT_OP_TEST_REG_REG;
+      out->dst = rm;
+    }
+    else {
+      jit_mark_helper(out, X86_JIT_HELPER_TEST_RM_REG);
+    }
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0xa0 || opcode == 0xa1 || opcode == 0xa2 || opcode == 0xa3) {
+    if (!jit_read_u32(r, &out->imm)) return false;
+    out->width = (opcode == 0xa0 || opcode == 0xa2) ?
+        X86_WIDTH_BYTE : out->width;
+    jit_mark_helper(out, (opcode == 0xa0 || opcode == 0xa1) ?
+        X86_JIT_HELPER_MOV_EAX_MOFFS : X86_JIT_HELPER_MOV_MOFFS_EAX);
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0xa8 || opcode == 0xa9) {
+    out->width = opcode == 0xa8 ? X86_WIDTH_BYTE : out->width;
+    if (out->width == X86_WIDTH_DWORD) {
+      if (!jit_read_u32(r, &out->imm)) return false;
+    }
+    else if (out->width == X86_WIDTH_WORD) {
+      if (!jit_read_u16(r, &out->imm)) return false;
+    }
+    else {
+      uint8_t imm = 0;
+      if (!jit_read_u8(r, &imm)) return false;
+      out->imm = imm;
+    }
+    if (out->width == X86_WIDTH_DWORD) {
+      out->op = X86_JIT_OP_TEST_EAX_IMM;
+    }
+    else {
+      jit_mark_helper(out, X86_JIT_HELPER_TEST_EAX_IMM);
+    }
+    return jit_finish_decode(r, out);
+  }
+
+  if ((opcode & 0xc7u) == 0x05u && jit_alu_from_opcode(opcode) >= 0) {
+    if (out->width == X86_WIDTH_DWORD) {
+      if (!jit_read_u32(r, &out->imm)) return false;
+    }
+    else if (!jit_read_u16(r, &out->imm)) {
+      return false;
+    }
+    out->alu_op = (uint8_t)jit_alu_from_opcode(opcode);
+    if (out->width == X86_WIDTH_DWORD) {
+      out->op = X86_JIT_OP_ALU_IMM_REG;
+      out->dst = R_EAX;
+    }
+    else {
+      jit_mark_helper(out, X86_JIT_HELPER_ALU_EAX_IMM);
+    }
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0xfe || opcode == 0xff) {
+    uint8_t mod = 0, reg = 0, rm = 0;
+    if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+        !jit_decode_rm_operand(r, mod, rm, out)) {
+      return false;
+    }
+
+    out->width = opcode == 0xfe ? X86_WIDTH_BYTE : out->width;
+    if (reg == 0 || reg == 1) {
+      out->alu_op = reg == 0 ? X86_ALU_ADD : X86_ALU_SUB;
+      jit_mark_helper(out, X86_JIT_HELPER_INCDEC_RM);
+      return jit_finish_decode(r, out);
+    }
+    if (opcode == 0xfe) return false;
+    if (out->width != X86_WIDTH_DWORD) return false;
+    if (reg == 2 || reg == 4) {
+      out->ends_block = true;
+      jit_mark_helper(out, reg == 2 ?
+          X86_JIT_HELPER_CALL_RM : X86_JIT_HELPER_JMP_RM);
+      return jit_finish_decode(r, out);
+    }
+    if (reg == 6) {
+      jit_mark_helper(out, X86_JIT_HELPER_PUSH_RM);
+      return jit_finish_decode(r, out);
+    }
+    return false;
+  }
+
+  if (opcode == 0xf6 || opcode == 0xf7) {
+    uint8_t mod = 0, reg = 0, rm = 0;
+    if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+        !jit_decode_rm_operand(r, mod, rm, out)) {
+      return false;
+    }
+
+    out->width = opcode == 0xf6 ? X86_WIDTH_BYTE : out->width;
+    if (reg == 0) {
+      if (out->width == X86_WIDTH_DWORD) {
+        if (!jit_read_u32(r, &out->imm)) return false;
+      }
+      else if (out->width == X86_WIDTH_WORD) {
+        if (!jit_read_u16(r, &out->imm)) return false;
+      }
+      else {
+        uint8_t imm = 0;
+        if (!jit_read_u8(r, &imm)) return false;
+        out->imm = imm;
+      }
+      jit_mark_helper(out, X86_JIT_HELPER_TEST_IMM_RM);
+      return jit_finish_decode(r, out);
+    }
+
+    if (reg == 2 || reg == 3) {
+      jit_mark_helper(out, reg == 2 ?
+          X86_JIT_HELPER_NOT_RM : X86_JIT_HELPER_NEG_RM);
+      return jit_finish_decode(r, out);
+    }
+    if (reg == 4 || reg == 5 || reg == 6 || reg == 7) {
+      static const x86_jit_helper_t gp3_helpers[] = {
+        X86_JIT_HELPER_MUL_RM,
+        X86_JIT_HELPER_IMUL_ACC_RM,
+        X86_JIT_HELPER_DIV_RM,
+        X86_JIT_HELPER_IDIV_RM,
+      };
+      jit_mark_helper(out, gp3_helpers[reg - 4u]);
+      return jit_finish_decode(r, out);
+    }
+    return false;
+  }
+
+  if (opcode == 0x68) {
+    if (out->width != X86_WIDTH_DWORD) return false;
+    if (!jit_read_u32(r, &out->imm)) return false;
+    jit_mark_helper(out, X86_JIT_HELPER_PUSH_IMM);
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0x6a) {
+    if (out->width != X86_WIDTH_DWORD) return false;
+    int32_t imm = 0;
+    if (!jit_read_i8(r, &imm)) return false;
+    out->imm = (uint32_t)imm;
+    jit_mark_helper(out, X86_JIT_HELPER_PUSH_IMM);
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0xe8 || opcode == 0xe9) {
+    if (out->width != X86_WIDTH_DWORD) return false;
+    uint32_t rel = 0;
+    if (!jit_read_u32(r, &rel)) return false;
+    out->rel = (int32_t)rel;
+    out->ends_block = true;
+    if (opcode == 0xe9) {
+      out->op = X86_JIT_OP_JMP_REL;
+    }
+    else {
+      jit_mark_helper(out, X86_JIT_HELPER_CALL_REL);
+    }
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0xeb) {
+    if (out->width != X86_WIDTH_DWORD) return false;
+    int32_t rel = 0;
+    if (!jit_read_i8(r, &rel)) return false;
+    out->rel = rel;
+    out->ends_block = true;
+    out->op = X86_JIT_OP_JMP_REL;
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0xc3) {
+    if (out->width != X86_WIDTH_DWORD) return false;
+    out->ends_block = true;
+    jit_mark_helper(out, X86_JIT_HELPER_RET);
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0xc9) {
+    if (out->width != X86_WIDTH_DWORD) return false;
+    jit_mark_helper(out, X86_JIT_HELPER_LEAVE);
+    return jit_finish_decode(r, out);
+  }
+
+  if (opcode == 0x0f) {
+    uint8_t opcode2 = 0;
+    if (!jit_read_u8(r, &opcode2)) return false;
+
+    if (opcode2 >= 0x80 && opcode2 <= 0x8f) {
+      if (out->width != X86_WIDTH_DWORD) return false;
+      uint32_t rel = 0;
+      if (!jit_read_u32(r, &rel)) return false;
+      out->cc = opcode2 & 0xfu;
+      out->rel = (int32_t)rel;
+      out->ends_block = true;
+      uint32_t mask = 0;
+      uint8_t host_cc = 0;
+      if (jit_jcc_fast_test(out->cc, &mask, &host_cc)) {
+        out->op = X86_JIT_OP_JCC_REL;
+      }
+      else {
+        jit_mark_helper(out, X86_JIT_HELPER_JCC_REL);
+      }
+      return jit_finish_decode(r, out);
+    }
+
+    if (opcode2 >= 0x90 && opcode2 <= 0x9f) {
+      uint8_t mod = 0, reg = 0, rm = 0;
+      if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+          !jit_decode_rm_operand(r, mod, rm, out)) {
+        return false;
+      }
+      (void)reg;
+      out->cc = opcode2 & 0xfu;
+      out->width = X86_WIDTH_BYTE;
+      jit_mark_helper(out, X86_JIT_HELPER_SETCC_RM8);
+      return jit_finish_decode(r, out);
+    }
+
+    if (opcode2 == 0xaf) {
+      uint8_t mod = 0, reg = 0, rm = 0;
+      if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+          !jit_decode_rm_operand(r, mod, rm, out)) {
+        return false;
+      }
+      out->dst = reg;
+      jit_mark_helper(out, X86_JIT_HELPER_IMUL_REG_RM);
+      return jit_finish_decode(r, out);
+    }
+
+    if ((opcode2 == 0xb6 || opcode2 == 0xb7) &&
+        out->width == X86_WIDTH_DWORD) {
+      uint8_t mod = 0, reg = 0, rm = 0;
+      if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+          !jit_decode_rm_operand(r, mod, rm, out)) {
+        return false;
+      }
+      out->dst = reg;
+      jit_mark_helper(out, opcode2 == 0xb6 ?
+          X86_JIT_HELPER_MOVZX_REG_RM8 : X86_JIT_HELPER_MOVZX_REG_RM16);
+      return jit_finish_decode(r, out);
+    }
+
+    if ((opcode2 == 0xbe || opcode2 == 0xbf) &&
+        out->width == X86_WIDTH_DWORD) {
+      uint8_t mod = 0, reg = 0, rm = 0;
+      if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
+          !jit_decode_rm_operand(r, mod, rm, out)) {
+        return false;
+      }
+      out->dst = reg;
+      jit_mark_helper(out, opcode2 == 0xbe ?
+          X86_JIT_HELPER_MOVSX_REG_RM8 : X86_JIT_HELPER_MOVSX_REG_RM16);
+      return jit_finish_decode(r, out);
+    }
   }
 
   return false;
@@ -435,23 +2263,41 @@ static size_t jit_align_code(size_t value) {
 static bool jit_block_source_matches(const x86_jit_block_t *block, vaddr_t pc) {
   if (!block->valid || block->pc != pc || block->source_len == 0) return false;
   if (!jit_flat_mode()) return false;
+  if (!jit_verify_source_enabled) return true;
   if (!jit_linear_in_pmem(pc, block->source_len)) return false;
   return memcmp(block->source, guest_to_host((paddr_t)pc), block->source_len) == 0;
 }
 
 static x86_jit_block_t *jit_cache_slot(vaddr_t pc) {
-  return &jit_cache[(pc >> 1) & (X86_JIT_CACHE_SIZE - 1u)];
+  uint32_t hash = pc;
+  hash ^= hash >> 4;
+  hash ^= hash >> 12;
+  hash ^= hash >> 20;
+  return &jit_cache[hash & (X86_JIT_CACHE_SIZE - 1u)];
 }
 
 static void jit_publish_unsupported(vaddr_t pc) {
   x86_jit_block_t *block = jit_cache_slot(pc);
+  uint8_t opcode = 0;
+  uint8_t opcode2 = 0;
   memset(block, 0, sizeof(*block));
   block->valid = true;
   block->unsupported = true;
   block->pc = pc;
   block->source_len = 1;
-  (void)jit_copy_source(pc, block->source_len, block->source);
-  jit_stats.blocks_unsupported++;
+  if (jit_copy_source(pc, block->source_len, block->source)) {
+    opcode = block->source[0];
+  }
+  if (opcode == 0x0f && jit_linear_in_pmem(pc, 2)) {
+    opcode2 = host_read(guest_to_host((paddr_t)pc + 1u), 1);
+    block->unsupported_opcode2 = opcode2;
+  }
+  jit_mark_source_pages(pc, block->source_len);
+  JIT_STAT_INC(blocks_unsupported);
+  if (jit_stats_enabled) {
+    jit_stats.unsupported_by_opcode[opcode]++;
+    if (opcode == 0x0f) jit_stats.unsupported_0f_by_opcode[opcode2]++;
+  }
 }
 
 static bool jit_ensure_code_cache(void) {
@@ -474,8 +2320,9 @@ static bool jit_ensure_code_cache(void) {
 
 static void jit_reset_arena(void) {
   memset(jit_cache, 0, sizeof(jit_cache));
+  memset(jit_source_page_has_code, 0, sizeof(jit_source_page_has_code));
   jit_code_used = 0;
-  jit_stats.arena_resets++;
+  JIT_STAT_INC(arena_resets);
 }
 
 static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
@@ -495,6 +2342,10 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
   };
   x86_jit_reader_t r = { .pc = pc, .cur = pc };
   uint32_t count = 0;
+  bool ends_with_control = false;
+  bool ends_with_chained_control = false;
+  x86_jit_block_t *block = jit_cache_slot(pc);
+  memset(block, 0, sizeof(*block));
 
   while (count < X86_JIT_BLOCK_MAX_INSNS && count < max_insns) {
     if ((uint32_t)(r.cur - pc) >= X86_JIT_MAX_SOURCE_BYTES) break;
@@ -502,14 +2353,31 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
     x86_jit_reader_t probe = r;
     x86_jit_insn_t insn;
     if (!jit_decode_insn(&probe, &insn)) break;
+    if (insn.op == X86_JIT_OP_HELPER && !jit_helper_translation_enabled()) {
+      break;
+    }
     if ((uint32_t)(probe.cur - pc) > X86_JIT_MAX_SOURCE_BYTES) break;
-    if (!emit_insn(&w, &insn)) {
+
+    block->insns[count] = insn;
+    const uint32_t insn_count = count + 1u;
+    if (jit_is_chainable_jcc_backedge(&block->insns[count], pc)) {
+      if (!emit_jcc_backedge(&w, &block->insns[count], w.start, insn_count)) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+      ends_with_chained_control = true;
+    }
+    else if (!emit_insn(&w, &block->insns[count])) {
       jit_code_used = start_used;
       return NULL;
     }
 
     r = probe;
     count++;
+    if (insn.ends_block) {
+      ends_with_control = true;
+      break;
+    }
   }
 
   if (count == 0) {
@@ -517,14 +2385,14 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
     return NULL;
   }
 
-  if (!emit_store_pc_imm(&w, r.cur) || !emit_ret_count(&w, count)) {
+  if (!ends_with_chained_control &&
+      ((!ends_with_control && !emit_store_pc_imm(&w, r.cur)) ||
+       !emit_ret_count(&w, count))) {
     jit_code_used = start_used;
     return NULL;
   }
 
   const uint32_t source_len = (uint32_t)(r.cur - pc);
-  x86_jit_block_t *block = jit_cache_slot(pc);
-  memset(block, 0, sizeof(*block));
   block->valid = true;
   block->pc = pc;
   block->source_len = source_len;
@@ -535,11 +2403,12 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
     jit_code_used = start_used;
     return NULL;
   }
+  jit_mark_source_pages(pc, source_len);
 
   __builtin___clear_cache((char *)w.start, (char *)w.cur);
   jit_code_used = jit_align_code((size_t)(w.cur - jit_code));
-  jit_stats.blocks_compiled++;
-  jit_stats.compiled_insns += count;
+  JIT_STAT_INC(blocks_compiled);
+  JIT_STAT_ADD(compiled_insns, count);
   return block;
 }
 
@@ -552,32 +2421,51 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
   *executed = 0;
   if (remaining == 0 || device_budget == 0 || !isa_jit_available()) return false;
 
-  jit_stats.exec_requests++;
+  JIT_STAT_INC(exec_requests);
 
-  uint64_t budget = remaining < device_budget ? remaining : device_budget;
-  if (budget > X86_JIT_BLOCK_MAX_INSNS) budget = X86_JIT_BLOCK_MAX_INSNS;
+  uint64_t budget = remaining < X86_JIT_BATCH_MAX_INSNS ?
+      remaining : X86_JIT_BATCH_MAX_INSNS;
+  if (budget > device_budget) budget = device_budget;
 
   while (*executed < budget) {
+    const uint32_t remaining_budget = (uint32_t)(budget - *executed);
+    const uint32_t block_budget = remaining_budget > X86_JIT_BLOCK_MAX_INSNS ?
+        X86_JIT_BLOCK_MAX_INSNS : remaining_budget;
     x86_jit_block_t *block = jit_cache_slot(cpu.pc);
     if (jit_block_source_matches(block, cpu.pc)) {
-      jit_stats.cache_hits++;
+      JIT_STAT_INC(cache_hits);
     }
     else {
-      jit_stats.cache_misses++;
-      block = jit_compile_block(cpu.pc, (uint32_t)(budget - *executed));
+      JIT_STAT_INC(cache_misses);
+      block = jit_compile_block(cpu.pc, block_budget);
     }
 
     if (block == NULL || block->unsupported) {
-      jit_stats.unsupported_hits++;
+      JIT_STAT_INC(unsupported_hits);
+      if (jit_stats_enabled && block != NULL && block->source_len != 0) {
+        const uint8_t opcode = block->source[0];
+        jit_stats.unsupported_hits_by_opcode[opcode]++;
+        if (opcode == 0x0f) {
+          jit_stats.unsupported_0f_hits_by_opcode[block->unsupported_opcode2]++;
+        }
+      }
       return *executed > 0;
     }
+
+    if (block->guest_insns > remaining_budget) {
+      return *executed > 0;
+    }
+
+    jit_entry_budget = remaining_budget;
+    jit_loop_extra = 0;
+    jit_chain_abort = 0;
 
     const uint32_t ran = block->entry();
     Assert(ran > 0 && ran <= budget - *executed,
         "x86 JIT block returned invalid count %u", ran);
     *executed += ran;
-    jit_stats.blocks_executed++;
-    jit_stats.executed_insns += ran;
+    JIT_STAT_INC(blocks_executed);
+    JIT_STAT_ADD(executed_insns, ran);
   }
 
   return *executed > 0;
@@ -585,16 +2473,27 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
 
 void isa_jit_flush_all(void) {
   memset(jit_cache, 0, sizeof(jit_cache));
+  memset(jit_source_page_has_code, 0, sizeof(jit_source_page_has_code));
   jit_code_used = 0;
 }
 
 void isa_jit_flush_data_tlb(void) {
 }
 
+bool isa_jit_may_invalidate_paddr(paddr_t addr, int len) {
+  return jit_range_may_touch_source_pages(addr, len);
+}
+
 void isa_jit_invalidate_paddr(paddr_t addr, int len) {
   if (len <= 0) return;
 
-  jit_stats.invalidation_requests++;
+  JIT_STAT_INC(invalidation_requests);
+  if (!jit_range_may_touch_source_pages(addr, len)) {
+    JIT_STAT_INC(invalidation_page_skips);
+    return;
+  }
+
+  JIT_STAT_INC(precise_invalidation_scans);
   const paddr_t end = addr + (paddr_t)len - 1u;
   for (uint32_t i = 0; i < X86_JIT_CACHE_SIZE; i++) {
     x86_jit_block_t *block = &jit_cache[i];
@@ -604,7 +2503,8 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len) {
     const paddr_t block_end = block_start + block->source_len - 1u;
     if (addr <= block_end && end >= block_start) {
       block->valid = false;
-      jit_stats.invalidated_blocks++;
+      jit_chain_abort = 1;
+      JIT_STAT_INC(invalidated_blocks);
     }
   }
 }
@@ -613,7 +2513,14 @@ void isa_jit_dump_stats(void) {
   jit_init_runtime_options();
 
   if (jit_runtime_disabled()) {
-    Log("jit: disabled by NEMU_DISABLE_JIT=1");
+    if (jit_stats_enabled) {
+      if (jit_env_force_disable) {
+        Log("jit: disabled by NEMU_DISABLE_JIT=1");
+      }
+      else {
+        Log("jit: disabled by NEMU_X86_JIT=0");
+      }
+    }
     return;
   }
 
@@ -655,12 +2562,44 @@ void isa_jit_dump_stats(void) {
       avg_exec_len / 100u,
       avg_exec_len % 100u,
       jit_stats.unsupported_hits);
+  Log("jit: native ALU ops = %" PRIu64
+      ", native branch ops = %" PRIu64,
+      jit_stats.native_alu_ops,
+      jit_stats.native_branch_ops);
   Log("jit: invalidation requests = %" PRIu64
+      ", page skips = %" PRIu64
+      ", precise invalidation scans = %" PRIu64
       ", invalidated blocks = %" PRIu64
       ", arena resets = %" PRIu64,
       jit_stats.invalidation_requests,
+      jit_stats.invalidation_page_skips,
+      jit_stats.precise_invalidation_scans,
       jit_stats.invalidated_blocks,
       jit_stats.arena_resets);
+  for (uint32_t opcode = 0; opcode < 256u; opcode++) {
+    if (jit_stats.unsupported_by_opcode[opcode] != 0) {
+      Log("jit: unsupported opcode 0x%02x = %" PRIu64,
+          opcode, jit_stats.unsupported_by_opcode[opcode]);
+    }
+  }
+  for (uint32_t opcode = 0; opcode < 256u; opcode++) {
+    if (jit_stats.unsupported_hits_by_opcode[opcode] != 0) {
+      Log("jit: unsupported-hit opcode 0x%02x = %" PRIu64,
+          opcode, jit_stats.unsupported_hits_by_opcode[opcode]);
+    }
+  }
+  for (uint32_t opcode = 0; opcode < 256u; opcode++) {
+    if (jit_stats.unsupported_0f_by_opcode[opcode] != 0) {
+      Log("jit: unsupported 0f opcode 0x%02x = %" PRIu64,
+          opcode, jit_stats.unsupported_0f_by_opcode[opcode]);
+    }
+  }
+  for (uint32_t opcode = 0; opcode < 256u; opcode++) {
+    if (jit_stats.unsupported_0f_hits_by_opcode[opcode] != 0) {
+      Log("jit: unsupported-hit 0f opcode 0x%02x = %" PRIu64,
+          opcode, jit_stats.unsupported_0f_hits_by_opcode[opcode]);
+    }
+  }
 #else
   if (jit_stats_enabled) {
     Log("jit: stats requested, but this binary was built without X86_JIT_STATS=1");
@@ -685,6 +2624,12 @@ void isa_jit_flush_all(void) {
 }
 
 void isa_jit_flush_data_tlb(void) {
+}
+
+bool isa_jit_may_invalidate_paddr(paddr_t addr, int len) {
+  (void)addr;
+  (void)len;
+  return false;
 }
 
 void isa_jit_invalidate_paddr(paddr_t addr, int len) {
