@@ -56,6 +56,13 @@
 #define X86_JIT_STATS 0
 #endif
 
+/*
+ * IA-32 paging and flag constants used by both decode-time checks and emitted
+ * native guards.  The bit positions follow Intel's CR0/CR4/PDE/PTE/EFLAGS
+ * layout: CR0.WP is bit 16, CR0.PG is bit 31, CR4.PSE is bit 4, PTE.P is bit
+ * 0, and PDE.PS is bit 7.  Page-directory/table addresses occupy bits 31..12,
+ * so the low 12 bits are masked away before comparing CR3 keys or page bases.
+ */
 #define X86_CR0_WP 0x00010000u
 #define X86_CR0_PG 0x80000000u
 #define X86_CR4_PSE 0x00000010u
@@ -65,33 +72,59 @@
 #define X86_DWORD_LIMIT 0xffffffffu
 #define X86_BYTE_MASK 0xffu
 #define X86_WORD_MASK 0xffffu
+/*
+ * Intel defines EFLAGS bit 1 as reserved and always read as one.  Keep it set
+ * after every helper-side flag write so PUSHF/POPF-visible state matches IA-32.
+ */
 #define X86_EFLAGS_FIXED_ONE (1u << 1)
+/*
+ * AF is carry/borrow from bit 3 to bit 4.  The usual x86 formula
+ * (lhs ^ rhs ^ result) therefore only needs bit 4, i.e. mask 0x10.
+ * PF is even parity of the low byte; fold that byte to four bits and use the
+ * 16-bit lookup table rather than counting bits on every helper ALU operation.
+ */
 #define X86_AUX_CARRY_BIT 0x10u
 #define X86_PARITY_FOLD_NIBBLE_MASK 0xfu
 #define X86_PARITY_FOLD_TABLE 0x6996u
 
+/* IA-32 arithmetic status flags used by ALU, Jcc, SETcc, and flag capture. */
 #define X86_FLAG_CF (1u << 0)
 #define X86_FLAG_PF (1u << 2)
 #define X86_FLAG_AF (1u << 4)
 #define X86_FLAG_ZF (1u << 6)
 #define X86_FLAG_SF (1u << 7)
 #define X86_FLAG_OF (1u << 11)
+/* Full status-flag set written by ADD/SUB-family helpers. */
 #define X86_EFLAGS_STATUS_MASK \
   (X86_FLAG_CF | X86_FLAG_PF | X86_FLAG_AF | \
       X86_FLAG_ZF | X86_FLAG_SF | X86_FLAG_OF)
+/* Logical instructions copy PF/ZF/SF from the host flags and clear CF/OF/AF. */
 #define X86_EFLAGS_LOGIC_COPY_MASK (X86_FLAG_PF | X86_FLAG_ZF | X86_FLAG_SF)
+/* INC/DEC update all arithmetic status flags except CF, which is preserved. */
 #define X86_EFLAGS_INCDEC_COPY_MASK \
   (X86_FLAG_PF | X86_FLAG_AF | X86_FLAG_ZF | X86_FLAG_SF | X86_FLAG_OF)
 
+/*
+ * Guest operand widths are stored as byte counts.  IA-32 defaults to 32-bit
+ * operands here; opcode 66H switches many decodes to WORD, while byte opcodes
+ * force BYTE.
+ */
 #define X86_WIDTH_BYTE 1u
 #define X86_WIDTH_WORD 2u
 #define X86_WIDTH_DWORD 4u
+/* IA-32 shift/rotate counts use only CL[4:0] for 8/16/32-bit operands. */
 #define X86_SHIFT_COUNT_MASK 0x1fu
 #define X86_BITS_PER_BYTE 8u
 #define X86_WORD_BITS 16u
 #define X86_DWORD_BITS 32u
+/* 2^32, used when reconstructing signed EDX:EAX dividends for IDIV. */
 #define X86_DWORD_BASE 0x100000000ll
 
+/*
+ * JIT sizing knobs.  Cache, L0, hot, RET, and DTLB sizes are powers of two
+ * because the lookup helpers mask hashes instead of using division.  Trace and
+ * source limits bound compile time, native code size, and invalidation scans.
+ */
 #define X86_JIT_BLOCK_MAX_INSNS 64u
 #define X86_JIT_BATCH_MAX_INSNS 65536u
 #define X86_JIT_CACHE_SETS 4096u
@@ -99,6 +132,8 @@
 #define X86_JIT_CACHE_SIZE (X86_JIT_CACHE_SETS * X86_JIT_CACHE_WAYS)
 #define X86_JIT_L0_SIZE 4096u
 #define X86_JIT_HOT_TABLE_SIZE 4096u
+#define X86_JIT_RET_CACHE_SIZE 4096u
+#define X86_JIT_RET_CACHE_MASK (X86_JIT_RET_CACHE_SIZE - 1u)
 #define X86_JIT_DEFAULT_BLOCK_LIMIT 32u
 #define X86_JIT_TRACE_HOT_THRESHOLD 1024u
 #define X86_JIT_TRACE_MAX_BLOCKS 12u
@@ -119,6 +154,7 @@
 #define X86_JIT_TRACE_SOURCE_SPAN_LIMIT 12u
 #define X86_JIT_EXIT_EDGE_LIMIT 12u
 #define X86_JIT_DTLB_SIZE 256u
+/* Per-entry access bits for the private data TLB; writes imply read access. */
 #define X86_JIT_DTLB_READ 0x1u
 #define X86_JIT_DTLB_WRITE 0x2u
 
@@ -142,6 +178,12 @@ typedef struct {
   uint32_t disp;
 } x86_jit_ea_t;
 
+/*
+ * Lazy flags describe how much of cpu.eflags is already materialised.  Native
+ * ALU emission can leave host flags live and delay copying them into cpu.eflags
+ * until a later guest instruction actually reads them or a helper call needs
+ * architectural state.
+ */
 typedef enum {
   X86_LAZY_FLAGS_NONE,
   X86_LAZY_FLAGS_MATERIALISED,
@@ -159,6 +201,11 @@ typedef struct {
   uint32_t clear_mask;
 } x86_lazy_flags_t;
 
+/*
+ * Per-block emission state.  The small register cache maps guest IA-32 GPRs to
+ * selected host registers, while the boolean capability bits record which base
+ * pointers and runtime facilities are live in the generated ABI at this point.
+ */
 typedef struct {
   bool valid;
   int guest_to_host[8];
@@ -174,8 +221,24 @@ typedef struct {
   bool has_cpu_base;
   bool has_pmem_base;
   bool has_source_bitmap_base;
+  bool trace_mode;
 } x86_jit_emit_ctx_t;
 
+/*
+ * Stack-window analysis lets generated code keep PUSH/POP/CALL/RET inside a
+ * guarded PMEM window.  Store bounds are tracked separately so self-modifying
+ * stack writes can still fall back before touching translated source pages.
+ */
+typedef struct {
+  bool valid;
+  bool has_store;
+  int32_t min_offset;
+  int32_t max_offset;
+  int32_t store_min_offset;
+  int32_t store_max_offset;
+} x86_jit_stack_window_t;
+
+/* Decoded IR opcodes: native forms emit host code, HELPERS call jit_helper_exec. */
 typedef enum {
   X86_JIT_OP_NOP,
   X86_JIT_OP_MOV_IMM_REG,
@@ -192,6 +255,11 @@ typedef enum {
   X86_JIT_OP_HELPER,
 } x86_jit_op_t;
 
+/*
+ * Helper kinds name interpreter-equivalent slow paths.  The decode stores one
+ * of these when an instruction is supported semantically but is not worth, or
+ * not safe, to inline directly in the current generated block.
+ */
 typedef enum {
   X86_JIT_HELPER_NONE,
   X86_JIT_HELPER_MOV_RM_REG,
@@ -235,6 +303,11 @@ typedef enum {
   X86_JIT_HELPER_COUNT,
 } x86_jit_helper_t;
 
+/*
+ * Predecoded IA-32 instruction.  `width` is a byte count, `alu_op` uses the
+ * Intel Group-1 /reg encoding order, and `cc` is the low condition-code nibble
+ * used by Jcc/SETcc opcodes.
+ */
 typedef struct {
   x86_jit_op_t op;
   x86_jit_helper_t helper;
@@ -255,17 +328,20 @@ typedef struct {
   x86_jit_ea_t ea;
 } x86_jit_insn_t;
 
+/* Physical source ranges are used to invalidate native blocks after PMEM writes. */
 typedef struct {
   paddr_t start;
   paddr_t end;
 } x86_jit_source_range_t;
 
+/* Trace source bytes can come from disjoint guest PCs, so store pc/offset spans. */
 typedef struct {
   vaddr_t pc;
   uint16_t offset;
   uint16_t len;
 } x86_jit_source_span_t;
 
+/* Block exit categories used for direct chaining and statistics. */
 typedef enum {
   X86_JIT_EXIT_FALLTHROUGH,
   X86_JIT_EXIT_TAKEN,
@@ -274,6 +350,29 @@ typedef enum {
   X86_JIT_EXIT_RET,
 } x86_jit_exit_kind_t;
 
+/* Reasons a chainable exit currently uses its slow stub instead of a target. */
+typedef enum {
+  X86_JIT_CHAIN_SLOW_UNLINKED,
+  X86_JIT_CHAIN_SLOW_COLD_TRACE,
+  X86_JIT_CHAIN_SLOW_SIDE_BRANCH,
+  X86_JIT_CHAIN_SLOW_HELPER,
+  X86_JIT_CHAIN_SLOW_UNACCEPTED_SUCCESSOR,
+  X86_JIT_CHAIN_SLOW_BLOCK_NOT_CHAINABLE,
+} x86_jit_chain_slow_reason_t;
+
+/* Chainability of each possible successor of a decoded block. */
+typedef struct {
+  bool fallthrough;
+  bool taken;
+  bool target;
+} x86_jit_edge_chainability_t;
+
+/*
+ * Patchable exit edge.  `patch_site` is the rel32 jump emitted in the source
+ * block.  It initially targets `slow_exit`, and later may target a hit counter
+ * stub or the successor block's chain entry.  `target_generation` prevents
+ * stale patches after cache invalidation.
+ */
 typedef struct {
   bool valid;
   vaddr_t target_pc;
@@ -283,8 +382,10 @@ typedef struct {
   uint8_t *hit_patch_site;
   uint32_t target_generation;
   uint8_t kind;
+  uint8_t slow_reason;
 } x86_jit_exit_edge_t;
 
+/* Hot block metadata kept in the fast cache line.  Large source bytes live cold. */
 typedef struct {
   bool valid;
   bool unsupported;
@@ -308,6 +409,11 @@ typedef struct {
   uint32_t cold_index;
 } x86_jit_block_t;
 
+/*
+ * Cold block payload: original source bytes, reverse-invalidation indexes, and
+ * predecoded trace instructions.  Keeping this separate makes the hot lookup
+ * table smaller and improves cache behaviour for common cache hits.
+ */
 typedef struct {
   uint8_t source[X86_JIT_MAX_SOURCE_BYTES];
   uint16_t source_page_count;
@@ -321,12 +427,17 @@ typedef struct {
   x86_jit_insn_t insns[X86_JIT_TRACE_MAX_INSNS];
 } x86_jit_block_cold_t;
 
+/* Reverse map from a PMEM source page to blocks that may contain its bytes. */
 typedef struct {
   uint32_t block_indices[X86_JIT_SOURCE_PAGE_BLOCK_LIMIT];
   uint16_t count;
   bool overflow;
 } x86_jit_source_page_blocks_t;
 
+/*
+ * Private data TLB entry.  Generated code reads these fields by fixed offsets,
+ * so the static asserts below deliberately fail the build if padding changes.
+ */
 typedef struct {
   bool valid;
   uint8_t access;
@@ -357,6 +468,7 @@ typedef struct {
   uint32_t generation;
 } x86_jit_l0_entry_t;
 
+/* Per-PC heat counters and optional trace pointer for trace selection. */
 typedef struct {
   bool valid;
   vaddr_t pc;
@@ -369,6 +481,19 @@ typedef struct {
   uint32_t trace_index;
   uint32_t trace_generation;
 } x86_jit_hot_info_t;
+
+/*
+ * Direct RET target cache entry.  The explicit padding keeps each entry 16
+ * bytes, which makes indexed native loads simple and stable.
+ */
+typedef struct {
+  vaddr_t target_pc;
+  uint32_t pad;
+  uint8_t *chain_entry;
+} x86_jit_ret_cache_entry_t;
+
+_Static_assert(sizeof(x86_jit_ret_cache_entry_t) == 16,
+    "x86 JIT RET cache entry size changed");
 
 typedef struct {
   uint64_t exec_requests;
@@ -416,6 +541,16 @@ typedef struct {
   uint64_t trace_hits;
   uint64_t side_exits;
   uint64_t smc_invalidation_exits;
+  uint64_t blocks_chainable;
+  uint64_t blocks_not_chainable;
+  uint64_t blocks_not_chainable_jmp;
+  uint64_t blocks_not_chainable_jcc_one_side;
+  uint64_t blocks_not_chainable_jcc_both_sides;
+  uint64_t blocks_not_chainable_ret;
+  uint64_t blocks_not_chainable_call_rm;
+  uint64_t blocks_not_chainable_unsupported_successor;
+  uint64_t traces_using_regcache;
+  uint64_t traces_not_using_regcache;
   uint64_t helper_by_kind[X86_JIT_HELPER_COUNT];
   uint64_t invalidation_requests;
   uint64_t invalidation_page_skips;
@@ -428,6 +563,7 @@ typedef struct {
   uint64_t unsupported_0f_hits_by_opcode[256];
 } x86_jit_stats_t;
 
+/* Intel Group-1 ALU /reg field order used by opcodes 80/81/83 and ModR/M.reg. */
 enum {
   X86_ALU_ADD,
   X86_ALU_OR,
@@ -439,23 +575,27 @@ enum {
   X86_ALU_CMP,
 };
 
+/*
+ * Intel condition-code low nibble.  Short Jcc is 70H|cc, near Jcc is 0F 80H|cc,
+ * and SETcc is 0F 90H|cc.
+ */
 enum {
-  X86_CC_O  = 0x0,
-  X86_CC_NO = 0x1,
-  X86_CC_B  = 0x2,
-  X86_CC_AE = 0x3,
-  X86_CC_Z  = 0x4,
-  X86_CC_NZ = 0x5,
-  X86_CC_BE = 0x6,
-  X86_CC_A  = 0x7,
-  X86_CC_S  = 0x8,
-  X86_CC_NS = 0x9,
-  X86_CC_P  = 0xa,
-  X86_CC_NP = 0xb,
-  X86_CC_L  = 0xc,
-  X86_CC_GE = 0xd,
-  X86_CC_LE = 0xe,
-  X86_CC_G  = 0xf,
+  X86_CC_O  = 0x0,  /* OF == 1. */
+  X86_CC_NO = 0x1,  /* OF == 0. */
+  X86_CC_B  = 0x2,  /* CF == 1; aliases C/NAE, unsigned below. */
+  X86_CC_AE = 0x3,  /* CF == 0; aliases NB/NC, unsigned above-or-equal. */
+  X86_CC_Z  = 0x4,  /* ZF == 1; alias E. */
+  X86_CC_NZ = 0x5,  /* ZF == 0; alias NE. */
+  X86_CC_BE = 0x6,  /* CF == 1 || ZF == 1; alias NA. */
+  X86_CC_A  = 0x7,  /* CF == 0 && ZF == 0; alias NBE. */
+  X86_CC_S  = 0x8,  /* SF == 1. */
+  X86_CC_NS = 0x9,  /* SF == 0. */
+  X86_CC_P  = 0xa,  /* PF == 1; alias PE. */
+  X86_CC_NP = 0xb,  /* PF == 0; alias PO. */
+  X86_CC_L  = 0xc,  /* SF != OF; signed less-than. */
+  X86_CC_GE = 0xd,  /* SF == OF; signed greater-or-equal. */
+  X86_CC_LE = 0xe,  /* ZF == 1 || SF != OF; signed less-or-equal. */
+  X86_CC_G  = 0xf,  /* ZF == 0 && SF == OF; signed greater-than. */
 };
 
 bool isa_jit_invalidation_active = false;
@@ -482,11 +622,19 @@ static bool jit_chain_enabled = true;
 static bool jit_trace_enabled = false;
 static bool jit_batch_trampoline_enabled = false;
 static bool jit_stack_fast_enabled = false;
+static bool jit_fast_chain_enabled = true;
+static bool jit_edge_pc_store_enabled = true;
+static bool jit_chain_abort_check_enabled = true;
+static bool jit_trace_regcache_enabled = true;
+static bool jit_trace_sibling_enabled = true;
+static bool jit_trace_loopback_enabled = true;
+static bool jit_regcache_wide_enabled = true;
 static uint32_t jit_runtime_block_limit = X86_JIT_DEFAULT_BLOCK_LIMIT;
 static uint32_t jit_trace_hot_threshold = X86_JIT_TRACE_HOT_THRESHOLD;
 static x86_jit_block_cold_t jit_cache_cold[X86_JIT_CACHE_SIZE];
 static x86_jit_l0_entry_t jit_l0_cache[X86_JIT_L0_SIZE];
 static x86_jit_hot_info_t jit_hot_info[X86_JIT_HOT_TABLE_SIZE];
+static x86_jit_ret_cache_entry_t jit_ret_cache[X86_JIT_RET_CACHE_SIZE];
 static volatile uint32_t jit_entry_budget = 0;
 static volatile uint32_t jit_loop_extra = 0;
 static volatile uint32_t jit_chain_abort = 0;
@@ -494,8 +642,22 @@ static volatile uint32_t jit_fault_guest_count = 0;
 static volatile uint64_t jit_direct_chain_hits_runtime = 0;
 static volatile uint64_t jit_trace_hits_runtime = 0;
 static volatile uint64_t jit_side_exits_runtime = 0;
+static volatile uint64_t jit_chain_exit_budget_runtime = 0;
+static volatile uint64_t jit_chain_exit_abort_runtime = 0;
+static volatile uint64_t jit_chain_exit_unlinked_runtime = 0;
+static volatile uint64_t jit_chain_exit_cold_trace_runtime = 0;
+static volatile uint64_t jit_chain_exit_side_branch_runtime = 0;
+static volatile uint64_t jit_chain_exit_helper_runtime = 0;
+static volatile uint64_t jit_chain_exit_unaccepted_successor_runtime = 0;
+static volatile uint64_t jit_chain_exit_block_not_chainable_runtime = 0;
+static volatile uint64_t jit_trace_side_exit_taken_runtime = 0;
+static volatile uint64_t jit_trace_side_exit_fallthrough_runtime = 0;
+static volatile uint64_t jit_trace_loopback_runtime = 0;
 static volatile uint64_t jit_smc_invalidation_exits_runtime = 0;
 static volatile uint64_t jit_mov_rm_reg_slow_exits_runtime = 0;
+static volatile uint64_t jit_ret_cache_hits_runtime = 0;
+static volatile uint64_t jit_ret_cache_misses_runtime = 0;
+static volatile uint64_t jit_sibling_trace_hits_runtime = 0;
 static volatile uint32_t jit_dtlb_scratch = 0;
 static bool jit_source_page_has_code[X86_JIT_SOURCE_PAGE_COUNT];
 static x86_jit_source_page_blocks_t
@@ -563,6 +725,7 @@ static void jit_unpatch_incoming_edges(const x86_jit_block_t *target);
 static void jit_link_edges_to_target(x86_jit_block_t *target);
 static void jit_link_block_exits(x86_jit_block_t *block);
 static void jit_reset_arena(void);
+static void jit_ret_cache_clear(void);
 static void jit_dtlb_flush(void);
 static bool jit_range_may_touch_source_pages(paddr_t addr, int len);
 static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out);
@@ -598,20 +761,24 @@ static bool jit_decode_block(vaddr_t pc, uint32_t max_insns,
 static void jit_analyse_block(const x86_jit_insn_t *insns, uint32_t count,
     x86_jit_emit_ctx_t *ctx);
 
+/* Return true when an environment flag is set to a non-empty, non-"0" value. */
 static bool jit_env_flag_enabled(const char *name) {
   const char *value = getenv(name);
   return value != NULL && value[0] != '\0' && strcmp(value, "0") != 0;
 }
 
+/* Return true only for the explicit "0" spelling used to disable defaults. */
 static bool jit_env_flag_disabled(const char *name) {
   const char *value = getenv(name);
   return value != NULL && value[0] != '\0' && strcmp(value, "0") == 0;
 }
 
+/* Feature switches default to enabled unless the matching environment flag is 0. */
 static bool jit_env_flag_default_enabled(const char *name) {
   return !jit_env_flag_disabled(name);
 }
 
+/* Parse an unsigned environment override and clamp it to a safe configured range. */
 static uint32_t jit_env_u32(const char *name, uint32_t fallback,
     uint32_t min_value, uint32_t max_value) {
   const char *value = getenv(name);
@@ -625,6 +792,11 @@ static uint32_t jit_env_u32(const char *name, uint32_t fallback,
   return (uint32_t)parsed;
 }
 
+/*
+ * Cache all runtime switches once.  These flags intentionally do not change
+ * during a NEMU run, because generated code can bake several of them into its
+ * ABI and guard layout.
+ */
 static void jit_init_runtime_options(void) {
   if (!jit_runtime_options_init) {
     jit_env_force_disable = jit_env_flag_enabled("NEMU_DISABLE_JIT");
@@ -655,6 +827,20 @@ static void jit_init_runtime_options(void) {
         jit_env_flag_default_enabled("NEMU_X86_JIT_BATCH");
     jit_stack_fast_enabled =
         jit_env_flag_enabled("NEMU_X86_JIT_STACK_FAST");
+    jit_fast_chain_enabled =
+        jit_env_flag_enabled("NEMU_X86_JIT_FAST_CHAIN");
+    jit_edge_pc_store_enabled =
+        jit_env_flag_default_enabled("NEMU_X86_JIT_EDGE_PC_STORE");
+    jit_chain_abort_check_enabled =
+        jit_env_flag_default_enabled("NEMU_X86_JIT_CHAIN_ABORT_CHECK");
+    jit_trace_regcache_enabled =
+        jit_env_flag_default_enabled("NEMU_X86_JIT_TRACE_REGCACHE");
+    jit_trace_sibling_enabled =
+        jit_env_flag_default_enabled("NEMU_X86_JIT_TRACE_SIBLING");
+    jit_trace_loopback_enabled =
+        jit_env_flag_default_enabled("NEMU_X86_JIT_TRACE_LOOPBACK");
+    jit_regcache_wide_enabled =
+        jit_env_flag_default_enabled("NEMU_X86_JIT_REGCACHE_WIDE");
     jit_runtime_block_limit = jit_env_u32("NEMU_X86_JIT_BLOCK_LIMIT",
         X86_JIT_DEFAULT_BLOCK_LIMIT, 1u, X86_JIT_BLOCK_MAX_INSNS);
     jit_trace_hot_threshold = jit_env_u32("NEMU_X86_JIT_TRACE_THRESHOLD",
@@ -663,34 +849,48 @@ static void jit_init_runtime_options(void) {
   }
 }
 
+/* Public availability checks use this gate before entering or compiling JIT code. */
 static bool jit_runtime_disabled(void) {
   jit_init_runtime_options();
   return jit_env_force_disable || !jit_env_enable;
 }
 
+/* Helpers can be disabled separately while keeping the tiny native-only subset. */
 static bool jit_helper_translation_enabled(void) {
   jit_init_runtime_options();
   return jit_helpers_enabled;
 }
 
+/* Compute a rounded fixed-point ratio with two decimal places. */
 static uint64_t jit_ratio_x100(uint64_t numerator, uint64_t denominator) {
   if (denominator == 0) return 0;
   return (numerator * 100u + denominator / 2u) / denominator;
 }
 
+/* Compute a rounded percentage scaled by 100, for log output such as 12.34%. */
 static uint64_t jit_percent_x100(uint64_t numerator, uint64_t denominator) {
   if (denominator == 0) return 0;
   return (numerator * 10000u + denominator / 2u) / denominator;
 }
 
+/* IA-32 paging is active when CR0.PG is set. */
 static bool jit_paging_enabled(void) {
   return (cpu.cr0 & X86_CR0_PG) != 0;
 }
 
+/* Fast chaining requires the trampoline ABI and currently only supports flat PMEM. */
+static bool jit_fast_chain_runtime_enabled(void) {
+  jit_init_runtime_options();
+  return jit_fast_chain_enabled && jit_batch_trampoline_enabled &&
+         !jit_paging_enabled();
+}
+
+/* Key translated blocks by CR3 page-directory base while paging is active. */
 static uint32_t jit_cr3_key(void) {
   return jit_paging_enabled() ? (uint32_t)(cpu.cr3 & ~(uint32_t)PAGE_MASK) : 0u;
 }
 
+/* The direct-fetch fast path is safe only when the four data/code segments are flat. */
 static bool jit_flat_segments(void) {
   for (uint32_t i = 0; i < 4; i++) {
     if (cpu.seg_cache[i].base != 0 || cpu.seg_cache[i].limit != X86_DWORD_LIMIT) {
@@ -701,6 +901,7 @@ static bool jit_flat_segments(void) {
   return true;
 }
 
+/* Fetch instruction bytes directly from PMEM for flat, non-paged execution. */
 static bool jit_flat_direct_fetch(vaddr_t pc, uint32_t len,
     const uint8_t **host) {
   if (!jit_flat_source_enabled || host == NULL || len == 0) return false;
@@ -711,14 +912,17 @@ static bool jit_flat_direct_fetch(vaddr_t pc, uint32_t len,
   return true;
 }
 
+/* Decode the MMU helper's low PAGE_MASK bits into a MEM_RET_* status. */
 static int jit_translate_status(paddr_t ret) {
   return (int)(ret & (paddr_t)PAGE_MASK);
 }
 
+/* Strip the MMU helper's status bits to recover the translated page base. */
 static paddr_t jit_translate_page(paddr_t ret) {
   return ret & ~(paddr_t)PAGE_MASK;
 }
 
+/* Translate one guest virtual range to PMEM, preserving the MMU's fault checks. */
 static bool jit_vaddr_to_paddr(vaddr_t addr, uint32_t len, int type,
     paddr_t *pa) {
   if (len == 0) return false;
@@ -738,6 +942,7 @@ static bool jit_vaddr_to_paddr(vaddr_t addr, uint32_t len, int type,
   return in_pmem_range(*pa, (int)len);
 }
 
+/* Read one instruction byte through the same path that block validation uses. */
 static bool jit_vaddr_read_u8(vaddr_t addr, uint8_t *value) {
   const uint8_t *host = NULL;
   if (jit_flat_direct_fetch(addr, 1u, &host)) {
@@ -751,12 +956,14 @@ static bool jit_vaddr_read_u8(vaddr_t addr, uint8_t *value) {
   return true;
 }
 
+/* Advance the decoder by one byte, returning false if instruction fetch faults. */
 static bool jit_read_u8(x86_jit_reader_t *r, uint8_t *value) {
   if (!jit_vaddr_read_u8(r->cur, value)) return false;
   r->cur++;
   return true;
 }
 
+/* Read a little-endian 32-bit immediate/displacement from the guest stream. */
 static bool jit_read_u32(x86_jit_reader_t *r, uint32_t *value) {
   const uint8_t *host = NULL;
   if (jit_flat_direct_fetch(r->cur, 4u, &host)) {
@@ -775,6 +982,7 @@ static bool jit_read_u32(x86_jit_reader_t *r, uint32_t *value) {
   return true;
 }
 
+/* Read a little-endian 16-bit immediate/displacement from the guest stream. */
 static bool jit_read_u16(x86_jit_reader_t *r, uint32_t *value) {
   const uint8_t *host = NULL;
   if (jit_flat_direct_fetch(r->cur, 2u, &host)) {
@@ -795,6 +1003,7 @@ static bool jit_read_u16(x86_jit_reader_t *r, uint32_t *value) {
   return true;
 }
 
+/* Read an 8-bit signed relative displacement and sign-extend it to int32_t. */
 static bool jit_read_i8(x86_jit_reader_t *r, int32_t *value) {
   uint8_t raw = 0;
   if (!jit_read_u8(r, &raw)) return false;
@@ -802,6 +1011,7 @@ static bool jit_read_i8(x86_jit_reader_t *r, int32_t *value) {
   return true;
 }
 
+/* Snapshot guest source bytes so later cache hits can detect modified code. */
 static bool jit_copy_source(vaddr_t pc, uint32_t len, uint8_t *dst) {
   if (len > X86_JIT_MAX_SOURCE_BYTES) return false;
   if (len == 0) return true;
@@ -818,6 +1028,7 @@ static bool jit_copy_source(vaddr_t pc, uint32_t len, uint8_t *dst) {
   return true;
 }
 
+/* Convert a PMEM address into the source-page bitmap index used for invalidation. */
 static bool jit_paddr_source_page(paddr_t addr, size_t *page) {
   if (!in_pmem(addr)) return false;
 
@@ -829,6 +1040,7 @@ static bool jit_paddr_source_page(paddr_t addr, size_t *page) {
   return true;
 }
 
+/* Check that a physical byte range is non-empty, non-wrapping, and inside PMEM. */
 static bool jit_pmem_range(paddr_t addr, uint32_t len) {
   if (len == 0) return false;
 
@@ -836,10 +1048,17 @@ static bool jit_pmem_range(paddr_t addr, uint32_t len) {
   return end >= addr && likely(in_pmem(addr) && in_pmem(end));
 }
 
+/* Return true when an access reaches past the end of its current 4 KiB page. */
 static bool jit_cross_page(vaddr_t addr, uint32_t len) {
   return len == 0 || (uint32_t)(addr & PAGE_MASK) + len > PAGE_SIZE;
 }
 
+/*
+ * Fold paging permission mode into a small DTLB state key: bits 0..1 are CPL,
+ * bit 2 tracks CR0.WP, and bit 3 tracks CR4.PSE.  A change in any of these can
+ * change page-permission or large-page behaviour, so cached translations must
+ * no longer match.
+ */
 static uint32_t jit_dtlb_state(void) {
   uint32_t state = cpu.cs & 0x3u;
 
@@ -848,12 +1067,14 @@ static uint32_t jit_dtlb_state(void) {
   return state;
 }
 
+/* Hash virtual page, CR3 key, and permission state into the power-of-two DTLB. */
 static uint32_t jit_dtlb_index(uint32_t vpn, uint32_t cr3_key,
     uint32_t state) {
   return (vpn ^ (vpn >> 10) ^ (cr3_key >> PAGE_SHIFT) ^ state) &
       (X86_JIT_DTLB_SIZE - 1u);
 }
 
+/* Drop all private data translations and page-table reverse markers. */
 static void jit_dtlb_flush(void) {
   memset(jit_dtlb, 0, sizeof(jit_dtlb));
   memset(jit_page_table_page_has_mapping, 0,
@@ -861,6 +1082,7 @@ static void jit_dtlb_flush(void) {
   JIT_STAT_INC(dtlb_flushes);
 }
 
+/* Remember that a PMEM page was used as a page directory/table page. */
 static void jit_mark_page_table_paddr(paddr_t addr) {
   size_t page = 0;
   if (jit_paddr_source_page(addr, &page)) {
@@ -868,6 +1090,7 @@ static void jit_mark_page_table_paddr(paddr_t addr) {
   }
 }
 
+/* Quickly reject PMEM writes that cannot touch any page table used by DTLB entries. */
 static bool jit_range_may_touch_page_table_pages(paddr_t addr, int len) {
   if (len <= 0) return false;
 
@@ -893,6 +1116,11 @@ static bool jit_range_may_touch_page_table_pages(paddr_t addr, int len) {
   return false;
 }
 
+/*
+ * Record page-directory and page-table pages walked for `addr`.  The inline DTLB
+ * handles only 4 KiB leaves; 4 MiB PDE.PS translations fall back to the MMU so
+ * reserved-bit and large-page semantics stay exact.
+ */
 static bool jit_dtlb_mark_page_tables(vaddr_t addr) {
   if (!jit_paging_enabled()) return true;
 
@@ -921,6 +1149,7 @@ static bool jit_dtlb_mark_page_tables(vaddr_t addr) {
   return (pte & X86_PTE_P) != 0;
 }
 
+/* Count a DTLB miss/fallback and signal generated code to use the slow path. */
 static void *jit_dtlb_fallback(void) {
   JIT_STAT_INC(dtlb_fallbacks);
   return NULL;
@@ -946,6 +1175,11 @@ static void *jit_dtlb_translate(const x86_jit_insn_t *insn, uint32_t addr,
   x86_jit_dtlb_entry_t *entry =
       &jit_dtlb[jit_dtlb_index(vpn, cr3_key, state)];
 
+  /*
+   * A DTLB hit still checks PMEM bounds and self-modifying-code/page-table
+   * hazards before returning a host pointer.  Writes that may stale code or
+   * page walks must use the slow path so the normal invalidation hooks run.
+   */
   if (likely(entry->valid &&
              entry->cr3_key == cr3_key &&
              entry->state == state &&
@@ -990,24 +1224,29 @@ static void *jit_dtlb_translate(const x86_jit_insn_t *insn, uint32_t addr,
   return guest_to_host(pa);
 }
 
+/* Convert a hot-cache pointer to its index for cold-side arrays and reverse maps. */
 static uint32_t jit_block_index(const x86_jit_block_t *block) {
   return (uint32_t)(block - jit_cache);
 }
 
+/* Return the cold payload paired with a hot block entry. */
 static x86_jit_block_cold_t *jit_block_cold(x86_jit_block_t *block) {
   return &jit_cache_cold[jit_block_index(block)];
 }
 
+/* Const version of jit_block_cold() for lookup/validation paths. */
 static const x86_jit_block_cold_t *jit_block_cold_const(
     const x86_jit_block_t *block) {
   return &jit_cache_cold[jit_block_index(block)];
 }
 
+/* Advance the global cache generation, keeping zero as the invalid sentinel. */
 static void jit_cache_bump_generation(void) {
   jit_cache_generation++;
   if (jit_cache_generation == 0) jit_cache_generation = 1;
 }
 
+/* Add one block to a source-page reverse map, or mark overflow for scan fallback. */
 static void jit_source_page_add_block(size_t page, uint32_t block_index) {
   if (page >= X86_JIT_SOURCE_PAGE_COUNT) return;
 
@@ -1028,6 +1267,7 @@ static void jit_source_page_add_block(size_t page, uint32_t block_index) {
   jit_source_page_has_code[page] = true;
 }
 
+/* Remove one block from a source-page reverse map after discard/invalidation. */
 static void jit_source_page_remove_block(size_t page, uint32_t block_index) {
   if (page >= X86_JIT_SOURCE_PAGE_COUNT) return;
 
@@ -1045,6 +1285,7 @@ static void jit_source_page_remove_block(size_t page, uint32_t block_index) {
   }
 }
 
+/* Detach a block from every PMEM source-page reverse map it registered. */
 static void jit_block_unregister_source_pages(x86_jit_block_t *block) {
   x86_jit_block_cold_t *cold = jit_block_cold(block);
   if (cold->source_page_count == 0) return;
@@ -1056,6 +1297,7 @@ static void jit_block_unregister_source_pages(x86_jit_block_t *block) {
   cold->source_page_count = 0;
 }
 
+/* Register one PMEM source page for precise invalidation of this block. */
 static void jit_block_register_source_page(x86_jit_block_t *block,
     size_t page) {
   x86_jit_block_cold_t *cold = jit_block_cold(block);
@@ -1074,6 +1316,7 @@ static void jit_block_register_source_page(x86_jit_block_t *block,
   jit_source_page_add_block(page, jit_block_index(block));
 }
 
+/* Coalesce adjacent PMEM source bytes into a small set of precise ranges. */
 static void jit_block_register_source_range(x86_jit_block_t *block,
     paddr_t pa) {
   x86_jit_block_cold_t *cold = jit_block_cold(block);
@@ -1095,6 +1338,7 @@ static void jit_block_register_source_range(x86_jit_block_t *block,
       (x86_jit_source_range_t){ .start = pa, .end = pa };
 }
 
+/* Register the physical bytes reached by a guest virtual instruction range. */
 static void jit_register_source_vaddr_range(x86_jit_block_t *block,
     vaddr_t pc, uint32_t len) {
   if (len == 0) return;
@@ -1135,6 +1379,7 @@ static void jit_register_source_vaddr_range(x86_jit_block_t *block,
   }
 }
 
+/* Reset and register source-byte reverse maps for one linear block. */
 static void jit_mark_source_pages(x86_jit_block_t *block, vaddr_t pc,
     uint32_t len) {
   x86_jit_block_cold_t *cold = jit_block_cold(block);
@@ -1145,6 +1390,7 @@ static void jit_mark_source_pages(x86_jit_block_t *block, vaddr_t pc,
   jit_register_source_vaddr_range(block, pc, len);
 }
 
+/* Reset and register source-byte reverse maps for all spans in a trace block. */
 static void jit_mark_trace_source_pages(x86_jit_block_t *block) {
   x86_jit_block_cold_t *cold = jit_block_cold(block);
   cold->source_page_count = 0;
@@ -1158,18 +1404,24 @@ static void jit_mark_trace_source_pages(x86_jit_block_t *block) {
   }
 }
 
+/* Mark one block invalid and unpatch all direct edges that target it. */
 static void jit_block_invalidate(x86_jit_block_t *block) {
-  if (block->valid) jit_unpatch_incoming_edges(block);
+  if (block->valid) {
+    jit_ret_cache_clear();
+    jit_unpatch_incoming_edges(block);
+  }
   if (block->valid) jit_block_unregister_source_pages(block);
   block->valid = false;
   jit_cache_bump_generation();
 }
 
+/* Fully remove one block from lookup and source-page reverse indexes. */
 static void jit_block_discard(x86_jit_block_t *block) {
   jit_block_invalidate(block);
   memset(block, 0, sizeof(*block));
 }
 
+/* Return true when a PMEM write range may overlap any translated source page. */
 static bool jit_range_may_touch_source_pages(paddr_t addr, int len) {
   if (len <= 0) return false;
 
@@ -1243,19 +1495,23 @@ static bool jit_block_source_overlaps_paddr_range(
   return false;
 }
 
+/* Build an all-ones mask for an 8-, 16-, or 32-bit guest operand. */
 static uint32_t jit_width_mask(uint8_t width) {
   return width == X86_WIDTH_DWORD ? X86_DWORD_LIMIT :
       ((1u << (width * 8u)) - 1u);
 }
 
+/* Return the top bit of the selected guest operand width. */
 static uint32_t jit_sign_bit(uint8_t width) {
   return 1u << (width * 8u - 1u);
 }
 
+/* Truncate a value exactly as an IA-32 destination write of this width would. */
 static uint32_t jit_mask_width(uint32_t val, uint8_t width) {
   return val & jit_width_mask(width);
 }
 
+/* Sign-extend an 8-, 16-, or 32-bit guest value into the uint32_t working type. */
 static uint32_t jit_sign_extend(uint32_t val, uint8_t width) {
   switch (width) {
     case X86_WIDTH_BYTE: return (uint32_t)(int32_t)(int8_t)val;
@@ -1265,6 +1521,7 @@ static uint32_t jit_sign_extend(uint32_t val, uint8_t width) {
   }
 }
 
+/* View the low guest-width bits as a signed value for overflow/divide checks. */
 static int64_t jit_signed_width(uint32_t val, uint8_t width) {
   switch (width) {
     case X86_WIDTH_BYTE: return (int8_t)val;
@@ -1274,22 +1531,26 @@ static int64_t jit_signed_width(uint32_t val, uint8_t width) {
   }
 }
 
+/* Test one architectural EFLAGS bit. */
 static bool jit_flag_get(uint32_t flag) {
   return (cpu.eflags & flag) != 0;
 }
 
+/* Set or clear one architectural EFLAGS bit while preserving Intel's fixed bit 1. */
 static void jit_flag_set(uint32_t flag, bool val) {
   if (val) cpu.eflags |= flag;
   else cpu.eflags &= ~flag;
   cpu.eflags |= X86_EFLAGS_FIXED_ONE;
 }
 
+/* Return true when the low byte contains an even number of one bits. */
 static bool jit_parity_even(uint8_t val) {
   val ^= val >> 4;
   val &= X86_PARITY_FOLD_NIBBLE_MASK;
   return ((X86_PARITY_FOLD_TABLE >> val) & 1u) == 0;
 }
 
+/* Set ZF/SF/PF from a result; these are common to arithmetic and logical ops. */
 static void jit_set_zsp_flags(uint32_t result, uint8_t width) {
   result = jit_mask_width(result, width);
   jit_flag_set(X86_FLAG_ZF, result == 0);
@@ -1297,6 +1558,7 @@ static void jit_set_zsp_flags(uint32_t result, uint8_t width) {
   jit_flag_set(X86_FLAG_PF, jit_parity_even(result & X86_BYTE_MASK));
 }
 
+/* Set flags for ADD-like operations: CF is unsigned carry, OF is signed overflow. */
 static void jit_set_add_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
     uint8_t width) {
   const uint32_t mask = jit_width_mask(width);
@@ -1312,6 +1574,7 @@ static void jit_set_add_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
   jit_flag_set(X86_FLAG_OF, ((~(l ^ r) & (l ^ res) & sign) != 0));
 }
 
+/* Set flags for SUB/CMP-like operations; CF represents an unsigned borrow. */
 static void jit_set_sub_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
     uint8_t width) {
   const uint32_t mask = jit_width_mask(width);
@@ -1326,6 +1589,7 @@ static void jit_set_sub_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
   jit_flag_set(X86_FLAG_OF, (((l ^ r) & (l ^ res) & sign) != 0));
 }
 
+/* Set flags for ADC, including the incoming carry in both unsigned and signed tests. */
 static void jit_set_adc_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
     uint8_t width, uint32_t carry) {
   const uint32_t mask = jit_width_mask(width);
@@ -1344,6 +1608,7 @@ static void jit_set_adc_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
   jit_flag_set(X86_FLAG_OF, signed_raw < min || signed_raw > max);
 }
 
+/* Set flags for SBB, where CF contributes one extra unit to the subtrahend. */
 static void jit_set_sbb_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
     uint8_t width, uint32_t carry) {
   const uint32_t mask = jit_width_mask(width);
@@ -1362,6 +1627,7 @@ static void jit_set_sbb_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
   jit_flag_set(X86_FLAG_OF, signed_raw < min || signed_raw > max);
 }
 
+/* Logical operations define ZF/SF/PF and clear CF/OF/AF in this model. */
 static void jit_set_logic_flags(uint32_t result, uint8_t width) {
   jit_set_zsp_flags(result, width);
   jit_flag_set(X86_FLAG_CF, false);
@@ -1375,6 +1641,7 @@ static uint32_t jit_rm_read(const x86_jit_insn_t *insn, uint8_t width);
 static void jit_rm_write_defer_flags(const x86_jit_insn_t *insn, uint8_t width,
     uint32_t data, uint32_t old_eflags, uint32_t new_eflags);
 
+/* Execute one IA-32 Group-1 ALU operation in the helper path. */
 static uint32_t jit_alu_exec(uint8_t op, uint32_t lhs, uint32_t rhs,
     uint8_t width) {
   uint32_t result = 0;
@@ -1420,6 +1687,11 @@ static uint32_t jit_alu_exec(uint8_t op, uint32_t lhs, uint32_t rhs,
   return jit_mask_width(result, width);
 }
 
+/*
+ * Helper implementation for Group-2 shifts and rotates.  The /reg field uses
+ * Intel order: 0 ROL, 1 ROR, 2 RCL, 3 RCR, 4 SHL/SAL, 5 SHR, 6 SHL/SAL alias,
+ * 7 SAR.
+ */
 static void jit_shift_rm(const x86_jit_insn_t *insn) {
   uint32_t count = insn->count_from_cl ? reg_b(R_ECX) : insn->imm;
   count &= X86_SHIFT_COUNT_MASK;
@@ -1534,6 +1806,7 @@ static void jit_shift_rm(const x86_jit_insn_t *insn) {
       old_eflags, new_eflags);
 }
 
+/* Signed two-operand IMUL: write the truncated low half and flag truncation. */
 static void jit_imul_reg_rm(const x86_jit_insn_t *insn) {
   const int64_t lhs = jit_signed_width(jit_reg_read(insn->dst, insn->width),
       insn->width);
@@ -1548,6 +1821,7 @@ static void jit_imul_reg_rm(const x86_jit_insn_t *insn) {
   jit_flag_set(X86_FLAG_OF, truncated);
 }
 
+/* Unsigned one-operand MUL: implicit AL/AX/EAX times r/m, high half sets CF/OF. */
 static void jit_mul_rm(const x86_jit_insn_t *insn) {
   const uint32_t lhs = jit_rm_read(insn, insn->width);
   bool high_nonzero = false;
@@ -1575,6 +1849,7 @@ static void jit_mul_rm(const x86_jit_insn_t *insn) {
   jit_flag_set(X86_FLAG_OF, high_nonzero);
 }
 
+/* Signed one-operand IMUL with implicit accumulator and high-half truncation flags. */
 static void jit_imul_acc_rm(const x86_jit_insn_t *insn) {
   const uint32_t lhs = jit_rm_read(insn, insn->width);
   bool truncated = false;
@@ -1602,6 +1877,7 @@ static void jit_imul_acc_rm(const x86_jit_insn_t *insn) {
   jit_flag_set(X86_FLAG_OF, truncated);
 }
 
+/* Unsigned DIV helper for the implicit AX, DX:AX, or EDX:EAX dividend forms. */
 static void jit_div_rm(const x86_jit_insn_t *insn) {
   const uint32_t lhs = jit_rm_read(insn, insn->width);
 
@@ -1640,6 +1916,7 @@ static void jit_div_rm(const x86_jit_insn_t *insn) {
   }
 }
 
+/* Signed IDIV helper for the implicit AX, DX:AX, or EDX:EAX dividend forms. */
 static void jit_idiv_rm(const x86_jit_insn_t *insn) {
   const uint32_t lhs = jit_rm_read(insn, insn->width);
 
@@ -1685,6 +1962,7 @@ static void jit_idiv_rm(const x86_jit_insn_t *insn) {
   }
 }
 
+/* Evaluate Intel's condition-code formulas against materialised guest EFLAGS. */
 static bool jit_cc_eval(uint8_t cc) {
   const bool cf = jit_flag_get(X86_FLAG_CF);
   const bool zf = jit_flag_get(X86_FLAG_ZF);
@@ -1713,6 +1991,7 @@ static bool jit_cc_eval(uint8_t cc) {
   }
 }
 
+/* Read a guest GPR at the selected byte/word/dword width. */
 static uint32_t jit_reg_read(uint8_t reg, uint8_t width) {
   switch (width) {
     case X86_WIDTH_BYTE: return reg_b(reg);
@@ -1722,6 +2001,7 @@ static uint32_t jit_reg_read(uint8_t reg, uint8_t width) {
   }
 }
 
+/* Write a guest GPR at the selected byte/word/dword width. */
 static void jit_reg_write(uint8_t reg, uint8_t width, uint32_t data) {
   switch (width) {
     case X86_WIDTH_BYTE: reg_b(reg) = data; return;
@@ -1731,14 +2011,17 @@ static void jit_reg_write(uint8_t reg, uint8_t width, uint32_t data) {
   }
 }
 
+/* Read guest memory through the architectural virtual-memory path. */
 static uint32_t jit_mem_read(vaddr_t addr, uint8_t width) {
   return vaddr_read(addr, width);
 }
 
+/* Write guest memory through the architectural virtual-memory path. */
 static void jit_mem_write(vaddr_t addr, uint8_t width, uint32_t data) {
   vaddr_write(addr, width, data);
 }
 
+/* Compute a 32-bit IA-32 effective address: base + index * scale + displacement. */
 static uint32_t jit_ea_addr(const x86_jit_insn_t *insn) {
   uint32_t addr = insn->ea.disp;
 
@@ -1752,6 +2035,7 @@ static uint32_t jit_ea_addr(const x86_jit_insn_t *insn) {
   return addr;
 }
 
+/* Read a decoded ModR/M r/m operand from either a register or memory. */
 static uint32_t jit_rm_read(const x86_jit_insn_t *insn, uint8_t width) {
   if (insn->rm_is_reg) {
     return jit_reg_read(insn->rm_reg, width);
@@ -1760,6 +2044,7 @@ static uint32_t jit_rm_read(const x86_jit_insn_t *insn, uint8_t width) {
   return jit_mem_read(jit_ea_addr(insn), width);
 }
 
+/* Write a decoded ModR/M r/m operand to either a register or memory. */
 static void jit_rm_write(const x86_jit_insn_t *insn, uint8_t width,
     uint32_t data) {
   if (insn->rm_is_reg) {
@@ -1770,6 +2055,11 @@ static void jit_rm_write(const x86_jit_insn_t *insn, uint8_t width,
   }
 }
 
+/*
+ * For memory destinations, write the data before committing new EFLAGS.  If the
+ * memory write faults, the guest observes the old flags, matching interpreter
+ * ordering and architectural exception behaviour.
+ */
 static void jit_rm_write_defer_flags(const x86_jit_insn_t *insn, uint8_t width,
     uint32_t data, uint32_t old_eflags, uint32_t new_eflags) {
   if (insn->rm_is_reg) {
@@ -1783,21 +2073,25 @@ static void jit_rm_write_defer_flags(const x86_jit_insn_t *insn, uint8_t width,
   }
 }
 
+/* Push a 32-bit value on the IA-32 stack. */
 static void jit_push32(uint32_t data) {
   cpu.esp -= X86_WIDTH_DWORD;
   jit_mem_write(cpu.esp, X86_WIDTH_DWORD, data);
 }
 
+/* Pop a 32-bit value from the IA-32 stack. */
 static uint32_t jit_pop32(void) {
   uint32_t data = jit_mem_read(cpu.esp, X86_WIDTH_DWORD);
   cpu.esp += X86_WIDTH_DWORD;
   return data;
 }
 
+/* Resolve a decoded relative branch target from next_pc plus signed displacement. */
 static uint32_t jit_branch_target(const x86_jit_insn_t *insn) {
   return (uint32_t)(insn->next_pc + insn->rel);
 }
 
+/* Slow semantic executor for decoded helper-backed instructions. */
 static void jit_helper_exec(const x86_jit_insn_t *insn) {
   uint32_t lhs = 0, rhs = 0, result = 0;
   uint32_t old_eflags = 0, new_eflags = 0;
@@ -1986,12 +2280,21 @@ static void jit_helper_exec(const x86_jit_insn_t *insn) {
   }
 }
 
+/*
+ * Raw x86-64 emitter layer.  The byte constants in these tiny functions are
+ * host-machine opcodes, ModR/M bytes, SIB bytes, prefixes, or immediates.  The
+ * function name is the assembly contract: for example emit_movabs_rdx() emits
+ * `REX.W + BA rd io` for `mov rdx, imm64`, and emit_jcc_rel32_placeholder()
+ * emits `0F 80+cc rel32` with the displacement patched later.
+ */
+/* Append one byte to the native code buffer. */
 static bool emit_u8(x86_jit_writer_t *w, uint8_t value) {
   if (w->cur >= w->end) return false;
   *w->cur++ = value;
   return true;
 }
 
+/* Append a little-endian 32-bit immediate/displacement. */
 static bool emit_u32(x86_jit_writer_t *w, uint32_t value) {
   for (uint32_t i = 0; i < 4; i++) {
     if (!emit_u8(w, (uint8_t)(value >> (i * 8)))) return false;
@@ -1999,6 +2302,7 @@ static bool emit_u32(x86_jit_writer_t *w, uint32_t value) {
   return true;
 }
 
+/* Append a little-endian 64-bit immediate/displacement. */
 static bool emit_u64(x86_jit_writer_t *w, uint64_t value) {
   for (uint32_t i = 0; i < 8; i++) {
     if (!emit_u8(w, (uint8_t)(value >> (i * 8)))) return false;
@@ -2006,35 +2310,47 @@ static bool emit_u64(x86_jit_writer_t *w, uint64_t value) {
   return true;
 }
 
+/* Emit host code for movabs rdx; bytes below are x86-64 encodings. */
 static bool emit_movabs_rdx(x86_jit_writer_t *w, uint64_t value) {
   return emit_u8(w, 0x48) && emit_u8(w, 0xba) && emit_u64(w, value);
 }
 
+/* Emit host code for movabs rax; bytes below are x86-64 encodings. */
 static bool emit_movabs_rax(x86_jit_writer_t *w, uint64_t value) {
   return emit_u8(w, 0x48) && emit_u8(w, 0xb8) && emit_u64(w, value);
 }
 
+/* Emit host code for mov eax moffs64; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_moffs64(x86_jit_writer_t *w, uint64_t addr) {
   return emit_u8(w, 0xa1) && emit_u64(w, addr);
 }
 
+/* Emit host code for mov moffs64 eax; bytes below are x86-64 encodings. */
 static bool emit_mov_moffs64_eax(x86_jit_writer_t *w, uint64_t addr) {
   return emit_u8(w, 0xa3) && emit_u64(w, addr);
 }
 
+/* Emit host code for movabs rdi; bytes below are x86-64 encodings. */
 static bool emit_movabs_rdi(x86_jit_writer_t *w, uint64_t value) {
   return emit_u8(w, 0x48) && emit_u8(w, 0xbf) && emit_u64(w, value);
 }
 
+/* Emit host code for mov r10 r13; bytes below are x86-64 encodings. */
 static bool emit_mov_r10_r13(x86_jit_writer_t *w) {
   return emit_u8(w, 0x4d) && emit_u8(w, 0x89) && emit_u8(w, 0xea);
 }
 
+/* Emit host code for mov r10 r15; bytes below are x86-64 encodings. */
 static bool emit_mov_r10_r15(x86_jit_writer_t *w) {
   return emit_u8(w, 0x4d) && emit_u8(w, 0x89) && emit_u8(w, 0xfa);
 }
 
+/* Emit host code for movabs r10; bytes below are x86-64 encodings. */
 static bool emit_movabs_r10(x86_jit_writer_t *w, uint64_t value) {
+  /*
+   * The batch trampoline pins PMEM and source-bitmap bases in callee-saved
+   * registers.  Reusing r13/r15 avoids repeated 64-bit immediates in hot code.
+   */
   if (jit_batch_trampoline_enabled && !jit_paging_enabled()) {
     if (value == (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) {
       return emit_mov_r10_r13(w);
@@ -2047,42 +2363,80 @@ static bool emit_movabs_r10(x86_jit_writer_t *w, uint64_t value) {
   return emit_u8(w, 0x49) && emit_u8(w, 0xba) && emit_u64(w, value);
 }
 
+/* Emit host code for mov r10 ret cache base; bytes below are x86-64 encodings. */
+static bool emit_mov_r10_ret_cache_base(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x49) && emit_u8(w, 0xba) &&
+         emit_u64(w, (uint64_t)(uintptr_t)jit_ret_cache);
+}
+
+/* Emit host code for movabs r11; bytes below are x86-64 encodings. */
 static bool emit_movabs_r11(x86_jit_writer_t *w, uint64_t value) {
   return emit_u8(w, 0x49) && emit_u8(w, 0xbb) && emit_u64(w, value);
 }
 
+/* Emit host code for call rax; bytes below are x86-64 encodings. */
 static bool emit_call_rax(x86_jit_writer_t *w) {
   return emit_u8(w, 0xff) && emit_u8(w, 0xd0);
 }
 
+/* Emit host code for push rdi; bytes below are x86-64 encodings. */
 static bool emit_push_rdi(x86_jit_writer_t *w) {
   return emit_u8(w, 0x57);
 }
 
+/* Emit host code for pop rdi; bytes below are x86-64 encodings. */
 static bool emit_pop_rdi(x86_jit_writer_t *w) {
   return emit_u8(w, 0x5f);
 }
 
+/* Emit host code for push rsi; bytes below are x86-64 encodings. */
+static bool emit_push_rsi(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x56);
+}
+
+/* Emit host code for pop rsi; bytes below are x86-64 encodings. */
+static bool emit_pop_rsi(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x5e);
+}
+
+/* Emit host code for sub rsp imm8; bytes below are x86-64 encodings. */
+static bool emit_sub_rsp_imm8(x86_jit_writer_t *w, uint8_t value) {
+  return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
+         emit_u8(w, 0xec) && emit_u8(w, value);
+}
+
+/* Emit host code for add rsp imm8; bytes below are x86-64 encodings. */
+static bool emit_add_rsp_imm8(x86_jit_writer_t *w, uint8_t value) {
+  return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
+         emit_u8(w, 0xc4) && emit_u8(w, value);
+}
+
+/* Emit host code for mov eax imm32; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0xb8) && emit_u32(w, value);
 }
 
+/* Emit host code for mov ecx imm32; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0xb9) && emit_u32(w, value);
 }
 
+/* Emit host code for mov edx imm32; bytes below are x86-64 encodings. */
 static bool emit_mov_edx_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0xba) && emit_u32(w, value);
 }
 
+/* Emit host code for mov r11d imm32; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0x41) && emit_u8(w, 0xbb) && emit_u32(w, value);
 }
 
+/* Emit host code for xor edx edx; bytes below are x86-64 encodings. */
 static bool emit_xor_edx_edx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x31) && emit_u8(w, 0xd2);
 }
 
+/* Emit host code for mov m32 rdx imm32; bytes below are x86-64 encodings. */
 static bool emit_mov_m32_rdx_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0xc7) && emit_u8(w, 0x02) && emit_u32(w, value);
 }
@@ -2094,153 +2448,222 @@ static bool emit_mov_m32_r12_disp32_imm32(x86_jit_writer_t *w,
          emit_u32(w, disp) && emit_u32(w, value);
 }
 
+/* Emit host code for mov ecx m32 rdx; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_m32_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x8b) && emit_u8(w, 0x0a);
 }
 
+/* Emit host code for mov ecx m32 r10; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_m32_r10(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x8b) && emit_u8(w, 0x0a);
 }
 
+/* Emit host code for mov ecx m32 r11; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_m32_r11(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x8b) && emit_u8(w, 0x0b);
 }
 
+/* Emit host code for mov r10d m32 r10; bytes below are x86-64 encodings. */
 static bool emit_mov_r10d_m32_r10(x86_jit_writer_t *w) {
   return emit_u8(w, 0x45) && emit_u8(w, 0x8b) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for mov eax m32 r12 disp32; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_m32_r12_disp32(x86_jit_writer_t *w, uint32_t disp) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
          emit_u8(w, 0x84) && emit_u8(w, 0x24) && emit_u32(w, disp);
 }
 
+/* Emit host code for mov ecx m32 r12 disp32; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_m32_r12_disp32(x86_jit_writer_t *w, uint32_t disp) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
          emit_u8(w, 0x8c) && emit_u8(w, 0x24) && emit_u32(w, disp);
 }
 
+/* Emit host code for mov r11d m32 r12 disp32; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_m32_r12_disp32(x86_jit_writer_t *w, uint32_t disp) {
   return emit_u8(w, 0x45) && emit_u8(w, 0x8b) &&
          emit_u8(w, 0x9c) && emit_u8(w, 0x24) && emit_u32(w, disp);
 }
 
+/* Emit host code for mov m32 r12 disp32 eax; bytes below are x86-64 encodings. */
 static bool emit_mov_m32_r12_disp32_eax(x86_jit_writer_t *w, uint32_t disp) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x89) &&
          emit_u8(w, 0x84) && emit_u8(w, 0x24) && emit_u32(w, disp);
 }
 
+/* Emit host code for mov eax m32 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_m32_r10_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
          emit_u8(w, 0x04) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for mov eax m32 r13 rdx; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_m32_r13_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
          emit_u8(w, 0x44) && emit_u8(w, 0x15) && emit_u8(w, 0x00);
 }
 
+/* Emit host code for mov ecx m32 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_m32_r10_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
          emit_u8(w, 0x0c) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for movzx eax m8 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_movzx_eax_m8_r10_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
          emit_u8(w, 0xb6) && emit_u8(w, 0x04) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for movzx eax m16 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_movzx_eax_m16_r10_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
          emit_u8(w, 0xb7) && emit_u8(w, 0x04) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for movsx eax m8 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_movsx_eax_m8_r10_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
          emit_u8(w, 0xbe) && emit_u8(w, 0x04) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for movsx eax m16 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_movsx_eax_m16_r10_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
          emit_u8(w, 0xbf) && emit_u8(w, 0x04) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for movsx eax al; bytes below are x86-64 encodings. */
 static bool emit_movsx_eax_al(x86_jit_writer_t *w) {
   return emit_u8(w, 0x0f) && emit_u8(w, 0xbe) && emit_u8(w, 0xc0);
 }
 
+/* Emit host code for movsx eax ax; bytes below are x86-64 encodings. */
 static bool emit_movsx_eax_ax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x0f) && emit_u8(w, 0xbf) && emit_u8(w, 0xc0);
 }
 
+/* Emit host code for movzx ecx m8 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_movzx_ecx_m8_r10_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
          emit_u8(w, 0xb6) && emit_u8(w, 0x0c) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for movzx ecx m16 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_movzx_ecx_m16_r10_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
          emit_u8(w, 0xb7) && emit_u8(w, 0x0c) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for mov m8 r10 rdx al; bytes below are x86-64 encodings. */
 static bool emit_mov_m8_r10_rdx_al(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x88) &&
          emit_u8(w, 0x04) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for mov m16 r10 rdx ax; bytes below are x86-64 encodings. */
 static bool emit_mov_m16_r10_rdx_ax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x66) && emit_u8(w, 0x41) && emit_u8(w, 0x89) &&
          emit_u8(w, 0x04) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for mov m32 r10 rdx r11d; bytes below are x86-64 encodings. */
 static bool emit_mov_m32_r10_rdx_r11d(x86_jit_writer_t *w) {
   return emit_u8(w, 0x45) && emit_u8(w, 0x89) &&
          emit_u8(w, 0x1c) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for mov m32 r13 rdx r11d; bytes below are x86-64 encodings. */
 static bool emit_mov_m32_r13_rdx_r11d(x86_jit_writer_t *w) {
   return emit_u8(w, 0x45) && emit_u8(w, 0x89) &&
          emit_u8(w, 0x5c) && emit_u8(w, 0x15) && emit_u8(w, 0x00);
 }
 
+/* Emit host code for mov r11d m32 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_m32_r10_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x45) && emit_u8(w, 0x8b) &&
          emit_u8(w, 0x1c) && emit_u8(w, 0x12);
 }
 
+static bool emit_mov_r11d_m32_r10_rcx_disp8(x86_jit_writer_t *w,
+    uint8_t disp) {
+  return emit_u8(w, 0x45) && emit_u8(w, 0x8b) &&
+         emit_u8(w, 0x5c) && emit_u8(w, 0x0a) && emit_u8(w, disp);
+}
+
+static bool emit_mov_r11_m64_r10_rcx_disp8(x86_jit_writer_t *w,
+    uint8_t disp) {
+  return emit_u8(w, 0x4d) && emit_u8(w, 0x8b) &&
+         emit_u8(w, 0x5c) && emit_u8(w, 0x0a) && emit_u8(w, disp);
+}
+
+/* Emit host code for mov eax m32 r10 disp8; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_m32_r10_disp8(x86_jit_writer_t *w, uint8_t disp) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
          emit_u8(w, 0x42) && emit_u8(w, disp);
 }
 
+/* Emit host code for mov m32 r10 rdx eax; bytes below are x86-64 encodings. */
 static bool emit_mov_m32_r10_rdx_eax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x89) &&
          emit_u8(w, 0x04) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for not m32 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_not_m32_r10_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0xf7) &&
          emit_u8(w, 0x14) && emit_u8(w, 0x12);
 }
 
+/* Emit host code for mov r11d m32 r11; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_m32_r11(x86_jit_writer_t *w) {
   return emit_u8(w, 0x45) && emit_u8(w, 0x8b) && emit_u8(w, 0x1b);
 }
 
+/* Emit host code for add eax m32 rdx; bytes below are x86-64 encodings. */
 static bool emit_add_eax_m32_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x03) && emit_u8(w, 0x02);
 }
 
+/* Emit host code for shl ecx imm; bytes below are x86-64 encodings. */
 static bool emit_shl_ecx_imm(x86_jit_writer_t *w, uint8_t value) {
   return value == 0 || (emit_u8(w, 0xc1) && emit_u8(w, 0xe1) && emit_u8(w, value));
 }
 
+/* Emit host code for add eax ecx; bytes below are x86-64 encodings. */
 static bool emit_add_eax_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x01) && emit_u8(w, 0xc8);
 }
 
+/* Emit host code for sub eax esi; bytes below are x86-64 encodings. */
+static bool emit_sub_eax_esi(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x29) && emit_u8(w, 0xf0);
+}
+
+/* Emit host code for sub ecx esi; bytes below are x86-64 encodings. */
+static bool emit_sub_ecx_esi(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x29) && emit_u8(w, 0xf1);
+}
+
+/* Emit host code for xor ecx eax; bytes below are x86-64 encodings. */
+static bool emit_xor_ecx_eax(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x31) && emit_u8(w, 0xc1);
+}
+
+/* Emit host code for xor ecx r11d; bytes below are x86-64 encodings. */
+static bool emit_xor_ecx_r11d(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x44) && emit_u8(w, 0x31) && emit_u8(w, 0xd9);
+}
+
+/* Emit host code for add eax imm32; bytes below are x86-64 encodings. */
 static bool emit_add_eax_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0x05) && emit_u32(w, value);
+}
+
+/* Emit host code for add esi imm32; bytes below are x86-64 encodings. */
+static bool emit_add_esi_imm32(x86_jit_writer_t *w, uint32_t value) {
+  return emit_u8(w, 0x81) && emit_u8(w, 0xc6) && emit_u32(w, value);
 }
 
 static bool emit_add_eax_imm32_placeholder(x86_jit_writer_t *w,
@@ -2250,107 +2673,163 @@ static bool emit_add_eax_imm32_placeholder(x86_jit_writer_t *w,
   return emit_u32(w, 0);
 }
 
+/* Emit host code for add edx imm32; bytes below are x86-64 encodings. */
 static bool emit_add_edx_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0x81) && emit_u8(w, 0xc2) && emit_u32(w, value);
 }
 
+/* Emit host code for cmp edx imm32; bytes below are x86-64 encodings. */
 static bool emit_cmp_edx_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0x81) && emit_u8(w, 0xfa) && emit_u32(w, value);
 }
 
+/* Emit host code for cmp eax edi; bytes below are x86-64 encodings. */
 static bool emit_cmp_eax_edi(x86_jit_writer_t *w) {
   return emit_u8(w, 0x39) && emit_u8(w, 0xf8);
 }
 
+/* Emit host code for cmp esi edi; bytes below are x86-64 encodings. */
+static bool emit_cmp_esi_edi(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x39) && emit_u8(w, 0xfe);
+}
+
+/* Emit host code for add m64 rdx imm8; bytes below are x86-64 encodings. */
 static bool emit_add_m64_rdx_imm8(x86_jit_writer_t *w, uint8_t value) {
   return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
          emit_u8(w, 0x02) && emit_u8(w, value);
 }
 
+/* Emit host code for mov edx eax; bytes below are x86-64 encodings. */
 static bool emit_mov_edx_eax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x89) && emit_u8(w, 0xc2);
 }
 
+/* Emit host code for mov eax edx; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_edx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x89) && emit_u8(w, 0xd0);
 }
 
+/* Emit host code for mov eax esi; bytes below are x86-64 encodings. */
+static bool emit_mov_eax_esi(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x89) && emit_u8(w, 0xf0);
+}
+
+/* Emit host code for mov esi eax; bytes below are x86-64 encodings. */
 static bool emit_mov_esi_eax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x89) && emit_u8(w, 0xc6);
 }
 
+/* Emit host code for mov r10 rax; bytes below are x86-64 encodings. */
 static bool emit_mov_r10_rax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x49) && emit_u8(w, 0x89) && emit_u8(w, 0xc2);
 }
 
+/* Emit host code for mov eax r11d; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_r11d(x86_jit_writer_t *w) {
   return emit_u8(w, 0x44) && emit_u8(w, 0x89) && emit_u8(w, 0xd8);
 }
 
+/* Emit host code for mov r10d eax; bytes below are x86-64 encodings. */
 static bool emit_mov_r10d_eax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xc2);
 }
 
+/* Emit host code for mov r10d ecx; bytes below are x86-64 encodings. */
 static bool emit_mov_r10d_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xca);
 }
 
+/* Emit host code for mov ecx r10d; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_r10d(x86_jit_writer_t *w) {
   return emit_u8(w, 0x44) && emit_u8(w, 0x89) && emit_u8(w, 0xd1);
 }
 
+/* Emit host code for sub ecx eax; bytes below are x86-64 encodings. */
 static bool emit_sub_ecx_eax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x29) && emit_u8(w, 0xc1);
 }
 
+/* Emit host code for sub eax ecx; bytes below are x86-64 encodings. */
 static bool emit_sub_eax_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x29) && emit_u8(w, 0xc8);
 }
 
+/* Emit host code for mov r11d ecx; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xcb);
 }
 
+/* Emit host code for mov r11d eax; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_eax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xc3);
 }
 
+/* Emit host code for mov r11d esi; bytes below are x86-64 encodings. */
+static bool emit_mov_r11d_esi(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xf3);
+}
+
+/* Emit host code for mov r11d edx; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_edx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xd3);
 }
 
+/* Emit host code for mov edx r11d; bytes below are x86-64 encodings. */
 static bool emit_mov_edx_r11d(x86_jit_writer_t *w) {
   return emit_u8(w, 0x44) && emit_u8(w, 0x89) && emit_u8(w, 0xda);
 }
 
+/* Emit host code for mov ecx r11d; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_r11d(x86_jit_writer_t *w) {
   return emit_u8(w, 0x44) && emit_u8(w, 0x89) && emit_u8(w, 0xd9);
 }
 
+/* Emit host code for mov ecx edx; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_edx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x89) && emit_u8(w, 0xd1);
 }
 
+/* Emit host code for mov ecx eax; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_eax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x89) && emit_u8(w, 0xc1);
 }
 
+/* Emit host code for mov eax ecx; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x89) && emit_u8(w, 0xc8);
 }
 
+/* Emit host code for mov eax edi; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_edi(x86_jit_writer_t *w) {
   return emit_u8(w, 0x89) && emit_u8(w, 0xf8);
 }
 
+/* Emit host code for mov ecx edi; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_edi(x86_jit_writer_t *w) {
   return emit_u8(w, 0x89) && emit_u8(w, 0xf9);
 }
 
+/* Emit host code for cmp edx ecx; bytes below are x86-64 encodings. */
 static bool emit_cmp_edx_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x39) && emit_u8(w, 0xca);
 }
 
+/* Emit host code for cmp r11d eax; bytes below are x86-64 encodings. */
+static bool emit_cmp_r11d_eax(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x41) && emit_u8(w, 0x39) && emit_u8(w, 0xc3);
+}
+
+/* Emit host code for test r11 r11; bytes below are x86-64 encodings. */
+static bool emit_test_r11_r11(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x4d) && emit_u8(w, 0x85) && emit_u8(w, 0xdb);
+}
+
+/* Emit host code for jmp r11; bytes below are x86-64 encodings. */
+static bool emit_jmp_r11(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x41) && emit_u8(w, 0xff) && emit_u8(w, 0xe3);
+}
+
+/* Emit host code for cmp ecx imm32; bytes below are x86-64 encodings. */
 static bool emit_cmp_ecx_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0x81) && emit_u8(w, 0xf9) && emit_u32(w, value);
 }
@@ -2367,82 +2846,106 @@ static bool emit_test_m8_r10_disp8_imm8(x86_jit_writer_t *w, uint8_t disp,
          emit_u8(w, 0x42) && emit_u8(w, disp) && emit_u8(w, value);
 }
 
+/* Emit host code for cmp m32 r10 disp8 ecx; bytes below are x86-64 encodings. */
 static bool emit_cmp_m32_r10_disp8_ecx(x86_jit_writer_t *w, uint8_t disp) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x39) &&
          emit_u8(w, 0x4a) && emit_u8(w, disp);
 }
 
+/* Emit host code for cmp m32 r10 disp8 r11d; bytes below are x86-64 encodings. */
 static bool emit_cmp_m32_r10_disp8_r11d(x86_jit_writer_t *w, uint8_t disp) {
   return emit_u8(w, 0x45) && emit_u8(w, 0x39) &&
          emit_u8(w, 0x5a) && emit_u8(w, disp);
 }
 
+/* Emit host code for test ecx ecx; bytes below are x86-64 encodings. */
 static bool emit_test_ecx_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x85) && emit_u8(w, 0xc9);
 }
 
+/* Emit host code for and ecx imm32; bytes below are x86-64 encodings. */
 static bool emit_and_ecx_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0x81) && emit_u8(w, 0xe1) && emit_u32(w, value);
 }
 
+/* Emit host code for and edx imm32; bytes below are x86-64 encodings. */
 static bool emit_and_edx_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0x81) && emit_u8(w, 0xe2) && emit_u32(w, value);
 }
 
+/* Emit host code for shr ecx imm; bytes below are x86-64 encodings. */
 static bool emit_shr_ecx_imm(x86_jit_writer_t *w, uint8_t value) {
   return value == 0 || (emit_u8(w, 0xc1) && emit_u8(w, 0xe9) && emit_u8(w, value));
 }
 
+/* Emit host code for shr r11d imm; bytes below are x86-64 encodings. */
+static bool emit_shr_r11d_imm(x86_jit_writer_t *w, uint8_t value) {
+  return value == 0 || (emit_u8(w, 0x41) && emit_u8(w, 0xc1) &&
+      emit_u8(w, 0xeb) && emit_u8(w, value));
+}
+
+/* Emit host code for test r10d imm32; bytes below are x86-64 encodings. */
 static bool emit_test_r10d_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0x41) && emit_u8(w, 0xf7) &&
          emit_u8(w, 0xc2) && emit_u32(w, value);
 }
 
+/* Emit host code for imul eax eax imm32; bytes below are x86-64 encodings. */
 static bool emit_imul_eax_eax_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0x69) && emit_u8(w, 0xc0) && emit_u32(w, value);
 }
 
+/* Emit host code for add r10 rax; bytes below are x86-64 encodings. */
 static bool emit_add_r10_rax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x49) && emit_u8(w, 0x01) && emit_u8(w, 0xc2);
 }
 
+/* Emit host code for add rax r10; bytes below are x86-64 encodings. */
 static bool emit_add_rax_r10(x86_jit_writer_t *w) {
   return emit_u8(w, 0x4c) && emit_u8(w, 0x01) && emit_u8(w, 0xd0);
 }
 
+/* Emit host code for or eax edx; bytes below are x86-64 encodings. */
 static bool emit_or_eax_edx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x09) && emit_u8(w, 0xd0);
 }
 
+/* Emit host code for lea r11d r11d disp8; bytes below are x86-64 encodings. */
 static bool emit_lea_r11d_r11d_disp8(x86_jit_writer_t *w, int8_t disp) {
   return emit_u8(w, 0x45) && emit_u8(w, 0x8d) &&
          emit_u8(w, 0x5b) && emit_u8(w, (uint8_t)disp);
 }
 
+/* Emit host code for lea r10d r10d disp8; bytes below are x86-64 encodings. */
 static bool emit_lea_r10d_r10d_disp8(x86_jit_writer_t *w, int8_t disp) {
   return emit_u8(w, 0x45) && emit_u8(w, 0x8d) &&
          emit_u8(w, 0x52) && emit_u8(w, (uint8_t)disp);
 }
 
+/* Emit host code for movzx ecx m8 r10 rcx; bytes below are x86-64 encodings. */
 static bool emit_movzx_ecx_m8_r10_rcx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
          emit_u8(w, 0xb6) && emit_u8(w, 0x0c) && emit_u8(w, 0x0a);
 }
 
+/* Emit host code for movzx ecx m8 r15 rcx; bytes below are x86-64 encodings. */
 static bool emit_movzx_ecx_m8_r15_rcx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
          emit_u8(w, 0xb6) && emit_u8(w, 0x4c) &&
          emit_u8(w, 0x0f) && emit_u8(w, 0x00);
 }
 
+/* Emit host code for pushfq; bytes below are x86-64 encodings. */
 static bool emit_pushfq(x86_jit_writer_t *w) {
   return emit_u8(w, 0x9c);
 }
 
+/* Emit host code for pop rax; bytes below are x86-64 encodings. */
 static bool emit_pop_rax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x58);
 }
 
+/* Emit host code for test eax imm32; bytes below are x86-64 encodings. */
 static bool emit_test_eax_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0xa9) && emit_u32(w, value);
 }
@@ -2462,34 +2965,42 @@ static bool emit_test_eax_imm_width(x86_jit_writer_t *w, uint8_t width,
   return false;
 }
 
+/* Emit host code for test eax ecx; bytes below are x86-64 encodings. */
 static bool emit_test_eax_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x85) && emit_u8(w, 0xc8);
 }
 
+/* Emit host code for test rax rax; bytes below are x86-64 encodings. */
 static bool emit_test_rax_rax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x48) && emit_u8(w, 0x85) && emit_u8(w, 0xc0);
 }
 
+/* Emit host code for test ax cx; bytes below are x86-64 encodings. */
 static bool emit_test_ax_cx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x66) && emit_u8(w, 0x85) && emit_u8(w, 0xc8);
 }
 
+/* Emit host code for test al cl; bytes below are x86-64 encodings. */
 static bool emit_test_al_cl(x86_jit_writer_t *w) {
   return emit_u8(w, 0x84) && emit_u8(w, 0xc8);
 }
 
+/* Emit host code for or eax ecx; bytes below are x86-64 encodings. */
 static bool emit_or_eax_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x09) && emit_u8(w, 0xc8);
 }
 
+/* Emit host code for imul eax ecx; bytes below are x86-64 encodings. */
 static bool emit_imul_eax_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x0f) && emit_u8(w, 0xaf) && emit_u8(w, 0xc1);
 }
 
+/* Emit host code for mul ecx; bytes below are x86-64 encodings. */
 static bool emit_mul_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0xf7) && emit_u8(w, 0xe1);
 }
 
+/* Emit host code for imul acc ecx; bytes below are x86-64 encodings. */
 static bool emit_imul_acc_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0xf7) && emit_u8(w, 0xe9);
 }
@@ -2501,6 +3012,7 @@ static bool emit_shift_eax_imm(x86_jit_writer_t *w, uint8_t shift_op,
          emit_u8(w, count);
 }
 
+/* Emit host code for shift eax cl; bytes below are x86-64 encodings. */
 static bool emit_shift_eax_cl(x86_jit_writer_t *w, uint8_t shift_op) {
   return emit_u8(w, 0xd3) &&
          emit_u8(w, (uint8_t)(0xc0u | ((shift_op & 0x7u) << 3)));
@@ -2514,10 +3026,12 @@ static bool emit_double_shift_eax_ecx_imm(x86_jit_writer_t *w,
          emit_u8(w, count);
 }
 
+/* Emit host code for not eax; bytes below are x86-64 encodings. */
 static bool emit_not_eax(x86_jit_writer_t *w) {
   return emit_u8(w, 0xf7) && emit_u8(w, 0xd0);
 }
 
+/* Emit host code for neg eax width; bytes below are x86-64 encodings. */
 static bool emit_neg_eax_width(x86_jit_writer_t *w, uint8_t width) {
   if (width == X86_WIDTH_DWORD) {
     return emit_u8(w, 0xf7) && emit_u8(w, 0xd8);
@@ -2531,14 +3045,17 @@ static bool emit_neg_eax_width(x86_jit_writer_t *w, uint8_t width) {
   return false;
 }
 
+/* Emit host code for div ecx; bytes below are x86-64 encodings. */
 static bool emit_div_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0xf7) && emit_u8(w, 0xf1);
 }
 
+/* Emit host code for cdq host; bytes below are x86-64 encodings. */
 static bool emit_cdq_host(x86_jit_writer_t *w) {
   return emit_u8(w, 0x99);
 }
 
+/* Emit host code for ret; bytes below are x86-64 encodings. */
 static bool emit_ret(x86_jit_writer_t *w) {
   return emit_u8(w, 0xc3);
 }
@@ -2550,18 +3067,21 @@ static bool emit_jcc_rel32_placeholder(x86_jit_writer_t *w, uint8_t cc,
   return emit_u32(w, 0);
 }
 
+/* Emit host code for jmp rel32 placeholder; bytes below are x86-64 encodings. */
 static bool emit_jmp_rel32_placeholder(x86_jit_writer_t *w, uint8_t **disp) {
   if (!emit_u8(w, 0xe9)) return false;
   *disp = w->cur;
   return emit_u32(w, 0);
 }
 
+/* Emit host code for jrcxz rel8 placeholder; bytes below are x86-64 encodings. */
 static bool emit_jrcxz_rel8_placeholder(x86_jit_writer_t *w, uint8_t **disp) {
   if (!emit_u8(w, 0xe3)) return false;
   *disp = w->cur;
   return emit_u8(w, 0);
 }
 
+/* Patch a reserved relative branch displacement to reach target. */
 static bool patch_rel8(uint8_t *disp, const uint8_t *target) {
   const int64_t rel = (int64_t)(target - (disp + 1));
   if (rel < INT8_MIN || rel > INT8_MAX) return false;
@@ -2570,6 +3090,7 @@ static bool patch_rel8(uint8_t *disp, const uint8_t *target) {
   return true;
 }
 
+/* Patch a reserved relative branch displacement to reach target. */
 static bool patch_rel32(uint8_t *disp, const uint8_t *target) {
   const int64_t rel = (int64_t)(target - (disp + 4));
   if (rel < INT32_MIN || rel > INT32_MAX) return false;
@@ -2581,16 +3102,19 @@ static bool patch_rel32(uint8_t *disp, const uint8_t *target) {
   return true;
 }
 
+/* Patch a reserved little-endian 32-bit immediate field. */
 static void patch_u32(uint8_t *dst, uint32_t value) {
   for (uint32_t i = 0; i < 4; i++) {
     dst[i] = (uint8_t)(value >> (i * 8));
   }
 }
 
+/* Return true when generated code can address CPU_state through r12. */
 static bool jit_batch_cpu_base_available(void) {
   return jit_batch_trampoline_enabled && !jit_paging_enabled();
 }
 
+/* Convert an absolute CPU_state member address to a signed disp32 offset. */
 static bool jit_cpu_disp32(uintptr_t addr, uint32_t *disp) {
   const intptr_t delta = (intptr_t)(addr - (uintptr_t)&cpu);
   if (delta < INT32_MIN || delta > INT32_MAX) return false;
@@ -2598,15 +3122,24 @@ static bool jit_cpu_disp32(uintptr_t addr, uint32_t *disp) {
   return true;
 }
 
+/* Emit host code for ret count; bytes below are x86-64 encodings. */
 static bool emit_ret_count(x86_jit_writer_t *w, uint32_t count) {
+  if (jit_fast_chain_runtime_enabled()) {
+    return emit_mov_eax_esi(w) &&
+           emit_add_eax_imm32(w, count) &&
+           emit_u8(w, 0xc3);
+  }
+
   return emit_mov_eax_imm32(w, count) && emit_u8(w, 0xc3);
 }
 
+/* Return the CPU_state address of one 32-bit guest GPR. */
 static uintptr_t jit_gpr_addr(uint8_t reg) {
   Assert(reg < 8, "bad x86 JIT register %u", reg);
   return (uintptr_t)&cpu.gpr[reg]._32;
 }
 
+/* Emit host code for store reg imm; bytes below are x86-64 encodings. */
 static bool emit_store_reg_imm(x86_jit_writer_t *w, uint8_t reg, uint32_t value) {
   JIT_STAT_INC(guest_gpr_stores_emitted);
   uint32_t disp = 0;
@@ -2617,6 +3150,7 @@ static bool emit_store_reg_imm(x86_jit_writer_t *w, uint8_t reg, uint32_t value)
          emit_mov_m32_rdx_imm32(w, value);
 }
 
+/* Emit host code for load reg eax; bytes below are x86-64 encodings. */
 static bool emit_load_reg_eax(x86_jit_writer_t *w, uint8_t reg) {
   JIT_STAT_INC(guest_gpr_loads_emitted);
   uint32_t disp = 0;
@@ -2626,6 +3160,7 @@ static bool emit_load_reg_eax(x86_jit_writer_t *w, uint8_t reg) {
   return emit_mov_eax_moffs64(w, jit_gpr_addr(reg));
 }
 
+/* Emit host code for load reg ecx; bytes below are x86-64 encodings. */
 static bool emit_load_reg_ecx(x86_jit_writer_t *w, uint8_t reg) {
   JIT_STAT_INC(guest_gpr_loads_emitted);
   uint32_t disp = 0;
@@ -2636,10 +3171,12 @@ static bool emit_load_reg_ecx(x86_jit_writer_t *w, uint8_t reg) {
          emit_mov_ecx_m32_rdx(w);
 }
 
+/* Emit host code for load reg edx; bytes below are x86-64 encodings. */
 static bool emit_load_reg_edx(x86_jit_writer_t *w, uint8_t reg) {
   return emit_load_reg_eax(w, reg) && emit_mov_edx_eax(w);
 }
 
+/* Emit host code for load reg r11d; bytes below are x86-64 encodings. */
 static bool emit_load_reg_r11d(x86_jit_writer_t *w, uint8_t reg) {
   JIT_STAT_INC(guest_gpr_loads_emitted);
   uint32_t disp = 0;
@@ -2650,6 +3187,7 @@ static bool emit_load_reg_r11d(x86_jit_writer_t *w, uint8_t reg) {
          emit_mov_r11d_m32_r11(w);
 }
 
+/* Emit host code for store reg eax; bytes below are x86-64 encodings. */
 static bool emit_store_reg_eax(x86_jit_writer_t *w, uint8_t reg) {
   JIT_STAT_INC(guest_gpr_stores_emitted);
   uint32_t disp = 0;
@@ -2659,6 +3197,7 @@ static bool emit_store_reg_eax(x86_jit_writer_t *w, uint8_t reg) {
   return emit_mov_moffs64_eax(w, jit_gpr_addr(reg));
 }
 
+/* Emit a 32-bit REX prefix when either selected host register is r8..r15. */
 static bool emit_rex32_reg_rm(x86_jit_writer_t *w, uint8_t reg,
     uint8_t rm) {
   uint8_t rex = 0x40u;
@@ -2667,12 +3206,14 @@ static bool emit_rex32_reg_rm(x86_jit_writer_t *w, uint8_t reg,
   return rex == 0x40u || emit_u8(w, rex);
 }
 
+/* Emit a register-direct ModR/M byte: mod=3, reg field, and r/m field. */
 static bool emit_modrm_reg_reg(x86_jit_writer_t *w, uint8_t reg,
     uint8_t rm) {
   return emit_u8(w, (uint8_t)(0xc0u | ((reg & 0x7u) << 3) |
       (rm & 0x7u)));
 }
 
+/* Emit `mov r32, imm32` for any host register encoded by the low three bits. */
 static bool emit_mov_host_imm32(x86_jit_writer_t *w, uint8_t host,
     uint32_t value) {
   if (host >= 8u && !emit_u8(w, 0x41)) return false;
@@ -2680,6 +3221,7 @@ static bool emit_mov_host_imm32(x86_jit_writer_t *w, uint8_t host,
          emit_u32(w, value);
 }
 
+/* Emit a 32-bit host-register copy. */
 static bool emit_mov_host_host(x86_jit_writer_t *w, uint8_t dst,
     uint8_t src) {
   return emit_rex32_reg_rm(w, src, dst) &&
@@ -2687,6 +3229,7 @@ static bool emit_mov_host_host(x86_jit_writer_t *w, uint8_t dst,
          emit_modrm_reg_reg(w, src, dst);
 }
 
+/* Emit a 32-bit host-register ALU operation using the Intel Group-1 order. */
 static bool emit_alu_host_host(x86_jit_writer_t *w, uint8_t alu_op,
     uint8_t dst, uint8_t src) {
   uint8_t opcode = 0;
@@ -2707,6 +3250,7 @@ static bool emit_alu_host_host(x86_jit_writer_t *w, uint8_t alu_op,
          emit_modrm_reg_reg(w, src, dst);
 }
 
+/* Emit a 32-bit host-register ALU immediate operation using opcode 81 /digit. */
 static bool emit_alu_host_imm32(x86_jit_writer_t *w, uint8_t alu_op,
     uint8_t host, uint32_t imm) {
   return emit_rex32_reg_rm(w, 0, host) &&
@@ -2715,6 +3259,7 @@ static bool emit_alu_host_imm32(x86_jit_writer_t *w, uint8_t alu_op,
          emit_u32(w, imm);
 }
 
+/* Emit `test r32, r32` between two host registers. */
 static bool emit_test_host_host(x86_jit_writer_t *w, uint8_t left,
     uint8_t right) {
   return emit_rex32_reg_rm(w, right, left) &&
@@ -2722,6 +3267,7 @@ static bool emit_test_host_host(x86_jit_writer_t *w, uint8_t left,
          emit_modrm_reg_reg(w, right, left);
 }
 
+/* Load one guest GPR from CPU_state into a cached host register. */
 static bool emit_load_guest_to_host(x86_jit_writer_t *w, uint8_t host,
     uint8_t guest) {
   uint32_t disp = 0;
@@ -2735,6 +3281,7 @@ static bool emit_load_guest_to_host(x86_jit_writer_t *w, uint8_t host,
          emit_u32(w, disp);
 }
 
+/* Store one cached host register back to a guest GPR in CPU_state. */
 static bool emit_store_host_to_guest(x86_jit_writer_t *w, uint8_t guest,
     uint8_t host) {
   uint32_t disp = 0;
@@ -2748,13 +3295,36 @@ static bool emit_store_host_to_guest(x86_jit_writer_t *w, uint8_t guest,
          emit_u32(w, disp);
 }
 
+/*
+ * Register-cache host sets.  rbx/rbp/r14 are callee-saved and compact for
+ * normal blocks; traces may also use r8..r11 because the trampoline owns the
+ * surrounding call frame.
+ */
 static const uint8_t jit_regcache_hosts[] = { 3u, 5u, 14u };
+static const uint8_t jit_regcache_trace_wide_hosts[] =
+    { 8u, 9u, 10u, 11u, 3u, 5u, 14u };
 
+/* Select the narrow or wide host-register set for this emission context. */
+static const uint8_t *jit_regcache_host_set(const x86_jit_emit_ctx_t *ctx,
+    uint32_t *count) {
+  if (ctx != NULL && ctx->trace_mode && jit_regcache_wide_enabled) {
+    *count = (uint32_t)(sizeof(jit_regcache_trace_wide_hosts) /
+        sizeof(jit_regcache_trace_wide_hosts[0]));
+    return jit_regcache_trace_wide_hosts;
+  }
+
+  *count = (uint32_t)(sizeof(jit_regcache_hosts) /
+      sizeof(jit_regcache_hosts[0]));
+  return jit_regcache_hosts;
+}
+
+/* The register cache is only valid when the generated ABI has a live CPU base. */
 static bool jit_regcache_active(const x86_jit_emit_ctx_t *ctx) {
   return ctx != NULL && ctx->valid && jit_regcache_enabled &&
          ctx->has_cpu_base && jit_batch_cpu_base_available();
 }
 
+/* Write back and free one guest GPR from the register cache. */
 static bool jit_regcache_flush_guest(x86_jit_writer_t *w,
     x86_jit_emit_ctx_t *ctx, uint8_t guest) {
   if (!jit_regcache_active(ctx) || guest >= 8u ||
@@ -2775,6 +3345,7 @@ static bool jit_regcache_flush_guest(x86_jit_writer_t *w,
   return true;
 }
 
+/* Write back and free all cached guest GPRs before helpers or exits. */
 static bool jit_regcache_flush_all(x86_jit_writer_t *w,
     x86_jit_emit_ctx_t *ctx) {
   if (!jit_regcache_active(ctx)) return true;
@@ -2784,6 +3355,7 @@ static bool jit_regcache_flush_all(x86_jit_writer_t *w,
   return true;
 }
 
+/* Allocate a host register for one guest GPR, evicting a non-avoided host if needed. */
 static bool jit_regcache_alloc_host(x86_jit_writer_t *w,
     x86_jit_emit_ctx_t *ctx, uint8_t guest, uint8_t *host_out,
     uint16_t avoid_hosts) {
@@ -2794,9 +3366,10 @@ static bool jit_regcache_alloc_host(x86_jit_writer_t *w,
     return true;
   }
 
-  for (uint32_t i = 0; i < sizeof(jit_regcache_hosts) /
-      sizeof(jit_regcache_hosts[0]); i++) {
-    const uint8_t host = jit_regcache_hosts[i];
+  uint32_t host_count = 0;
+  const uint8_t *hosts = jit_regcache_host_set(ctx, &host_count);
+  for (uint32_t i = 0; i < host_count; i++) {
+    const uint8_t host = hosts[i];
     if ((avoid_hosts & (uint16_t)(1u << host)) == 0 &&
         ctx->host_to_guest[host] < 0) {
       ctx->host_to_guest[host] = guest;
@@ -2807,9 +3380,8 @@ static bool jit_regcache_alloc_host(x86_jit_writer_t *w,
   }
 
   uint8_t host = UINT8_MAX;
-  for (uint32_t i = 0; i < sizeof(jit_regcache_hosts) /
-      sizeof(jit_regcache_hosts[0]); i++) {
-    const uint8_t candidate = jit_regcache_hosts[i];
+  for (uint32_t i = 0; i < host_count; i++) {
+    const uint8_t candidate = hosts[i];
     if ((avoid_hosts & (uint16_t)(1u << candidate)) == 0) {
       host = candidate;
       break;
@@ -2829,6 +3401,7 @@ static bool jit_regcache_alloc_host(x86_jit_writer_t *w,
   return true;
 }
 
+/* Get a host register containing the current value of a guest GPR. */
 static bool jit_regcache_get_read(x86_jit_writer_t *w,
     x86_jit_emit_ctx_t *ctx, uint8_t guest, uint8_t *host_out,
     uint16_t avoid_hosts) {
@@ -2842,6 +3415,7 @@ static bool jit_regcache_get_read(x86_jit_writer_t *w,
   return true;
 }
 
+/* Get a host register for a guest GPR write, optionally loading the old value. */
 static bool jit_regcache_get_write(x86_jit_writer_t *w,
     x86_jit_emit_ctx_t *ctx, uint8_t guest, bool read_old,
     uint8_t *host_out, uint16_t avoid_hosts) {
@@ -2856,26 +3430,31 @@ static bool jit_regcache_get_write(x86_jit_writer_t *w,
   return true;
 }
 
+/* Mark a cached guest GPR dirty after native code changes the host copy. */
 static void jit_regcache_mark_dirty(x86_jit_emit_ctx_t *ctx, uint8_t guest) {
   if (ctx == NULL || guest >= 8u) return;
   ctx->guest_dirty[guest] = true;
   ctx->guest_loaded[guest] = true;
 }
 
+/* Emit a direct write to cpu.pc with an immediate guest PC. */
 static bool emit_store_pc_imm(x86_jit_writer_t *w, vaddr_t pc) {
   return emit_movabs_rdx(w, (uintptr_t)&cpu.pc) &&
          emit_mov_m32_rdx_imm32(w, pc);
 }
 
+/* Emit a direct write to cpu.pc using EAX as the new guest PC. */
 static bool emit_store_pc_eax(x86_jit_writer_t *w) {
   return emit_mov_moffs64_eax(w, (uintptr_t)&cpu.pc);
 }
 
+/* Add one guest GPR value to EAX while building a guest effective address. */
 static bool emit_add_reg_to_eax(x86_jit_writer_t *w, uint8_t reg) {
   return emit_movabs_rdx(w, jit_gpr_addr(reg)) &&
          emit_add_eax_m32_rdx(w);
 }
 
+/* Emit guest 32-bit effective-address calculation into EAX. */
 static bool emit_guest_ea_eax(x86_jit_writer_t *w, const x86_jit_ea_t *ea) {
   if (!emit_mov_eax_imm32(w, ea->disp)) return false;
 
@@ -2895,31 +3474,43 @@ static bool emit_guest_ea_eax(x86_jit_writer_t *w, const x86_jit_ea_t *ea) {
   return true;
 }
 
+/* Emit LEA by calculating the decoded effective address and writing the destination. */
 static bool emit_lea(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
   if (!emit_guest_ea_eax(w, &insn->ea)) return false;
   return emit_store_reg_eax(w, insn->dst);
 }
 
+/* Call the generic helper while preserving the generated ABI's argument registers. */
 static bool emit_helper_call(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
   return emit_push_rdi(w) &&
+         emit_push_rsi(w) &&
          emit_movabs_rdi(w, (uintptr_t)insn) &&
          emit_movabs_rax(w, (uintptr_t)jit_helper_exec) &&
+         emit_sub_rsp_imm8(w, 8u) &&
          emit_call_rax(w) &&
+         emit_add_rsp_imm8(w, 8u) &&
+         emit_pop_rsi(w) &&
          emit_pop_rdi(w);
 }
 
+/* Call the DTLB/MMU slow translator with the address currently in EAX. */
 static bool emit_dtlb_translate_call(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t width, bool is_write) {
   return emit_push_rdi(w) &&
+         emit_push_rsi(w) &&
          emit_movabs_rdi(w, (uintptr_t)insn) &&
          emit_mov_esi_eax(w) &&
          emit_mov_edx_imm32(w, width) &&
          emit_mov_ecx_imm32(w, is_write ? 1u : 0u) &&
          emit_movabs_rax(w, (uintptr_t)jit_dtlb_translate) &&
+         emit_sub_rsp_imm8(w, 8u) &&
          emit_call_rax(w) &&
+         emit_add_rsp_imm8(w, 8u) &&
+         emit_pop_rsi(w) &&
          emit_pop_rdi(w);
 }
 
+/* Emit the same compact permission-state key as jit_dtlb_state(), into ECX. */
 static bool emit_inline_dtlb_state_ecx(x86_jit_writer_t *w) {
   uint8_t *no_wp_disp = NULL;
   uint8_t *no_pse_disp = NULL;
@@ -2947,18 +3538,25 @@ static bool emit_inline_dtlb_state_ecx(x86_jit_writer_t *w) {
   return patch_rel32(no_pse_disp, w->cur);
 }
 
+/* Reload the CR3 page-directory base key into ECX using r10 as scratch. */
 static bool emit_reload_cr3_key_ecx(x86_jit_writer_t *w) {
   return emit_movabs_r10(w, (uint64_t)(uintptr_t)&cpu.cr3) &&
          emit_mov_ecx_m32_r10(w) &&
          emit_and_ecx_imm32(w, ~(uint32_t)PAGE_MASK);
 }
 
+/* Reload the CR3 page-directory base key into ECX using r11 as scratch. */
 static bool emit_reload_cr3_key_ecx_via_r11(x86_jit_writer_t *w) {
   return emit_movabs_r11(w, (uint64_t)(uintptr_t)&cpu.cr3) &&
          emit_mov_ecx_m32_r11(w) &&
          emit_and_ecx_imm32(w, ~(uint32_t)PAGE_MASK);
 }
 
+/*
+ * Inline read-DTLB fast path.  Input EAX is a guest virtual address; on hit, the
+ * result is a host pointer in RAX.  All miss tests branch to `miss_native`,
+ * where the normal helper translates and may return NULL for a slow block exit.
+ */
 static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t width, uint8_t **slow_disp) {
   uint8_t *miss_disp[8];
@@ -2970,6 +3568,11 @@ static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
   }
   if (sizeof(paddr_t) != sizeof(uint32_t)) return false;
 
+  /*
+   * The eight-entry miss list covers: page crossing, invalid entry, missing
+   * read access, mismatched state, mismatched VPN, and mismatched CR3 key.  The
+   * array is intentionally fixed-size so adding a new guard is reviewed here.
+   */
   if (!emit_mov_edx_eax(w) ||
       !emit_mov_ecx_eax(w) ||
       !emit_and_ecx_imm32(w, PAGE_MASK) ||
@@ -3045,6 +3648,12 @@ static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/*
+ * Enter generated code through the optional batch trampoline.  Register ABI:
+ *   r12 = &cpu, r13 = guest_to_host(CONFIG_MBASE), r15 = source-page bitmap,
+ *   edi = instruction budget, esi = retired instruction count.
+ * The callee-saved registers keep these bases live across direct chains.
+ */
 static uint32_t jit_batch_enter(x86_jit_entry_t entry,
     uint32_t remaining_budget) {
   if (!jit_batch_trampoline_enabled) {
@@ -3068,6 +3677,7 @@ static uint32_t jit_batch_enter(x86_jit_entry_t entry,
       "movq %[cpu_base], %%r8\n\t"
       "movq %[pmem_base], %%r9\n\t"
       "movq %[source_bitmap], %%r10\n\t"
+      "xorl %%esi, %%esi\n\t"
       "pushq %%rbx\n\t"
       "pushq %%rbp\n\t"
       "pushq %%r12\n\t"
@@ -3095,6 +3705,10 @@ static uint32_t jit_batch_enter(x86_jit_entry_t entry,
   return ret;
 }
 
+/*
+ * Guard a direct PMEM access.  The emitted code subtracts CONFIG_MBASE with
+ * unsigned arithmetic, then checks the resulting offset is within CONFIG_MSIZE.
+ */
 static bool emit_direct_pmem_guard_edx(x86_jit_writer_t *w, uint32_t len,
     uint8_t **slow_disp) {
   if (len == 0 || len > CONFIG_MSIZE) return false;
@@ -3105,6 +3719,11 @@ static bool emit_direct_pmem_guard_edx(x86_jit_writer_t *w, uint32_t len,
          emit_jcc_rel32_placeholder(w, X86_CC_A, slow_disp);
 }
 
+/*
+ * Guard direct stores against source-code invalidation.  A store crossing a
+ * source-page boundary or touching a page marked as translated code falls back
+ * so the central invalidation path can discard stale native blocks.
+ */
 static bool emit_direct_store_source_guard_edx(x86_jit_writer_t *w,
     uint32_t len, uint8_t **cross_page_slow_disp,
     uint8_t **source_page_slow_disp) {
@@ -3132,89 +3751,184 @@ static bool emit_direct_store_source_guard_edx(x86_jit_writer_t *w,
          emit_jcc_rel32_placeholder(w, X86_CC_NZ, source_page_slow_disp);
 }
 
+/* Load a 32-bit stack value from PMEM offset EDX into EAX. */
 static bool emit_stack_load_dword_eax(x86_jit_writer_t *w) {
   if (jit_batch_cpu_base_available()) return emit_mov_eax_m32_r13_rdx(w);
   return emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) &&
          emit_mov_eax_m32_r10_rdx(w);
 }
 
+/* Store r11d to a 32-bit stack slot at PMEM offset EDX. */
 static bool emit_stack_store_dword_r11d(x86_jit_writer_t *w) {
   if (jit_batch_cpu_base_available()) return emit_mov_m32_r13_rdx_r11d(w);
   return emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) &&
          emit_mov_m32_r10_rdx_r11d(w);
 }
 
+/* Return to the dispatcher before executing a stack fast path that failed guards. */
+static bool emit_stack_window_slow_return(x86_jit_writer_t *w, vaddr_t pc) {
+  return emit_store_pc_imm(w, pc) &&
+         (jit_fast_chain_runtime_enabled() ? emit_mov_eax_esi(w) :
+             emit_mov_eax_imm32(w, 0u)) &&
+         emit_ret(w);
+}
+
+/* Guard one ESP-relative stack window against leaving PMEM. */
+static bool emit_stack_window_pmem_guard(x86_jit_writer_t *w,
+    int32_t min_offset, uint32_t len, uint8_t **slow_disp) {
+  if (len == 0 || len > CONFIG_MSIZE) return false;
+  return emit_load_reg_eax(w, R_ESP) &&
+         emit_add_eax_imm32(w, (uint32_t)min_offset) &&
+         emit_mov_edx_eax(w) &&
+         emit_direct_pmem_guard_edx(w, len, slow_disp);
+}
+
+/*
+ * Emit all preconditions for the stack fast path.  Loads and stores must remain
+ * inside PMEM; stores also must not touch translated source pages.
+ */
+static bool emit_stack_window_guard(x86_jit_writer_t *w, vaddr_t pc,
+    const x86_jit_stack_window_t *window) {
+  uint8_t *access_pmem_slow_disp = NULL;
+  uint8_t *store_pmem_slow_disp = NULL;
+  uint8_t *store_cross_page_slow_disp = NULL;
+  uint8_t *store_source_page_slow_disp = NULL;
+  uint8_t *done_disp = NULL;
+
+  if (window == NULL || !window->valid || !jit_fast_chain_runtime_enabled()) {
+    return true;
+  }
+
+  const int64_t access_len64 =
+      (int64_t)window->max_offset - (int64_t)window->min_offset +
+      (int64_t)X86_WIDTH_DWORD;
+  if (access_len64 <= 0 || access_len64 > CONFIG_MSIZE) return false;
+
+  if (!emit_stack_window_pmem_guard(w, window->min_offset,
+      (uint32_t)access_len64, &access_pmem_slow_disp)) {
+    return false;
+  }
+
+  if (window->has_store) {
+    const int64_t store_len64 =
+        (int64_t)window->store_max_offset -
+        (int64_t)window->store_min_offset + (int64_t)X86_WIDTH_DWORD;
+    if (store_len64 <= 0 || store_len64 > X86_JIT_SOURCE_PAGE_SIZE) {
+      return false;
+    }
+    if (!emit_stack_window_pmem_guard(w, window->store_min_offset,
+        (uint32_t)store_len64, &store_pmem_slow_disp) ||
+        !emit_direct_store_source_guard_edx(w, (uint32_t)store_len64,
+            &store_cross_page_slow_disp, &store_source_page_slow_disp)) {
+      return false;
+    }
+  }
+
+  if (!emit_jmp_rel32_placeholder(w, &done_disp)) return false;
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(access_pmem_slow_disp, slow_native) ||
+      (store_pmem_slow_disp != NULL &&
+          !patch_rel32(store_pmem_slow_disp, slow_native)) ||
+      (store_cross_page_slow_disp != NULL &&
+          !patch_rel32(store_cross_page_slow_disp, slow_native)) ||
+      (store_source_page_slow_disp != NULL &&
+          !patch_rel32(store_source_page_slow_disp, slow_native)) ||
+      !emit_stack_window_slow_return(w, pc)) {
+    return false;
+  }
+
+  return patch_rel32(done_disp, w->cur);
+}
+
+/* Load the current non-trampoline retired-count accumulator into EAX. */
 static bool emit_load_loop_extra_eax(x86_jit_writer_t *w) {
   return emit_mov_eax_moffs64(w, (uintptr_t)&jit_loop_extra);
 }
 
+/* Load the current non-trampoline retired-count accumulator into ECX. */
 static bool emit_load_loop_extra_ecx(x86_jit_writer_t *w) {
   return emit_movabs_rdx(w, (uintptr_t)&jit_loop_extra) &&
          emit_mov_ecx_m32_rdx(w);
 }
 
+/* Store EAX into the non-trampoline retired-count accumulator. */
 static bool emit_store_loop_extra_eax(x86_jit_writer_t *w) {
   return emit_mov_moffs64_eax(w, (uintptr_t)&jit_loop_extra);
 }
 
+/* Load the current entry budget from memory into ECX. */
 static bool emit_load_entry_budget_ecx(x86_jit_writer_t *w) {
   return emit_movabs_rdx(w, (uintptr_t)&jit_entry_budget) &&
          emit_mov_ecx_m32_rdx(w);
 }
 
+/* Copy the trampoline/function budget argument from EDI to ECX. */
 static bool emit_load_entry_budget_arg_ecx(x86_jit_writer_t *w) {
   return emit_mov_ecx_edi(w);
 }
 
+/* Copy the trampoline/function budget argument from EDI to EAX. */
 static bool emit_load_entry_budget_arg_eax(x86_jit_writer_t *w) {
   return emit_mov_eax_edi(w);
 }
 
+/* Load the async chain-abort flag, checked before long direct-chain runs. */
 static bool emit_load_chain_abort_ecx(x86_jit_writer_t *w) {
   return emit_movabs_rdx(w, (uintptr_t)&jit_chain_abort) &&
          emit_mov_ecx_m32_rdx(w);
 }
 
+/* Load materialised guest EFLAGS into EAX. */
 static bool emit_load_eflags_eax(x86_jit_writer_t *w) {
   return emit_mov_eax_moffs64(w, (uintptr_t)&cpu.eflags);
 }
 
+/* Load materialised guest EFLAGS into ECX. */
 static bool emit_load_eflags_ecx(x86_jit_writer_t *w) {
   return emit_movabs_rdx(w, (uintptr_t)&cpu.eflags) &&
          emit_mov_ecx_m32_rdx(w);
 }
 
+/* Load materialised guest EFLAGS into r11d. */
 static bool emit_load_eflags_r11d(x86_jit_writer_t *w) {
   return emit_movabs_r11(w, (uintptr_t)&cpu.eflags) &&
          emit_mov_r11d_m32_r11(w);
 }
 
+/* Store EAX as materialised guest EFLAGS. */
 static bool emit_store_eflags_eax(x86_jit_writer_t *w) {
   return emit_mov_moffs64_eax(w, (uintptr_t)&cpu.eflags);
 }
 
+/* ADC/SBB consume guest CF, so native emission must seed host CF first. */
 static bool jit_alu_reads_carry(uint8_t alu_op) {
   return alu_op == X86_ALU_ADC || alu_op == X86_ALU_SBB;
 }
 
+/* Emit BT ecx, imm8; the selected guest EFLAGS bit is copied into host CF. */
 static bool emit_bt_ecx_imm8(x86_jit_writer_t *w, uint8_t bit) {
   return emit_u8(w, 0x0f) && emit_u8(w, 0xba) &&
          emit_u8(w, 0xe1) && emit_u8(w, bit);
 }
 
+/* Emit BT r11d, imm8; the selected guest EFLAGS bit is copied into host CF. */
 static bool emit_bt_r11d_imm8(x86_jit_writer_t *w, uint8_t bit) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x0f) && emit_u8(w, 0xba) &&
          emit_u8(w, 0xe3) && emit_u8(w, bit);
 }
 
+/* Seed host CF from guest EFLAGS.CF using ECX as the materialised copy. */
 static bool emit_guest_cf_to_host_cf_ecx(x86_jit_writer_t *w) {
   return emit_load_eflags_ecx(w) && emit_bt_ecx_imm8(w, 0);
 }
 
+/* Seed host CF from guest EFLAGS.CF using r11d as the materialised copy. */
 static bool emit_guest_cf_to_host_cf_r11(x86_jit_writer_t *w) {
   return emit_load_eflags_r11d(w) && emit_bt_r11d_imm8(w, 0);
 }
 
+/* Emit a register-direct 32-bit ALU operation; rm is the destination field. */
 static bool emit_alu_rm32_r32(x86_jit_writer_t *w, uint8_t alu_op,
     uint8_t rm, uint8_t reg) {
   uint8_t opcode = 0;
@@ -3292,6 +4006,7 @@ static bool emit_alu_eax_imm_width(x86_jit_writer_t *w, uint8_t alu_op,
   return false;
 }
 
+/* Emit host code for load pmem eax width; bytes below are x86-64 encodings. */
 static bool emit_load_pmem_eax_width(x86_jit_writer_t *w, uint8_t width) {
   switch (width) {
     case X86_WIDTH_BYTE:
@@ -3305,6 +4020,7 @@ static bool emit_load_pmem_eax_width(x86_jit_writer_t *w, uint8_t width) {
   }
 }
 
+/* Emit host code for load pmem ecx width; bytes below are x86-64 encodings. */
 static bool emit_load_pmem_ecx_width(x86_jit_writer_t *w, uint8_t width) {
   switch (width) {
     case X86_WIDTH_BYTE:
@@ -3318,6 +4034,7 @@ static bool emit_load_pmem_ecx_width(x86_jit_writer_t *w, uint8_t width) {
   }
 }
 
+/* Emit host code for load host ptr rax width; bytes below are x86-64 encodings. */
 static bool emit_load_host_ptr_rax_width(x86_jit_writer_t *w, uint8_t width) {
   switch (width) {
     case X86_WIDTH_BYTE:
@@ -3331,6 +4048,7 @@ static bool emit_load_host_ptr_rax_width(x86_jit_writer_t *w, uint8_t width) {
   }
 }
 
+/* Emit host code for store pmem eax width; bytes below are x86-64 encodings. */
 static bool emit_store_pmem_eax_width(x86_jit_writer_t *w, uint8_t width) {
   switch (width) {
     case X86_WIDTH_BYTE:
@@ -3359,6 +4077,7 @@ static bool emit_store_host_ptr_r10_eax_width(x86_jit_writer_t *w,
   }
 }
 
+/* Emit host code for test eax ecx width; bytes below are x86-64 encodings. */
 static bool emit_test_eax_ecx_width(x86_jit_writer_t *w, uint8_t width) {
   switch (width) {
     case X86_WIDTH_BYTE:
@@ -3400,11 +4119,13 @@ static bool emit_store_reg_eax_width(x86_jit_writer_t *w, uint8_t reg,
          emit_store_reg_eax(w, reg);
 }
 
+/* Emit host code for load byte reg to eax; bytes below are x86-64 encodings. */
 static bool emit_load_byte_reg_to_eax(x86_jit_writer_t *w, uint8_t reg) {
   if (!emit_load_reg_eax(w, reg & 0x3u)) return false;
   return reg < 4u || emit_shift_eax_imm(w, 5u, 8u);
 }
 
+/* Emit host code for store al to byte reg; bytes below are x86-64 encodings. */
 static bool emit_store_al_to_byte_reg(x86_jit_writer_t *w, uint8_t reg) {
   if (reg < 4u) return emit_store_reg_eax_width(w, reg, X86_WIDTH_BYTE);
 
@@ -3886,26 +4607,31 @@ static bool emit_paged_dtlb_test_imm_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit host code for stack push addr eax; bytes below are x86-64 encodings. */
 static bool emit_stack_push_addr_eax(x86_jit_writer_t *w) {
   return emit_load_reg_eax(w, R_ESP) &&
          emit_add_eax_imm32(w, 0u - X86_WIDTH_DWORD);
 }
 
+/* Emit host code for commit stack push esp; bytes below are x86-64 encodings. */
 static bool emit_commit_stack_push_esp(x86_jit_writer_t *w) {
   return emit_stack_push_addr_eax(w) &&
          emit_store_reg_eax(w, R_ESP);
 }
 
+/* Emit host code for commit stack pop esp; bytes below are x86-64 encodings. */
 static bool emit_commit_stack_pop_esp(x86_jit_writer_t *w) {
   return emit_load_reg_eax(w, R_ESP) &&
          emit_add_eax_imm32(w, X86_WIDTH_DWORD) &&
          emit_store_reg_eax(w, R_ESP);
 }
 
+/* Emit host code for store dtlb scratch eax; bytes below are x86-64 encodings. */
 static bool emit_store_dtlb_scratch_eax(x86_jit_writer_t *w) {
   return emit_mov_moffs64_eax(w, (uintptr_t)&jit_dtlb_scratch);
 }
 
+/* Emit host code for load dtlb scratch eax; bytes below are x86-64 encodings. */
 static bool emit_load_dtlb_scratch_eax(x86_jit_writer_t *w) {
   return emit_mov_eax_moffs64(w, (uintptr_t)&jit_dtlb_scratch);
 }
@@ -4316,25 +5042,89 @@ static bool emit_native_incdec_reg_body(x86_jit_writer_t *w,
 
 static bool emit_return_completed(x86_jit_writer_t *w, vaddr_t pc,
     uint32_t count) {
+  if (jit_fast_chain_runtime_enabled()) {
+    return emit_store_pc_imm(w, pc) &&
+           emit_mov_eax_esi(w) &&
+           emit_add_eax_imm32(w, count) &&
+           emit_ret(w);
+  }
+
   return emit_store_pc_imm(w, pc) &&
          emit_load_loop_extra_eax(w) &&
          emit_add_eax_imm32(w, count) &&
          emit_ret(w);
 }
 
+/* Emit host code for return loop extra; bytes below are x86-64 encodings. */
 static bool emit_return_loop_extra(x86_jit_writer_t *w) {
+  if (jit_fast_chain_runtime_enabled()) {
+    return emit_mov_eax_esi(w) && emit_ret(w);
+  }
+
   return emit_load_loop_extra_eax(w) && emit_ret(w);
 }
 
+/* Increment a 64-bit runtime statistic directly from generated code. */
 static bool emit_runtime_counter_inc(x86_jit_writer_t *w,
     volatile uint64_t *counter) {
   return emit_movabs_rdx(w, (uint64_t)(uintptr_t)counter) &&
          emit_add_m64_rdx_imm8(w, 1u);
 }
 
+/* Map a slow-chain reason to the runtime counter incremented by its exit stub. */
+static volatile uint64_t *jit_chain_slow_reason_counter(
+    x86_jit_chain_slow_reason_t reason) {
+  switch (reason) {
+    case X86_JIT_CHAIN_SLOW_UNLINKED:
+      return &jit_chain_exit_unlinked_runtime;
+    case X86_JIT_CHAIN_SLOW_COLD_TRACE:
+      return &jit_chain_exit_cold_trace_runtime;
+    case X86_JIT_CHAIN_SLOW_SIDE_BRANCH:
+      return &jit_chain_exit_side_branch_runtime;
+    case X86_JIT_CHAIN_SLOW_HELPER:
+      return &jit_chain_exit_helper_runtime;
+    case X86_JIT_CHAIN_SLOW_UNACCEPTED_SUCCESSOR:
+      return &jit_chain_exit_unaccepted_successor_runtime;
+    case X86_JIT_CHAIN_SLOW_BLOCK_NOT_CHAINABLE:
+      return &jit_chain_exit_block_not_chainable_runtime;
+    default:
+      return &jit_chain_exit_unlinked_runtime;
+  }
+}
+
+/* Increment the generic side-exit counter and the reason-specific counter. */
+static bool emit_side_exit_counter_inc(x86_jit_writer_t *w,
+    volatile uint64_t *counter) {
+  if (!jit_stats_enabled) return true;
+  return emit_runtime_counter_inc(w, &jit_side_exits_runtime) &&
+         emit_runtime_counter_inc(w, counter);
+}
+
+/* Emit a side-exit return that reports `count` retired guest instructions. */
+static bool emit_ret_count_side_exit(x86_jit_writer_t *w, uint32_t count,
+    x86_jit_chain_slow_reason_t reason) {
+  return emit_side_exit_counter_inc(w, jit_chain_slow_reason_counter(reason)) &&
+         emit_ret_count(w, count);
+}
+
+/* Stop a chained run before it would exceed the caller's instruction budget. */
 static bool emit_chain_budget_guard(x86_jit_writer_t *w, vaddr_t pc,
     uint8_t **count_imm) {
   uint8_t *ok_disp = NULL;
+
+  if (jit_fast_chain_runtime_enabled()) {
+    if (!emit_mov_eax_esi(w) ||
+        !emit_add_eax_imm32_placeholder(w, count_imm) ||
+        !emit_cmp_eax_edi(w) ||
+        !emit_jcc_rel32_placeholder(w, X86_CC_BE, &ok_disp) ||
+        !emit_store_pc_imm(w, pc) ||
+        !emit_mov_eax_esi(w) ||
+        !emit_ret(w)) {
+      return false;
+    }
+
+    return patch_rel32(ok_disp, w->cur);
+  }
 
   if (!emit_load_loop_extra_eax(w) ||
       !emit_add_eax_imm32_placeholder(w, count_imm) ||
@@ -4348,13 +5138,101 @@ static bool emit_chain_budget_guard(x86_jit_writer_t *w, vaddr_t pc,
   return patch_rel32(ok_disp, w->cur);
 }
 
+/*
+ * Emit a patchable direct-chain exit.
+ *
+ * State machine:
+ *   1. The source block emits a rel32 jump at `patch_site`.
+ *   2. Before the successor is known, the jump targets `slow_exit`, which
+ *      stores the target PC and returns to the dispatcher.
+ *   3. When the successor block is compiled and still current, the jump is
+ *      patched to that block's chain entry, optionally through a hit-counter
+ *      stub for stats.
+ *   4. If the successor is invalidated, `target_generation` lets the JIT patch
+ *      the edge back to `slow_exit`.
+ */
 static bool emit_chain_exit(x86_jit_writer_t *w, x86_jit_block_t *block,
-    vaddr_t target_pc, uint32_t count, x86_jit_exit_kind_t kind) {
+    vaddr_t target_pc, uint32_t count, x86_jit_exit_kind_t kind,
+    x86_jit_chain_slow_reason_t slow_reason) {
   uint8_t *budget_exit_disp = NULL;
   uint8_t *abort_exit_disp = NULL;
   uint8_t *chain_disp = NULL;
 
   if (block->exit_count >= X86_JIT_EXIT_EDGE_LIMIT) return false;
+
+  if (jit_fast_chain_runtime_enabled()) {
+    if (!emit_add_esi_imm32(w, count) ||
+        !emit_cmp_esi_edi(w) ||
+        !emit_jcc_rel32_placeholder(w, X86_CC_AE, &budget_exit_disp)) {
+      return false;
+    }
+    if (jit_chain_abort_check_enabled &&
+        (!emit_load_chain_abort_ecx(w) ||
+         !emit_test_ecx_ecx(w) ||
+         !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &abort_exit_disp))) {
+      return false;
+    }
+    if (!emit_jmp_rel32_placeholder(w, &chain_disp)) return false;
+
+    x86_jit_exit_edge_t *edge = &block->exits[block->exit_count++];
+    *edge = (x86_jit_exit_edge_t){
+      .valid = true,
+      .target_pc = target_pc,
+      .patch_site = chain_disp,
+      .slow_exit = NULL,
+      .hit_stub = NULL,
+      .hit_patch_site = NULL,
+      .target_generation = 0,
+      .kind = (uint8_t)kind,
+      .slow_reason = (uint8_t)slow_reason,
+    };
+
+    uint8_t *budget_exit = w->cur;
+    if (!patch_rel32(budget_exit_disp, budget_exit) ||
+        !emit_store_pc_imm(w, target_pc) ||
+        !emit_side_exit_counter_inc(w, &jit_chain_exit_budget_runtime) ||
+        !emit_mov_eax_esi(w) ||
+        !emit_ret(w)) {
+      return false;
+    }
+
+    uint8_t *slow_exit = w->cur;
+    if (jit_chain_abort_check_enabled) {
+      if (!patch_rel32(abort_exit_disp, slow_exit) ||
+          !emit_store_pc_imm(w, target_pc) ||
+          !emit_side_exit_counter_inc(w, &jit_chain_exit_abort_runtime) ||
+          !emit_mov_eax_esi(w) ||
+          !emit_ret(w)) {
+        return false;
+      }
+      slow_exit = w->cur;
+    }
+
+    edge->slow_exit = slow_exit;
+    if (!patch_rel32(chain_disp, slow_exit) ||
+        !emit_store_pc_imm(w, target_pc) ||
+        !emit_side_exit_counter_inc(w,
+            jit_chain_slow_reason_counter(slow_reason)) ||
+        !emit_mov_eax_esi(w) ||
+        !emit_ret(w)) {
+      return false;
+    }
+
+    if (jit_stats_enabled) {
+      edge->hit_stub = w->cur;
+      if (!emit_runtime_counter_inc(w, &jit_direct_chain_hits_runtime) ||
+          (slow_reason == X86_JIT_CHAIN_SLOW_COLD_TRACE &&
+              jit_trace_sibling_enabled &&
+              !emit_runtime_counter_inc(w,
+                  &jit_sibling_trace_hits_runtime)) ||
+          !emit_jmp_rel32_placeholder(w, &edge->hit_patch_site) ||
+          !patch_rel32(edge->hit_patch_site, slow_exit)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
 
   if (!emit_store_pc_imm(w, target_pc) ||
       !emit_load_loop_extra_eax(w) ||
@@ -4379,24 +5257,39 @@ static bool emit_chain_exit(x86_jit_writer_t *w, x86_jit_block_t *block,
     .hit_patch_site = NULL,
     .target_generation = 0,
     .kind = (uint8_t)kind,
+    .slow_reason = (uint8_t)slow_reason,
   };
+
+  uint8_t *budget_exit = w->cur;
+  if (!patch_rel32(budget_exit_disp, budget_exit) ||
+      !emit_side_exit_counter_inc(w, &jit_chain_exit_budget_runtime) ||
+      !emit_ret(w)) {
+    return false;
+  }
+
+  uint8_t *abort_exit = w->cur;
+  if (!patch_rel32(abort_exit_disp, abort_exit) ||
+      !emit_side_exit_counter_inc(w, &jit_chain_exit_abort_runtime) ||
+      !emit_ret(w)) {
+    return false;
+  }
 
   uint8_t *slow_exit = w->cur;
   edge->slow_exit = slow_exit;
-  if (!patch_rel32(budget_exit_disp, slow_exit) ||
-      !patch_rel32(abort_exit_disp, slow_exit) ||
-      !patch_rel32(chain_disp, slow_exit)) {
+  if (!patch_rel32(chain_disp, slow_exit) ||
+      !emit_side_exit_counter_inc(w,
+          jit_chain_slow_reason_counter(slow_reason)) ||
+      !emit_ret(w)) {
     return false;
   }
-  if (jit_stats_enabled &&
-      !emit_runtime_counter_inc(w, &jit_side_exits_runtime)) {
-    return false;
-  }
-  if (!emit_ret(w)) return false;
 
   if (jit_stats_enabled) {
     edge->hit_stub = w->cur;
     if (!emit_runtime_counter_inc(w, &jit_direct_chain_hits_runtime) ||
+        (slow_reason == X86_JIT_CHAIN_SLOW_COLD_TRACE &&
+            jit_trace_sibling_enabled &&
+            !emit_runtime_counter_inc(w,
+                &jit_sibling_trace_hits_runtime)) ||
         !emit_jmp_rel32_placeholder(w, &edge->hit_patch_site) ||
         !patch_rel32(edge->hit_patch_site, slow_exit)) {
       return false;
@@ -4406,10 +5299,30 @@ static bool emit_chain_exit(x86_jit_writer_t *w, x86_jit_block_t *block,
   return true;
 }
 
+/* Emit a trace loopback to the trace head while respecting budget/abort exits. */
 static bool emit_trace_head_loop(x86_jit_writer_t *w, vaddr_t target_pc,
     uint32_t count, const uint8_t *native_target) {
   uint8_t *abort_exit_disp = NULL;
   uint8_t *loop_disp = NULL;
+
+  if (jit_fast_chain_runtime_enabled()) {
+    if (!emit_add_esi_imm32(w, count) ||
+        !emit_cmp_esi_edi(w) ||
+        !emit_jcc_rel32_placeholder(w, X86_CC_AE, &abort_exit_disp) ||
+        (jit_stats_enabled &&
+            !emit_runtime_counter_inc(w, &jit_trace_loopback_runtime)) ||
+        !emit_jmp_rel32_placeholder(w, &loop_disp)) {
+      return false;
+    }
+
+    uint8_t *budget_native = w->cur;
+    return patch_rel32(loop_disp, native_target) &&
+           patch_rel32(abort_exit_disp, budget_native) &&
+           emit_store_pc_imm(w, target_pc) &&
+           emit_side_exit_counter_inc(w, &jit_chain_exit_budget_runtime) &&
+           emit_mov_eax_esi(w) &&
+           emit_ret(w);
+  }
 
   if (!emit_load_loop_extra_eax(w) ||
       !emit_add_eax_imm32(w, count) ||
@@ -4417,6 +5330,8 @@ static bool emit_trace_head_loop(x86_jit_writer_t *w, vaddr_t target_pc,
       !emit_load_chain_abort_ecx(w) ||
       !emit_test_ecx_ecx(w) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &abort_exit_disp) ||
+      (jit_stats_enabled &&
+          !emit_runtime_counter_inc(w, &jit_trace_loopback_runtime)) ||
       !emit_jmp_rel32_placeholder(w, &loop_disp)) {
     return false;
   }
@@ -4428,6 +5343,7 @@ static bool emit_trace_head_loop(x86_jit_writer_t *w, vaddr_t target_pc,
          emit_return_loop_extra(w);
 }
 
+/* Restore a patchable edge so it returns through its slow dispatcher exit. */
 static void jit_patch_edge_to_slow(x86_jit_exit_edge_t *edge) {
   if (edge == NULL || !edge->valid || edge->patch_site == NULL ||
       edge->slow_exit == NULL) {
@@ -4441,10 +5357,17 @@ static void jit_patch_edge_to_slow(x86_jit_exit_edge_t *edge) {
   edge->target_generation = 0;
 }
 
+/* Patch a valid edge to a compiled target block, with generation tracking. */
 static void jit_patch_edge_to_target(x86_jit_exit_edge_t *edge,
     const x86_jit_block_t *target) {
   if (edge == NULL || target == NULL || !edge->valid ||
       target->chain_entry == NULL) {
+    return;
+  }
+  if (jit_trace_sibling_enabled &&
+      edge->slow_reason == X86_JIT_CHAIN_SLOW_COLD_TRACE &&
+      !target->is_trace) {
+    jit_patch_edge_to_slow(edge);
     return;
   }
 
@@ -4464,6 +5387,7 @@ static void jit_patch_edge_to_target(x86_jit_exit_edge_t *edge,
   JIT_STAT_INC(direct_chain_patches);
 }
 
+/* Remove every edge that currently jumps into a target block being invalidated. */
 static void jit_unpatch_incoming_edges(const x86_jit_block_t *target) {
   if (target == NULL || target->chain_entry == NULL) return;
 
@@ -4479,17 +5403,40 @@ static void jit_unpatch_incoming_edges(const x86_jit_block_t *target) {
   }
 }
 
+/* Return r11d plus an immediate retired-count increment. */
 static bool emit_return_r11_plus_imm(x86_jit_writer_t *w, uint32_t count) {
   return emit_mov_eax_r11d(w) &&
          emit_add_eax_imm32(w, count) &&
          emit_ret(w);
 }
 
+/* Return the retired-count value already held in r11d. */
 static bool emit_return_r11(x86_jit_writer_t *w) {
   return emit_mov_eax_r11d(w) && emit_ret(w);
 }
 
+/*
+ * Calculate how many loop iterations remain for a resident backedge.  The
+ * count parameter is guest instructions per lap; division converts the caller's
+ * remaining instruction budget into a lap budget.
+ */
 static bool emit_resident_lap_budget_r10d(x86_jit_writer_t *w, uint32_t count) {
+  if (jit_fast_chain_runtime_enabled()) {
+    if (count == 2u) {
+      return emit_mov_ecx_edi(w) &&
+             emit_sub_ecx_esi(w) &&
+             emit_shr_ecx_imm(w, 1u) &&
+             emit_mov_r10d_ecx(w);
+    }
+
+    return emit_mov_eax_edi(w) &&
+           emit_sub_eax_esi(w) &&
+           emit_xor_edx_edx(w) &&
+           emit_mov_ecx_imm32(w, count) &&
+           emit_div_ecx(w) &&
+           emit_mov_r10d_eax(w);
+  }
+
   if (count == 2u) {
     return emit_load_entry_budget_arg_ecx(w) &&
            emit_load_loop_extra_eax(w) &&
@@ -4507,6 +5454,7 @@ static bool emit_resident_lap_budget_r10d(x86_jit_writer_t *w, uint32_t count) {
          emit_mov_r10d_eax(w);
 }
 
+/* Map single-flag Jcc conditions to `test eflags, mask` plus host JZ/JNZ. */
 static bool jit_backedge_flag_test(uint8_t cc, uint32_t *flag,
     uint8_t *host_cc) {
   switch (cc & 0xfu) {
@@ -4524,6 +5472,7 @@ static bool jit_backedge_flag_test(uint8_t cc, uint32_t *flag,
   }
 }
 
+/* Map cheap Jcc conditions to a guest-EFLAGS mask and native condition code. */
 static bool jit_jcc_fast_test(uint8_t cc, uint32_t *mask, uint8_t *host_cc) {
   if (jit_backedge_flag_test(cc, mask, host_cc)) return true;
 
@@ -4541,6 +5490,7 @@ static bool jit_jcc_fast_test(uint8_t cc, uint32_t *mask, uint8_t *host_cc) {
   }
 }
 
+/* Signed Jcc needs SF xor OF, which cannot be tested with one EFLAGS mask. */
 static bool jit_jcc_signed_test(uint8_t cc) {
   switch (cc & 0xfu) {
     case X86_CC_L:
@@ -4553,6 +5503,7 @@ static bool jit_jcc_signed_test(uint8_t cc) {
   }
 }
 
+/* Return true when the Jcc condition can be lowered without a helper call. */
 static bool jit_jcc_native_supported(uint8_t cc) {
   uint32_t mask = 0;
   uint8_t host_cc = 0;
@@ -4560,6 +5511,7 @@ static bool jit_jcc_native_supported(uint8_t cc) {
          jit_jcc_signed_test(cc);
 }
 
+/* Conditions safe to reuse immediately after native INC/DEC lowering. */
 static bool jit_incdec_jcc_host_cc(uint8_t cc, uint8_t *host_cc) {
   switch (cc & 0xfu) {
     case X86_CC_O:
@@ -4711,8 +5663,9 @@ static bool emit_incdec_jcc_resident_backedge(x86_jit_writer_t *w,
     return false;
   }
 
-  if (!emit_load_loop_extra_eax(w) ||
-      !emit_mov_r11d_eax(w) ||
+  if (!((jit_fast_chain_runtime_enabled() ?
+          emit_mov_r11d_esi(w) :
+          (emit_load_loop_extra_eax(w) && emit_mov_r11d_eax(w)))) ||
       !emit_resident_lap_budget_r10d(w, count) ||
       !emit_load_reg_eax(w, incdec->dst)) {
     return false;
@@ -4793,8 +5746,9 @@ static bool emit_incdec_cmp_jcc_resident_backedge(x86_jit_writer_t *w,
 
   if (count < 2u || count > INT8_MAX) return false;
 
-  if (!emit_load_loop_extra_eax(w) ||
-      !emit_mov_r11d_eax(w) ||
+  if (!((jit_fast_chain_runtime_enabled() ?
+          emit_mov_r11d_esi(w) :
+          (emit_load_loop_extra_eax(w) && emit_mov_r11d_eax(w)))) ||
       !emit_resident_lap_budget_r10d(w, count) ||
       !emit_load_reg_eax(w, incdec->dst)) {
     return false;
@@ -4848,7 +5802,7 @@ static bool emit_chained_jmp_rel(x86_jit_writer_t *w, x86_jit_block_t *block,
     const x86_jit_insn_t *insn, uint32_t count) {
   JIT_STAT_INC(native_branch_ops);
   return emit_chain_exit(w, block, jit_branch_target(insn), count,
-      X86_JIT_EXIT_JMP);
+      X86_JIT_EXIT_JMP, X86_JIT_CHAIN_SLOW_UNLINKED);
 }
 
 static bool emit_native_jmp_rm(x86_jit_writer_t *w,
@@ -4905,20 +5859,34 @@ static bool emit_native_jcc_rel(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
-static bool emit_chained_jcc_rel(x86_jit_writer_t *w, x86_jit_block_t *block,
-    const x86_jit_insn_t *insn, uint32_t count) {
+static bool emit_jcc_edge_exit(x86_jit_writer_t *w, x86_jit_block_t *block,
+    vaddr_t target_pc, uint32_t count, x86_jit_exit_kind_t kind,
+    bool can_chain) {
+  if (can_chain) {
+    return emit_chain_exit(w, block, target_pc, count, kind,
+        X86_JIT_CHAIN_SLOW_UNLINKED);
+  }
+
+  return emit_store_pc_imm(w, target_pc) &&
+         emit_ret_count_side_exit(w, count,
+             X86_JIT_CHAIN_SLOW_UNACCEPTED_SUCCESSOR);
+}
+
+static bool emit_jcc_rel_per_edge(x86_jit_writer_t *w,
+    x86_jit_block_t *block, const x86_jit_insn_t *insn, uint32_t count,
+    bool fallthrough_can_chain, bool taken_can_chain) {
   uint8_t *taken_disp = NULL;
 
   if (!emit_jcc_condition_jump(w, insn->cc, &taken_disp) ||
-      !emit_chain_exit(w, block, insn->next_pc, count,
-          X86_JIT_EXIT_FALLTHROUGH)) {
+      !emit_jcc_edge_exit(w, block, insn->next_pc, count,
+          X86_JIT_EXIT_FALLTHROUGH, fallthrough_can_chain)) {
     return false;
   }
 
   uint8_t *taken_native = w->cur;
   if (!patch_rel32(taken_disp, taken_native) ||
-      !emit_chain_exit(w, block, jit_branch_target(insn), count,
-          X86_JIT_EXIT_TAKEN)) {
+      !emit_jcc_edge_exit(w, block, jit_branch_target(insn), count,
+          X86_JIT_EXIT_TAKEN, taken_can_chain)) {
     return false;
   }
 
@@ -4926,14 +5894,17 @@ static bool emit_chained_jcc_rel(x86_jit_writer_t *w, x86_jit_block_t *block,
   return true;
 }
 
+/* CMP is the only native ALU producer here that writes flags but not a result. */
 static bool jit_native_alu_writes_result(uint8_t alu_op) {
   return alu_op != X86_ALU_CMP;
 }
 
+/* Only EAX/ECX/EDX/EBX have legacy low-byte names without a REX complication. */
 static bool jit_native_low_byte_reg(uint8_t reg) {
   return reg < 4u;
 }
 
+/* Select which host status flags are safe to copy after native ALU emission. */
 static uint32_t jit_native_alu_flag_copy_mask(uint8_t alu_op) {
   switch (alu_op) {
     case X86_ALU_OR:
@@ -4950,10 +5921,12 @@ static uint32_t jit_native_alu_flag_copy_mask(uint8_t alu_op) {
   }
 }
 
+/* Return true for a Jcc decoded in the native branch IR form. */
 static bool jit_is_native_jcc(const x86_jit_insn_t *insn) {
   return insn->op == X86_JIT_OP_JCC_REL;
 }
 
+/* Conservative check for helpers that may read/write guest memory or stack. */
 static bool jit_helper_may_touch_guest_memory(const x86_jit_insn_t *insn) {
   switch (insn->helper) {
     case X86_JIT_HELPER_MOV_RM_REG:
@@ -4996,6 +5969,7 @@ static bool jit_helper_may_touch_guest_memory(const x86_jit_insn_t *insn) {
   }
 }
 
+/* Return true for native instructions whose host flags can feed a following Jcc. */
 static bool jit_is_fusible_flag_producer(const x86_jit_insn_t *insn) {
   switch (insn->op) {
     case X86_JIT_OP_ALU_REG_REG:
@@ -5010,6 +5984,7 @@ static bool jit_is_fusible_flag_producer(const x86_jit_insn_t *insn) {
   }
 }
 
+/* Return the EFLAGS bits produced by a fusible flag-writing instruction. */
 static uint32_t jit_flag_producer_copy_mask(const x86_jit_insn_t *insn) {
   if (insn->op == X86_JIT_OP_TEST_REG_REG ||
       insn->op == X86_JIT_OP_TEST_EAX_IMM) {
@@ -5019,6 +5994,7 @@ static uint32_t jit_flag_producer_copy_mask(const x86_jit_insn_t *insn) {
   return jit_native_alu_flag_copy_mask(insn->alu_op);
 }
 
+/* Return true when the next instruction overwrites flags before anyone reads them. */
 static bool jit_flags_overwritten_by_next(const x86_jit_insn_t *insns,
     uint32_t index, uint32_t count) {
   return index + 1u < count &&
@@ -5026,6 +6002,7 @@ static bool jit_flags_overwritten_by_next(const x86_jit_insn_t *insns,
          jit_is_fusible_flag_producer(&insns[index + 1u]);
 }
 
+/* Return true when an instruction defines every status flag this JIT models. */
 static bool jit_insn_fully_writes_flags(const x86_jit_insn_t *insn) {
   if (insn->op == X86_JIT_OP_TEST_REG_REG ||
       insn->op == X86_JIT_OP_TEST_EAX_IMM) {
@@ -5042,6 +6019,7 @@ static bool jit_insn_fully_writes_flags(const x86_jit_insn_t *insn) {
   return false;
 }
 
+/* Return true when an instruction consumes the current guest EFLAGS value. */
 static bool jit_insn_reads_flags(const x86_jit_insn_t *insn) {
   if (insn->op == X86_JIT_OP_JCC_REL) return true;
 
@@ -5070,6 +6048,7 @@ static bool jit_insn_reads_flags(const x86_jit_insn_t *insn) {
   }
 }
 
+/* Probe forward to see whether successor code overwrites flags before reading them. */
 static bool jit_successor_flags_dead(vaddr_t pc) {
   if (!jit_lazy_flags_enabled || !jit_flat_segments()) return false;
 
@@ -5276,6 +6255,56 @@ static bool emit_flag_producer_no_capture(x86_jit_writer_t *w,
   }
 }
 
+static bool emit_flag_producer_no_capture_regcached(x86_jit_writer_t *w,
+    x86_jit_emit_ctx_t *ctx, const x86_jit_insn_t *insn) {
+  uint8_t dst_host = 0;
+  uint8_t src_host = 0;
+
+  if (!jit_regcache_active(ctx) || !jit_is_fusible_flag_producer(insn)) {
+    return jit_regcache_flush_all(w, ctx) &&
+           emit_flag_producer_no_capture(w, insn);
+  }
+
+  switch (insn->op) {
+    case X86_JIT_OP_ALU_REG_REG:
+      if (!jit_regcache_get_read(w, ctx, insn->dst, &dst_host, 0) ||
+          !jit_regcache_get_read(w, ctx, insn->src, &src_host,
+              (uint16_t)(1u << dst_host)) ||
+          !emit_alu_host_host(w, insn->alu_op, dst_host, src_host)) {
+        return false;
+      }
+      if (jit_native_alu_writes_result(insn->alu_op)) {
+        jit_regcache_mark_dirty(ctx, insn->dst);
+      }
+      JIT_STAT_INC(native_alu_ops);
+      return true;
+    case X86_JIT_OP_ALU_IMM_REG:
+      if (!jit_regcache_get_read(w, ctx, insn->dst, &dst_host, 0) ||
+          !emit_alu_host_imm32(w, insn->alu_op, dst_host, insn->imm)) {
+        return false;
+      }
+      if (jit_native_alu_writes_result(insn->alu_op)) {
+        jit_regcache_mark_dirty(ctx, insn->dst);
+      }
+      JIT_STAT_INC(native_alu_ops);
+      return true;
+    case X86_JIT_OP_TEST_REG_REG:
+      if (!jit_regcache_get_read(w, ctx, insn->dst, &dst_host, 0) ||
+          !jit_regcache_get_read(w, ctx, insn->src, &src_host,
+              (uint16_t)(1u << dst_host)) ||
+          !emit_test_host_host(w, dst_host, src_host)) {
+        return false;
+      }
+      JIT_STAT_INC(native_alu_ops);
+      return true;
+    case X86_JIT_OP_TEST_EAX_IMM:
+      return jit_regcache_flush_all(w, ctx) &&
+             emit_flag_producer_no_capture(w, insn);
+    default:
+      return false;
+  }
+}
+
 static bool emit_fused_flag_producer_jcc(x86_jit_writer_t *w,
     const x86_jit_insn_t *producer, const x86_jit_insn_t *jcc,
     uint32_t count) {
@@ -5306,9 +6335,26 @@ static bool emit_fused_flag_producer_jcc(x86_jit_writer_t *w,
   return true;
 }
 
-static bool emit_chained_fused_flag_producer_jcc(x86_jit_writer_t *w,
+static bool emit_fused_jcc_edge_exit(x86_jit_writer_t *w,
+    x86_jit_block_t *block, vaddr_t target_pc, uint32_t count,
+    x86_jit_exit_kind_t kind, bool can_chain, uint32_t copy_mask) {
+  if (!emit_capture_status_flags_if_live(w, copy_mask, target_pc)) {
+    return false;
+  }
+  if (can_chain) {
+    return emit_chain_exit(w, block, target_pc, count, kind,
+        X86_JIT_CHAIN_SLOW_UNLINKED);
+  }
+
+  return emit_store_pc_imm(w, target_pc) &&
+         emit_ret_count_side_exit(w, count,
+             X86_JIT_CHAIN_SLOW_UNACCEPTED_SUCCESSOR);
+}
+
+static bool emit_fused_flag_producer_jcc_per_edge(x86_jit_writer_t *w,
     x86_jit_block_t *block, const x86_jit_insn_t *producer,
-    const x86_jit_insn_t *jcc, uint32_t count) {
+    const x86_jit_insn_t *jcc, uint32_t count,
+    bool fallthrough_can_chain, bool taken_can_chain) {
   uint8_t *taken_disp = NULL;
   const uint32_t copy_mask = jit_flag_producer_copy_mask(producer);
 
@@ -5318,17 +6364,15 @@ static bool emit_chained_fused_flag_producer_jcc(x86_jit_writer_t *w,
 
   if (!emit_flag_producer_no_capture(w, producer) ||
       !emit_jcc_rel32_placeholder(w, jcc->cc, &taken_disp) ||
-      !emit_capture_status_flags_if_live(w, copy_mask, jcc->next_pc) ||
-      !emit_chain_exit(w, block, jcc->next_pc, count,
-          X86_JIT_EXIT_FALLTHROUGH)) {
+      !emit_fused_jcc_edge_exit(w, block, jcc->next_pc, count,
+          X86_JIT_EXIT_FALLTHROUGH, fallthrough_can_chain, copy_mask)) {
     return false;
   }
 
   uint8_t *taken_native = w->cur;
   if (!patch_rel32(taken_disp, taken_native) ||
-      !emit_capture_status_flags_if_live(w, copy_mask, jit_branch_target(jcc)) ||
-      !emit_chain_exit(w, block, jit_branch_target(jcc), count,
-          X86_JIT_EXIT_TAKEN)) {
+      !emit_fused_jcc_edge_exit(w, block, jit_branch_target(jcc), count,
+          X86_JIT_EXIT_TAKEN, taken_can_chain, copy_mask)) {
     return false;
   }
 
@@ -5349,8 +6393,9 @@ static bool emit_fused_flag_producer_jcc_resident_backedge(
     return false;
   }
 
-  if (!emit_load_loop_extra_eax(w) ||
-      !emit_mov_r11d_eax(w) ||
+  if (!((jit_fast_chain_runtime_enabled() ?
+          emit_mov_r11d_esi(w) :
+          (emit_load_loop_extra_eax(w) && emit_mov_r11d_eax(w)))) ||
       !emit_resident_lap_budget_r10d(w, count)) {
     return false;
   }
@@ -5957,6 +7002,23 @@ static bool emit_native_push_reg(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+static bool emit_native_push_reg_stack_guarded(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  if (insn->width != X86_WIDTH_DWORD) return false;
+
+  if (!emit_load_reg_eax(w, R_ESP) ||
+      !emit_add_eax_imm32(w, 0u - X86_WIDTH_DWORD) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_load_reg_r11d(w, insn->src) ||
+      !emit_stack_store_dword_r11d(w) ||
+      !emit_store_reg_eax(w, R_ESP)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_pmem_stores);
+  return true;
+}
+
 static bool emit_native_pop_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5990,6 +7052,25 @@ static bool emit_native_pop_reg(x86_jit_writer_t *w,
 
   JIT_STAT_INC(native_pmem_loads);
   return patch_rel32(done_disp, w->cur);
+}
+
+static bool emit_native_pop_reg_stack_guarded(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  if (insn->width != X86_WIDTH_DWORD || insn->dst == R_ESP) return false;
+
+  if (!emit_load_reg_eax(w, R_ESP) ||
+      !emit_mov_r11d_eax(w) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_stack_load_dword_eax(w) ||
+      !emit_store_reg_eax(w, insn->dst) ||
+      !emit_mov_eax_r11d(w) ||
+      !emit_add_eax_imm32(w, X86_WIDTH_DWORD) ||
+      !emit_store_reg_eax(w, R_ESP)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_pmem_loads);
+  return true;
 }
 
 static bool emit_native_call_rel(x86_jit_writer_t *w,
@@ -6027,6 +7108,78 @@ static bool emit_native_call_rel(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+static bool emit_native_call_rel_stack_guarded(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  if (insn->width != X86_WIDTH_DWORD) return false;
+
+  if (!emit_load_reg_eax(w, R_ESP) ||
+      !emit_add_eax_imm32(w, 0u - X86_WIDTH_DWORD) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_mov_r11d_imm32(w, insn->next_pc) ||
+      !emit_stack_store_dword_r11d(w) ||
+      !emit_store_reg_eax(w, R_ESP) ||
+      !emit_store_pc_imm(w, jit_branch_target(insn))) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_pmem_stores);
+  return true;
+}
+
+static bool emit_chained_call_rel(x86_jit_writer_t *w, x86_jit_block_t *block,
+    const x86_jit_insn_t *insn, uint32_t count) {
+  uint8_t *pmem_slow_disp = NULL;
+  uint8_t *cross_page_slow_disp = NULL;
+  uint8_t *source_page_slow_disp = NULL;
+
+  if (insn->width != X86_WIDTH_DWORD) return false;
+
+  if (!emit_load_reg_eax(w, R_ESP) ||
+      !emit_add_eax_imm32(w, 0u - X86_WIDTH_DWORD) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_direct_pmem_guard_edx(w, X86_WIDTH_DWORD, &pmem_slow_disp) ||
+      !emit_direct_store_source_guard_edx(w, X86_WIDTH_DWORD,
+          &cross_page_slow_disp, &source_page_slow_disp) ||
+      !emit_mov_r11d_imm32(w, insn->next_pc) ||
+      !emit_stack_store_dword_r11d(w) ||
+      !emit_store_reg_eax(w, R_ESP) ||
+      !emit_chain_exit(w, block, jit_branch_target(insn), count,
+          X86_JIT_EXIT_CALL, X86_JIT_CHAIN_SLOW_UNLINKED)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(pmem_slow_disp, slow_native) ||
+      !patch_rel32(cross_page_slow_disp, slow_native) ||
+      !patch_rel32(source_page_slow_disp, slow_native) ||
+      !emit_helper_call(w, insn) ||
+      !emit_ret_count_side_exit(w, count, X86_JIT_CHAIN_SLOW_HELPER)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_pmem_stores);
+  return true;
+}
+
+static bool emit_chained_call_rel_stack_guarded(x86_jit_writer_t *w,
+    x86_jit_block_t *block, const x86_jit_insn_t *insn, uint32_t count) {
+  if (insn->width != X86_WIDTH_DWORD) return false;
+
+  if (!emit_load_reg_eax(w, R_ESP) ||
+      !emit_add_eax_imm32(w, 0u - X86_WIDTH_DWORD) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_mov_r11d_imm32(w, insn->next_pc) ||
+      !emit_stack_store_dword_r11d(w) ||
+      !emit_store_reg_eax(w, R_ESP) ||
+      !emit_chain_exit(w, block, jit_branch_target(insn), count,
+          X86_JIT_EXIT_CALL, X86_JIT_CHAIN_SLOW_UNLINKED)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_pmem_stores);
+  return true;
+}
+
 static bool emit_native_ret(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -6055,6 +7208,237 @@ static bool emit_native_ret(x86_jit_writer_t *w,
 
   JIT_STAT_INC(native_pmem_loads);
   return patch_rel32(done_disp, w->cur);
+}
+
+static bool emit_native_ret_stack_guarded(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  if (insn->width != X86_WIDTH_DWORD) return false;
+
+  if (!emit_load_reg_eax(w, R_ESP) ||
+      !emit_mov_r11d_eax(w) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_stack_load_dword_eax(w) ||
+      !emit_store_pc_eax(w) ||
+      !emit_mov_eax_r11d(w) ||
+      !emit_add_eax_imm32(w, X86_WIDTH_DWORD) ||
+      !emit_store_reg_eax(w, R_ESP)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_pmem_loads);
+  return true;
+}
+
+static bool emit_chained_ret(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn, uint32_t count) {
+  uint8_t *pmem_slow_disp = NULL;
+  uint8_t *budget_exit_disp = NULL;
+  uint8_t *miss_disp = NULL;
+  uint8_t *null_disp = NULL;
+
+  if (insn->width != X86_WIDTH_DWORD || !jit_fast_chain_runtime_enabled()) {
+    return false;
+  }
+
+  if (!emit_load_reg_eax(w, R_ESP) ||
+      !emit_mov_r11d_eax(w) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_direct_pmem_guard_edx(w, X86_WIDTH_DWORD, &pmem_slow_disp) ||
+      !emit_stack_load_dword_eax(w) ||
+      !emit_mov_ecx_eax(w) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_mov_eax_r11d(w) ||
+      !emit_add_eax_imm32(w, X86_WIDTH_DWORD) ||
+      !emit_store_reg_eax(w, R_ESP) ||
+      !emit_mov_eax_edx(w) ||
+      !emit_add_esi_imm32(w, count) ||
+      !emit_cmp_esi_edi(w) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_AE, &budget_exit_disp) ||
+      !emit_mov_ecx_eax(w) ||
+      !emit_shr_ecx_imm(w, 4u) ||
+      !emit_xor_ecx_eax(w) ||
+      !emit_mov_r11d_ecx(w) ||
+      !emit_shr_r11d_imm(w, 12u) ||
+      !emit_xor_ecx_r11d(w) ||
+      !emit_and_ecx_imm32(w, X86_JIT_RET_CACHE_MASK) ||
+      !emit_shl_ecx_imm(w, 4u) ||
+      !emit_mov_r10_ret_cache_base(w) ||
+      !emit_mov_r11d_m32_r10_rcx_disp8(w, 0u) ||
+      !emit_cmp_r11d_eax(w) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp) ||
+      !emit_mov_r11_m64_r10_rcx_disp8(w, 8u) ||
+      !emit_test_r11_r11(w) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_Z, &null_disp) ||
+      (jit_stats_enabled &&
+          !emit_runtime_counter_inc(w, &jit_ret_cache_hits_runtime)) ||
+      !emit_jmp_r11(w)) {
+    return false;
+  }
+
+  uint8_t *budget_native = w->cur;
+  if (!patch_rel32(budget_exit_disp, budget_native) ||
+      !emit_store_pc_eax(w) ||
+      !emit_side_exit_counter_inc(w, &jit_chain_exit_budget_runtime) ||
+      !emit_mov_eax_esi(w) ||
+      !emit_ret(w)) {
+    return false;
+  }
+
+  uint8_t *miss_native = w->cur;
+  if (!patch_rel32(miss_disp, miss_native) ||
+      !patch_rel32(null_disp, miss_native) ||
+      (jit_stats_enabled &&
+          !emit_runtime_counter_inc(w, &jit_ret_cache_misses_runtime)) ||
+      !emit_store_pc_eax(w) ||
+      !emit_side_exit_counter_inc(w,
+          &jit_chain_exit_block_not_chainable_runtime) ||
+      !emit_mov_eax_esi(w) ||
+      !emit_ret(w)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(pmem_slow_disp, slow_native) ||
+      !emit_helper_call(w, insn) ||
+      !emit_ret_count_side_exit(w, count, X86_JIT_CHAIN_SLOW_HELPER)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_pmem_loads);
+  return true;
+}
+
+static bool emit_indirect_target_cache_jump(x86_jit_writer_t *w,
+    uint32_t count, uint8_t **budget_exit_disp, uint8_t **miss_disp,
+    uint8_t **null_disp);
+static bool emit_indirect_target_cache_slow_exits(x86_jit_writer_t *w,
+    uint8_t *budget_exit_disp, uint8_t *miss_disp, uint8_t *null_disp);
+
+static bool emit_chained_ret_stack_guarded(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn, uint32_t count) {
+  uint8_t *budget_exit_disp = NULL;
+  uint8_t *miss_disp = NULL;
+  uint8_t *null_disp = NULL;
+
+  if (insn->width != X86_WIDTH_DWORD || !jit_fast_chain_runtime_enabled()) {
+    return false;
+  }
+
+  if (!emit_load_reg_eax(w, R_ESP) ||
+      !emit_mov_r11d_eax(w) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_stack_load_dword_eax(w) ||
+      !emit_mov_ecx_eax(w) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_mov_eax_r11d(w) ||
+      !emit_add_eax_imm32(w, X86_WIDTH_DWORD) ||
+      !emit_store_reg_eax(w, R_ESP) ||
+      !emit_mov_eax_edx(w) ||
+      !emit_indirect_target_cache_jump(w, count, &budget_exit_disp,
+          &miss_disp, &null_disp) ||
+      !emit_indirect_target_cache_slow_exits(w, budget_exit_disp,
+          miss_disp, null_disp)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_pmem_loads);
+  return true;
+}
+
+static bool emit_indirect_target_cache_jump(x86_jit_writer_t *w,
+    uint32_t count, uint8_t **budget_exit_disp, uint8_t **miss_disp,
+    uint8_t **null_disp) {
+  return emit_add_esi_imm32(w, count) &&
+         emit_cmp_esi_edi(w) &&
+         emit_jcc_rel32_placeholder(w, X86_CC_AE, budget_exit_disp) &&
+         emit_mov_ecx_eax(w) &&
+         emit_shr_ecx_imm(w, 4u) &&
+         emit_xor_ecx_eax(w) &&
+         emit_mov_r11d_ecx(w) &&
+         emit_shr_r11d_imm(w, 12u) &&
+         emit_xor_ecx_r11d(w) &&
+         emit_and_ecx_imm32(w, X86_JIT_RET_CACHE_MASK) &&
+         emit_shl_ecx_imm(w, 4u) &&
+         emit_mov_r10_ret_cache_base(w) &&
+         emit_mov_r11d_m32_r10_rcx_disp8(w, 0u) &&
+         emit_cmp_r11d_eax(w) &&
+         emit_jcc_rel32_placeholder(w, X86_CC_NZ, miss_disp) &&
+         emit_mov_r11_m64_r10_rcx_disp8(w, 8u) &&
+         emit_test_r11_r11(w) &&
+         emit_jcc_rel32_placeholder(w, X86_CC_Z, null_disp) &&
+         (!jit_stats_enabled ||
+             emit_runtime_counter_inc(w, &jit_ret_cache_hits_runtime)) &&
+         emit_jmp_r11(w);
+}
+
+static bool emit_indirect_target_cache_slow_exits(x86_jit_writer_t *w,
+    uint8_t *budget_exit_disp, uint8_t *miss_disp, uint8_t *null_disp) {
+  uint8_t *budget_native = w->cur;
+  if (!patch_rel32(budget_exit_disp, budget_native) ||
+      !emit_store_pc_eax(w) ||
+      !emit_side_exit_counter_inc(w, &jit_chain_exit_budget_runtime) ||
+      !emit_mov_eax_esi(w) ||
+      !emit_ret(w)) {
+    return false;
+  }
+
+  uint8_t *miss_native = w->cur;
+  return patch_rel32(miss_disp, miss_native) &&
+         patch_rel32(null_disp, miss_native) &&
+         (!jit_stats_enabled ||
+             emit_runtime_counter_inc(w, &jit_ret_cache_misses_runtime)) &&
+         emit_store_pc_eax(w) &&
+         emit_side_exit_counter_inc(w,
+             &jit_chain_exit_block_not_chainable_runtime) &&
+         emit_mov_eax_esi(w) &&
+         emit_ret(w);
+}
+
+static bool emit_chained_jmp_rm(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn, uint32_t count) {
+  uint8_t *pmem_slow_disp = NULL;
+  uint8_t *budget_exit_disp = NULL;
+  uint8_t *miss_disp = NULL;
+  uint8_t *null_disp = NULL;
+
+  if (insn->width != X86_WIDTH_DWORD || !jit_fast_chain_runtime_enabled()) {
+    return false;
+  }
+
+  if (insn->rm_is_reg) {
+    if (!emit_load_reg_eax(w, insn->rm_reg) ||
+        !emit_indirect_target_cache_jump(w, count, &budget_exit_disp,
+            &miss_disp, &null_disp) ||
+        !emit_indirect_target_cache_slow_exits(w, budget_exit_disp,
+            miss_disp, null_disp)) {
+      return false;
+    }
+    JIT_STAT_INC(native_branch_ops);
+    return true;
+  }
+
+  if (!emit_guest_ea_eax(w, &insn->ea) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_direct_pmem_guard_edx(w, X86_WIDTH_DWORD, &pmem_slow_disp) ||
+      !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
+      !emit_mov_eax_m32_r10_rdx(w) ||
+      !emit_indirect_target_cache_jump(w, count, &budget_exit_disp,
+          &miss_disp, &null_disp) ||
+      !emit_indirect_target_cache_slow_exits(w, budget_exit_disp,
+          miss_disp, null_disp)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(pmem_slow_disp, slow_native) ||
+      !emit_helper_call(w, insn) ||
+      !emit_ret_count_side_exit(w, count, X86_JIT_CHAIN_SLOW_HELPER)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_branch_ops);
+  JIT_STAT_INC(native_pmem_loads);
+  return true;
 }
 
 static bool emit_native_neg_rm(x86_jit_writer_t *w,
@@ -6236,6 +7620,7 @@ static bool emit_load_rm_ecx_dword(x86_jit_writer_t *w,
          emit_mov_ecx_m32_r10_rdx(w);
 }
 
+/* Emit host code for store edx eax pair; bytes below are x86-64 encodings. */
 static bool emit_store_edx_eax_pair(x86_jit_writer_t *w) {
   return emit_mov_r11d_edx(w) &&
          emit_store_reg_eax(w, R_EAX) &&
@@ -6728,6 +8113,7 @@ static bool emit_native_test_imm_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit host code for condition bool eax; bytes below are x86-64 encodings. */
 static bool emit_condition_bool_eax(x86_jit_writer_t *w, uint8_t cc) {
   uint8_t *true_disp = NULL;
   uint8_t *done_disp = NULL;
@@ -6820,6 +8206,23 @@ static bool emit_native_push_imm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+static bool emit_native_push_imm_stack_guarded(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  if (insn->width != X86_WIDTH_DWORD) return false;
+
+  if (!emit_load_reg_eax(w, R_ESP) ||
+      !emit_add_eax_imm32(w, 0u - X86_WIDTH_DWORD) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_mov_r11d_imm32(w, insn->imm) ||
+      !emit_stack_store_dword_r11d(w) ||
+      !emit_store_reg_eax(w, R_ESP)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_pmem_stores);
+  return true;
+}
+
 static bool emit_native_push_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *src_slow_disp = NULL;
@@ -6859,6 +8262,44 @@ static bool emit_native_push_rm(x86_jit_writer_t *w,
       !patch_rel32(dst_pmem_slow_disp, slow_native) ||
       !patch_rel32(cross_page_slow_disp, slow_native) ||
       !patch_rel32(source_page_slow_disp, slow_native) ||
+      !emit_helper_call(w, insn)) {
+    return false;
+  }
+
+  if (!insn->rm_is_reg) JIT_STAT_INC(native_pmem_loads);
+  JIT_STAT_INC(native_pmem_stores);
+  return patch_rel32(done_disp, w->cur);
+}
+
+static bool emit_native_push_rm_stack_guarded(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  uint8_t *src_slow_disp = NULL;
+  uint8_t *done_disp = NULL;
+
+  if (insn->width != X86_WIDTH_DWORD) return false;
+
+  if (insn->rm_is_reg) {
+    if (!emit_load_reg_r11d(w, insn->rm_reg)) return false;
+  }
+  else if (!emit_guest_ea_eax(w, &insn->ea) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_direct_pmem_guard_edx(w, X86_WIDTH_DWORD, &src_slow_disp) ||
+      !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
+      !emit_mov_r11d_m32_r10_rdx(w)) {
+    return false;
+  }
+
+  if (!emit_load_reg_eax(w, R_ESP) ||
+      !emit_add_eax_imm32(w, 0u - X86_WIDTH_DWORD) ||
+      !emit_mov_edx_eax(w) ||
+      !emit_stack_store_dword_r11d(w) ||
+      !emit_store_reg_eax(w, R_ESP) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if ((src_slow_disp != NULL && !patch_rel32(src_slow_disp, slow_native)) ||
       !emit_helper_call(w, insn)) {
     return false;
   }
@@ -6980,6 +8421,7 @@ static bool emit_insn_regcached(x86_jit_writer_t *w,
   }
 }
 
+/* Emit host code for insn; bytes below are x86-64 encodings. */
 static bool emit_insn(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
   switch (insn->op) {
     case X86_JIT_OP_NOP:
@@ -7239,6 +8681,7 @@ static bool jit_is_any_jcc_backedge(const x86_jit_insn_t *insn,
   return is_jcc && jit_branch_target(insn) == block_pc;
 }
 
+/* Detect CMP forms that compare against a specific resident loop register. */
 static bool jit_is_cmp_with_reg(const x86_jit_insn_t *insn, uint8_t reg) {
   if (insn->width != X86_WIDTH_DWORD || insn->alu_op != X86_ALU_CMP) {
     return false;
@@ -7252,6 +8695,7 @@ static bool jit_is_cmp_with_reg(const x86_jit_insn_t *insn, uint8_t reg) {
   return false;
 }
 
+/* Detect register INC/DEC helpers that can be lowered as a resident loop update. */
 static bool jit_is_native_incdec_reg(const x86_jit_insn_t *insn) {
   return insn->op == X86_JIT_OP_HELPER &&
          insn->helper == X86_JIT_HELPER_INCDEC_REG &&
@@ -7259,6 +8703,7 @@ static bool jit_is_native_incdec_reg(const x86_jit_insn_t *insn) {
          (insn->alu_op == X86_ALU_ADD || insn->alu_op == X86_ALU_SUB);
 }
 
+/* Decode the IA-32 ModR/M byte into mod, reg/opcode, and r/m fields. */
 static bool jit_decode_modrm(x86_jit_reader_t *r, uint8_t *mod, uint8_t *reg,
     uint8_t *rm) {
   uint8_t modrm = 0;
@@ -7270,6 +8715,11 @@ static bool jit_decode_modrm(x86_jit_reader_t *r, uint8_t *mod, uint8_t *reg,
   return true;
 }
 
+/*
+ * Decode a 32-bit IA-32 effective address.  rm=4 selects a SIB byte; rm=5 with
+ * mod=0 means disp32 with no base.  In SIB, index=4 means no index and base=5
+ * with mod=0 again means no base plus disp32.
+ */
 static bool jit_decode_ea32(x86_jit_reader_t *r, uint8_t mod, uint8_t rm,
     x86_jit_ea_t *ea) {
   ea->base_reg = -1;
@@ -7310,6 +8760,7 @@ static bool jit_decode_ea32(x86_jit_reader_t *r, uint8_t mod, uint8_t rm,
   return true;
 }
 
+/* Attach either a register r/m operand or a decoded memory effective address. */
 static bool jit_decode_rm_operand(x86_jit_reader_t *r, uint8_t mod,
     uint8_t rm, x86_jit_insn_t *out) {
   out->rm_is_reg = mod == 3;
@@ -7318,16 +8769,19 @@ static bool jit_decode_rm_operand(x86_jit_reader_t *r, uint8_t mod,
   return jit_decode_ea32(r, mod, rm, &out->ea);
 }
 
+/* Finish decode by recording the first byte after this instruction. */
 static bool jit_finish_decode(x86_jit_reader_t *r, x86_jit_insn_t *out) {
   out->next_pc = r->cur;
   return true;
 }
 
+/* Mark a decoded instruction as helper-backed. */
 static void jit_mark_helper(x86_jit_insn_t *out, x86_jit_helper_t helper) {
   out->op = X86_JIT_OP_HELPER;
   out->helper = helper;
 }
 
+/* Convert the opcode's Group-1 bits 5..3 into the local ALU enum. */
 static int jit_alu_from_opcode(uint8_t opcode) {
   switch (opcode & 0x38u) {
     case 0x00: return X86_ALU_ADD;
@@ -7342,6 +8796,11 @@ static int jit_alu_from_opcode(uint8_t opcode) {
   }
 }
 
+/*
+ * Decode the supported IA-32 subset into the compact JIT IR.  The decoder keeps
+ * unsupported opcodes side-effect free: if it returns false, the interpreter
+ * will execute from the original PC.
+ */
 static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
   memset(out, 0, sizeof(*out));
   out->pc = r->cur;
@@ -7906,6 +9365,7 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
   return false;
 }
 
+/* Initialise per-block emission state and invalidate every register-cache slot. */
 static void jit_emit_ctx_init(x86_jit_emit_ctx_t *ctx) {
   memset(ctx, 0, sizeof(*ctx));
   ctx->valid = true;
@@ -7915,6 +9375,7 @@ static void jit_emit_ctx_init(x86_jit_emit_ctx_t *ctx) {
   ctx->flags.kind = X86_LAZY_FLAGS_MATERIALISED;
 }
 
+/* Decode a straight-line block until unsupported decode, limit, or control flow. */
 static bool jit_decode_block(vaddr_t pc, uint32_t max_insns,
     x86_jit_insn_t *insns, uint32_t *count_out, vaddr_t *end_pc_out) {
   x86_jit_reader_t r = { .pc = pc, .cur = pc };
@@ -7942,6 +9403,7 @@ static bool jit_decode_block(vaddr_t pc, uint32_t max_insns,
   return count != 0;
 }
 
+/* Summarise helper/memory properties needed before choosing emission fast paths. */
 static void jit_analyse_block(const x86_jit_insn_t *insns, uint32_t count,
     x86_jit_emit_ctx_t *ctx) {
   for (uint32_t i = 0; i < count; i++) {
@@ -7953,10 +9415,123 @@ static void jit_analyse_block(const x86_jit_insn_t *insns, uint32_t count,
   }
 }
 
+/* Expand the tracked ESP-relative window by one 32-bit load or store slot. */
+static void jit_stack_window_note_access(x86_jit_stack_window_t *window,
+    int32_t offset, bool is_store) {
+  if (!window->valid) {
+    window->valid = true;
+    window->min_offset = offset;
+    window->max_offset = offset;
+  }
+  else {
+    if (offset < window->min_offset) window->min_offset = offset;
+    if (offset > window->max_offset) window->max_offset = offset;
+  }
+
+  if (is_store) {
+    if (!window->has_store) {
+      window->has_store = true;
+      window->store_min_offset = offset;
+      window->store_max_offset = offset;
+    }
+    else {
+      if (offset < window->store_min_offset) window->store_min_offset = offset;
+      if (offset > window->store_max_offset) window->store_max_offset = offset;
+    }
+  }
+}
+
+/* Return true if an instruction writes ESP in a way the stack-window analysis cannot fold. */
+static bool jit_stack_window_guest_esp_write(const x86_jit_insn_t *insn) {
+  switch (insn->op) {
+    case X86_JIT_OP_MOV_IMM_REG:
+    case X86_JIT_OP_MOV_REG_REG:
+    case X86_JIT_OP_LEA:
+    case X86_JIT_OP_ALU_REG_REG:
+    case X86_JIT_OP_ALU_IMM_REG:
+    case X86_JIT_OP_DOUBLE_SHIFT_REG_IMM:
+      return insn->dst == R_ESP;
+    case X86_JIT_OP_HELPER:
+      switch (insn->helper) {
+        case X86_JIT_HELPER_MOV_REG_RM:
+        case X86_JIT_HELPER_MOVZX_REG_RM8:
+        case X86_JIT_HELPER_MOVZX_REG_RM16:
+        case X86_JIT_HELPER_MOVSX_REG_RM8:
+        case X86_JIT_HELPER_MOVSX_REG_RM16:
+        case X86_JIT_HELPER_IMUL_REG_RM:
+          return insn->dst == R_ESP;
+        default:
+          return false;
+      }
+    default:
+      return false;
+  }
+}
+
+static bool jit_analyse_stack_window(const x86_jit_insn_t *insns,
+    uint32_t count, x86_jit_stack_window_t *window) {
+  memset(window, 0, sizeof(*window));
+  if (!jit_stack_fast_enabled || !jit_fast_chain_runtime_enabled() ||
+      jit_paging_enabled()) {
+    return false;
+  }
+
+  int32_t esp_delta = 0;
+  for (uint32_t i = 0; i < count; i++) {
+    const x86_jit_insn_t *insn = &insns[i];
+    if (jit_stack_window_guest_esp_write(insn)) return false;
+    if (insn->op != X86_JIT_OP_HELPER) continue;
+
+    switch (insn->helper) {
+      case X86_JIT_HELPER_PUSH_REG:
+      case X86_JIT_HELPER_PUSH_IMM:
+      case X86_JIT_HELPER_PUSH_RM:
+      case X86_JIT_HELPER_CALL_REL:
+        if (insn->width != X86_WIDTH_DWORD) return false;
+        esp_delta -= (int32_t)X86_WIDTH_DWORD;
+        jit_stack_window_note_access(window, esp_delta, true);
+        break;
+      case X86_JIT_HELPER_POP_REG:
+        if (insn->width != X86_WIDTH_DWORD || insn->dst == R_ESP) {
+          return false;
+        }
+        jit_stack_window_note_access(window, esp_delta, false);
+        esp_delta += (int32_t)X86_WIDTH_DWORD;
+        break;
+      case X86_JIT_HELPER_RET:
+        if (insn->width != X86_WIDTH_DWORD) return false;
+        jit_stack_window_note_access(window, esp_delta, false);
+        break;
+      case X86_JIT_HELPER_LEAVE:
+      case X86_JIT_HELPER_CALL_RM:
+        return false;
+      default:
+        break;
+    }
+  }
+
+  if (!window->valid) return false;
+  const int64_t access_len64 =
+      (int64_t)window->max_offset - (int64_t)window->min_offset +
+      (int64_t)X86_WIDTH_DWORD;
+  if (access_len64 <= 0 || access_len64 > CONFIG_MSIZE) return false;
+  if (window->has_store) {
+    const int64_t store_len64 =
+        (int64_t)window->store_max_offset -
+        (int64_t)window->store_min_offset + (int64_t)X86_WIDTH_DWORD;
+    if (store_len64 <= 0 || store_len64 > X86_JIT_SOURCE_PAGE_SIZE) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/* Align native block starts for friendlier instruction-cache fetch and patching. */
 static size_t jit_align_code(size_t value) {
   return (value + X86_JIT_CODE_ALIGN - 1u) & ~(size_t)(X86_JIT_CODE_ALIGN - 1u);
 }
 
+/* Validate that cached source bytes still match guest memory for this PC/CR3. */
 static bool jit_block_source_matches(const x86_jit_block_t *block, vaddr_t pc) {
   if (!block->valid || block->pc != pc || block->source_len == 0) return false;
   if (block->cr3_key != jit_cr3_key()) return false;
@@ -7980,12 +9555,14 @@ static bool jit_block_source_matches(const x86_jit_block_t *block, vaddr_t pc) {
   return memcmp(cold->source, current, block->source_len) == 0;
 }
 
+/* Monotonic replacement age; zero is reserved as "never used". */
 static uint32_t jit_next_cache_age(void) {
   jit_cache_age_clock++;
   if (jit_cache_age_clock == 0) jit_cache_age_clock = 1;
   return jit_cache_age_clock;
 }
 
+/* Hash a PC/CR3 key into the set-associative block cache. */
 static uint32_t jit_cache_set_key(vaddr_t pc, uint32_t cr3_key) {
   uint32_t hash = pc ^ cr3_key;
   hash ^= hash >> 4;
@@ -7994,6 +9571,10 @@ static uint32_t jit_cache_set_key(vaddr_t pc, uint32_t cr3_key) {
   return hash & (X86_JIT_CACHE_SETS - 1u);
 }
 
+/*
+ * Hash a PC/CR3 key into the hotness table.  2654435761 is Knuth's 32-bit
+ * multiplicative hash constant, used to spread nearby CR3 values before masking.
+ */
 static uint32_t jit_hot_index(vaddr_t pc, uint32_t cr3_key) {
   uint32_t hash = pc ^ (cr3_key * 2654435761u);
   hash ^= hash >> 7;
@@ -8001,6 +9582,35 @@ static uint32_t jit_hot_index(vaddr_t pc, uint32_t cr3_key) {
   return hash & (X86_JIT_HOT_TABLE_SIZE - 1u);
 }
 
+/* Hash a return target PC into the power-of-two direct RET cache. */
+static uint32_t jit_ret_cache_index(vaddr_t pc) {
+  uint32_t hash = pc;
+  hash ^= hash >> 4;
+  hash ^= hash >> 12;
+  return hash & X86_JIT_RET_CACHE_MASK;
+}
+
+/* Clear all indirect RET chain hints. */
+static void jit_ret_cache_clear(void) {
+  memset(jit_ret_cache, 0, sizeof(jit_ret_cache));
+}
+
+/* Publish one chainable non-paged block as a possible RET target. */
+static void jit_ret_cache_publish(const x86_jit_block_t *block) {
+  if (block == NULL || !block->valid || block->unsupported ||
+      !block->accepts_chain || block->chain_entry == NULL ||
+      block->paging) {
+    return;
+  }
+
+  x86_jit_ret_cache_entry_t *entry =
+      &jit_ret_cache[jit_ret_cache_index(block->pc)];
+  entry->target_pc = block->pc;
+  entry->pad = 0;
+  entry->chain_entry = block->chain_entry;
+}
+
+/* Return or initialise the hotness record for one PC/CR3 pair. */
 static x86_jit_hot_info_t *jit_hot_info_for(vaddr_t pc, uint32_t cr3_key) {
   x86_jit_hot_info_t *hot = &jit_hot_info[jit_hot_index(pc, cr3_key)];
   if (!hot->valid || hot->pc != pc || hot->cr3_key != cr3_key) {
@@ -8014,6 +9624,7 @@ static x86_jit_hot_info_t *jit_hot_info_for(vaddr_t pc, uint32_t cr3_key) {
   return hot;
 }
 
+/* Check whether a hotness record still points to the same compiled trace. */
 static bool jit_hot_trace_is_valid(const x86_jit_hot_info_t *hot) {
   if (hot == NULL || !hot->trace_compiled ||
       hot->trace_index >= X86_JIT_CACHE_SIZE) {
@@ -8027,10 +9638,12 @@ static bool jit_hot_trace_is_valid(const x86_jit_hot_info_t *hot) {
          trace->generation == hot->trace_generation;
 }
 
+/* Hash the current PC using the current CR3 key. */
 static uint32_t jit_cache_set(vaddr_t pc) {
   return jit_cache_set_key(pc, jit_cr3_key());
 }
 
+/* Hash a PC/CR3 key into the direct-mapped L0 cache. */
 static uint32_t jit_l0_index_key(vaddr_t pc, uint32_t cr3_key) {
   uint32_t hash = pc ^ cr3_key;
   hash ^= hash >> 6;
@@ -8038,15 +9651,18 @@ static uint32_t jit_l0_index_key(vaddr_t pc, uint32_t cr3_key) {
   return hash & (X86_JIT_L0_SIZE - 1u);
 }
 
+/* Return one way from the current-CR3 block-cache set. */
 static x86_jit_block_t *jit_cache_way(vaddr_t pc, uint32_t way) {
   return &jit_cache[jit_cache_set(pc) * X86_JIT_CACHE_WAYS + way];
 }
 
+/* Return one way from a block-cache set for an explicit CR3 key. */
 static x86_jit_block_t *jit_cache_way_key(vaddr_t pc, uint32_t way,
     uint32_t cr3_key) {
   return &jit_cache[jit_cache_set_key(pc, cr3_key) * X86_JIT_CACHE_WAYS + way];
 }
 
+/* Probe the direct-mapped L0 cache before walking all ways of the block cache. */
 static x86_jit_block_t *jit_l0_lookup(vaddr_t pc, uint32_t cr3_key) {
   if (!jit_l0_cache_enabled || !jit_hot_cold_cache_enabled) return NULL;
 
@@ -8069,6 +9685,7 @@ static x86_jit_block_t *jit_l0_lookup(vaddr_t pc, uint32_t cr3_key) {
   return block;
 }
 
+/* Fill the L0 cache with the hot-cache index and current generation. */
 static void jit_l0_fill_key(vaddr_t pc, const x86_jit_block_t *block,
     uint32_t cr3_key) {
   if (!jit_l0_cache_enabled || !jit_hot_cold_cache_enabled || block == NULL) {
@@ -8085,20 +9702,26 @@ static void jit_l0_fill_key(vaddr_t pc, const x86_jit_block_t *block,
   };
 }
 
+/* Fill the L0 cache for the current CR3 key. */
 static void jit_l0_fill(vaddr_t pc, const x86_jit_block_t *block) {
   jit_l0_fill_key(pc, block, jit_cr3_key());
 }
 
+/* Lookup a valid block, verifying source bytes if requested. */
 static x86_jit_block_t *jit_cache_lookup(vaddr_t pc) {
   const uint32_t cr3_key = jit_cr3_key();
   x86_jit_block_t *block = jit_l0_lookup(pc, cr3_key);
-  if (block != NULL) return block;
+  if (block != NULL) {
+    jit_ret_cache_publish(block);
+    return block;
+  }
 
   const uint32_t ways = jit_4way_cache_enabled ? X86_JIT_CACHE_WAYS : 1u;
   for (uint32_t way = 0; way < ways; way++) {
     x86_jit_block_t *block = jit_cache_way_key(pc, way, cr3_key);
     if (jit_block_source_matches(block, pc)) {
       jit_l0_fill_key(pc, block, cr3_key);
+      jit_ret_cache_publish(block);
       return block;
     }
     if (jit_verify_source_enabled && block->valid && block->pc == pc &&
@@ -8109,6 +9732,7 @@ static x86_jit_block_t *jit_cache_lookup(vaddr_t pc) {
   return NULL;
 }
 
+/* Link all patchable exits of one block to currently compiled successors. */
 static void jit_link_block_exits(x86_jit_block_t *block) {
   if (!jit_chain_enabled || block == NULL || !block->valid ||
       block->unsupported) {
@@ -8131,6 +9755,7 @@ static void jit_link_block_exits(x86_jit_block_t *block) {
   }
 }
 
+/* Link existing incoming edges after compiling a new target block. */
 static void jit_link_edges_to_target(x86_jit_block_t *target) {
   if (!jit_chain_enabled || target == NULL || !target->valid ||
       target->unsupported || !target->accepts_chain ||
@@ -8153,6 +9778,7 @@ static void jit_link_edges_to_target(x86_jit_block_t *target) {
   }
 }
 
+/* Probe a potential successor to see whether it can accept a direct chain. */
 static bool jit_target_probe_accepts_chain(vaddr_t pc) {
   x86_jit_block_t *cached = jit_cache_lookup(pc);
   if (cached != NULL) {
@@ -8171,23 +9797,111 @@ static bool jit_target_probe_accepts_chain(vaddr_t pc) {
   return true;
 }
 
-static bool jit_block_successors_accept_chain(const x86_jit_insn_t *insns,
-    uint32_t count, vaddr_t end_pc) {
-  if (count == 0) return false;
+/* Check whether an edge may use a patchable direct chain. */
+static bool jit_edge_accepts_chain(bool guarded_block, vaddr_t pc) {
+  return guarded_block && jit_target_probe_accepts_chain(pc);
+}
+
+/* Classify the possible successors of a block for chain emission decisions. */
+static x86_jit_edge_chainability_t jit_block_edge_chainability(
+    const x86_jit_insn_t *insns, uint32_t count, vaddr_t end_pc,
+    bool guarded_block) {
+  x86_jit_edge_chainability_t edges = {0};
+  if (!guarded_block || count == 0) return edges;
 
   const x86_jit_insn_t *last = &insns[count - 1u];
   if (last->op == X86_JIT_OP_JMP_REL) {
-    return jit_target_probe_accepts_chain(jit_branch_target(last));
+    edges.target = jit_edge_accepts_chain(guarded_block,
+        jit_branch_target(last));
+    return edges;
   }
   if (last->op == X86_JIT_OP_JCC_REL) {
-    return jit_target_probe_accepts_chain(last->next_pc) &&
-           jit_target_probe_accepts_chain(jit_branch_target(last));
+    edges.fallthrough = jit_edge_accepts_chain(guarded_block, last->next_pc);
+    edges.taken = jit_edge_accepts_chain(guarded_block,
+        jit_branch_target(last));
+    return edges;
+  }
+  if (last->op == X86_JIT_OP_HELPER &&
+      last->helper == X86_JIT_HELPER_CALL_REL) {
+    edges.target = jit_edge_accepts_chain(guarded_block,
+        jit_branch_target(last));
+    return edges;
   }
   if (!last->ends_block) {
-    return jit_target_probe_accepts_chain(end_pc);
+    edges.fallthrough = jit_edge_accepts_chain(guarded_block, end_pc);
   }
 
-  return false;
+  return edges;
+}
+
+/* Return true when at least one successor edge can be directly chained. */
+static bool jit_block_has_chainable_edge(x86_jit_edge_chainability_t edges) {
+  return edges.fallthrough || edges.taken || edges.target;
+}
+
+/* Account why a block did or did not get any chainable outgoing edge. */
+static void jit_classify_block_chainability(const x86_jit_insn_t *insns,
+    uint32_t count, vaddr_t end_pc, bool guarded_block,
+    x86_jit_edge_chainability_t edges) {
+  if (!jit_stats_enabled || !guarded_block) return;
+
+  if (jit_block_has_chainable_edge(edges)) {
+    jit_stats.blocks_chainable++;
+    return;
+  }
+
+  jit_stats.blocks_not_chainable++;
+  if (count == 0) {
+    jit_stats.blocks_not_chainable_unsupported_successor++;
+    return;
+  }
+
+  const x86_jit_insn_t *last = &insns[count - 1u];
+  if (last->op == X86_JIT_OP_JMP_REL) {
+    jit_stats.blocks_not_chainable_jmp++;
+    if (!jit_target_probe_accepts_chain(jit_branch_target(last))) {
+      jit_stats.blocks_not_chainable_unsupported_successor++;
+    }
+    return;
+  }
+
+  if (last->op == X86_JIT_OP_JCC_REL) {
+    const bool fallthrough_ok = jit_target_probe_accepts_chain(last->next_pc);
+    const bool taken_ok = jit_target_probe_accepts_chain(jit_branch_target(last));
+    if (fallthrough_ok != taken_ok) {
+      jit_stats.blocks_not_chainable_jcc_one_side++;
+    }
+    else {
+      jit_stats.blocks_not_chainable_jcc_both_sides++;
+    }
+    if (!fallthrough_ok || !taken_ok) {
+      jit_stats.blocks_not_chainable_unsupported_successor++;
+    }
+    return;
+  }
+
+  if (last->op == X86_JIT_OP_HELPER) {
+    if (last->helper == X86_JIT_HELPER_CALL_REL) {
+      if (!jit_target_probe_accepts_chain(jit_branch_target(last))) {
+        jit_stats.blocks_not_chainable_unsupported_successor++;
+      }
+    }
+    else if (last->helper == X86_JIT_HELPER_RET) {
+      jit_stats.blocks_not_chainable_ret++;
+    }
+    else if (last->helper == X86_JIT_HELPER_CALL_RM) {
+      jit_stats.blocks_not_chainable_call_rm++;
+    }
+    else {
+      jit_stats.blocks_not_chainable_unsupported_successor++;
+    }
+    return;
+  }
+
+  if (!last->ends_block &&
+      !jit_target_probe_accepts_chain(end_pc)) {
+    jit_stats.blocks_not_chainable_unsupported_successor++;
+  }
 }
 
 typedef struct {
@@ -8204,10 +9918,12 @@ typedef struct {
   bool is_final;
 } x86_jit_trace_part_t;
 
+/* Trace builder treats direct JMP/Jcc as block-ending control instructions. */
 static bool jit_trace_insn_is_direct_control(const x86_jit_insn_t *insn) {
   return insn->op == X86_JIT_OP_JMP_REL || insn->op == X86_JIT_OP_JCC_REL;
 }
 
+/* Choose the hot Jcc edge from observed counters, falling back to backwards-branch bias. */
 static bool jit_trace_choose_taken(vaddr_t pc, const x86_jit_insn_t *jcc) {
   const uint32_t cr3_key = jit_cr3_key();
   x86_jit_hot_info_t *hot =
@@ -8278,7 +9994,8 @@ static bool jit_trace_decode(vaddr_t pc, uint32_t max_insns,
     if (last->ends_block && !jit_trace_insn_is_direct_control(last)) {
       break;
     }
-    if (jit_trace_block_has_resident_backedge(decoded, decoded_count, cur_pc)) {
+    if (!jit_trace_loopback_enabled &&
+        jit_trace_block_has_resident_backedge(decoded, decoded_count, cur_pc)) {
       break;
     }
     if (last->op == X86_JIT_OP_JCC_REL &&
@@ -8345,19 +10062,38 @@ static bool jit_trace_decode(vaddr_t pc, uint32_t max_insns,
   *trace_count = total;
   *part_count = parts_used;
   *source_len = source_total;
-  return parts_used >= 2u && total >= X86_JIT_TRACE_MIN_INSNS;
+  if (total < X86_JIT_TRACE_MIN_INSNS) return false;
+  if (parts_used >= 2u) return true;
+  if (!jit_trace_loopback_enabled || parts_used == 0) return false;
+
+  const x86_jit_trace_part_t *last_part = &parts[parts_used - 1u];
+  return last_part->is_final &&
+         (last_part->ends_with_jmp || last_part->ends_with_jcc) &&
+         last_part->hot_target == pc;
+}
+
+static bool jit_trace_jcc_successor_flags_dead(
+    const x86_jit_trace_part_t *part) {
+  return part != NULL &&
+         jit_successor_flags_dead(part->hot_target) &&
+         jit_successor_flags_dead(part->cold_target);
 }
 
 static bool emit_trace_jcc_side_exit(x86_jit_writer_t *w,
     x86_jit_block_t *block, const x86_jit_insn_t *jcc,
-    const x86_jit_trace_part_t *part) {
+    const x86_jit_trace_part_t *part, x86_jit_emit_ctx_t *ctx) {
   uint8_t *taken_disp = NULL;
 
   if (!emit_jcc_condition_jump(w, jcc->cc, &taken_disp)) return false;
 
   if (part->hot_is_taken) {
-    if (!emit_chain_exit(w, block, part->cold_target, part->count_after,
-        X86_JIT_EXIT_FALLTHROUGH)) {
+    x86_jit_emit_ctx_t exit_ctx = *ctx;
+    if ((jit_stats_enabled &&
+            !emit_runtime_counter_inc(w,
+                &jit_trace_side_exit_fallthrough_runtime)) ||
+        !jit_regcache_flush_all(w, &exit_ctx) ||
+        !emit_chain_exit(w, block, part->cold_target, part->count_after,
+        X86_JIT_EXIT_FALLTHROUGH, X86_JIT_CHAIN_SLOW_COLD_TRACE)) {
       return false;
     }
     return patch_rel32(taken_disp, w->cur);
@@ -8366,9 +10102,50 @@ static bool emit_trace_jcc_side_exit(x86_jit_writer_t *w,
   uint8_t *hot_disp = NULL;
   if (!emit_jmp_rel32_placeholder(w, &hot_disp)) return false;
   uint8_t *cold_native = w->cur;
+  x86_jit_emit_ctx_t exit_ctx = *ctx;
   if (!patch_rel32(taken_disp, cold_native) ||
+      (jit_stats_enabled &&
+          !emit_runtime_counter_inc(w,
+              &jit_trace_side_exit_taken_runtime)) ||
+      !jit_regcache_flush_all(w, &exit_ctx) ||
       !emit_chain_exit(w, block, part->cold_target, part->count_after,
-          X86_JIT_EXIT_TAKEN)) {
+          X86_JIT_EXIT_TAKEN, X86_JIT_CHAIN_SLOW_COLD_TRACE)) {
+    return false;
+  }
+  return patch_rel32(hot_disp, w->cur);
+}
+
+static bool emit_trace_jcc_side_exit_host_flags(x86_jit_writer_t *w,
+    x86_jit_block_t *block, const x86_jit_insn_t *jcc,
+    const x86_jit_trace_part_t *part, x86_jit_emit_ctx_t *ctx) {
+  uint8_t *taken_disp = NULL;
+
+  if (!emit_jcc_rel32_placeholder(w, jcc->cc, &taken_disp)) return false;
+
+  if (part->hot_is_taken) {
+    x86_jit_emit_ctx_t exit_ctx = *ctx;
+    if ((jit_stats_enabled &&
+            !emit_runtime_counter_inc(w,
+                &jit_trace_side_exit_fallthrough_runtime)) ||
+        !jit_regcache_flush_all(w, &exit_ctx) ||
+        !emit_chain_exit(w, block, part->cold_target, part->count_after,
+            X86_JIT_EXIT_FALLTHROUGH, X86_JIT_CHAIN_SLOW_COLD_TRACE)) {
+      return false;
+    }
+    return patch_rel32(taken_disp, w->cur);
+  }
+
+  uint8_t *hot_disp = NULL;
+  if (!emit_jmp_rel32_placeholder(w, &hot_disp)) return false;
+  uint8_t *cold_native = w->cur;
+  x86_jit_emit_ctx_t exit_ctx = *ctx;
+  if (!patch_rel32(taken_disp, cold_native) ||
+      (jit_stats_enabled &&
+          !emit_runtime_counter_inc(w,
+              &jit_trace_side_exit_taken_runtime)) ||
+      !jit_regcache_flush_all(w, &exit_ctx) ||
+      !emit_chain_exit(w, block, part->cold_target, part->count_after,
+          X86_JIT_EXIT_TAKEN, X86_JIT_CHAIN_SLOW_COLD_TRACE)) {
     return false;
   }
   return patch_rel32(hot_disp, w->cur);
@@ -8382,8 +10159,11 @@ static bool emit_trace_jcc_final_exit(x86_jit_writer_t *w,
   if (!emit_jcc_condition_jump(w, jcc->cc, &taken_disp)) return false;
 
   if (part->hot_is_taken) {
-    if (!emit_chain_exit(w, block, part->cold_target, part->count_after,
-        X86_JIT_EXIT_FALLTHROUGH)) {
+    if ((jit_stats_enabled &&
+            !emit_runtime_counter_inc(w,
+                &jit_trace_side_exit_fallthrough_runtime)) ||
+        !emit_chain_exit(w, block, part->cold_target, part->count_after,
+        X86_JIT_EXIT_FALLTHROUGH, X86_JIT_CHAIN_SLOW_COLD_TRACE)) {
       return false;
     }
     uint8_t *hot_native = w->cur;
@@ -8393,15 +10173,18 @@ static bool emit_trace_jcc_final_exit(x86_jit_writer_t *w,
           block->chain_entry);
     }
     return emit_chain_exit(w, block, part->hot_target, part->count_after,
-        X86_JIT_EXIT_TAKEN);
+        X86_JIT_EXIT_TAKEN, X86_JIT_CHAIN_SLOW_UNLINKED);
   }
 
   if (part->hot_target == block->pc) {
     uint8_t *cold_disp = NULL;
     if (!emit_jmp_rel32_placeholder(w, &cold_disp) ||
         !patch_rel32(taken_disp, w->cur) ||
+        (jit_stats_enabled &&
+            !emit_runtime_counter_inc(w,
+                &jit_trace_side_exit_taken_runtime)) ||
         !emit_chain_exit(w, block, part->cold_target, part->count_after,
-            X86_JIT_EXIT_TAKEN)) {
+            X86_JIT_EXIT_TAKEN, X86_JIT_CHAIN_SLOW_COLD_TRACE)) {
       return false;
     }
     uint8_t *hot_native = w->cur;
@@ -8411,15 +10194,72 @@ static bool emit_trace_jcc_final_exit(x86_jit_writer_t *w,
   }
 
   if (!emit_chain_exit(w, block, part->hot_target, part->count_after,
-      X86_JIT_EXIT_FALLTHROUGH)) {
+      X86_JIT_EXIT_FALLTHROUGH, X86_JIT_CHAIN_SLOW_UNLINKED)) {
     return false;
   }
   uint8_t *cold_native = w->cur;
   return patch_rel32(taken_disp, cold_native) &&
+         (!jit_stats_enabled ||
+          emit_runtime_counter_inc(w, &jit_trace_side_exit_taken_runtime)) &&
          emit_chain_exit(w, block, part->cold_target, part->count_after,
-             X86_JIT_EXIT_TAKEN);
+             X86_JIT_EXIT_TAKEN, X86_JIT_CHAIN_SLOW_COLD_TRACE);
 }
 
+static bool emit_trace_jcc_final_exit_host_flags(x86_jit_writer_t *w,
+    x86_jit_block_t *block, const x86_jit_insn_t *jcc,
+    const x86_jit_trace_part_t *part) {
+  uint8_t *taken_disp = NULL;
+
+  if (!emit_jcc_rel32_placeholder(w, jcc->cc, &taken_disp)) return false;
+
+  if (part->hot_is_taken) {
+    if ((jit_stats_enabled &&
+            !emit_runtime_counter_inc(w,
+                &jit_trace_side_exit_fallthrough_runtime)) ||
+        !emit_chain_exit(w, block, part->cold_target, part->count_after,
+            X86_JIT_EXIT_FALLTHROUGH, X86_JIT_CHAIN_SLOW_COLD_TRACE)) {
+      return false;
+    }
+    uint8_t *hot_native = w->cur;
+    if (!patch_rel32(taken_disp, hot_native)) return false;
+    if (part->hot_target == block->pc) {
+      return emit_trace_head_loop(w, block->pc, part->count_after,
+          block->chain_entry);
+    }
+    return emit_chain_exit(w, block, part->hot_target, part->count_after,
+        X86_JIT_EXIT_TAKEN, X86_JIT_CHAIN_SLOW_UNLINKED);
+  }
+
+  if (part->hot_target == block->pc) {
+    uint8_t *cold_disp = NULL;
+    if (!emit_jmp_rel32_placeholder(w, &cold_disp) ||
+        !patch_rel32(taken_disp, w->cur) ||
+        (jit_stats_enabled &&
+            !emit_runtime_counter_inc(w,
+                &jit_trace_side_exit_taken_runtime)) ||
+        !emit_chain_exit(w, block, part->cold_target, part->count_after,
+            X86_JIT_EXIT_TAKEN, X86_JIT_CHAIN_SLOW_COLD_TRACE)) {
+      return false;
+    }
+    uint8_t *hot_native = w->cur;
+    return patch_rel32(cold_disp, hot_native) &&
+           emit_trace_head_loop(w, block->pc, part->count_after,
+               block->chain_entry);
+  }
+
+  if (!emit_chain_exit(w, block, part->hot_target, part->count_after,
+      X86_JIT_EXIT_FALLTHROUGH, X86_JIT_CHAIN_SLOW_UNLINKED)) {
+    return false;
+  }
+  uint8_t *cold_native = w->cur;
+  return patch_rel32(taken_disp, cold_native) &&
+         (!jit_stats_enabled ||
+          emit_runtime_counter_inc(w, &jit_trace_side_exit_taken_runtime)) &&
+         emit_chain_exit(w, block, part->cold_target, part->count_after,
+             X86_JIT_EXIT_TAKEN, X86_JIT_CHAIN_SLOW_COLD_TRACE);
+}
+
+/* Store disjoint trace source spans so later verification can re-read each PC. */
 static bool jit_trace_store_source(x86_jit_block_t *block,
     const x86_jit_trace_part_t *parts, uint32_t part_count) {
   x86_jit_block_cold_t *cold = jit_block_cold(block);
@@ -8446,6 +10286,7 @@ static bool jit_trace_store_source(x86_jit_block_t *block,
   return true;
 }
 
+/* Pick an empty way or the oldest way in the current cache set. */
 static x86_jit_block_t *jit_cache_select_victim(vaddr_t pc) {
   x86_jit_block_t *victim = NULL;
 
@@ -8469,6 +10310,7 @@ static x86_jit_block_t *jit_cache_select_victim(vaddr_t pc) {
   return victim;
 }
 
+/* Publish a negative cache entry for an opcode this JIT currently cannot translate. */
 static void jit_publish_unsupported(vaddr_t pc) {
   x86_jit_block_t *block = jit_cache_select_victim(pc);
   x86_jit_block_cold_t *cold = jit_block_cold(block);
@@ -8499,6 +10341,7 @@ static void jit_publish_unsupported(vaddr_t pc) {
   }
 }
 
+/* Compile a hot multi-block trace following the observed branch direction. */
 static x86_jit_block_t *jit_compile_trace(vaddr_t pc, uint32_t max_insns,
     x86_jit_hot_info_t *hot) {
   if (!jit_trace_enabled || !jit_chain_enabled || !jit_flat_segments()) {
@@ -8538,12 +10381,25 @@ static x86_jit_block_t *jit_compile_trace(vaddr_t pc, uint32_t max_insns,
 
   x86_jit_block_t *block = jit_cache_select_victim(pc);
   x86_jit_block_cold_t *cold = jit_block_cold(block);
+  x86_jit_emit_ctx_t trace_ctx;
+  jit_emit_ctx_init(&trace_ctx);
+  trace_ctx.trace_mode = true;
+  const bool trace_uses_regcache =
+      jit_trace_regcache_enabled && jit_regcache_active(&trace_ctx);
   memcpy(cold->insns, decoded, decoded_count * sizeof(decoded[0]));
   block->exit_count = 0;
   block->chain_entry = w.cur;
   block->chain_guard_count_imm = NULL;
   block->accepts_chain = false;
   block->is_trace = true;
+  if (jit_stats_enabled) {
+    if (trace_uses_regcache) {
+      jit_stats.traces_using_regcache++;
+    }
+    else {
+      jit_stats.traces_not_using_regcache++;
+    }
+  }
 
   if (!emit_chain_budget_guard(&w, pc, &block->chain_guard_count_imm)) {
     jit_code_used = start_used;
@@ -8562,16 +10418,53 @@ static x86_jit_block_t *jit_compile_trace(vaddr_t pc, uint32_t max_insns,
       const x86_jit_insn_t *insn = &cold->insns[insn_index];
       const bool is_last = i + 1u == part->insn_count;
 
+      if (!is_last && i + 2u == part->insn_count && part->ends_with_jcc) {
+        const x86_jit_insn_t *jcc = &cold->insns[insn_index + 1u];
+        if (jit_lazy_flags_enabled &&
+            jit_is_fusible_flag_producer(insn) &&
+            jit_is_native_jcc(jcc) &&
+            jit_trace_jcc_successor_flags_dead(part)) {
+          const bool emitted_producer = trace_uses_regcache ?
+              emit_flag_producer_no_capture_regcached(&w, &trace_ctx, insn) :
+              emit_flag_producer_no_capture(&w, insn);
+          if (!emitted_producer) {
+            jit_code_used = start_used;
+            return NULL;
+          }
+          trace_ctx.flags.kind = X86_LAZY_FLAGS_HOST_VALID;
+          trace_ctx.flags.copy_mask = jit_flag_producer_copy_mask(insn);
+          trace_ctx.flags.clear_mask =
+              X86_EFLAGS_STATUS_MASK & ~trace_ctx.flags.copy_mask;
+          if (part->is_final) {
+            if (!jit_regcache_flush_all(&w, &trace_ctx) ||
+                !emit_trace_jcc_final_exit_host_flags(&w, block, jcc, part)) {
+              jit_code_used = start_used;
+              return NULL;
+            }
+          }
+          else if (!emit_trace_jcc_side_exit_host_flags(&w, block, jcc, part,
+              &trace_ctx)) {
+            jit_code_used = start_used;
+            return NULL;
+          }
+          i++;
+          continue;
+        }
+      }
+
       if (is_last && part->ends_with_jmp) {
         if (part->is_final) {
           bool ok = false;
           if (part->hot_target == block->pc) {
-            ok = emit_trace_head_loop(&w, block->pc, part->count_after,
-                block->chain_entry);
+            ok = jit_regcache_flush_all(&w, &trace_ctx) &&
+                emit_trace_head_loop(&w, block->pc, part->count_after,
+                    block->chain_entry);
           }
           else {
-            ok = emit_chain_exit(&w, block, part->hot_target,
-                part->count_after, X86_JIT_EXIT_JMP);
+            ok = jit_regcache_flush_all(&w, &trace_ctx) &&
+                emit_chain_exit(&w, block, part->hot_target,
+                part->count_after, X86_JIT_EXIT_JMP,
+                X86_JIT_CHAIN_SLOW_UNLINKED);
           }
           if (!ok) {
             jit_code_used = start_used;
@@ -8583,27 +10476,35 @@ static x86_jit_block_t *jit_compile_trace(vaddr_t pc, uint32_t max_insns,
 
       if (is_last && part->ends_with_jcc) {
         if (part->is_final) {
+          if (!jit_regcache_flush_all(&w, &trace_ctx)) {
+            jit_code_used = start_used;
+            return NULL;
+          }
           if (!emit_trace_jcc_final_exit(&w, block, insn, part)) {
             jit_code_used = start_used;
             return NULL;
           }
         }
-        else if (!emit_trace_jcc_side_exit(&w, block, insn, part)) {
+        else if (!emit_trace_jcc_side_exit(&w, block, insn, part,
+            &trace_ctx)) {
           jit_code_used = start_used;
           return NULL;
         }
         continue;
       }
 
-      if (!emit_insn(&w, insn)) {
+      if (!(trace_uses_regcache ?
+              emit_insn_regcached(&w, &trace_ctx, insn) :
+              emit_insn(&w, insn))) {
         jit_code_used = start_used;
         return NULL;
       }
     }
 
     if (part->is_final && !part->ends_with_jmp && !part->ends_with_jcc &&
-        !emit_chain_exit(&w, block, part->end_pc, part->count_after,
-            X86_JIT_EXIT_FALLTHROUGH)) {
+        (!jit_regcache_flush_all(&w, &trace_ctx) ||
+         !emit_chain_exit(&w, block, part->end_pc, part->count_after,
+             X86_JIT_EXIT_FALLTHROUGH, X86_JIT_CHAIN_SLOW_UNLINKED))) {
       jit_code_used = start_used;
       return NULL;
     }
@@ -8633,6 +10534,7 @@ static x86_jit_block_t *jit_compile_trace(vaddr_t pc, uint32_t max_insns,
   }
   jit_mark_trace_source_pages(block);
   jit_l0_fill(pc, block);
+  jit_ret_cache_publish(block);
 
   __builtin___clear_cache((char *)w.start, (char *)w.cur);
   jit_code_used = jit_align_code((size_t)(w.cur - jit_code));
@@ -8650,6 +10552,7 @@ static x86_jit_block_t *jit_compile_trace(vaddr_t pc, uint32_t max_insns,
   return block;
 }
 
+/* Allocate the executable code arena on first use. */
 static bool jit_ensure_code_cache(void) {
   if (jit_code != NULL) return true;
 
@@ -8668,11 +10571,13 @@ static bool jit_ensure_code_cache(void) {
   return true;
 }
 
+/* Drop all generated code and side metadata while keeping the mmap allocation. */
 static void jit_reset_arena(void) {
   memset(jit_cache, 0, sizeof(jit_cache));
   memset(jit_cache_cold, 0, sizeof(jit_cache_cold));
   memset(jit_l0_cache, 0, sizeof(jit_l0_cache));
   memset(jit_hot_info, 0, sizeof(jit_hot_info));
+  jit_ret_cache_clear();
   memset(jit_source_page_has_code, 0, sizeof(jit_source_page_has_code));
   memset(jit_source_page_blocks, 0, sizeof(jit_source_page_blocks));
   jit_dtlb_flush();
@@ -8682,6 +10587,7 @@ static void jit_reset_arena(void) {
   JIT_STAT_INC(arena_resets);
 }
 
+/* Decode, analyse, emit, validate, and publish one native block. */
 static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
   if (!jit_flat_segments()) {
     return NULL;
@@ -8714,9 +10620,17 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
   x86_jit_emit_ctx_t ctx;
   jit_emit_ctx_init(&ctx);
   jit_analyse_block(decoded, decoded_count, &ctx);
+  x86_jit_stack_window_t stack_window;
+  const bool stack_window_fast =
+      jit_analyse_stack_window(decoded, decoded_count, &stack_window);
   const bool guarded_block = jit_chain_enabled;
-  const bool chainable_block = guarded_block &&
-      jit_block_successors_accept_chain(decoded, decoded_count, end_pc);
+  const x86_jit_edge_chainability_t block_edges =
+      jit_block_edge_chainability(decoded, decoded_count, end_pc,
+          guarded_block);
+  const bool chainable_block = jit_block_has_chainable_edge(block_edges);
+  const bool fast_chain_block = jit_fast_chain_runtime_enabled();
+  jit_classify_block_chainability(decoded, decoded_count, end_pc,
+      guarded_block, block_edges);
 
   x86_jit_block_t *block = jit_cache_select_victim(pc);
   x86_jit_block_cold_t *cold = jit_block_cold(block);
@@ -8727,6 +10641,10 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
   block->accepts_chain = false;
   if (guarded_block &&
       !emit_chain_budget_guard(&w, pc, &block->chain_guard_count_imm)) {
+    jit_code_used = start_used;
+    return NULL;
+  }
+  if (stack_window_fast && !emit_stack_window_guard(&w, pc, &stack_window)) {
     jit_code_used = start_used;
     return NULL;
   }
@@ -8768,7 +10686,8 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
     if (jit_is_fusible_flag_producer(&cold->insns[i]) &&
         i + 1u < decoded_count && jit_is_native_jcc(&cold->insns[i + 1u])) {
       const uint32_t fused_count = i + 2u;
-      if (jit_branch_target(&cold->insns[i + 1u]) == pc) {
+      if (jit_branch_target(&cold->insns[i + 1u]) == pc &&
+          (i == 0 || !fast_chain_block)) {
         if (i == 0) {
           if (!jit_regcache_flush_all(&w, &ctx) ||
               !emit_fused_flag_producer_jcc_resident_backedge(&w,
@@ -8793,10 +10712,16 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
         ctx.uses_loop_accounting = true;
         break;
       }
-      if (chainable_block) {
+      const bool fallthrough_can_chain =
+          jit_edge_accepts_chain(guarded_block, cold->insns[i + 1u].next_pc);
+      const bool taken_can_chain =
+          jit_edge_accepts_chain(guarded_block,
+              jit_branch_target(&cold->insns[i + 1u]));
+      if (fallthrough_can_chain || taken_can_chain) {
         if (!jit_regcache_flush_all(&w, &ctx) ||
-            !emit_chained_fused_flag_producer_jcc(&w, block,
-            &cold->insns[i], &cold->insns[i + 1u], fused_count)) {
+            !emit_fused_flag_producer_jcc_per_edge(&w, block,
+            &cold->insns[i], &cold->insns[i + 1u], fused_count,
+            fallthrough_can_chain, taken_can_chain)) {
           jit_code_used = start_used;
           return NULL;
         }
@@ -8826,7 +10751,7 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
       continue;
     }
 
-    if (jit_is_chainable_jcc_backedge(&cold->insns[i], pc)) {
+    if (!fast_chain_block && jit_is_chainable_jcc_backedge(&cold->insns[i], pc)) {
       if (!jit_regcache_flush_all(&w, &ctx) ||
           !emit_jcc_backedge(&w, &cold->insns[i], w.start, insn_count)) {
         jit_code_used = start_used;
@@ -8837,7 +10762,9 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
       ctx.uses_loop_accounting = true;
       ctx.uses_global_loop_accounting = true;
     }
-    else if (chainable_block && cold->insns[i].op == X86_JIT_OP_JMP_REL) {
+    else if (cold->insns[i].op == X86_JIT_OP_JMP_REL &&
+        jit_edge_accepts_chain(guarded_block,
+            jit_branch_target(&cold->insns[i]))) {
       if (!jit_regcache_flush_all(&w, &ctx) ||
           !emit_chained_jmp_rel(&w, block, &cold->insns[i], insn_count)) {
         jit_code_used = start_used;
@@ -8845,13 +10772,133 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
       }
       ends_with_chained_control = true;
     }
-    else if (chainable_block && cold->insns[i].op == X86_JIT_OP_JCC_REL) {
+    else if (cold->insns[i].op == X86_JIT_OP_JMP_REL && guarded_block) {
       if (!jit_regcache_flush_all(&w, &ctx) ||
-          !emit_chained_jcc_rel(&w, block, &cold->insns[i], insn_count)) {
+          !emit_store_pc_imm(&w, jit_branch_target(&cold->insns[i])) ||
+          !emit_ret_count_side_exit(&w, insn_count,
+              X86_JIT_CHAIN_SLOW_UNACCEPTED_SUCCESSOR)) {
         jit_code_used = start_used;
         return NULL;
       }
       ends_with_chained_control = true;
+      ends_with_control = true;
+    }
+    else if (cold->insns[i].op == X86_JIT_OP_JCC_REL) {
+      const bool fallthrough_can_chain =
+          jit_edge_accepts_chain(guarded_block, cold->insns[i].next_pc);
+      const bool taken_can_chain =
+          jit_edge_accepts_chain(guarded_block,
+              jit_branch_target(&cold->insns[i]));
+      if (!fallthrough_can_chain && !taken_can_chain) {
+        if (!emit_insn_regcached(&w, &ctx, &cold->insns[i])) {
+          jit_code_used = start_used;
+          return NULL;
+        }
+        emitted_count = insn_count;
+        ends_with_control = true;
+        break;
+      }
+      if (!jit_regcache_flush_all(&w, &ctx) ||
+          !emit_jcc_rel_per_edge(&w, block, &cold->insns[i], insn_count,
+              fallthrough_can_chain, taken_can_chain)) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+      ends_with_chained_control = true;
+    }
+    else if (stack_window_fast && cold->insns[i].op == X86_JIT_OP_HELPER &&
+        cold->insns[i].helper == X86_JIT_HELPER_PUSH_REG) {
+      if (!jit_regcache_flush_all(&w, &ctx) ||
+          !emit_native_push_reg_stack_guarded(&w, &cold->insns[i])) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+    }
+    else if (stack_window_fast && cold->insns[i].op == X86_JIT_OP_HELPER &&
+        cold->insns[i].helper == X86_JIT_HELPER_PUSH_IMM) {
+      if (!jit_regcache_flush_all(&w, &ctx) ||
+          !emit_native_push_imm_stack_guarded(&w, &cold->insns[i])) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+    }
+    else if (stack_window_fast && cold->insns[i].op == X86_JIT_OP_HELPER &&
+        cold->insns[i].helper == X86_JIT_HELPER_PUSH_RM) {
+      if (!jit_regcache_flush_all(&w, &ctx) ||
+          !emit_native_push_rm_stack_guarded(&w, &cold->insns[i])) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+    }
+    else if (stack_window_fast && cold->insns[i].op == X86_JIT_OP_HELPER &&
+        cold->insns[i].helper == X86_JIT_HELPER_POP_REG) {
+      if (!jit_regcache_flush_all(&w, &ctx) ||
+          !emit_native_pop_reg_stack_guarded(&w, &cold->insns[i])) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+    }
+    else if (jit_chain_enabled && cold->insns[i].op == X86_JIT_OP_HELPER &&
+        cold->insns[i].helper == X86_JIT_HELPER_CALL_REL &&
+        jit_target_probe_accepts_chain(jit_branch_target(&cold->insns[i]))) {
+      if (!jit_regcache_flush_all(&w, &ctx) ||
+          !(stack_window_fast ?
+              emit_chained_call_rel_stack_guarded(&w, block, &cold->insns[i],
+                  insn_count) :
+              emit_chained_call_rel(&w, block, &cold->insns[i],
+                  insn_count))) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+      ends_with_chained_control = true;
+      ends_with_control = true;
+    }
+    else if (stack_window_fast && cold->insns[i].op == X86_JIT_OP_HELPER &&
+        cold->insns[i].helper == X86_JIT_HELPER_CALL_REL) {
+      if (!jit_regcache_flush_all(&w, &ctx) ||
+          !emit_native_call_rel_stack_guarded(&w, &cold->insns[i])) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+      ends_with_chained_control = true;
+      ends_with_control = true;
+    }
+    else if (jit_chain_enabled && fast_chain_block &&
+        cold->insns[i].op == X86_JIT_OP_HELPER &&
+        cold->insns[i].helper == X86_JIT_HELPER_JMP_RM) {
+      if (!jit_regcache_flush_all(&w, &ctx) ||
+          !emit_chained_jmp_rm(&w, &cold->insns[i], insn_count)) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+      ends_with_chained_control = true;
+      ends_with_control = true;
+    }
+    else if (jit_chain_enabled && fast_chain_block &&
+        cold->insns[i].op == X86_JIT_OP_HELPER &&
+        cold->insns[i].helper == X86_JIT_HELPER_RET &&
+        cold->insns[i].width == X86_WIDTH_DWORD) {
+      if (!jit_regcache_flush_all(&w, &ctx) ||
+          !(stack_window_fast ?
+              emit_chained_ret_stack_guarded(&w, &cold->insns[i],
+                  insn_count) :
+              emit_chained_ret(&w, &cold->insns[i], insn_count))) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+      ends_with_chained_control = true;
+      ends_with_control = true;
+    }
+    else if (stack_window_fast && cold->insns[i].op == X86_JIT_OP_HELPER &&
+        cold->insns[i].helper == X86_JIT_HELPER_RET &&
+        cold->insns[i].width == X86_WIDTH_DWORD) {
+      if (!jit_regcache_flush_all(&w, &ctx) ||
+          !emit_native_ret_stack_guarded(&w, &cold->insns[i])) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+      ends_with_chained_control = true;
+      ends_with_control = true;
     }
     else if (!emit_insn_regcached(&w, &ctx, &cold->insns[i])) {
       jit_code_used = start_used;
@@ -8870,15 +10917,23 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
     return NULL;
   }
 
-  if (!ends_with_chained_control &&
-      ((!ends_with_control &&
-          !(chainable_block ?
-              emit_chain_exit(&w, block, end_pc, emitted_count,
-                  X86_JIT_EXIT_FALLTHROUGH) :
-              emit_store_pc_imm(&w, end_pc))) ||
-       !(chainable_block ? true : emit_ret_count(&w, emitted_count)))) {
-    jit_code_used = start_used;
-    return NULL;
+  if (!ends_with_chained_control) {
+    const bool fallthrough_can_chain = !ends_with_control &&
+        jit_edge_accepts_chain(guarded_block, end_pc);
+    if (fallthrough_can_chain) {
+      if (!emit_chain_exit(&w, block, end_pc, emitted_count,
+          X86_JIT_EXIT_FALLTHROUGH, X86_JIT_CHAIN_SLOW_UNLINKED)) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+    }
+    else if ((!ends_with_control && !emit_store_pc_imm(&w, end_pc)) ||
+        !emit_ret_count_side_exit(&w, emitted_count,
+            guarded_block ? X86_JIT_CHAIN_SLOW_UNACCEPTED_SUCCESSOR :
+                X86_JIT_CHAIN_SLOW_BLOCK_NOT_CHAINABLE)) {
+      jit_code_used = start_used;
+      return NULL;
+    }
   }
 
   if (guarded_block && block->chain_guard_count_imm != NULL) {
@@ -8906,10 +10961,11 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
   }
   jit_mark_source_pages(block, pc, source_len);
   jit_l0_fill(pc, block);
+  jit_ret_cache_publish(block);
 
   __builtin___clear_cache((char *)w.start, (char *)w.cur);
   jit_code_used = jit_align_code((size_t)(w.cur - jit_code));
-  if (chainable_block) {
+  if (chainable_block || block->exit_count != 0) {
     jit_link_block_exits(block);
     jit_link_edges_to_target(block);
   }
@@ -8918,11 +10974,16 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
   return block;
 }
 
+/* Public hook: report whether the x86 JIT can be used in this process. */
 bool isa_jit_available(void) {
   if (jit_runtime_disabled()) return false;
   return jit_ensure_code_cache();
 }
 
+/*
+ * Public hook: run a bounded JIT batch.  The caller supplies the instruction
+ * budget and device deadline; `executed` receives the retired guest count.
+ */
 bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed) {
   *executed = 0;
   if (remaining == 0 || device_budget == 0 || !isa_jit_available()) return false;
@@ -9038,11 +11099,13 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
   return *executed > 0;
 }
 
+/* Public hook: discard every compiled block and every JIT-owned lookup table. */
 void isa_jit_flush_all(void) {
   memset(jit_cache, 0, sizeof(jit_cache));
   memset(jit_cache_cold, 0, sizeof(jit_cache_cold));
   memset(jit_l0_cache, 0, sizeof(jit_l0_cache));
   memset(jit_hot_info, 0, sizeof(jit_hot_info));
+  jit_ret_cache_clear();
   memset(jit_source_page_has_code, 0, sizeof(jit_source_page_has_code));
   memset(jit_source_page_blocks, 0, sizeof(jit_source_page_blocks));
   jit_dtlb_flush();
@@ -9051,15 +11114,18 @@ void isa_jit_flush_all(void) {
   jit_code_used = 0;
 }
 
+/* Public hook: discard only the private data-translation cache. */
 void isa_jit_flush_data_tlb(void) {
   jit_dtlb_flush();
 }
 
+/* Public hook: cheap pre-check for PMEM writes that may stale JIT state. */
 bool isa_jit_may_invalidate_paddr(paddr_t addr, int len) {
   return jit_range_may_touch_source_pages(addr, len) ||
          jit_range_may_touch_page_table_pages(addr, len);
 }
 
+/* Public hook: react to PMEM writes that can stale native code or data TLBs. */
 void isa_jit_invalidate_paddr(paddr_t addr, int len) {
   if (len <= 0) return;
 
@@ -9126,6 +11192,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len) {
   }
 }
 
+/* Public hook: print optional JIT counters collected during execution. */
 void isa_jit_dump_stats(void) {
   jit_init_runtime_options();
 
@@ -9156,9 +11223,26 @@ void isa_jit_dump_stats(void) {
   const uint64_t direct_chain_hits = jit_direct_chain_hits_runtime;
   const uint64_t trace_hits = jit_trace_hits_runtime;
   const uint64_t side_exits = jit_side_exits_runtime;
+  const uint64_t chain_exit_budget = jit_chain_exit_budget_runtime;
+  const uint64_t chain_exit_abort = jit_chain_exit_abort_runtime;
+  const uint64_t chain_exit_unlinked = jit_chain_exit_unlinked_runtime;
+  const uint64_t chain_exit_cold_trace = jit_chain_exit_cold_trace_runtime;
+  const uint64_t chain_exit_side_branch = jit_chain_exit_side_branch_runtime;
+  const uint64_t chain_exit_helper = jit_chain_exit_helper_runtime;
+  const uint64_t chain_exit_unaccepted_successor =
+      jit_chain_exit_unaccepted_successor_runtime;
+  const uint64_t chain_exit_block_not_chainable =
+      jit_chain_exit_block_not_chainable_runtime;
+  const uint64_t trace_side_exit_taken = jit_trace_side_exit_taken_runtime;
+  const uint64_t trace_side_exit_fallthrough =
+      jit_trace_side_exit_fallthrough_runtime;
+  const uint64_t trace_loopback = jit_trace_loopback_runtime;
   const uint64_t smc_invalidation_exits = jit_smc_invalidation_exits_runtime;
   const uint64_t mov_rm_reg_slow_exits =
       jit_mov_rm_reg_slow_exits_runtime;
+  const uint64_t ret_cache_hits = jit_ret_cache_hits_runtime;
+  const uint64_t ret_cache_misses = jit_ret_cache_misses_runtime;
+  const uint64_t sibling_trace_hits = jit_sibling_trace_hits_runtime;
 
   Log("jit: exec requests = %" PRIu64
       ", cache hits = %" PRIu64
@@ -9256,6 +11340,68 @@ void isa_jit_dump_stats(void) {
       jit_stats.helper_incdec_rm_calls);
   Log("jit: native mov-rm-reg slow exits = %" PRIu64,
       mov_rm_reg_slow_exits);
+  Log("jit: indirect target cache hits = %" PRIu64 ", misses = %" PRIu64,
+      ret_cache_hits,
+      ret_cache_misses);
+  Log("jit: sibling trace hits = %" PRIu64, sibling_trace_hits);
+  Log("jit: chain exit reasons budget = %" PRIu64
+      ", abort = %" PRIu64
+      ", unlinked = %" PRIu64
+      ", cold trace = %" PRIu64
+      ", side branch = %" PRIu64
+      ", helper = %" PRIu64
+      ", unaccepted successor = %" PRIu64
+      ", block not chainable = %" PRIu64,
+      chain_exit_budget,
+      chain_exit_abort,
+      chain_exit_unlinked,
+      chain_exit_cold_trace,
+      chain_exit_side_branch,
+      chain_exit_helper,
+      chain_exit_unaccepted_successor,
+      chain_exit_block_not_chainable);
+  Log("jit: trace side exits taken = %" PRIu64
+      ", fallthrough = %" PRIu64
+      ", trace loopbacks = %" PRIu64,
+      trace_side_exit_taken,
+      trace_side_exit_fallthrough,
+      trace_loopback);
+  Log("jit: chainability blocks chainable = %" PRIu64
+      ", not chainable = %" PRIu64
+      ", jmp = %" PRIu64
+      ", jcc one side = %" PRIu64
+      ", jcc both sides = %" PRIu64
+      ", ret = %" PRIu64
+      ", call-rm = %" PRIu64
+      ", unsupported successor = %" PRIu64,
+      jit_stats.blocks_chainable,
+      jit_stats.blocks_not_chainable,
+      jit_stats.blocks_not_chainable_jmp,
+      jit_stats.blocks_not_chainable_jcc_one_side,
+      jit_stats.blocks_not_chainable_jcc_both_sides,
+      jit_stats.blocks_not_chainable_ret,
+      jit_stats.blocks_not_chainable_call_rm,
+      jit_stats.blocks_not_chainable_unsupported_successor);
+  Log("jit: traces using regcache = %" PRIu64
+      ", traces not using regcache = %" PRIu64,
+      jit_stats.traces_using_regcache,
+      jit_stats.traces_not_using_regcache);
+  Log("jit: toggles fast chain = %u"
+      ", edge pc store = %u"
+      ", chain abort check = %u"
+      ", trace regcache = %u"
+      ", trace sibling = %u"
+      ", trace loopback = %u"
+      ", regcache wide = %u"
+      ", stack fast = %u",
+      jit_fast_chain_enabled ? 1u : 0u,
+      jit_edge_pc_store_enabled ? 1u : 0u,
+      jit_chain_abort_check_enabled ? 1u : 0u,
+      jit_trace_regcache_enabled ? 1u : 0u,
+      jit_trace_sibling_enabled ? 1u : 0u,
+      jit_trace_loopback_enabled ? 1u : 0u,
+      jit_regcache_wide_enabled ? 1u : 0u,
+      jit_stack_fast_enabled ? 1u : 0u);
   for (uint32_t helper = 1; helper < X86_JIT_HELPER_COUNT; helper++) {
     if (jit_stats.helper_by_kind[helper] != 0) {
       const char *name = jit_helper_names[helper] != NULL ?
@@ -9307,10 +11453,12 @@ void isa_jit_dump_stats(void) {
 
 #else
 
+/* Stub hook used when this binary cannot host the x86 JIT. */
 bool isa_jit_available(void) {
   return false;
 }
 
+/* Stub hook: no native execution is attempted when the JIT is compiled out. */
 bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed) {
   (void)remaining;
   (void)device_budget;
@@ -9318,23 +11466,28 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
   return false;
 }
 
+/* Stub hook: no generated state exists to flush. */
 void isa_jit_flush_all(void) {
 }
 
+/* Stub hook: no private data TLB exists to flush. */
 void isa_jit_flush_data_tlb(void) {
 }
 
+/* Stub hook: compiled-out JIT state is never invalidated by PMEM writes. */
 bool isa_jit_may_invalidate_paddr(paddr_t addr, int len) {
   (void)addr;
   (void)len;
   return false;
 }
 
+/* Stub hook: ignore PMEM invalidation notifications when no JIT state exists. */
 void isa_jit_invalidate_paddr(paddr_t addr, int len) {
   (void)addr;
   (void)len;
 }
 
+/* Stub hook: no JIT statistics exist when the JIT is compiled out. */
 void isa_jit_dump_stats(void) {
 }
 
