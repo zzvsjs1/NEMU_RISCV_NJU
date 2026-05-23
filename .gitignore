@@ -12,3 +12,4 @@ scripts/codex-*.sh
 __pycache__/
 /compile_commands.json
 /.compile-commands/
+/qemu
