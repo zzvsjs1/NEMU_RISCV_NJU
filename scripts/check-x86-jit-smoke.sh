@@ -12,7 +12,7 @@ export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
 
 DEFCONFIG="$NEMU_HOME/configs/x86-am-jit_defconfig"
-TESTS=(add sum fib mov-c bit movsx shift rotate incdec byte-div mul-longlong jit-call-ret jit-direct-load jit-direct-store jit-incdec-reg jit-incdec-loop jit-imul jit-indirect-jmp jit-mem-alu jit-moffs jit-movzx jit-not jit-remaining-helpers jit-shift-native jit-signed-jcc jit-stack-reg jit-word-ops)
+TESTS=(add sum fib mov-c bit movsx shift rotate incdec byte-div mul-longlong jit-alu-jcc-fusion jit-call-ret jit-direct-load jit-direct-store jit-incdec-reg jit-incdec-loop jit-imul jit-indirect-jmp jit-mem-alu jit-moffs jit-movzx jit-mul-div-native jit-not jit-remaining-helpers jit-shift-native jit-signed-jcc jit-stack-reg jit-word-ops)
 
 tmp_files=()
 
@@ -33,6 +33,7 @@ required_jit_instructions() {
     byte-div) echo 20 ;;
     fib) echo 700 ;;
     incdec) echo 80 ;;
+    jit-alu-jcc-fusion) echo 10000 ;;
     jit-call-ret) echo 100 ;;
     jit-direct-load) echo 50 ;;
     jit-direct-store) echo 50 ;;
@@ -42,6 +43,7 @@ required_jit_instructions() {
     jit-mem-alu) echo 20 ;;
     jit-moffs) echo 20 ;;
     jit-movzx) echo 10000 ;;
+    jit-mul-div-native) echo 10000 ;;
     jit-not) echo 10000 ;;
     jit-remaining-helpers) echo 20 ;;
     jit-shift-native) echo 20 ;;
@@ -62,8 +64,10 @@ required_jit_instructions() {
 required_max_unsupported_hits() {
   case "$1" in
     jit-indirect-jmp) echo 1000 ;;
+    jit-alu-jcc-fusion) echo 20 ;;
     jit-imul) echo 100 ;;
     jit-movzx) echo 100 ;;
+    jit-mul-div-native) echo 100 ;;
     jit-not) echo 100 ;;
     jit-incdec-reg) echo 20 ;;
     jit-incdec-loop) echo 10 ;;
@@ -143,6 +147,35 @@ required_min_native_pmem_stores() {
 required_min_native_imul_ops() {
   case "$1" in
     jit-imul) echo 1 ;;
+    jit-mul-div-native) echo 1 ;;
+    *) echo "" ;;
+  esac
+}
+
+required_min_native_mul_ops() {
+  case "$1" in
+    jit-mul-div-native) echo 1 ;;
+    *) echo "" ;;
+  esac
+}
+
+required_min_native_div_ops() {
+  case "$1" in
+    jit-mul-div-native) echo 1 ;;
+    *) echo "" ;;
+  esac
+}
+
+required_min_native_alu_jcc_fusions() {
+  case "$1" in
+    jit-alu-jcc-fusion) echo 1 ;;
+    *) echo "" ;;
+  esac
+}
+
+required_min_native_alu_jcc_resident_loops() {
+  case "$1" in
+    jit-alu-jcc-fusion) echo 1 ;;
     *) echo "" ;;
   esac
 }
@@ -222,6 +255,13 @@ required_max_helper_shift_rm_calls() {
 required_max_helper_stack_reg_calls() {
   case "$1" in
     jit-stack-reg) echo 0 ;;
+    *) echo "" ;;
+  esac
+}
+
+required_max_helper_mul_div_calls() {
+  case "$1" in
+    jit-mul-div-native) echo 0 ;;
     *) echo "" ;;
   esac
 }
@@ -466,6 +506,94 @@ require_min_native_imul_ops() {
   fi
 }
 
+require_min_native_mul_ops() {
+  local log=$1
+  local test_name=$2
+  local min_ops=$3
+  local native_ops
+
+  [ -n "$min_ops" ] || return 0
+
+  native_ops=$(sed -n 's/.*native mul ops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$native_ops" ]; then
+    echo "Failed to find native mul stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$native_ops" -lt "$min_ops" ]; then
+    echo "Expected at least $min_ops native mul ops for $test_name, got $native_ops" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_min_native_div_ops() {
+  local log=$1
+  local test_name=$2
+  local min_ops=$3
+  local native_ops
+
+  [ -n "$min_ops" ] || return 0
+
+  native_ops=$(sed -n 's/.*native div ops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$native_ops" ]; then
+    echo "Failed to find native div stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$native_ops" -lt "$min_ops" ]; then
+    echo "Expected at least $min_ops native div ops for $test_name, got $native_ops" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_min_native_alu_jcc_fusions() {
+  local log=$1
+  local test_name=$2
+  local min_ops=$3
+  local native_ops
+
+  [ -n "$min_ops" ] || return 0
+
+  native_ops=$(sed -n 's/.*native ALU\/Jcc fusions = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$native_ops" ]; then
+    echo "Failed to find native ALU/Jcc fusion stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$native_ops" -lt "$min_ops" ]; then
+    echo "Expected at least $min_ops native ALU/Jcc fusions for $test_name, got $native_ops" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_min_native_alu_jcc_resident_loops() {
+  local log=$1
+  local test_name=$2
+  local min_ops=$3
+  local native_ops
+
+  [ -n "$min_ops" ] || return 0
+
+  native_ops=$(sed -n 's/.*native ALU\/Jcc resident loops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  if [ -z "$native_ops" ]; then
+    echo "Failed to find native ALU/Jcc resident-loop stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$native_ops" -lt "$min_ops" ]; then
+    echo "Expected at least $min_ops native ALU/Jcc resident loops for $test_name, got $native_ops" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 require_min_native_shift_ops() {
   local log=$1
   local test_name=$2
@@ -650,6 +778,13 @@ require_max_helper_remaining_calls() {
   local neg_rm_calls
   local incdec_rm_calls
   local test_eax_imm_calls
+  local test_imm_rm_calls
+  local push_imm_calls
+  local push_rm_calls
+  local leave_calls
+  local setcc_calls
+  local movsx8_calls
+  local movsx16_calls
 
   [ -n "$max_calls" ] || return 0
 
@@ -661,6 +796,13 @@ require_max_helper_remaining_calls() {
   neg_rm_calls=$(sed -n 's/.*helper profile neg-rm[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
   incdec_rm_calls=$(sed -n 's/.*helper profile incdec-rm[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
   test_eax_imm_calls=$(sed -n 's/.*helper profile test-eax-imm[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  test_imm_rm_calls=$(sed -n 's/.*helper profile test-imm-rm[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  push_imm_calls=$(sed -n 's/.*helper profile push-imm[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  push_rm_calls=$(sed -n 's/.*helper profile push-rm[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  leave_calls=$(sed -n 's/.*helper profile leave[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  setcc_calls=$(sed -n 's/.*helper profile setcc-rm8[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  movsx8_calls=$(sed -n 's/.*helper profile movsx-reg-rm8[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  movsx16_calls=$(sed -n 's/.*helper profile movsx-reg-rm16[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
   mov_rm_reg_calls=${mov_rm_reg_calls:-0}
   mov_reg_rm_calls=${mov_reg_rm_calls:-0}
   mov_imm_rm_calls=${mov_imm_rm_calls:-0}
@@ -669,6 +811,13 @@ require_max_helper_remaining_calls() {
   neg_rm_calls=${neg_rm_calls:-0}
   incdec_rm_calls=${incdec_rm_calls:-0}
   test_eax_imm_calls=${test_eax_imm_calls:-0}
+  test_imm_rm_calls=${test_imm_rm_calls:-0}
+  push_imm_calls=${push_imm_calls:-0}
+  push_rm_calls=${push_rm_calls:-0}
+  leave_calls=${leave_calls:-0}
+  setcc_calls=${setcc_calls:-0}
+  movsx8_calls=${movsx8_calls:-0}
+  movsx16_calls=${movsx16_calls:-0}
 
   if [ "$mov_rm_reg_calls" -gt "$max_calls" ] ||
       [ "$mov_reg_rm_calls" -gt "$max_calls" ] ||
@@ -677,8 +826,15 @@ require_max_helper_remaining_calls() {
       [ "$alu_reg_rm_calls" -gt "$max_calls" ] ||
       [ "$neg_rm_calls" -gt "$max_calls" ] ||
       [ "$incdec_rm_calls" -gt "$max_calls" ] ||
-      [ "$test_eax_imm_calls" -gt "$max_calls" ]; then
-    echo "Expected remaining helper calls within limits for $test_name, got mov-rm-reg=$mov_rm_reg_calls mov-reg-rm=$mov_reg_rm_calls mov-imm-rm=$mov_imm_rm_calls alu-rm-reg=$alu_rm_reg_calls alu-reg-rm=$alu_reg_rm_calls neg-rm=$neg_rm_calls incdec-rm=$incdec_rm_calls test-eax-imm=$test_eax_imm_calls" >&2
+      [ "$test_eax_imm_calls" -gt "$max_calls" ] ||
+      [ "$test_imm_rm_calls" -gt "$max_calls" ] ||
+      [ "$push_imm_calls" -gt "$max_calls" ] ||
+      [ "$push_rm_calls" -gt "$max_calls" ] ||
+      [ "$leave_calls" -gt "$max_calls" ] ||
+      [ "$setcc_calls" -gt "$max_calls" ] ||
+      [ "$movsx8_calls" -gt "$max_calls" ] ||
+      [ "$movsx16_calls" -gt "$max_calls" ]; then
+    echo "Expected remaining helper calls within limits for $test_name, got mov-rm-reg=$mov_rm_reg_calls mov-reg-rm=$mov_reg_rm_calls mov-imm-rm=$mov_imm_rm_calls alu-rm-reg=$alu_rm_reg_calls alu-reg-rm=$alu_reg_rm_calls neg-rm=$neg_rm_calls incdec-rm=$incdec_rm_calls test-eax-imm=$test_eax_imm_calls test-imm-rm=$test_imm_rm_calls push-imm=$push_imm_calls push-rm=$push_rm_calls leave=$leave_calls setcc-rm8=$setcc_calls movsx-reg-rm8=$movsx8_calls movsx-reg-rm16=$movsx16_calls" >&2
     cat "$log" >&2
     exit 1
   fi
@@ -723,6 +879,32 @@ require_max_helper_stack_reg_calls() {
   fi
 }
 
+require_max_helper_mul_div_calls() {
+  local log=$1
+  local test_name=$2
+  local max_calls=$3
+  local mul_calls
+  local imul_acc_calls
+  local div_calls
+
+  [ -n "$max_calls" ] || return 0
+
+  mul_calls=$(sed -n 's/.*helper profile mul-rm[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  imul_acc_calls=$(sed -n 's/.*helper profile imul-acc-rm[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  div_calls=$(sed -n 's/.*helper profile div-rm[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+  mul_calls=${mul_calls:-0}
+  imul_acc_calls=${imul_acc_calls:-0}
+  div_calls=${div_calls:-0}
+
+  if [ "$mul_calls" -gt "$max_calls" ] ||
+      [ "$imul_acc_calls" -gt "$max_calls" ] ||
+      [ "$div_calls" -gt "$max_calls" ]; then
+    echo "Expected at most $max_calls mul/div helper calls for $test_name, got mul=$mul_calls imul-acc=$imul_acc_calls div=$div_calls" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 cd "$ROOT"
 
 [ -f "$DEFCONFIG" ] || fail "missing $DEFCONFIG"
@@ -750,7 +932,11 @@ for test_name in "${TESTS[@]}"; do
   require_max_helper_incdec_reg_calls "$out" "$test_name" "$(required_max_helper_incdec_reg_calls "$test_name")"
   require_min_native_pmem_loads "$out" "$test_name" "$(required_min_native_pmem_loads "$test_name")"
   require_min_native_pmem_stores "$out" "$test_name" "$(required_min_native_pmem_stores "$test_name")"
+  require_min_native_mul_ops "$out" "$test_name" "$(required_min_native_mul_ops "$test_name")"
   require_min_native_imul_ops "$out" "$test_name" "$(required_min_native_imul_ops "$test_name")"
+  require_min_native_div_ops "$out" "$test_name" "$(required_min_native_div_ops "$test_name")"
+  require_min_native_alu_jcc_fusions "$out" "$test_name" "$(required_min_native_alu_jcc_fusions "$test_name")"
+  require_min_native_alu_jcc_resident_loops "$out" "$test_name" "$(required_min_native_alu_jcc_resident_loops "$test_name")"
   require_min_native_shift_ops "$out" "$test_name" "$(required_min_native_shift_ops "$test_name")"
   require_min_native_not_ops "$out" "$test_name" "$(required_min_native_not_ops "$test_name")"
   require_min_native_movzx_ops "$out" "$test_name" "$(required_min_native_movzx_ops "$test_name")"
@@ -762,6 +948,7 @@ for test_name in "${TESTS[@]}"; do
   require_max_helper_remaining_calls "$out" "$test_name" "$(required_max_helper_remaining_calls "$test_name")"
   require_max_helper_shift_rm_calls "$out" "$test_name" "$(required_max_helper_shift_rm_calls "$test_name")"
   require_max_helper_stack_reg_calls "$out" "$test_name" "$(required_max_helper_stack_reg_calls "$test_name")"
+  require_max_helper_mul_div_calls "$out" "$test_name" "$(required_max_helper_mul_div_calls "$test_name")"
 done
 
 echo "x86 JIT smoke gate passed: ${TESTS[*]}"

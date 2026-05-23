@@ -198,7 +198,7 @@ $(CLEAN_ALL):
 .PHONY: clean-all $(CLEAN_ALL)
 
 ### Build fsimg and ramdisk for Nanos-lite
-APPS = pal onscripter bird
+APPS = pal onscripter fceux
 TESTS =
 FSIMG_GENERATED_DIRS = $(NAVY_HOME)/fsimg/bin $(NAVY_HOME)/fsimg/share/games $(NAVY_HOME)/fsimg/share/slides
 
