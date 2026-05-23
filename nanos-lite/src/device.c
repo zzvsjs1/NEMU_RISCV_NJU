@@ -5,6 +5,8 @@
 #include <proc.h>
 #include <stdint.h>
 
+void syscall_request_resched(void);
+
 #if defined(__ARCH_MIPS32_NEMU) || defined(__ARCH_RISCV32_NEMU) || defined(__ARCH_RISCV64_NEMU)
 #define NEMU_PLATFORM_CONSTANTS_ONLY
 #include <nemu.h>
@@ -262,6 +264,7 @@ void device_restore_foreground_on_schedule(void)
     }
 
     audio_restore_pending = false;
+    fb_restore_foreground();
     audio_restore_foreground();
 }
 
@@ -277,27 +280,21 @@ static bool handle_foreground_hotkey(AM_INPUT_KEYBRD_T *keyboard)
         if (keyboard->keydown)
         {
             if (switch_fg_pcb(0))
-            {
-                fb_restore_foreground();
-            }
+                syscall_request_resched();
         }
         return true;
     case AM_KEY_F2:
         if (keyboard->keydown)
         {
             if (switch_fg_pcb(1))
-            {
-                fb_restore_foreground();
-            }
+                syscall_request_resched();
         }
         return true;
     case AM_KEY_F3:
         if (keyboard->keydown)
         {
             if (switch_fg_pcb(2))
-            {
-                fb_restore_foreground();
-            }
+                syscall_request_resched();
         }
         return true;
     default:

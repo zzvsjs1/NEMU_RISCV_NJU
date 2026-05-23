@@ -1,6 +1,7 @@
 #include <cpu/cpu.h>
 #include <cpu/exec.h>
 #include <cpu/difftest.h>
+#include <inttypes.h>
 #if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86)
 #include <isa-all-instr.h>
 #endif
@@ -8,6 +9,7 @@
 #include <isa-jit.h>
 #endif
 #include <locale.h>
+#include <stdlib.h>
 
 /* The assembly code of instructions executed is only output to the screen
  * when the number of instructions executed is less than this value.
@@ -262,6 +264,29 @@ static bool should_dump_failure_registers()
            (nemu_state.state == NEMU_END && nemu_state.halt_ret != 0);
 }
 
+static uint64_t diagnostic_instr_limit(void)
+{
+    static bool parsed = false;
+    static uint64_t limit = 0;
+
+    if (!parsed)
+    {
+        const char *value = getenv("NEMU_EXIT_AFTER_INSTR");
+        if (value != NULL && value[0] != '\0')
+        {
+            char *end = NULL;
+            limit = strtoull(value, &end, 0);
+            if (end == value || *end != '\0')
+            {
+                limit = 0;
+            }
+        }
+        parsed = true;
+    }
+
+    return limit;
+}
+
 #if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86)
 void fetch_decode(Decode *s, vaddr_t pc)
 {
@@ -346,6 +371,7 @@ static inline bool can_jit_exec()
 void cpu_exec(uint64_t n)
 {
     g_print_step = n < MAX_INSTR_TO_PRINT;
+    const uint64_t instr_limit = diagnostic_instr_limit();
 
     switch (nemu_state.state)
     {
@@ -370,6 +396,21 @@ void cpu_exec(uint64_t n)
 
     while (n > 0)
     {
+        if (instr_limit != 0)
+        {
+            if (g_nr_guest_instr >= instr_limit)
+            {
+                nemu_state.state = NEMU_QUIT;
+                break;
+            }
+
+            const uint64_t remaining_to_limit = instr_limit - g_nr_guest_instr;
+            if (n > remaining_to_limit)
+            {
+                n = remaining_to_limit;
+            }
+        }
+
         uint32_t executed = 0;
         bool jit_done = false;
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
@@ -441,6 +482,14 @@ void cpu_exec(uint64_t n)
 
         if (nemu_state.state != NEMU_RUNNING)
         {
+            break;
+        }
+
+        if (instr_limit != 0 && g_nr_guest_instr >= instr_limit)
+        {
+            Log("diagnostic instruction limit reached at %" PRIu64 " guest instructions",
+                g_nr_guest_instr);
+            nemu_state.state = NEMU_QUIT;
             break;
         }
 

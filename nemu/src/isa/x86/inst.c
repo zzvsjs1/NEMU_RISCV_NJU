@@ -18,6 +18,7 @@
 #include <cpu/decode.h>
 #include <cpu/difftest.h>
 #include <cpu/ifetch.h>
+#include <isa-jit.h>
 
 uint32_t pio_read(ioaddr_t addr, int len);
 void pio_write(ioaddr_t addr, int len, uint32_t data);
@@ -1285,6 +1286,7 @@ static void cr_write(Decode *s, int cr_idx, word_t data) {
       Assert((data & CR0_PG) == 0 || (data & CR0_PE) != 0,
           "x86 mov to CR0 sets PG while PE is clear at pc = " FMT_WORD, s->pc);
       cpu.cr0 = data;
+      isa_jit_flush_data_tlb();
       break;
     case X86_CR2_INDEX:
       /* CR2 is normally written by page-fault hardware; monitor tests may still restore it. */
@@ -1292,9 +1294,11 @@ static void cr_write(Decode *s, int cr_idx, word_t data) {
       break;
     case X86_CR3_INDEX:
       cpu.cr3 = (data & ~X86_PAGE_OFFSET_MASK) | (data & CR3_PWT_PCD_MASK);
+      isa_jit_flush_data_tlb();
       break;
     case X86_CR4_INDEX:
       cpu.cr4 = data;
+      isa_jit_flush_data_tlb();
       break;
     default:
       INV(s->pc);

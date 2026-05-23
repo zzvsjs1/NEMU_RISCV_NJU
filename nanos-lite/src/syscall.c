@@ -72,6 +72,11 @@ int syscall_need_resched_and_clear(void)
     return v;
 }
 
+void syscall_request_resched(void)
+{
+    need_resched = 1;
+}
+
 Context *syscall_replacement_context_and_clear(void)
 {
     /* execve() rebuilds current->cp in-place.  The trap handler uses this flag to
