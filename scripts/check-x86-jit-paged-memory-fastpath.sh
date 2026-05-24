@@ -42,6 +42,12 @@ src_load_line=$(printf '%s\n' "$alu_rm_reg_body" |
 grep -q 'emit_paged_dtlb_write_hit_inline' "$ROOT/nemu/src/isa/x86/jit.c" ||
   fail "missing inline paged write-DTLB hit path"
 
+grep -q 'emit_chained_paged_call_rel' "$ROOT/nemu/src/isa/x86/jit.c" ||
+  fail "paged CALL rel32 still exits to the C dispatcher instead of chaining"
+
+grep -q 'jit_paged_dtlb_context_key' "$ROOT/nemu/src/isa/x86/jit.c" ||
+  fail "inline paged DTLB hits still reload paging context on every access"
+
 translate_addr_body=$(sed -n '/static bool emit_paged_dtlb_translate_addr_eax/,/^}/p' \
   "$ROOT/nemu/src/isa/x86/jit.c")
 printf '%s\n' "$translate_addr_body" |

@@ -3985,46 +3985,22 @@ static bool emit_dtlb_translate_call(x86_jit_writer_t *w,
          emit_pop_rdi(w);
 }
 
-/* Emit the same compact permission-state key as jit_dtlb_state(), into ECX. */
-static bool emit_inline_dtlb_state_ecx(x86_jit_writer_t *w) {
-  uint8_t *no_wp_disp = NULL;
-  uint8_t *no_pse_disp = NULL;
-
-  if (!emit_movabs_r10(w, (uint64_t)(uintptr_t)&cpu.cs) ||
-      !emit_mov_ecx_m32_r10(w) ||
-      !emit_and_ecx_imm32(w, 0x3u) ||
-      !emit_movabs_r10(w, (uint64_t)(uintptr_t)&cpu.cr0) ||
-      !emit_mov_r10d_m32_r10(w) ||
-      !emit_test_r10d_imm32(w, X86_CR0_WP) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_Z, &no_wp_disp) ||
-      !emit_alu_reg_imm32(w, X86_ALU_OR, R_ECX, 1u << 2)) {
-    return false;
-  }
-  if (!patch_rel32(no_wp_disp, w->cur)) return false;
-
-  if (!emit_movabs_r10(w, (uint64_t)(uintptr_t)&cpu.cr4) ||
-      !emit_mov_r10d_m32_r10(w) ||
-      !emit_test_r10d_imm32(w, X86_CR4_PSE) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_Z, &no_pse_disp) ||
-      !emit_alu_reg_imm32(w, X86_ALU_OR, R_ECX, 1u << 3)) {
+/* Capture the page-mode key that is already guarded before this block runs. */
+static bool jit_paged_dtlb_context_key(uint32_t *cr3_key, uint32_t *state) {
+  if (cr3_key == NULL || state == NULL ||
+      !jit_paging_enabled() || !jit_paging_mode_supported()) {
     return false;
   }
 
-  return patch_rel32(no_pse_disp, w->cur);
-}
-
-/* Reload the CR3 page-directory base key into ECX using r10 as scratch. */
-static bool emit_reload_cr3_key_ecx(x86_jit_writer_t *w) {
-  return emit_movabs_r10(w, (uint64_t)(uintptr_t)&cpu.cr3) &&
-         emit_mov_ecx_m32_r10(w) &&
-         emit_and_ecx_imm32(w, ~(uint32_t)PAGE_MASK);
-}
-
-/* Reload the CR3 page-directory base key into ECX using r11 as scratch. */
-static bool emit_reload_cr3_key_ecx_via_r11(x86_jit_writer_t *w) {
-  return emit_movabs_r11(w, (uint64_t)(uintptr_t)&cpu.cr3) &&
-         emit_mov_ecx_m32_r11(w) &&
-         emit_and_ecx_imm32(w, ~(uint32_t)PAGE_MASK);
+  const x86_jit_translation_key_t key = jit_current_translation_key();
+  /*
+   * DTLB entries are indexed by jit_dtlb_state() bits only.  The block
+   * translation key also carries a CR0.PG bit so non-paged and paged compiled
+   * code cannot alias; do not feed that extra bit into the DTLB hash.
+   */
+  *cr3_key = key.cr3_key;
+  *state = key.state & ~(1u << 4);
+  return true;
 }
 
 /*
@@ -4036,24 +4012,22 @@ static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t width, uint8_t **slow_disp) {
   uint8_t *miss_disp[9];
   uint32_t miss_count = 0;
+  uint32_t cr3_key = 0;
+  uint32_t state = 0;
 
   if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
       width != X86_WIDTH_DWORD) {
     return false;
   }
   if (sizeof(paddr_t) != sizeof(uint32_t)) return false;
+  if (!jit_paged_dtlb_context_key(&cr3_key, &state)) return false;
 
   /*
-   * The miss list covers: unsupported PAE mode, page crossing, invalid entry,
-   * missing read access, mismatched state, mismatched VPN, and mismatched CR3
-   * key.  The array is intentionally fixed-size so adding a new guard is
-   * reviewed here.
+   * The block entry and direct-chain checks already prove the CR3 and paging
+   * mode key.  Use those constants for the DTLB hash and entry comparisons so
+   * hot memory accesses do not reload cpu.cr3/cr0/cr4/cs on every hit.
    */
   if (!emit_mov_edx_eax(w) ||
-      !emit_movabs_r10(w, (uint64_t)(uintptr_t)&cpu.cr4) ||
-      !emit_mov_r10d_m32_r10(w) ||
-      !emit_test_r10d_imm32(w, X86_CR4_PAE) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++]) ||
       !emit_mov_ecx_eax(w) ||
       !emit_and_ecx_imm32(w, PAGE_MASK) ||
       !emit_cmp_ecx_imm32(w, PAGE_SIZE - width) ||
@@ -4064,11 +4038,8 @@ static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
       !emit_mov_eax_ecx(w) ||
       !emit_shift_eax_imm(w, 5u, 10u) ||
       !emit_alu_rm32_r32(w, X86_ALU_XOR, R_EAX, R_ECX) ||
-      !emit_reload_cr3_key_ecx(w) ||
-      !emit_shr_ecx_imm(w, PAGE_SHIFT) ||
-      !emit_alu_rm32_r32(w, X86_ALU_XOR, R_EAX, R_ECX) ||
-      !emit_inline_dtlb_state_ecx(w) ||
-      !emit_alu_rm32_r32(w, X86_ALU_XOR, R_EAX, R_ECX) ||
+      !emit_alu_eax_imm32(w, X86_ALU_XOR, cr3_key >> PAGE_SHIFT) ||
+      !emit_alu_eax_imm32(w, X86_ALU_XOR, state) ||
       !emit_alu_eax_imm32(w, X86_ALU_AND, X86_JIT_DTLB_SIZE - 1u) ||
       !emit_imul_eax_eax_imm32(w, sizeof(x86_jit_dtlb_entry_t)) ||
       !emit_movabs_r10(w, (uint64_t)(uintptr_t)jit_dtlb) ||
@@ -4080,13 +4051,14 @@ static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, access),
           X86_JIT_DTLB_READ) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_Z, &miss_disp[miss_count++]) ||
+      !emit_mov_ecx_imm32(w, state) ||
       !emit_cmp_m32_r10_disp8_ecx(w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, state)) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++]) ||
       !emit_cmp_m32_r10_disp8_r11d(w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, vpn)) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++]) ||
-      !emit_reload_cr3_key_ecx_via_r11(w) ||
+      !emit_mov_ecx_imm32(w, cr3_key) ||
       !emit_cmp_m32_r10_disp8_ecx(w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, cr3_key)) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++])) {
@@ -4262,19 +4234,18 @@ static bool emit_paged_dtlb_write_hit_inline(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t width, uint8_t **slow_disp) {
   uint8_t *miss_disp[13];
   uint32_t miss_count = 0;
+  uint32_t cr3_key = 0;
+  uint32_t state = 0;
 
   if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
       width != X86_WIDTH_DWORD) {
     return false;
   }
   if (sizeof(paddr_t) != sizeof(uint32_t)) return false;
+  if (!jit_paged_dtlb_context_key(&cr3_key, &state)) return false;
 
   if (!emit_mov_edx_eax(w) ||
       !emit_push_rdx(w) ||
-      !emit_movabs_r10(w, (uint64_t)(uintptr_t)&cpu.cr4) ||
-      !emit_mov_r10d_m32_r10(w) ||
-      !emit_test_r10d_imm32(w, X86_CR4_PAE) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++]) ||
       !emit_mov_ecx_eax(w) ||
       !emit_and_ecx_imm32(w, PAGE_MASK) ||
       !emit_cmp_ecx_imm32(w, PAGE_SIZE - width) ||
@@ -4285,11 +4256,8 @@ static bool emit_paged_dtlb_write_hit_inline(x86_jit_writer_t *w,
       !emit_mov_eax_ecx(w) ||
       !emit_shift_eax_imm(w, 5u, 10u) ||
       !emit_alu_rm32_r32(w, X86_ALU_XOR, R_EAX, R_ECX) ||
-      !emit_reload_cr3_key_ecx(w) ||
-      !emit_shr_ecx_imm(w, PAGE_SHIFT) ||
-      !emit_alu_rm32_r32(w, X86_ALU_XOR, R_EAX, R_ECX) ||
-      !emit_inline_dtlb_state_ecx(w) ||
-      !emit_alu_rm32_r32(w, X86_ALU_XOR, R_EAX, R_ECX) ||
+      !emit_alu_eax_imm32(w, X86_ALU_XOR, cr3_key >> PAGE_SHIFT) ||
+      !emit_alu_eax_imm32(w, X86_ALU_XOR, state) ||
       !emit_alu_eax_imm32(w, X86_ALU_AND, X86_JIT_DTLB_SIZE - 1u) ||
       !emit_imul_eax_eax_imm32(w, sizeof(x86_jit_dtlb_entry_t)) ||
       !emit_movabs_r10(w, (uint64_t)(uintptr_t)jit_dtlb) ||
@@ -4301,13 +4269,14 @@ static bool emit_paged_dtlb_write_hit_inline(x86_jit_writer_t *w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, access),
           X86_JIT_DTLB_WRITE) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_Z, &miss_disp[miss_count++]) ||
+      !emit_mov_ecx_imm32(w, state) ||
       !emit_cmp_m32_r10_disp8_ecx(w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, state)) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++]) ||
       !emit_cmp_m32_r10_disp8_r11d(w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, vpn)) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++]) ||
-      !emit_reload_cr3_key_ecx_via_r11(w) ||
+      !emit_mov_ecx_imm32(w, cr3_key) ||
       !emit_cmp_m32_r10_disp8_ecx(w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, cr3_key)) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++])) {
@@ -8308,6 +8277,41 @@ static bool emit_chained_call_rel_stack_guarded(x86_jit_writer_t *w,
       !emit_store_reg_eax(w, R_ESP) ||
       !emit_chain_exit(w, block, jit_branch_target(insn), count,
           X86_JIT_EXIT_CALL, X86_JIT_CHAIN_SLOW_UNLINKED)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_pmem_stores);
+  return true;
+}
+
+static bool emit_chained_paged_call_rel(x86_jit_writer_t *w,
+    x86_jit_block_t *block, const x86_jit_insn_t *insn, uint32_t count) {
+  uint8_t *slow_disp = NULL;
+
+  if (!jit_paging_enabled() || insn->width != X86_WIDTH_DWORD) return false;
+
+  /*
+   * Keep the paged CALL commit order identical to emit_paged_dtlb_call_rel():
+   * prove the stack write first, store the return address, then publish ESP and
+   * enter the callee.  A miss or protected stack page still runs the normal
+   * helper before leaving the native chain.
+   */
+  if (!emit_stack_push_addr_eax(w) ||
+      !emit_paged_dtlb_translate_addr_eax(w, insn, X86_WIDTH_DWORD, true,
+          &slow_disp) ||
+      !emit_mov_r10_rax(w) ||
+      !emit_mov_eax_imm32(w, insn->next_pc) ||
+      !emit_store_host_ptr_r10_eax_width(w, X86_WIDTH_DWORD) ||
+      !emit_commit_stack_push_esp(w) ||
+      !emit_chain_exit(w, block, jit_branch_target(insn), count,
+          X86_JIT_EXIT_CALL, X86_JIT_CHAIN_SLOW_UNLINKED)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(slow_disp, slow_native) ||
+      !emit_helper_call(w, insn) ||
+      !emit_ret_count_side_exit(w, count, X86_JIT_CHAIN_SLOW_HELPER)) {
     return false;
   }
 
@@ -12552,6 +12556,19 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
                   insn_count) :
               emit_chained_call_rel(&w, block, &cold->insns[i],
                   insn_count))) {
+        jit_code_used = start_used;
+        return NULL;
+      }
+      ends_with_chained_control = true;
+      ends_with_control = true;
+    }
+    else if (jit_chain_enabled && paged_block &&
+        cold->insns[i].op == X86_JIT_OP_HELPER &&
+        cold->insns[i].helper == X86_JIT_HELPER_CALL_REL &&
+        jit_target_probe_accepts_chain(jit_branch_target(&cold->insns[i]))) {
+      if (!jit_regcache_flush_all(&w, &ctx) ||
+          !emit_chained_paged_call_rel(&w, block, &cold->insns[i],
+              insn_count)) {
         jit_code_used = start_used;
         return NULL;
       }
