@@ -59,13 +59,15 @@
 /*
  * IA-32 paging and flag constants used by both decode-time checks and emitted
  * native guards.  The bit positions follow Intel's CR0/CR4/PDE/PTE/EFLAGS
- * layout: CR0.WP is bit 16, CR0.PG is bit 31, CR4.PSE is bit 4, PTE.P is bit
- * 0, and PDE.PS is bit 7.  Page-directory/table addresses occupy bits 31..12,
+ * layout: CR0.WP is bit 16, CR0.PG is bit 31, CR4.PSE is bit 4, CR4.PAE is
+ * bit 5, PTE.P is bit 0, and PDE.PS is bit 7.  Page-directory/table addresses
+ * occupy bits 31..12,
  * so the low 12 bits are masked away before comparing CR3 keys or page bases.
  */
 #define X86_CR0_WP 0x00010000u
 #define X86_CR0_PG 0x80000000u
 #define X86_CR4_PSE 0x00000010u
+#define X86_CR4_PAE 0x00000020u
 #define X86_PTE_P 0x001u
 #define X86_PTE_PS 0x080u
 #define X86_PTE_ADDR_MASK ((paddr_t)0xfffff000u)
@@ -232,6 +234,8 @@ typedef struct {
 typedef struct {
   bool valid;
   bool has_store;
+  bool has_load;
+  bool paged;
   int32_t min_offset;
   int32_t max_offset;
   int32_t store_min_offset;
@@ -341,6 +345,20 @@ typedef struct {
   uint16_t len;
 } x86_jit_source_span_t;
 
+/*
+ * Page-mode compiled code is identified by more than CR3.  The NEMU x86 MMU
+ * implemented here is 32-bit non-PAE paging, so the relevant dynamic inputs are
+ * CR3's page-directory base, CR0.PG/CR0.WP, CR4.PSE, CPL, and the conservative
+ * page-table/source generation maintained by the JIT invalidation hooks.  PAE,
+ * NX, and IA-32e are not modelled in this NEMU path, so native paged fast paths
+ * reject PAE instead of adding unsupported architectural bits to this key.
+ */
+typedef struct {
+  uint32_t cr3_key;
+  uint32_t state;
+  uint32_t paging_generation;
+} x86_jit_translation_key_t;
+
 /* Block exit categories used for direct chaining and statistics. */
 typedef enum {
   X86_JIT_EXIT_FALLTHROUGH,
@@ -392,6 +410,7 @@ typedef struct {
   bool paging;
   vaddr_t pc;
   uint32_t cr3_key;
+  x86_jit_translation_key_t translation_key;
   uint32_t source_len;
   uint8_t unsupported_opcode2;
   x86_jit_entry_t c_entry;
@@ -464,6 +483,7 @@ typedef struct {
   bool valid;
   vaddr_t pc;
   uint32_t cr3_key;
+  x86_jit_translation_key_t translation_key;
   uint32_t hot_index;
   uint32_t generation;
 } x86_jit_l0_entry_t;
@@ -473,6 +493,7 @@ typedef struct {
   bool valid;
   vaddr_t pc;
   uint32_t cr3_key;
+  x86_jit_translation_key_t translation_key;
   uint32_t exec_count;
   uint32_t taken_count;
   uint32_t fallthrough_count;
@@ -487,6 +508,11 @@ typedef struct {
  * bytes, which makes indexed native loads simple and stable.
  */
 typedef struct {
+  x86_jit_translation_key_t translation_key;
+  uint32_t block_generation;
+} x86_jit_ret_cache_meta_t;
+
+typedef struct {
   vaddr_t target_pc;
   uint32_t pad;
   uint8_t *chain_entry;
@@ -494,12 +520,30 @@ typedef struct {
 
 _Static_assert(sizeof(x86_jit_ret_cache_entry_t) == 16,
     "x86 JIT RET cache entry size changed");
+_Static_assert(sizeof(x86_jit_ret_cache_meta_t) == 16,
+    "x86 JIT RET cache metadata size changed");
+_Static_assert(offsetof(x86_jit_ret_cache_entry_t, target_pc) == 0,
+    "x86 JIT RET cache target offset changed");
+_Static_assert(offsetof(x86_jit_ret_cache_entry_t, chain_entry) == 8,
+    "x86 JIT RET cache chain-entry offset changed");
+
+typedef struct {
+  uint8_t *budget_exit_disp;
+  uint8_t *target_miss_disp;
+  uint8_t *key_cr3_miss_disp;
+  uint8_t *key_state_miss_disp;
+  uint8_t *key_generation_miss_disp;
+  uint8_t *generation_slot_null_disp;
+  uint8_t *block_generation_miss_disp;
+  uint8_t *entry_null_disp;
+} x86_jit_indirect_cache_patches_t;
 
 typedef struct {
   uint64_t exec_requests;
   uint64_t cache_hits;
   uint64_t cache_misses;
   uint64_t blocks_compiled;
+  uint64_t paged_blocks_compiled;
   uint64_t blocks_unsupported;
   uint64_t compiled_insns;
   uint64_t blocks_executed;
@@ -535,11 +579,20 @@ typedef struct {
   uint64_t guest_gpr_stores_emitted;
   uint64_t native_pmem_guards_emitted;
   uint64_t direct_chain_patches;
+  uint64_t paged_chain_patches;
   uint64_t batch_entries;
   uint64_t traces_compiled;
+  uint64_t paged_traces_compiled;
   uint64_t trace_compile_failures;
   uint64_t trace_hits;
+  uint64_t paged_trace_hits;
   uint64_t side_exits;
+  uint64_t paged_chain_hits;
+  uint64_t paged_ret_cache_hits;
+  uint64_t paged_ret_cache_misses;
+  uint64_t paged_dtlb_read_hits;
+  uint64_t paged_dtlb_write_hits;
+  uint64_t paged_dtlb_fallbacks;
   uint64_t smc_invalidation_exits;
   uint64_t blocks_chainable;
   uint64_t blocks_not_chainable;
@@ -556,6 +609,15 @@ typedef struct {
   uint64_t invalidation_page_skips;
   uint64_t precise_invalidation_scans;
   uint64_t invalidated_blocks;
+  uint64_t page_table_write_invalidations;
+  uint64_t source_alias_invalidations;
+  uint64_t cr3_or_paging_key_mismatches;
+  uint64_t cross_page_fallbacks;
+  uint64_t mmio_fallbacks;
+  uint64_t stack_fast_fallbacks;
+  uint64_t paged_large_page_fallbacks;
+  uint64_t unsupported_paging_mode_fallbacks;
+  uint64_t paged_source_validation_failures;
   uint64_t arena_resets;
   uint64_t unsupported_by_opcode[256];
   uint64_t unsupported_hits_by_opcode[256];
@@ -622,6 +684,13 @@ static bool jit_chain_enabled = true;
 static bool jit_trace_enabled = false;
 static bool jit_batch_trampoline_enabled = false;
 static bool jit_stack_fast_enabled = false;
+static bool jit_paged_trace_enabled = true;
+static bool jit_paged_chain_enabled = true;
+static bool jit_paged_retcache_enabled = false;
+static bool jit_paged_batch_enabled = false;
+static bool jit_paged_regcache_enabled = false;
+static bool jit_paged_stack_fast_enabled = false;
+static bool jit_paged_aggressive_enabled = false;
 static bool jit_fast_chain_enabled = true;
 static bool jit_edge_pc_store_enabled = true;
 static bool jit_chain_abort_check_enabled = true;
@@ -635,6 +704,8 @@ static x86_jit_block_cold_t jit_cache_cold[X86_JIT_CACHE_SIZE];
 static x86_jit_l0_entry_t jit_l0_cache[X86_JIT_L0_SIZE];
 static x86_jit_hot_info_t jit_hot_info[X86_JIT_HOT_TABLE_SIZE];
 static x86_jit_ret_cache_entry_t jit_ret_cache[X86_JIT_RET_CACHE_SIZE];
+static x86_jit_ret_cache_meta_t jit_ret_cache_meta[X86_JIT_RET_CACHE_SIZE];
+static const uint32_t *jit_ret_cache_generation_slot[X86_JIT_RET_CACHE_SIZE];
 static volatile uint32_t jit_entry_budget = 0;
 static volatile uint32_t jit_loop_extra = 0;
 static volatile uint32_t jit_chain_abort = 0;
@@ -659,6 +730,7 @@ static volatile uint64_t jit_ret_cache_hits_runtime = 0;
 static volatile uint64_t jit_ret_cache_misses_runtime = 0;
 static volatile uint64_t jit_sibling_trace_hits_runtime = 0;
 static volatile uint32_t jit_dtlb_scratch = 0;
+static volatile uint32_t jit_dtlb_value_scratch = 0;
 static bool jit_source_page_has_code[X86_JIT_SOURCE_PAGE_COUNT];
 static x86_jit_source_page_blocks_t
     jit_source_page_blocks[X86_JIT_SOURCE_PAGE_COUNT];
@@ -666,8 +738,10 @@ static bool jit_page_table_page_has_mapping[X86_JIT_SOURCE_PAGE_COUNT];
 static x86_jit_dtlb_entry_t jit_dtlb[X86_JIT_DTLB_SIZE];
 static uint32_t jit_cache_age_clock = 1;
 static uint32_t jit_cache_generation = 1;
+static uint32_t jit_paging_generation = 1;
 static x86_jit_stats_t jit_stats;
 
+#if X86_JIT_STATS
 static const char *const jit_helper_names[X86_JIT_HELPER_COUNT] = {
   [X86_JIT_HELPER_NONE] = "none",
   [X86_JIT_HELPER_MOV_RM_REG] = "mov-rm-reg",
@@ -709,6 +783,7 @@ static const char *const jit_helper_names[X86_JIT_HELPER_COUNT] = {
   [X86_JIT_HELPER_SHIFT_RM] = "shift-rm",
   [X86_JIT_HELPER_IMUL_REG_RM] = "imul-reg-rm",
 };
+#endif
 
 #define JIT_STAT_INC(field) \
   do { \
@@ -727,6 +802,11 @@ static void jit_link_block_exits(x86_jit_block_t *block);
 static void jit_reset_arena(void);
 static void jit_ret_cache_clear(void);
 static void jit_dtlb_flush(void);
+static void jit_cache_bump_generation(void);
+static uint32_t jit_dtlb_state(void);
+static bool jit_dtlb_mark_page_tables(vaddr_t addr);
+static bool jit_batch_cpu_base_available(void);
+static bool jit_target_probe_accepts_chain(vaddr_t pc);
 static bool jit_range_may_touch_source_pages(paddr_t addr, int len);
 static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out);
 static bool emit_insn(x86_jit_writer_t *w, const x86_jit_insn_t *insn);
@@ -737,6 +817,7 @@ static bool emit_paged_dtlb_mov_rm_reg_store(x86_jit_writer_t *w,
 static bool emit_shift_eax_imm(x86_jit_writer_t *w, uint8_t shift_op,
     uint8_t count);
 static bool jit_native_alu_writes_result(uint8_t alu_op);
+static bool jit_helper_may_touch_guest_memory(const x86_jit_insn_t *insn);
 static uint32_t jit_native_alu_flag_copy_mask(uint8_t alu_op);
 static bool emit_capture_status_flags(x86_jit_writer_t *w,
     uint32_t copy_mask);
@@ -744,6 +825,21 @@ static bool emit_capture_status_flags_custom(x86_jit_writer_t *w,
     uint32_t copy_mask, uint32_t clear_mask);
 static bool emit_runtime_counter_inc(x86_jit_writer_t *w,
     volatile uint64_t *counter);
+static bool emit_load_chain_abort_ecx(x86_jit_writer_t *w);
+static bool emit_load_loop_extra_eax(x86_jit_writer_t *w);
+static bool emit_return_completed(x86_jit_writer_t *w, vaddr_t pc,
+    uint32_t count);
+static bool emit_condition_bool_eax(x86_jit_writer_t *w, uint8_t cc);
+static bool emit_store_edx_eax_pair(x86_jit_writer_t *w);
+static bool emit_indirect_target_cache_jump(x86_jit_writer_t *w,
+    uint32_t count, x86_jit_indirect_cache_patches_t *patches);
+static bool emit_indirect_target_cache_slow_exits(x86_jit_writer_t *w,
+    x86_jit_indirect_cache_patches_t *patches);
+static bool emit_paged_dtlb_translate_addr_eax(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn, uint8_t width, bool is_write,
+    uint8_t **slow_disp);
+static bool emit_store_dtlb_scratch_eax(x86_jit_writer_t *w);
+static bool emit_load_dtlb_scratch_eax(x86_jit_writer_t *w);
 static bool emit_alu_rm32_r32(x86_jit_writer_t *w, uint8_t alu_op,
     uint8_t rm, uint8_t reg);
 static bool emit_alu_reg_imm32(x86_jit_writer_t *w, uint8_t alu_op,
@@ -827,6 +923,26 @@ static void jit_init_runtime_options(void) {
         jit_env_flag_default_enabled("NEMU_X86_JIT_BATCH");
     jit_stack_fast_enabled =
         jit_env_flag_enabled("NEMU_X86_JIT_STACK_FAST");
+    jit_paged_aggressive_enabled =
+        jit_env_flag_enabled("NEMU_X86_JIT_PAGED_AGGRESSIVE");
+    jit_paged_trace_enabled =
+        jit_env_flag_default_enabled("NEMU_X86_JIT_PAGED_TRACE") ||
+        jit_paged_aggressive_enabled;
+    jit_paged_chain_enabled =
+        jit_env_flag_default_enabled("NEMU_X86_JIT_PAGED_CHAIN") ||
+        jit_paged_aggressive_enabled;
+    jit_paged_retcache_enabled =
+        jit_env_flag_enabled("NEMU_X86_JIT_PAGED_RETCACHE") ||
+        jit_paged_aggressive_enabled;
+    jit_paged_batch_enabled =
+        jit_env_flag_enabled("NEMU_X86_JIT_PAGED_BATCH") ||
+        jit_paged_aggressive_enabled;
+    jit_paged_regcache_enabled =
+        jit_env_flag_enabled("NEMU_X86_JIT_PAGED_REGCACHE") ||
+        jit_paged_aggressive_enabled;
+    jit_paged_stack_fast_enabled =
+        jit_env_flag_enabled("NEMU_X86_JIT_PAGED_STACK_FAST") ||
+        jit_paged_aggressive_enabled;
     jit_fast_chain_enabled =
         jit_env_flag_enabled("NEMU_X86_JIT_FAST_CHAIN");
     jit_edge_pc_store_enabled =
@@ -861,6 +977,7 @@ static bool jit_helper_translation_enabled(void) {
   return jit_helpers_enabled;
 }
 
+#if X86_JIT_STATS
 /* Compute a rounded fixed-point ratio with two decimal places. */
 static uint64_t jit_ratio_x100(uint64_t numerator, uint64_t denominator) {
   if (denominator == 0) return 0;
@@ -872,22 +989,95 @@ static uint64_t jit_percent_x100(uint64_t numerator, uint64_t denominator) {
   if (denominator == 0) return 0;
   return (numerator * 10000u + denominator / 2u) / denominator;
 }
+#endif
 
 /* IA-32 paging is active when CR0.PG is set. */
 static bool jit_paging_enabled(void) {
   return (cpu.cr0 & X86_CR0_PG) != 0;
 }
 
-/* Fast chaining requires the trampoline ABI and currently only supports flat PMEM. */
-static bool jit_fast_chain_runtime_enabled(void) {
-  jit_init_runtime_options();
-  return jit_fast_chain_enabled && jit_batch_trampoline_enabled &&
-         !jit_paging_enabled();
-}
-
 /* Key translated blocks by CR3 page-directory base while paging is active. */
 static uint32_t jit_cr3_key(void) {
   return jit_paging_enabled() ? (uint32_t)(cpu.cr3 & ~(uint32_t)PAGE_MASK) : 0u;
+}
+
+/*
+ * Native paged paths follow the implemented NEMU x86 MMU model: 32-bit
+ * non-PAE paging.  CR4.PSE is not rejected globally because ordinary 4 KiB
+ * PDEs remain legal when PSE is enabled; each PDE.PS leaf is rejected at the
+ * page-walk dependency step so the helper/MMU preserves 4 MiB and reserved-bit
+ * behaviour.  NEMU has no EFER/NX/IA-32e state in this path, so CR4.PAE is the
+ * unsupported mode bit that must stay on the interpreter/helper path.
+ */
+static bool jit_paging_mode_supported(void) {
+  return !jit_paging_enabled() || (cpu.cr4 & X86_CR4_PAE) == 0;
+}
+
+static bool jit_paged_fastpath_mode_ready(void) {
+  if (jit_paging_mode_supported()) return true;
+  JIT_STAT_INC(unsupported_paging_mode_fallbacks);
+  return false;
+}
+
+static uint32_t jit_paging_state_key(void) {
+  if (!jit_paging_enabled()) return 0u;
+
+  uint32_t state = jit_dtlb_state();
+  state |= 1u << 4; /* CR0.PG is set. */
+  return state;
+}
+
+static x86_jit_translation_key_t jit_current_translation_key(void) {
+  if (!jit_paging_enabled()) {
+    return (x86_jit_translation_key_t){0};
+  }
+
+  return (x86_jit_translation_key_t){
+    .cr3_key = jit_cr3_key(),
+    .state = jit_paging_state_key(),
+    .paging_generation = jit_paging_generation,
+  };
+}
+
+static bool jit_translation_key_equal(x86_jit_translation_key_t a,
+    x86_jit_translation_key_t b) {
+  return a.cr3_key == b.cr3_key &&
+         a.state == b.state &&
+         a.paging_generation == b.paging_generation;
+}
+
+static bool jit_block_translation_key_matches(const x86_jit_block_t *block) {
+  if (block == NULL || !block->valid ||
+      block->paging != jit_paging_enabled()) {
+    return false;
+  }
+  if (!block->paging) return block->cr3_key == 0;
+  if (!jit_paged_fastpath_mode_ready()) return false;
+
+  const bool matches = jit_translation_key_equal(block->translation_key,
+      jit_current_translation_key());
+  if (!matches) JIT_STAT_INC(cr3_or_paging_key_mismatches);
+  return matches;
+}
+
+static bool jit_trace_translation_key_matches(const x86_jit_hot_info_t *hot,
+    const x86_jit_block_t *trace) {
+  return hot != NULL && trace != NULL &&
+         jit_translation_key_equal(hot->translation_key,
+             trace->translation_key) &&
+         jit_block_translation_key_matches(trace);
+}
+
+/* Fast chaining requires the trampoline ABI and is paged only under its guard. */
+static bool jit_fast_chain_runtime_enabled(void) {
+  jit_init_runtime_options();
+  return jit_fast_chain_enabled && jit_batch_trampoline_enabled &&
+         (!jit_paging_enabled() ||
+          (jit_paged_chain_enabled && jit_paged_batch_enabled));
+}
+
+static bool jit_indirect_target_cache_runtime_enabled(void) {
+  return !jit_paging_enabled() || jit_paged_retcache_enabled;
 }
 
 /* The direct-fetch fast path is safe only when the four data/code segments are flat. */
@@ -934,12 +1124,22 @@ static bool jit_vaddr_to_paddr(vaddr_t addr, uint32_t len, int type,
   }
 
   if (mmu != MMU_TRANSLATE) return false;
+  if (!jit_paged_fastpath_mode_ready()) return false;
 
   const paddr_t ret = isa_mmu_translate(addr, (int)len, type);
   if (jit_translate_status(ret) != MEM_RET_OK) return false;
 
   *pa = jit_translate_page(ret) | (paddr_t)(addr & PAGE_MASK);
   return in_pmem_range(*pa, (int)len);
+}
+
+static bool jit_translate_ifetch_byte(vaddr_t addr, paddr_t *pa) {
+  if (!jit_vaddr_to_paddr(addr, 1u, MEM_TYPE_IFETCH, pa)) return false;
+  if (jit_paging_enabled() && !jit_dtlb_mark_page_tables(addr)) {
+    JIT_STAT_INC(paged_source_validation_failures);
+    return false;
+  }
+  return true;
 }
 
 /* Read one instruction byte through the same path that block validation uses. */
@@ -951,7 +1151,7 @@ static bool jit_vaddr_read_u8(vaddr_t addr, uint8_t *value) {
   }
 
   paddr_t pa = 0;
-  if (!jit_vaddr_to_paddr(addr, 1u, MEM_TYPE_IFETCH, &pa)) return false;
+  if (!jit_translate_ifetch_byte(addr, &pa)) return false;
   *value = host_read(guest_to_host(pa), 1);
   return true;
 }
@@ -1057,7 +1257,8 @@ static bool jit_cross_page(vaddr_t addr, uint32_t len) {
  * Fold paging permission mode into a small DTLB state key: bits 0..1 are CPL,
  * bit 2 tracks CR0.WP, and bit 3 tracks CR4.PSE.  A change in any of these can
  * change page-permission or large-page behaviour, so cached translations must
- * no longer match.
+ * no longer match.  CR4.PAE is deliberately absent: it is unsupported by this
+ * native page walker and guarded as a fallback-only mode before DTLB lookup.
  */
 static uint32_t jit_dtlb_state(void) {
   uint32_t state = cpu.cs & 0x3u;
@@ -1074,12 +1275,17 @@ static uint32_t jit_dtlb_index(uint32_t vpn, uint32_t cr3_key,
       (X86_JIT_DTLB_SIZE - 1u);
 }
 
+/* Drop private data translations while preserving page-table dependency marks. */
+static void jit_dtlb_clear_entries(void) {
+  memset(jit_dtlb, 0, sizeof(jit_dtlb));
+  JIT_STAT_INC(dtlb_flushes);
+}
+
 /* Drop all private data translations and page-table reverse markers. */
 static void jit_dtlb_flush(void) {
-  memset(jit_dtlb, 0, sizeof(jit_dtlb));
+  jit_dtlb_clear_entries();
   memset(jit_page_table_page_has_mapping, 0,
       sizeof(jit_page_table_page_has_mapping));
-  JIT_STAT_INC(dtlb_flushes);
 }
 
 /* Remember that a PMEM page was used as a page directory/table page. */
@@ -1137,7 +1343,10 @@ static bool jit_dtlb_mark_page_tables(vaddr_t addr) {
    * Keep the first x86 DTLB step to normal 4 KiB leaves.  The slow helper keeps
    * 4 MiB PDE.PS pages exact, including CR4.PSE reserved-bit fault behaviour.
    */
-  if ((pde & X86_PTE_PS) != 0) return false;
+  if ((pde & X86_PTE_PS) != 0) {
+    JIT_STAT_INC(paged_large_page_fallbacks);
+    return false;
+  }
 
   const paddr_t pt_base = (paddr_t)(pde & X86_PTE_ADDR_MASK);
   const paddr_t pte_addr =
@@ -1152,6 +1361,7 @@ static bool jit_dtlb_mark_page_tables(vaddr_t addr) {
 /* Count a DTLB miss/fallback and signal generated code to use the slow path. */
 static void *jit_dtlb_fallback(void) {
   JIT_STAT_INC(dtlb_fallbacks);
+  JIT_STAT_INC(paged_dtlb_fallbacks);
   return NULL;
 }
 
@@ -1166,6 +1376,7 @@ static void *jit_dtlb_translate(const x86_jit_insn_t *insn, uint32_t addr,
   if ((len != X86_WIDTH_BYTE && len != X86_WIDTH_WORD &&
           len != X86_WIDTH_DWORD) ||
       jit_cross_page(addr, len)) {
+    if (jit_cross_page(addr, len)) JIT_STAT_INC(cross_page_fallbacks);
     return jit_dtlb_fallback();
   }
 
@@ -1187,22 +1398,34 @@ static void *jit_dtlb_translate(const x86_jit_insn_t *insn, uint32_t addr,
              (entry->access & access) != 0)) {
     const paddr_t pa = entry->pg_paddr | (paddr_t)(addr & PAGE_MASK);
 
-    if (!jit_pmem_range(pa, len)) return jit_dtlb_fallback();
+    if (!jit_pmem_range(pa, len)) {
+      JIT_STAT_INC(mmio_fallbacks);
+      return jit_dtlb_fallback();
+    }
     if (is_write &&
         (jit_range_may_touch_source_pages(pa, (int)len) ||
             jit_range_may_touch_page_table_pages(pa, (int)len))) {
       return jit_dtlb_fallback();
     }
 
-    if (is_write) JIT_STAT_INC(dtlb_write_hits);
-    else JIT_STAT_INC(dtlb_read_hits);
+    if (is_write) {
+      JIT_STAT_INC(dtlb_write_hits);
+      JIT_STAT_INC(paged_dtlb_write_hits);
+    }
+    else {
+      JIT_STAT_INC(dtlb_read_hits);
+      JIT_STAT_INC(paged_dtlb_read_hits);
+    }
     return guest_to_host(pa);
   }
 
   paddr_t pa = 0;
   if (!jit_vaddr_to_paddr(addr, len, type, &pa) ||
-      !jit_dtlb_mark_page_tables(addr) ||
-      !jit_pmem_range(pa, len)) {
+      !jit_dtlb_mark_page_tables(addr)) {
+    return jit_dtlb_fallback();
+  }
+  if (!jit_pmem_range(pa, len)) {
+    JIT_STAT_INC(mmio_fallbacks);
     return jit_dtlb_fallback();
   }
 
@@ -1244,6 +1467,14 @@ static const x86_jit_block_cold_t *jit_block_cold_const(
 static void jit_cache_bump_generation(void) {
   jit_cache_generation++;
   if (jit_cache_generation == 0) jit_cache_generation = 1;
+}
+
+/* Conservative page-table/source generation used by paged block keys. */
+static void jit_paging_bump_generation(void) {
+  jit_paging_generation++;
+  if (jit_paging_generation == 0) jit_paging_generation = 1;
+  jit_ret_cache_clear();
+  jit_cache_bump_generation();
 }
 
 /* Add one block to a source-page reverse map, or mark overflow for scan fallback. */
@@ -1339,9 +1570,9 @@ static void jit_block_register_source_range(x86_jit_block_t *block,
 }
 
 /* Register the physical bytes reached by a guest virtual instruction range. */
-static void jit_register_source_vaddr_range(x86_jit_block_t *block,
+static bool jit_register_source_vaddr_range(x86_jit_block_t *block,
     vaddr_t pc, uint32_t len) {
-  if (len == 0) return;
+  if (len == 0) return true;
   x86_jit_block_cold_t *cold = jit_block_cold(block);
   const uint8_t *host = NULL;
   if (jit_flat_direct_fetch(pc, len, &host)) {
@@ -1354,7 +1585,7 @@ static void jit_register_source_vaddr_range(x86_jit_block_t *block,
         !jit_paddr_source_page(end, &last)) {
       cold->source_page_overflow = true;
       cold->source_range_overflow = true;
-      return;
+      return false;
     }
 
     for (size_t page = first; page <= last; page++) {
@@ -1365,33 +1596,38 @@ static void jit_register_source_vaddr_range(x86_jit_block_t *block,
       jit_block_register_source_range(block, pa);
       if (pa == (paddr_t)-1) break;
     }
-    return;
+    return true;
   }
 
   for (uint32_t i = 0; i < len; i++) {
     paddr_t pa = 0;
     size_t page = 0;
-    if (jit_vaddr_to_paddr(pc + i, 1u, MEM_TYPE_IFETCH, &pa) &&
-        jit_paddr_source_page(pa, &page)) {
-      jit_block_register_source_page(block, page);
-      jit_block_register_source_range(block, pa);
+    if (!jit_translate_ifetch_byte(pc + i, &pa) ||
+        !jit_paddr_source_page(pa, &page)) {
+      cold->source_page_overflow = true;
+      cold->source_range_overflow = true;
+      JIT_STAT_INC(paged_source_validation_failures);
+      return false;
     }
+    jit_block_register_source_page(block, page);
+    jit_block_register_source_range(block, pa);
   }
+  return true;
 }
 
 /* Reset and register source-byte reverse maps for one linear block. */
-static void jit_mark_source_pages(x86_jit_block_t *block, vaddr_t pc,
+static bool jit_mark_source_pages(x86_jit_block_t *block, vaddr_t pc,
     uint32_t len) {
   x86_jit_block_cold_t *cold = jit_block_cold(block);
   cold->source_page_count = 0;
   cold->source_page_overflow = false;
   cold->source_range_count = 0;
   cold->source_range_overflow = false;
-  jit_register_source_vaddr_range(block, pc, len);
+  return jit_register_source_vaddr_range(block, pc, len);
 }
 
 /* Reset and register source-byte reverse maps for all spans in a trace block. */
-static void jit_mark_trace_source_pages(x86_jit_block_t *block) {
+static bool jit_mark_trace_source_pages(x86_jit_block_t *block) {
   x86_jit_block_cold_t *cold = jit_block_cold(block);
   cold->source_page_count = 0;
   cold->source_page_overflow = false;
@@ -1400,8 +1636,11 @@ static void jit_mark_trace_source_pages(x86_jit_block_t *block) {
 
   for (uint16_t i = 0; i < cold->source_span_count; i++) {
     const x86_jit_source_span_t *span = &cold->source_spans[i];
-    jit_register_source_vaddr_range(block, span->pc, span->len);
+    if (!jit_register_source_vaddr_range(block, span->pc, span->len)) {
+      return false;
+    }
   }
+  return true;
 }
 
 /* Mark one block invalid and unpatch all direct edges that target it. */
@@ -1413,6 +1652,22 @@ static void jit_block_invalidate(x86_jit_block_t *block) {
   if (block->valid) jit_block_unregister_source_pages(block);
   block->valid = false;
   jit_cache_bump_generation();
+}
+
+static void jit_invalidate_paged_blocks(void) {
+  bool any = false;
+  for (uint32_t i = 0; i < X86_JIT_CACHE_SIZE; i++) {
+    x86_jit_block_t *block = &jit_cache[i];
+    if (!block->valid || !block->paging) continue;
+    jit_block_invalidate(block);
+    jit_chain_abort = 1;
+    any = true;
+    JIT_STAT_INC(invalidated_blocks);
+  }
+  if (any) {
+    memset(jit_l0_cache, 0, sizeof(jit_l0_cache));
+    memset(jit_hot_info, 0, sizeof(jit_hot_info));
+  }
 }
 
 /* Fully remove one block from lookup and source-page reverse indexes. */
@@ -2351,7 +2606,7 @@ static bool emit_movabs_r10(x86_jit_writer_t *w, uint64_t value) {
    * The batch trampoline pins PMEM and source-bitmap bases in callee-saved
    * registers.  Reusing r13/r15 avoids repeated 64-bit immediates in hot code.
    */
-  if (jit_batch_trampoline_enabled && !jit_paging_enabled()) {
+  if (jit_batch_cpu_base_available()) {
     if (value == (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) {
       return emit_mov_r10_r13(w);
     }
@@ -2367,6 +2622,18 @@ static bool emit_movabs_r10(x86_jit_writer_t *w, uint64_t value) {
 static bool emit_mov_r10_ret_cache_base(x86_jit_writer_t *w) {
   return emit_u8(w, 0x49) && emit_u8(w, 0xba) &&
          emit_u64(w, (uint64_t)(uintptr_t)jit_ret_cache);
+}
+
+/* Emit host code for mov r10 ret-cache metadata base. */
+static bool emit_mov_r10_ret_cache_meta_base(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x49) && emit_u8(w, 0xba) &&
+         emit_u64(w, (uint64_t)(uintptr_t)jit_ret_cache_meta);
+}
+
+/* Emit host code for mov r10 ret-cache generation-slot base. */
+static bool emit_mov_r10_ret_cache_generation_slot_base(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x49) && emit_u8(w, 0xba) &&
+         emit_u64(w, (uint64_t)(uintptr_t)jit_ret_cache_generation_slot);
 }
 
 /* Emit host code for movabs r11; bytes below are x86-64 encodings. */
@@ -2598,6 +2865,12 @@ static bool emit_mov_r11_m64_r10_rcx_disp8(x86_jit_writer_t *w,
          emit_u8(w, 0x5c) && emit_u8(w, 0x0a) && emit_u8(w, disp);
 }
 
+/* Emit host code for mov r11 m64 r10 rdx; bytes below are x86-64 encodings. */
+static bool emit_mov_r11_m64_r10_rdx(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x4d) && emit_u8(w, 0x8b) &&
+         emit_u8(w, 0x1c) && emit_u8(w, 0x12);
+}
+
 /* Emit host code for mov eax m32 r10 disp8; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_m32_r10_disp8(x86_jit_writer_t *w, uint8_t disp) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
@@ -2629,6 +2902,12 @@ static bool emit_add_eax_m32_rdx(x86_jit_writer_t *w) {
 /* Emit host code for shl ecx imm; bytes below are x86-64 encodings. */
 static bool emit_shl_ecx_imm(x86_jit_writer_t *w, uint8_t value) {
   return value == 0 || (emit_u8(w, 0xc1) && emit_u8(w, 0xe1) && emit_u8(w, value));
+}
+
+/* Emit host code for shl edx imm; bytes below are x86-64 encodings. */
+static bool emit_shl_edx_imm(x86_jit_writer_t *w, uint8_t value) {
+  return value == 0 ||
+         (emit_u8(w, 0xc1) && emit_u8(w, 0xe2) && emit_u8(w, value));
 }
 
 /* Emit host code for add eax ecx; bytes below are x86-64 encodings. */
@@ -2704,6 +2983,11 @@ static bool emit_mov_edx_eax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x89) && emit_u8(w, 0xc2);
 }
 
+/* Emit host code for mov edx ecx; bytes below are x86-64 encodings. */
+static bool emit_mov_edx_ecx(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x89) && emit_u8(w, 0xca);
+}
+
 /* Emit host code for mov eax edx; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_edx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x89) && emit_u8(w, 0xd0);
@@ -2722,6 +3006,11 @@ static bool emit_mov_esi_eax(x86_jit_writer_t *w) {
 /* Emit host code for mov r10 rax; bytes below are x86-64 encodings. */
 static bool emit_mov_r10_rax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x49) && emit_u8(w, 0x89) && emit_u8(w, 0xc2);
+}
+
+/* Emit host code for mov r14 rax; bytes below are x86-64 encodings. */
+static bool emit_mov_r14_rax(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x49) && emit_u8(w, 0x89) && emit_u8(w, 0xc6);
 }
 
 /* Emit host code for mov eax r11d; bytes below are x86-64 encodings. */
@@ -2752,6 +3041,11 @@ static bool emit_sub_ecx_eax(x86_jit_writer_t *w) {
 /* Emit host code for sub eax ecx; bytes below are x86-64 encodings. */
 static bool emit_sub_eax_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x29) && emit_u8(w, 0xc8);
+}
+
+/* Emit host code for sub r14 rax; bytes below are x86-64 encodings. */
+static bool emit_sub_r14_rax(x86_jit_writer_t *w) {
+  return emit_u8(w, 0x49) && emit_u8(w, 0x29) && emit_u8(w, 0xc6);
 }
 
 /* Emit host code for mov r11d ecx; bytes below are x86-64 encodings. */
@@ -2819,6 +3113,12 @@ static bool emit_cmp_r11d_eax(x86_jit_writer_t *w) {
   return emit_u8(w, 0x41) && emit_u8(w, 0x39) && emit_u8(w, 0xc3);
 }
 
+/* Emit host code for cmp r11d imm32; bytes below are x86-64 encodings. */
+static bool emit_cmp_r11d_imm32(x86_jit_writer_t *w, uint32_t value) {
+  return emit_u8(w, 0x41) && emit_u8(w, 0x81) &&
+         emit_u8(w, 0xfb) && emit_u32(w, value);
+}
+
 /* Emit host code for test r11 r11; bytes below are x86-64 encodings. */
 static bool emit_test_r11_r11(x86_jit_writer_t *w) {
   return emit_u8(w, 0x4d) && emit_u8(w, 0x85) && emit_u8(w, 0xdb);
@@ -2856,6 +3156,13 @@ static bool emit_cmp_m32_r10_disp8_ecx(x86_jit_writer_t *w, uint8_t disp) {
 static bool emit_cmp_m32_r10_disp8_r11d(x86_jit_writer_t *w, uint8_t disp) {
   return emit_u8(w, 0x45) && emit_u8(w, 0x39) &&
          emit_u8(w, 0x5a) && emit_u8(w, disp);
+}
+
+/* Emit host code for cmp m32 r10 rcx disp8 r11d; bytes below are x86-64 encodings. */
+static bool emit_cmp_m32_r10_rcx_disp8_r11d(x86_jit_writer_t *w,
+    uint8_t disp) {
+  return emit_u8(w, 0x45) && emit_u8(w, 0x39) &&
+         emit_u8(w, 0x5c) && emit_u8(w, 0x0a) && emit_u8(w, disp);
 }
 
 /* Emit host code for test ecx ecx; bytes below are x86-64 encodings. */
@@ -3050,6 +3357,11 @@ static bool emit_div_ecx(x86_jit_writer_t *w) {
   return emit_u8(w, 0xf7) && emit_u8(w, 0xf1);
 }
 
+/* Emit host code for idiv ecx; bytes below are x86-64 encodings. */
+static bool emit_idiv_ecx(x86_jit_writer_t *w) {
+  return emit_u8(w, 0xf7) && emit_u8(w, 0xf9);
+}
+
 /* Emit host code for cdq host; bytes below are x86-64 encodings. */
 static bool emit_cdq_host(x86_jit_writer_t *w) {
   return emit_u8(w, 0x99);
@@ -3111,7 +3423,8 @@ static void patch_u32(uint8_t *dst, uint32_t value) {
 
 /* Return true when generated code can address CPU_state through r12. */
 static bool jit_batch_cpu_base_available(void) {
-  return jit_batch_trampoline_enabled && !jit_paging_enabled();
+  return jit_batch_trampoline_enabled &&
+         (!jit_paging_enabled() || jit_paged_batch_enabled);
 }
 
 /* Convert an absolute CPU_state member address to a signed disp32 offset. */
@@ -3321,6 +3634,7 @@ static const uint8_t *jit_regcache_host_set(const x86_jit_emit_ctx_t *ctx,
 /* The register cache is only valid when the generated ABI has a live CPU base. */
 static bool jit_regcache_active(const x86_jit_emit_ctx_t *ctx) {
   return ctx != NULL && ctx->valid && jit_regcache_enabled &&
+         (!jit_paging_enabled() || jit_paged_regcache_enabled) &&
          ctx->has_cpu_base && jit_batch_cpu_base_available();
 }
 
@@ -3482,15 +3796,48 @@ static bool emit_lea(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
 
 /* Call the generic helper while preserving the generated ABI's argument registers. */
 static bool emit_helper_call(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
-  return emit_push_rdi(w) &&
-         emit_push_rsi(w) &&
-         emit_movabs_rdi(w, (uintptr_t)insn) &&
-         emit_movabs_rax(w, (uintptr_t)jit_helper_exec) &&
-         emit_sub_rsp_imm8(w, 8u) &&
-         emit_call_rax(w) &&
-         emit_add_rsp_imm8(w, 8u) &&
-         emit_pop_rsi(w) &&
-         emit_pop_rdi(w);
+  uint8_t *continue_disp = NULL;
+
+  if (!emit_push_rdi(w) ||
+      !emit_push_rsi(w) ||
+      !emit_movabs_rdi(w, (uintptr_t)insn) ||
+      !emit_movabs_rax(w, (uintptr_t)jit_helper_exec) ||
+      !emit_sub_rsp_imm8(w, 8u) ||
+      !emit_call_rax(w) ||
+      !emit_add_rsp_imm8(w, 8u) ||
+      !emit_pop_rsi(w) ||
+      !emit_pop_rdi(w)) {
+    return false;
+  }
+
+  if (!jit_paging_enabled() || !jit_helper_may_touch_guest_memory(insn)) {
+    return true;
+  }
+
+  if (!emit_load_chain_abort_ecx(w) ||
+      !emit_test_ecx_ecx(w) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_Z, &continue_disp) ||
+      (jit_stats_enabled &&
+          !emit_runtime_counter_inc(w, &jit_smc_invalidation_exits_runtime))) {
+    return false;
+  }
+
+  if (insn->ends_block) {
+    if (!(jit_fast_chain_runtime_enabled() ?
+            (emit_mov_eax_esi(w) &&
+             emit_add_eax_imm32(w, insn->ordinal) &&
+             emit_ret(w)) :
+            (emit_load_loop_extra_eax(w) &&
+             emit_add_eax_imm32(w, insn->ordinal) &&
+             emit_ret(w)))) {
+      return false;
+    }
+  }
+  else if (!emit_return_completed(w, insn->next_pc, insn->ordinal)) {
+    return false;
+  }
+
+  return patch_rel32(continue_disp, w->cur);
 }
 
 /* Call the DTLB/MMU slow translator with the address currently in EAX. */
@@ -3559,7 +3906,7 @@ static bool emit_reload_cr3_key_ecx_via_r11(x86_jit_writer_t *w) {
  */
 static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t width, uint8_t **slow_disp) {
-  uint8_t *miss_disp[8];
+  uint8_t *miss_disp[9];
   uint32_t miss_count = 0;
 
   if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
@@ -3569,11 +3916,16 @@ static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
   if (sizeof(paddr_t) != sizeof(uint32_t)) return false;
 
   /*
-   * The eight-entry miss list covers: page crossing, invalid entry, missing
-   * read access, mismatched state, mismatched VPN, and mismatched CR3 key.  The
-   * array is intentionally fixed-size so adding a new guard is reviewed here.
+   * The miss list covers: unsupported PAE mode, page crossing, invalid entry,
+   * missing read access, mismatched state, mismatched VPN, and mismatched CR3
+   * key.  The array is intentionally fixed-size so adding a new guard is
+   * reviewed here.
    */
   if (!emit_mov_edx_eax(w) ||
+      !emit_movabs_r10(w, (uint64_t)(uintptr_t)&cpu.cr4) ||
+      !emit_mov_r10d_m32_r10(w) ||
+      !emit_test_r10d_imm32(w, X86_CR4_PAE) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++]) ||
       !emit_mov_ecx_eax(w) ||
       !emit_and_ecx_imm32(w, PAGE_MASK) ||
       !emit_cmp_ecx_imm32(w, PAGE_SIZE - width) ||
@@ -3616,6 +3968,7 @@ static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
   if (jit_stats_enabled) {
     if (!emit_mov_r11d_edx(w) ||
         !emit_runtime_counter_inc(w, &jit_stats.dtlb_read_hits) ||
+        !emit_runtime_counter_inc(w, &jit_stats.paged_dtlb_read_hits) ||
         !emit_mov_edx_r11d(w)) {
       return false;
     }
@@ -3687,7 +4040,9 @@ static uint32_t jit_batch_enter(x86_jit_entry_t entry,
       "movq %%r8, %%r12\n\t"
       "movq %%r9, %%r13\n\t"
       "movq %%r10, %%r15\n\t"
+      "subq $8, %%rsp\n\t"
       "call *%%r11\n\t"
+      "addq $8, %%rsp\n\t"
       "popq %%r15\n\t"
       "popq %%r14\n\t"
       "popq %%r13\n\t"
@@ -3753,6 +4108,7 @@ static bool emit_direct_store_source_guard_edx(x86_jit_writer_t *w,
 
 /* Load a 32-bit stack value from PMEM offset EDX into EAX. */
 static bool emit_stack_load_dword_eax(x86_jit_writer_t *w) {
+  if (jit_paging_enabled()) return false;
   if (jit_batch_cpu_base_available()) return emit_mov_eax_m32_r13_rdx(w);
   return emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) &&
          emit_mov_eax_m32_r10_rdx(w);
@@ -3760,6 +4116,7 @@ static bool emit_stack_load_dword_eax(x86_jit_writer_t *w) {
 
 /* Store r11d to a 32-bit stack slot at PMEM offset EDX. */
 static bool emit_stack_store_dword_r11d(x86_jit_writer_t *w) {
+  if (jit_paging_enabled()) return false;
   if (jit_batch_cpu_base_available()) return emit_mov_m32_r13_rdx_r11d(w);
   return emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) &&
          emit_mov_m32_r10_rdx_r11d(w);
@@ -3788,7 +4145,8 @@ static bool emit_stack_window_pmem_guard(x86_jit_writer_t *w,
  * inside PMEM; stores also must not touch translated source pages.
  */
 static bool emit_stack_window_guard(x86_jit_writer_t *w, vaddr_t pc,
-    const x86_jit_stack_window_t *window) {
+    const x86_jit_stack_window_t *window,
+    const x86_jit_insn_t *guard_insn) {
   uint8_t *access_pmem_slow_disp = NULL;
   uint8_t *store_pmem_slow_disp = NULL;
   uint8_t *store_cross_page_slow_disp = NULL;
@@ -3803,6 +4161,40 @@ static bool emit_stack_window_guard(x86_jit_writer_t *w, vaddr_t pc,
       (int64_t)window->max_offset - (int64_t)window->min_offset +
       (int64_t)X86_WIDTH_DWORD;
   if (access_len64 <= 0 || access_len64 > CONFIG_MSIZE) return false;
+
+  if (window->paged) {
+    /*
+     * Paged stack-window fast path is intentionally single-slot only.  The
+     * DTLB guard below proves the current stack slot and leaves r14 holding
+     * host_pointer - linear_address, so the existing ESP-relative emitters can
+     * use r14 + runtime linear ESP.  Multi-slot windows stay on per-instruction
+     * DTLB paths until their fault ordering has dedicated tests.
+     */
+    if (guard_insn == NULL || access_len64 != X86_WIDTH_DWORD ||
+        !jit_batch_cpu_base_available()) {
+      return false;
+    }
+
+    if (!emit_load_reg_eax(w, R_ESP) ||
+        !emit_add_eax_imm32(w, (uint32_t)window->min_offset) ||
+        !emit_store_dtlb_scratch_eax(w) ||
+        !emit_paged_dtlb_translate_addr_eax(w, guard_insn, X86_WIDTH_DWORD,
+            window->has_store, &access_pmem_slow_disp) ||
+        !emit_mov_r14_rax(w) ||
+        !emit_load_dtlb_scratch_eax(w) ||
+        !emit_sub_r14_rax(w) ||
+        !emit_jmp_rel32_placeholder(w, &done_disp)) {
+      return false;
+    }
+
+    uint8_t *slow_native = w->cur;
+    if (!patch_rel32(access_pmem_slow_disp, slow_native) ||
+        !emit_stack_window_slow_return(w, pc)) {
+      return false;
+    }
+
+    return patch_rel32(done_disp, w->cur);
+  }
 
   if (!emit_stack_window_pmem_guard(w, window->min_offset,
       (uint32_t)access_len64, &access_pmem_slow_disp)) {
@@ -4636,6 +5028,16 @@ static bool emit_load_dtlb_scratch_eax(x86_jit_writer_t *w) {
   return emit_mov_eax_moffs64(w, (uintptr_t)&jit_dtlb_scratch);
 }
 
+/* Emit host code for store dtlb value scratch eax; bytes below are x86-64 encodings. */
+static bool emit_store_dtlb_value_scratch_eax(x86_jit_writer_t *w) {
+  return emit_mov_moffs64_eax(w, (uintptr_t)&jit_dtlb_value_scratch);
+}
+
+/* Emit host code for load dtlb value scratch eax; bytes below are x86-64 encodings. */
+static bool emit_load_dtlb_value_scratch_eax(x86_jit_writer_t *w) {
+  return emit_mov_eax_moffs64(w, (uintptr_t)&jit_dtlb_value_scratch);
+}
+
 static bool emit_paged_dtlb_push_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -4959,6 +5361,286 @@ static bool emit_paged_dtlb_incdec_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+static bool emit_paged_dtlb_not_rm(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  uint8_t *slow_disp = NULL;
+  uint8_t *done_disp = NULL;
+  const uint8_t width = insn->width;
+
+  if (insn->rm_is_reg) return false;
+  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
+      width != X86_WIDTH_DWORD) {
+    return false;
+  }
+
+  if (!emit_paged_dtlb_load_ea_eax(w, insn, width, true, &slow_disp) ||
+      !emit_not_eax(w) ||
+      !emit_store_host_ptr_r10_eax_width(w, width) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(slow_disp, slow_native) ||
+      !emit_helper_call(w, insn)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_not_ops);
+  JIT_STAT_INC(native_pmem_loads);
+  JIT_STAT_INC(native_pmem_stores);
+  return patch_rel32(done_disp, w->cur);
+}
+
+static bool emit_paged_dtlb_neg_rm(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  uint8_t *slow_disp = NULL;
+  uint8_t *done_disp = NULL;
+  const uint8_t width = insn->width;
+
+  if (insn->rm_is_reg) return false;
+  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
+      width != X86_WIDTH_DWORD) {
+    return false;
+  }
+
+  if (!emit_paged_dtlb_load_ea_eax(w, insn, width, true, &slow_disp) ||
+      !emit_neg_eax_width(w, width) ||
+      !emit_store_host_ptr_r10_eax_width(w, width) ||
+      !emit_capture_status_flags(w, X86_EFLAGS_STATUS_MASK) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(slow_disp, slow_native) ||
+      !emit_helper_call(w, insn)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_alu_ops);
+  JIT_STAT_INC(native_pmem_loads);
+  JIT_STAT_INC(native_pmem_stores);
+  return patch_rel32(done_disp, w->cur);
+}
+
+static bool emit_paged_dtlb_setcc_rm8(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  uint8_t *slow_disp = NULL;
+  uint8_t *done_disp = NULL;
+
+  if (insn->rm_is_reg || insn->width != X86_WIDTH_BYTE) return false;
+
+  if (!emit_guest_ea_eax(w, &insn->ea) ||
+      !emit_paged_dtlb_translate_addr_eax(w, insn, X86_WIDTH_BYTE, true,
+          &slow_disp) ||
+      !emit_mov_r10_rax(w) ||
+      !emit_condition_bool_eax(w, insn->cc) ||
+      !emit_store_host_ptr_r10_eax_width(w, X86_WIDTH_BYTE) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(slow_disp, slow_native) ||
+      !emit_helper_call(w, insn)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_pmem_stores);
+  return patch_rel32(done_disp, w->cur);
+}
+
+static bool emit_paged_dtlb_imul_reg_rm(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  uint8_t *slow_disp = NULL;
+  uint8_t *done_disp = NULL;
+
+  if (insn->rm_is_reg || insn->width != X86_WIDTH_DWORD) return false;
+
+  if (!emit_paged_dtlb_load_ea_eax(w, insn, X86_WIDTH_DWORD, false,
+          &slow_disp) ||
+      !emit_mov_ecx_eax(w) ||
+      !emit_load_reg_eax(w, insn->dst) ||
+      !emit_imul_eax_ecx(w) ||
+      !emit_store_reg_eax(w, insn->dst) ||
+      !emit_capture_status_flags_custom(w, X86_FLAG_CF | X86_FLAG_OF, 0) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(slow_disp, slow_native) ||
+      !emit_helper_call(w, insn)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_imul_ops);
+  JIT_STAT_INC(native_pmem_loads);
+  return patch_rel32(done_disp, w->cur);
+}
+
+static bool emit_paged_dtlb_mul_rm(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  uint8_t *slow_disp = NULL;
+  uint8_t *done_disp = NULL;
+
+  if (insn->rm_is_reg || insn->width != X86_WIDTH_DWORD) return false;
+
+  if (!emit_paged_dtlb_load_ea_eax(w, insn, X86_WIDTH_DWORD, false,
+          &slow_disp) ||
+      !emit_mov_ecx_eax(w) ||
+      !emit_load_reg_eax(w, R_EAX) ||
+      !emit_mul_ecx(w) ||
+      !emit_store_edx_eax_pair(w) ||
+      !emit_capture_status_flags_custom(w, X86_FLAG_CF | X86_FLAG_OF, 0) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(slow_disp, slow_native) ||
+      !emit_helper_call(w, insn)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_mul_ops);
+  JIT_STAT_INC(native_pmem_loads);
+  return patch_rel32(done_disp, w->cur);
+}
+
+static bool emit_paged_dtlb_imul_acc_rm(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  uint8_t *slow_disp = NULL;
+  uint8_t *done_disp = NULL;
+
+  if (insn->rm_is_reg || insn->width != X86_WIDTH_DWORD) return false;
+
+  if (!emit_paged_dtlb_load_ea_eax(w, insn, X86_WIDTH_DWORD, false,
+          &slow_disp) ||
+      !emit_mov_ecx_eax(w) ||
+      !emit_load_reg_eax(w, R_EAX) ||
+      !emit_imul_acc_ecx(w) ||
+      !emit_store_edx_eax_pair(w) ||
+      !emit_capture_status_flags_custom(w, X86_FLAG_CF | X86_FLAG_OF, 0) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(slow_disp, slow_native) ||
+      !emit_helper_call(w, insn)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_imul_ops);
+  JIT_STAT_INC(native_pmem_loads);
+  return patch_rel32(done_disp, w->cur);
+}
+
+static bool emit_paged_dtlb_div_rm(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  uint8_t *src_slow_disp = NULL;
+  uint8_t *zero_slow_disp = NULL;
+  uint8_t *overflow_slow_disp = NULL;
+  uint8_t *done_disp = NULL;
+
+  if (insn->rm_is_reg || insn->width != X86_WIDTH_DWORD) return false;
+
+  /*
+   * Host IDIV would raise a host #DE on unsupported dividends.  Keep native
+   * execution to the sign-extended EAX subset and send every wider dividend to
+   * the helper after the memory read has already had the chance to fault.
+   */
+  if (!emit_paged_dtlb_load_ea_eax(w, insn, X86_WIDTH_DWORD, false,
+          &src_slow_disp) ||
+      !emit_mov_ecx_eax(w) ||
+      !emit_test_ecx_ecx(w) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_Z, &zero_slow_disp) ||
+      !emit_load_reg_eax(w, R_EAX) ||
+      !emit_mov_r11d_eax(w) ||
+      !emit_load_reg_edx(w, R_EDX) ||
+      !emit_cmp_edx_ecx(w) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_AE, &overflow_slow_disp) ||
+      !emit_mov_eax_r11d(w) ||
+      !emit_div_ecx(w) ||
+      !emit_store_edx_eax_pair(w) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(src_slow_disp, slow_native) ||
+      !patch_rel32(zero_slow_disp, slow_native) ||
+      !patch_rel32(overflow_slow_disp, slow_native) ||
+      !emit_helper_call(w, insn)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_div_ops);
+  JIT_STAT_INC(native_pmem_loads);
+  return patch_rel32(done_disp, w->cur);
+}
+
+static bool emit_paged_dtlb_idiv_rm(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  uint8_t *src_slow_disp = NULL;
+  uint8_t *zero_slow_disp = NULL;
+  uint8_t *wide_slow_disp = NULL;
+  uint8_t *not_min_disp = NULL;
+  uint8_t *overflow_slow_disp = NULL;
+  uint8_t *done_disp = NULL;
+
+  if (insn->rm_is_reg || insn->width != X86_WIDTH_DWORD) return false;
+
+  if (!emit_paged_dtlb_load_ea_eax(w, insn, X86_WIDTH_DWORD, false,
+          &src_slow_disp) ||
+      !emit_mov_ecx_eax(w) ||
+      !emit_store_dtlb_value_scratch_eax(w) ||
+      !emit_test_ecx_ecx(w) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_Z, &zero_slow_disp) ||
+      !emit_load_reg_eax(w, R_EAX) ||
+      !emit_mov_r11d_eax(w) ||
+      !emit_cdq_host(w) ||
+      !emit_mov_eax_edx(w) ||
+      !emit_store_dtlb_scratch_eax(w) ||
+      !emit_load_reg_eax(w, R_EDX) ||
+      !emit_mov_ecx_eax(w) ||
+      !emit_load_dtlb_scratch_eax(w) ||
+      !emit_alu_eax_ecx_width(w, X86_ALU_CMP, X86_WIDTH_DWORD) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &wide_slow_disp) ||
+      !emit_load_dtlb_value_scratch_eax(w) ||
+      !emit_mov_ecx_eax(w) ||
+      !emit_mov_eax_r11d(w) ||
+      !emit_alu_eax_imm32(w, X86_ALU_CMP, 0x80000000u) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &not_min_disp) ||
+      !emit_cmp_ecx_imm32(w, 0xffffffffu) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_Z, &overflow_slow_disp)) {
+    return false;
+  }
+
+  uint8_t *native_safe = w->cur;
+  if (!patch_rel32(not_min_disp, native_safe) ||
+      !emit_idiv_ecx(w) ||
+      !emit_store_edx_eax_pair(w) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(src_slow_disp, slow_native) ||
+      !patch_rel32(zero_slow_disp, slow_native) ||
+      !patch_rel32(wide_slow_disp, slow_native) ||
+      !patch_rel32(overflow_slow_disp, slow_native) ||
+      !emit_helper_call(w, insn)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_div_ops);
+  JIT_STAT_INC(native_pmem_loads);
+  return patch_rel32(done_disp, w->cur);
+}
+
 static bool emit_store_reg_imm_width(x86_jit_writer_t *w, uint8_t reg,
     uint8_t width, uint32_t imm) {
   uint32_t keep_mask = 0;
@@ -5221,6 +5903,8 @@ static bool emit_chain_exit(x86_jit_writer_t *w, x86_jit_block_t *block,
     if (jit_stats_enabled) {
       edge->hit_stub = w->cur;
       if (!emit_runtime_counter_inc(w, &jit_direct_chain_hits_runtime) ||
+          (block->paging &&
+              !emit_runtime_counter_inc(w, &jit_stats.paged_chain_hits)) ||
           (slow_reason == X86_JIT_CHAIN_SLOW_COLD_TRACE &&
               jit_trace_sibling_enabled &&
               !emit_runtime_counter_inc(w,
@@ -5286,6 +5970,8 @@ static bool emit_chain_exit(x86_jit_writer_t *w, x86_jit_block_t *block,
   if (jit_stats_enabled) {
     edge->hit_stub = w->cur;
     if (!emit_runtime_counter_inc(w, &jit_direct_chain_hits_runtime) ||
+        (block->paging &&
+            !emit_runtime_counter_inc(w, &jit_stats.paged_chain_hits)) ||
         (slow_reason == X86_JIT_CHAIN_SLOW_COLD_TRACE &&
             jit_trace_sibling_enabled &&
             !emit_runtime_counter_inc(w,
@@ -5385,6 +6071,7 @@ static void jit_patch_edge_to_target(x86_jit_exit_edge_t *edge,
 
   edge->target_generation = target->generation;
   JIT_STAT_INC(direct_chain_patches);
+  if (target->paging) JIT_STAT_INC(paged_chain_patches);
 }
 
 /* Remove every edge that currently jumps into a target block being invalidated. */
@@ -7132,7 +7819,7 @@ static bool emit_chained_call_rel(x86_jit_writer_t *w, x86_jit_block_t *block,
   uint8_t *cross_page_slow_disp = NULL;
   uint8_t *source_page_slow_disp = NULL;
 
-  if (insn->width != X86_WIDTH_DWORD) return false;
+  if (jit_paging_enabled() || insn->width != X86_WIDTH_DWORD) return false;
 
   if (!emit_load_reg_eax(w, R_ESP) ||
       !emit_add_eax_imm32(w, 0u - X86_WIDTH_DWORD) ||
@@ -7232,12 +7919,37 @@ static bool emit_native_ret_stack_guarded(x86_jit_writer_t *w,
 static bool emit_chained_ret(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint32_t count) {
   uint8_t *pmem_slow_disp = NULL;
-  uint8_t *budget_exit_disp = NULL;
-  uint8_t *miss_disp = NULL;
-  uint8_t *null_disp = NULL;
+  x86_jit_indirect_cache_patches_t patches;
 
-  if (insn->width != X86_WIDTH_DWORD || !jit_fast_chain_runtime_enabled()) {
+  if (insn->width != X86_WIDTH_DWORD || !jit_fast_chain_runtime_enabled() ||
+      !jit_indirect_target_cache_runtime_enabled()) {
     return false;
+  }
+
+  if (jit_paging_enabled()) {
+    if (!emit_load_reg_eax(w, R_ESP) ||
+        !emit_paged_dtlb_translate_addr_eax(w, insn, X86_WIDTH_DWORD, false,
+            &pmem_slow_disp) ||
+        !emit_load_host_ptr_rax_width(w, X86_WIDTH_DWORD) ||
+        !emit_mov_edx_eax(w) ||
+        !emit_load_reg_eax(w, R_ESP) ||
+        !emit_add_eax_imm32(w, X86_WIDTH_DWORD) ||
+        !emit_store_reg_eax(w, R_ESP) ||
+        !emit_mov_eax_edx(w) ||
+        !emit_indirect_target_cache_jump(w, count, &patches) ||
+        !emit_indirect_target_cache_slow_exits(w, &patches)) {
+      return false;
+    }
+
+    uint8_t *slow_native = w->cur;
+    if (!patch_rel32(pmem_slow_disp, slow_native) ||
+        !emit_helper_call(w, insn) ||
+        !emit_ret_count_side_exit(w, count, X86_JIT_CHAIN_SLOW_HELPER)) {
+      return false;
+    }
+
+    JIT_STAT_INC(native_pmem_loads);
+    return true;
   }
 
   if (!emit_load_reg_eax(w, R_ESP) ||
@@ -7251,49 +7963,8 @@ static bool emit_chained_ret(x86_jit_writer_t *w,
       !emit_add_eax_imm32(w, X86_WIDTH_DWORD) ||
       !emit_store_reg_eax(w, R_ESP) ||
       !emit_mov_eax_edx(w) ||
-      !emit_add_esi_imm32(w, count) ||
-      !emit_cmp_esi_edi(w) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_AE, &budget_exit_disp) ||
-      !emit_mov_ecx_eax(w) ||
-      !emit_shr_ecx_imm(w, 4u) ||
-      !emit_xor_ecx_eax(w) ||
-      !emit_mov_r11d_ecx(w) ||
-      !emit_shr_r11d_imm(w, 12u) ||
-      !emit_xor_ecx_r11d(w) ||
-      !emit_and_ecx_imm32(w, X86_JIT_RET_CACHE_MASK) ||
-      !emit_shl_ecx_imm(w, 4u) ||
-      !emit_mov_r10_ret_cache_base(w) ||
-      !emit_mov_r11d_m32_r10_rcx_disp8(w, 0u) ||
-      !emit_cmp_r11d_eax(w) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp) ||
-      !emit_mov_r11_m64_r10_rcx_disp8(w, 8u) ||
-      !emit_test_r11_r11(w) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_Z, &null_disp) ||
-      (jit_stats_enabled &&
-          !emit_runtime_counter_inc(w, &jit_ret_cache_hits_runtime)) ||
-      !emit_jmp_r11(w)) {
-    return false;
-  }
-
-  uint8_t *budget_native = w->cur;
-  if (!patch_rel32(budget_exit_disp, budget_native) ||
-      !emit_store_pc_eax(w) ||
-      !emit_side_exit_counter_inc(w, &jit_chain_exit_budget_runtime) ||
-      !emit_mov_eax_esi(w) ||
-      !emit_ret(w)) {
-    return false;
-  }
-
-  uint8_t *miss_native = w->cur;
-  if (!patch_rel32(miss_disp, miss_native) ||
-      !patch_rel32(null_disp, miss_native) ||
-      (jit_stats_enabled &&
-          !emit_runtime_counter_inc(w, &jit_ret_cache_misses_runtime)) ||
-      !emit_store_pc_eax(w) ||
-      !emit_side_exit_counter_inc(w,
-          &jit_chain_exit_block_not_chainable_runtime) ||
-      !emit_mov_eax_esi(w) ||
-      !emit_ret(w)) {
+      !emit_indirect_target_cache_jump(w, count, &patches) ||
+      !emit_indirect_target_cache_slow_exits(w, &patches)) {
     return false;
   }
 
@@ -7308,19 +7979,12 @@ static bool emit_chained_ret(x86_jit_writer_t *w,
   return true;
 }
 
-static bool emit_indirect_target_cache_jump(x86_jit_writer_t *w,
-    uint32_t count, uint8_t **budget_exit_disp, uint8_t **miss_disp,
-    uint8_t **null_disp);
-static bool emit_indirect_target_cache_slow_exits(x86_jit_writer_t *w,
-    uint8_t *budget_exit_disp, uint8_t *miss_disp, uint8_t *null_disp);
-
 static bool emit_chained_ret_stack_guarded(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint32_t count) {
-  uint8_t *budget_exit_disp = NULL;
-  uint8_t *miss_disp = NULL;
-  uint8_t *null_disp = NULL;
+  x86_jit_indirect_cache_patches_t patches;
 
-  if (insn->width != X86_WIDTH_DWORD || !jit_fast_chain_runtime_enabled()) {
+  if (insn->width != X86_WIDTH_DWORD || !jit_fast_chain_runtime_enabled() ||
+      !jit_indirect_target_cache_runtime_enabled()) {
     return false;
   }
 
@@ -7334,10 +7998,8 @@ static bool emit_chained_ret_stack_guarded(x86_jit_writer_t *w,
       !emit_add_eax_imm32(w, X86_WIDTH_DWORD) ||
       !emit_store_reg_eax(w, R_ESP) ||
       !emit_mov_eax_edx(w) ||
-      !emit_indirect_target_cache_jump(w, count, &budget_exit_disp,
-          &miss_disp, &null_disp) ||
-      !emit_indirect_target_cache_slow_exits(w, budget_exit_disp,
-          miss_disp, null_disp)) {
+      !emit_indirect_target_cache_jump(w, count, &patches) ||
+      !emit_indirect_target_cache_slow_exits(w, &patches)) {
     return false;
   }
 
@@ -7345,12 +8007,58 @@ static bool emit_chained_ret_stack_guarded(x86_jit_writer_t *w,
   return true;
 }
 
+static bool patch_optional_rel32(uint8_t *disp, const uint8_t *target) {
+  return disp == NULL || patch_rel32(disp, target);
+}
+
+static bool emit_paged_ret_cache_meta_guard(x86_jit_writer_t *w,
+    x86_jit_indirect_cache_patches_t *patches) {
+  const x86_jit_translation_key_t key = jit_current_translation_key();
+
+  return emit_mov_r10_ret_cache_meta_base(w) &&
+         emit_mov_r11d_m32_r10_rcx_disp8(w,
+             (uint8_t)offsetof(x86_jit_ret_cache_meta_t,
+                 translation_key.cr3_key)) &&
+         emit_cmp_r11d_imm32(w, key.cr3_key) &&
+         emit_jcc_rel32_placeholder(w, X86_CC_NZ,
+             &patches->key_cr3_miss_disp) &&
+         emit_mov_r11d_m32_r10_rcx_disp8(w,
+             (uint8_t)offsetof(x86_jit_ret_cache_meta_t,
+                 translation_key.state)) &&
+         emit_cmp_r11d_imm32(w, key.state) &&
+         emit_jcc_rel32_placeholder(w, X86_CC_NZ,
+             &patches->key_state_miss_disp) &&
+         emit_mov_r11d_m32_r10_rcx_disp8(w,
+             (uint8_t)offsetof(x86_jit_ret_cache_meta_t,
+                 translation_key.paging_generation)) &&
+         emit_cmp_r11d_imm32(w, key.paging_generation) &&
+         emit_jcc_rel32_placeholder(w, X86_CC_NZ,
+             &patches->key_generation_miss_disp) &&
+         emit_shl_edx_imm(w, 3u) &&
+         emit_mov_r10_ret_cache_generation_slot_base(w) &&
+         emit_mov_r11_m64_r10_rdx(w) &&
+         emit_test_r11_r11(w) &&
+         emit_jcc_rel32_placeholder(w, X86_CC_Z,
+             &patches->generation_slot_null_disp) &&
+         emit_mov_r11d_m32_r11(w) &&
+         emit_mov_r10_ret_cache_meta_base(w) &&
+         emit_cmp_m32_r10_rcx_disp8_r11d(w,
+             (uint8_t)offsetof(x86_jit_ret_cache_meta_t,
+                 block_generation)) &&
+         emit_jcc_rel32_placeholder(w, X86_CC_NZ,
+             &patches->block_generation_miss_disp);
+}
+
 static bool emit_indirect_target_cache_jump(x86_jit_writer_t *w,
-    uint32_t count, uint8_t **budget_exit_disp, uint8_t **miss_disp,
-    uint8_t **null_disp) {
+    uint32_t count, x86_jit_indirect_cache_patches_t *patches) {
+  memset(patches, 0, sizeof(*patches));
+  const bool paged_probe = jit_paging_enabled();
+  if (!jit_indirect_target_cache_runtime_enabled()) return false;
+
   return emit_add_esi_imm32(w, count) &&
          emit_cmp_esi_edi(w) &&
-         emit_jcc_rel32_placeholder(w, X86_CC_AE, budget_exit_disp) &&
+         emit_jcc_rel32_placeholder(w, X86_CC_AE,
+             &patches->budget_exit_disp) &&
          emit_mov_ecx_eax(w) &&
          emit_shr_ecx_imm(w, 4u) &&
          emit_xor_ecx_eax(w) &&
@@ -7358,23 +8066,31 @@ static bool emit_indirect_target_cache_jump(x86_jit_writer_t *w,
          emit_shr_r11d_imm(w, 12u) &&
          emit_xor_ecx_r11d(w) &&
          emit_and_ecx_imm32(w, X86_JIT_RET_CACHE_MASK) &&
+         (!paged_probe || emit_mov_edx_ecx(w)) &&
          emit_shl_ecx_imm(w, 4u) &&
          emit_mov_r10_ret_cache_base(w) &&
          emit_mov_r11d_m32_r10_rcx_disp8(w, 0u) &&
          emit_cmp_r11d_eax(w) &&
-         emit_jcc_rel32_placeholder(w, X86_CC_NZ, miss_disp) &&
+         emit_jcc_rel32_placeholder(w, X86_CC_NZ,
+             &patches->target_miss_disp) &&
+         (!paged_probe || emit_paged_ret_cache_meta_guard(w, patches)) &&
+         emit_mov_r10_ret_cache_base(w) &&
          emit_mov_r11_m64_r10_rcx_disp8(w, 8u) &&
          emit_test_r11_r11(w) &&
-         emit_jcc_rel32_placeholder(w, X86_CC_Z, null_disp) &&
+         emit_jcc_rel32_placeholder(w, X86_CC_Z,
+             &patches->entry_null_disp) &&
          (!jit_stats_enabled ||
-             emit_runtime_counter_inc(w, &jit_ret_cache_hits_runtime)) &&
+             (emit_runtime_counter_inc(w, &jit_ret_cache_hits_runtime) &&
+              (!paged_probe ||
+                  emit_runtime_counter_inc(w,
+                      &jit_stats.paged_ret_cache_hits)))) &&
          emit_jmp_r11(w);
 }
 
 static bool emit_indirect_target_cache_slow_exits(x86_jit_writer_t *w,
-    uint8_t *budget_exit_disp, uint8_t *miss_disp, uint8_t *null_disp) {
+    x86_jit_indirect_cache_patches_t *patches) {
   uint8_t *budget_native = w->cur;
-  if (!patch_rel32(budget_exit_disp, budget_native) ||
+  if (!patch_rel32(patches->budget_exit_disp, budget_native) ||
       !emit_store_pc_eax(w) ||
       !emit_side_exit_counter_inc(w, &jit_chain_exit_budget_runtime) ||
       !emit_mov_eax_esi(w) ||
@@ -7383,10 +8099,21 @@ static bool emit_indirect_target_cache_slow_exits(x86_jit_writer_t *w,
   }
 
   uint8_t *miss_native = w->cur;
-  return patch_rel32(miss_disp, miss_native) &&
-         patch_rel32(null_disp, miss_native) &&
+  return patch_optional_rel32(patches->target_miss_disp, miss_native) &&
+         patch_optional_rel32(patches->key_cr3_miss_disp, miss_native) &&
+         patch_optional_rel32(patches->key_state_miss_disp, miss_native) &&
+         patch_optional_rel32(patches->key_generation_miss_disp,
+             miss_native) &&
+         patch_optional_rel32(patches->generation_slot_null_disp,
+             miss_native) &&
+         patch_optional_rel32(patches->block_generation_miss_disp,
+             miss_native) &&
+         patch_optional_rel32(patches->entry_null_disp, miss_native) &&
          (!jit_stats_enabled ||
-             emit_runtime_counter_inc(w, &jit_ret_cache_misses_runtime)) &&
+             (emit_runtime_counter_inc(w, &jit_ret_cache_misses_runtime) &&
+              (!jit_paging_enabled() ||
+                  emit_runtime_counter_inc(w,
+                      &jit_stats.paged_ret_cache_misses)))) &&
          emit_store_pc_eax(w) &&
          emit_side_exit_counter_inc(w,
              &jit_chain_exit_block_not_chainable_runtime) &&
@@ -7397,35 +8124,32 @@ static bool emit_indirect_target_cache_slow_exits(x86_jit_writer_t *w,
 static bool emit_chained_jmp_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint32_t count) {
   uint8_t *pmem_slow_disp = NULL;
-  uint8_t *budget_exit_disp = NULL;
-  uint8_t *miss_disp = NULL;
-  uint8_t *null_disp = NULL;
+  x86_jit_indirect_cache_patches_t patches;
 
-  if (insn->width != X86_WIDTH_DWORD || !jit_fast_chain_runtime_enabled()) {
+  if (insn->width != X86_WIDTH_DWORD || !jit_fast_chain_runtime_enabled() ||
+      !jit_indirect_target_cache_runtime_enabled()) {
     return false;
   }
 
   if (insn->rm_is_reg) {
     if (!emit_load_reg_eax(w, insn->rm_reg) ||
-        !emit_indirect_target_cache_jump(w, count, &budget_exit_disp,
-            &miss_disp, &null_disp) ||
-        !emit_indirect_target_cache_slow_exits(w, budget_exit_disp,
-            miss_disp, null_disp)) {
+        !emit_indirect_target_cache_jump(w, count, &patches) ||
+        !emit_indirect_target_cache_slow_exits(w, &patches)) {
       return false;
     }
     JIT_STAT_INC(native_branch_ops);
     return true;
   }
 
+  if (jit_paging_enabled()) return false;
+
   if (!emit_guest_ea_eax(w, &insn->ea) ||
       !emit_mov_edx_eax(w) ||
       !emit_direct_pmem_guard_edx(w, X86_WIDTH_DWORD, &pmem_slow_disp) ||
       !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
       !emit_mov_eax_m32_r10_rdx(w) ||
-      !emit_indirect_target_cache_jump(w, count, &budget_exit_disp,
-          &miss_disp, &null_disp) ||
-      !emit_indirect_target_cache_slow_exits(w, budget_exit_disp,
-          miss_disp, null_disp)) {
+      !emit_indirect_target_cache_jump(w, count, &patches) ||
+      !emit_indirect_target_cache_slow_exits(w, &patches)) {
     return false;
   }
 
@@ -7884,6 +8608,146 @@ static bool emit_native_shift_rm_cl(x86_jit_writer_t *w,
   if (!patch_rel32(pmem_slow_disp, slow_native) ||
       !patch_rel32(cross_page_slow_disp, slow_native) ||
       !patch_rel32(source_page_slow_disp, slow_native) ||
+      !emit_helper_call(w, insn)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_shift_ops);
+  JIT_STAT_INC(native_pmem_loads);
+  JIT_STAT_INC(native_pmem_stores);
+  uint8_t *done_native = w->cur;
+  return patch_rel32(zero_disp, done_native) &&
+         patch_rel32(many_done_disp, done_native) &&
+         patch_rel32(one_done_disp, done_native);
+}
+
+static bool emit_paged_dtlb_shift_rm_imm(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  uint8_t *read_slow_disp = NULL;
+  uint8_t *write_slow_disp = NULL;
+  uint8_t *done_disp = NULL;
+  uint8_t shift_op = insn->alu_op;
+  uint32_t copy_mask = 0;
+
+  if (insn->rm_is_reg || insn->width != X86_WIDTH_DWORD ||
+      insn->count_from_cl) {
+    return false;
+  }
+
+  const uint8_t count = insn->imm & X86_SHIFT_COUNT_MASK;
+  if (!jit_native_shift_flag_copy_mask(insn->alu_op, count,
+      &shift_op, &copy_mask)) {
+    return false;
+  }
+
+  if (count == 0) {
+    JIT_STAT_INC(native_shift_ops);
+    return true;
+  }
+
+  /*
+   * Preserve the helper's RMW order: read translation and load first, then
+   * write translation, then commit the memory result and flags.
+   */
+  if (!emit_guest_ea_eax(w, &insn->ea) ||
+      !emit_store_dtlb_scratch_eax(w) ||
+      !emit_paged_dtlb_translate_addr_eax(w, insn, X86_WIDTH_DWORD, false,
+          &read_slow_disp) ||
+      !emit_load_host_ptr_rax_width(w, X86_WIDTH_DWORD) ||
+      !emit_store_dtlb_value_scratch_eax(w) ||
+      !emit_load_dtlb_scratch_eax(w) ||
+      !emit_paged_dtlb_translate_addr_eax(w, insn, X86_WIDTH_DWORD, true,
+          &write_slow_disp) ||
+      !emit_mov_r10_rax(w) ||
+      !emit_load_dtlb_value_scratch_eax(w) ||
+      !emit_shift_eax_imm(w, shift_op, count) ||
+      !emit_store_host_ptr_r10_eax_width(w, X86_WIDTH_DWORD) ||
+      !emit_capture_status_flags_custom(w, copy_mask, 0) ||
+      !emit_jmp_rel32_placeholder(w, &done_disp)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(read_slow_disp, slow_native) ||
+      !patch_rel32(write_slow_disp, slow_native) ||
+      !emit_helper_call(w, insn)) {
+    return false;
+  }
+
+  JIT_STAT_INC(native_shift_ops);
+  JIT_STAT_INC(native_pmem_loads);
+  JIT_STAT_INC(native_pmem_stores);
+  return patch_rel32(done_disp, w->cur);
+}
+
+static bool emit_paged_dtlb_shift_rm_cl(x86_jit_writer_t *w,
+    const x86_jit_insn_t *insn) {
+  uint8_t *zero_disp = NULL;
+  uint8_t *one_disp = NULL;
+  uint8_t *read_slow_disp = NULL;
+  uint8_t *write_slow_disp = NULL;
+  uint8_t *many_done_disp = NULL;
+  uint8_t *one_done_disp = NULL;
+  uint8_t shift_op = insn->alu_op;
+  uint8_t one_shift_op = insn->alu_op;
+  uint32_t many_mask = 0;
+  uint32_t one_mask = 0;
+
+  if (insn->rm_is_reg || insn->width != X86_WIDTH_DWORD ||
+      !insn->count_from_cl) {
+    return false;
+  }
+  if (!jit_native_shift_flag_copy_mask(insn->alu_op, 2,
+          &shift_op, &many_mask) ||
+      !jit_native_shift_flag_copy_mask(insn->alu_op, 1,
+          &one_shift_op, &one_mask) ||
+      shift_op != one_shift_op) {
+    return false;
+  }
+
+  /*
+   * The NEMU helper returns before touching memory when CL's masked count is
+   * zero.  Keep that fast exit before EA calculation or page translation.
+   */
+  if (!emit_load_reg_eax(w, R_ECX) ||
+      !emit_alu_eax_imm32(w, X86_ALU_AND, X86_SHIFT_COUNT_MASK) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_Z, &zero_disp) ||
+      !emit_guest_ea_eax(w, &insn->ea) ||
+      !emit_store_dtlb_scratch_eax(w) ||
+      !emit_paged_dtlb_translate_addr_eax(w, insn, X86_WIDTH_DWORD, false,
+          &read_slow_disp) ||
+      !emit_load_host_ptr_rax_width(w, X86_WIDTH_DWORD) ||
+      !emit_store_dtlb_value_scratch_eax(w) ||
+      !emit_load_dtlb_scratch_eax(w) ||
+      !emit_paged_dtlb_translate_addr_eax(w, insn, X86_WIDTH_DWORD, true,
+          &write_slow_disp) ||
+      !emit_mov_r10_rax(w) ||
+      !emit_load_dtlb_value_scratch_eax(w) ||
+      !emit_mov_r11d_eax(w) ||
+      !emit_load_reg_ecx(w, R_ECX) ||
+      !emit_and_ecx_imm32(w, X86_SHIFT_COUNT_MASK) ||
+      !emit_mov_eax_r11d(w) ||
+      !emit_cmp_ecx_imm32(w, 1) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_Z, &one_disp) ||
+      !emit_shift_eax_cl(w, shift_op) ||
+      !emit_store_host_ptr_r10_eax_width(w, X86_WIDTH_DWORD) ||
+      !emit_capture_status_flags_custom(w, many_mask, 0) ||
+      !emit_jmp_rel32_placeholder(w, &many_done_disp)) {
+    return false;
+  }
+
+  uint8_t *one_native = w->cur;
+  if (!patch_rel32(one_disp, one_native) ||
+      !emit_shift_eax_cl(w, shift_op) ||
+      !emit_store_host_ptr_r10_eax_width(w, X86_WIDTH_DWORD) ||
+      !emit_capture_status_flags_custom(w, one_mask, 0) ||
+      !emit_jmp_rel32_placeholder(w, &one_done_disp)) {
+    return false;
+  }
+
+  uint8_t *slow_native = w->cur;
+  if (!patch_rel32(read_slow_disp, slow_native) ||
+      !patch_rel32(write_slow_disp, slow_native) ||
       !emit_helper_call(w, insn)) {
     return false;
   }
@@ -8451,9 +9315,9 @@ static bool emit_insn(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
     case X86_JIT_OP_HELPER:
       /*
        * Paged guests need architectural address translation and fault ordering.
-       * The DTLB MOV path keeps misses on the architectural MMU and only lets
-       * generated code dereference PMEM after page-table and SMC guards pass.
-       * Other memory helpers stay on vaddr_read()/vaddr_write() for now.
+       * DTLB helper paths keep misses on the architectural MMU and only let
+       * generated code dereference PMEM after page-table, permission, MMIO,
+       * and self-modifying-code guards pass.
        */
       if (jit_paging_enabled() && jit_helper_may_touch_guest_memory(insn)) {
         if (insn->helper == X86_JIT_HELPER_MOV_REG_RM &&
@@ -8544,6 +9408,42 @@ static bool emit_insn(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
         }
         if (insn->helper == X86_JIT_HELPER_INCDEC_RM &&
             emit_paged_dtlb_incdec_rm(w, insn)) {
+          return true;
+        }
+        if (insn->helper == X86_JIT_HELPER_SHIFT_RM) {
+          if (emit_paged_dtlb_shift_rm_cl(w, insn)) return true;
+          if (emit_paged_dtlb_shift_rm_imm(w, insn)) return true;
+        }
+        if (insn->helper == X86_JIT_HELPER_NOT_RM &&
+            emit_paged_dtlb_not_rm(w, insn)) {
+          return true;
+        }
+        if (insn->helper == X86_JIT_HELPER_NEG_RM &&
+            emit_paged_dtlb_neg_rm(w, insn)) {
+          return true;
+        }
+        if (insn->helper == X86_JIT_HELPER_SETCC_RM8 &&
+            emit_paged_dtlb_setcc_rm8(w, insn)) {
+          return true;
+        }
+        if (insn->helper == X86_JIT_HELPER_IMUL_REG_RM &&
+            emit_paged_dtlb_imul_reg_rm(w, insn)) {
+          return true;
+        }
+        if (insn->helper == X86_JIT_HELPER_MUL_RM &&
+            emit_paged_dtlb_mul_rm(w, insn)) {
+          return true;
+        }
+        if (insn->helper == X86_JIT_HELPER_IMUL_ACC_RM &&
+            emit_paged_dtlb_imul_acc_rm(w, insn)) {
+          return true;
+        }
+        if (insn->helper == X86_JIT_HELPER_DIV_RM &&
+            emit_paged_dtlb_div_rm(w, insn)) {
+          return true;
+        }
+        if (insn->helper == X86_JIT_HELPER_IDIV_RM &&
+            emit_paged_dtlb_idiv_rm(w, insn)) {
           return true;
         }
         return emit_helper_call(w, insn);
@@ -9369,7 +10269,9 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
 static void jit_emit_ctx_init(x86_jit_emit_ctx_t *ctx) {
   memset(ctx, 0, sizeof(*ctx));
   ctx->valid = true;
-  ctx->has_cpu_base = jit_regcache_enabled && jit_batch_cpu_base_available();
+  ctx->has_cpu_base = jit_regcache_enabled &&
+      (!jit_paging_enabled() || jit_paged_regcache_enabled) &&
+      jit_batch_cpu_base_available();
   for (uint32_t i = 0; i < 8u; i++) ctx->guest_to_host[i] = -1;
   for (uint32_t i = 0; i < 16u; i++) ctx->host_to_guest[i] = -1;
   ctx->flags.kind = X86_LAZY_FLAGS_MATERIALISED;
@@ -9439,6 +10341,9 @@ static void jit_stack_window_note_access(x86_jit_stack_window_t *window,
       if (offset > window->store_max_offset) window->store_max_offset = offset;
     }
   }
+  else {
+    window->has_load = true;
+  }
 }
 
 /* Return true if an instruction writes ESP in a way the stack-window analysis cannot fold. */
@@ -9468,59 +10373,111 @@ static bool jit_stack_window_guest_esp_write(const x86_jit_insn_t *insn) {
   }
 }
 
+static bool jit_stack_window_reject(bool paged) {
+  if (paged) JIT_STAT_INC(stack_fast_fallbacks);
+  return false;
+}
+
 static bool jit_analyse_stack_window(const x86_jit_insn_t *insns,
     uint32_t count, x86_jit_stack_window_t *window) {
   memset(window, 0, sizeof(*window));
-  if (!jit_stack_fast_enabled || !jit_fast_chain_runtime_enabled() ||
-      jit_paging_enabled()) {
+  const bool paged = jit_paging_enabled();
+  if (paged) {
+    /*
+     * Keep page-mode stack operations on their per-instruction DTLB paths.  A
+     * block-entry stack-window guard is not a valid invariant until every
+     * accepted PUSH/POP/CALL/RET form can prove its page access at the exact
+     * architectural commit point; Nanos-lite stack control flow depends on that
+     * ordering.
+     */
+    if (jit_paged_stack_fast_enabled) JIT_STAT_INC(stack_fast_fallbacks);
+    return false;
+  }
+  else if (!jit_stack_fast_enabled || !jit_fast_chain_runtime_enabled()) {
     return false;
   }
 
   int32_t esp_delta = 0;
+  uint32_t stack_ops = 0;
   for (uint32_t i = 0; i < count; i++) {
     const x86_jit_insn_t *insn = &insns[i];
-    if (jit_stack_window_guest_esp_write(insn)) return false;
+    if (jit_stack_window_guest_esp_write(insn)) {
+      return jit_stack_window_reject(paged);
+    }
     if (insn->op != X86_JIT_OP_HELPER) continue;
 
     switch (insn->helper) {
       case X86_JIT_HELPER_PUSH_REG:
       case X86_JIT_HELPER_PUSH_IMM:
-      case X86_JIT_HELPER_PUSH_RM:
+        if (insn->width != X86_WIDTH_DWORD) {
+          return jit_stack_window_reject(paged);
+        }
+        stack_ops++;
+        esp_delta -= (int32_t)X86_WIDTH_DWORD;
+        jit_stack_window_note_access(window, esp_delta, true);
+        break;
       case X86_JIT_HELPER_CALL_REL:
+        if (insn->width != X86_WIDTH_DWORD) {
+          return jit_stack_window_reject(paged);
+        }
+        if (paged && (!jit_chain_enabled ||
+            !jit_target_probe_accepts_chain(jit_branch_target(insn)))) {
+          return jit_stack_window_reject(true);
+        }
+        stack_ops++;
+        esp_delta -= (int32_t)X86_WIDTH_DWORD;
+        jit_stack_window_note_access(window, esp_delta, true);
+        break;
+      case X86_JIT_HELPER_PUSH_RM:
+        if (paged) return jit_stack_window_reject(true);
         if (insn->width != X86_WIDTH_DWORD) return false;
+        stack_ops++;
         esp_delta -= (int32_t)X86_WIDTH_DWORD;
         jit_stack_window_note_access(window, esp_delta, true);
         break;
       case X86_JIT_HELPER_POP_REG:
         if (insn->width != X86_WIDTH_DWORD || insn->dst == R_ESP) {
-          return false;
+          return jit_stack_window_reject(paged);
         }
+        stack_ops++;
         jit_stack_window_note_access(window, esp_delta, false);
         esp_delta += (int32_t)X86_WIDTH_DWORD;
         break;
       case X86_JIT_HELPER_RET:
-        if (insn->width != X86_WIDTH_DWORD) return false;
+        if (insn->width != X86_WIDTH_DWORD) {
+          return jit_stack_window_reject(paged);
+        }
+        if (paged && (!jit_chain_enabled ||
+            !jit_indirect_target_cache_runtime_enabled())) {
+          return jit_stack_window_reject(true);
+        }
+        stack_ops++;
         jit_stack_window_note_access(window, esp_delta, false);
         break;
       case X86_JIT_HELPER_LEAVE:
       case X86_JIT_HELPER_CALL_RM:
-        return false;
+        return jit_stack_window_reject(paged);
       default:
         break;
     }
   }
 
-  if (!window->valid) return false;
+  if (!window->valid) return jit_stack_window_reject(paged);
+  if (paged && stack_ops != 1u) {
+    return jit_stack_window_reject(true);
+  }
   const int64_t access_len64 =
       (int64_t)window->max_offset - (int64_t)window->min_offset +
       (int64_t)X86_WIDTH_DWORD;
-  if (access_len64 <= 0 || access_len64 > CONFIG_MSIZE) return false;
+  if (access_len64 <= 0 || access_len64 > CONFIG_MSIZE) {
+    return jit_stack_window_reject(paged);
+  }
   if (window->has_store) {
     const int64_t store_len64 =
         (int64_t)window->store_max_offset -
         (int64_t)window->store_min_offset + (int64_t)X86_WIDTH_DWORD;
     if (store_len64 <= 0 || store_len64 > X86_JIT_SOURCE_PAGE_SIZE) {
-      return false;
+      return jit_stack_window_reject(paged);
     }
   }
   return true;
@@ -9534,7 +10491,7 @@ static size_t jit_align_code(size_t value) {
 /* Validate that cached source bytes still match guest memory for this PC/CR3. */
 static bool jit_block_source_matches(const x86_jit_block_t *block, vaddr_t pc) {
   if (!block->valid || block->pc != pc || block->source_len == 0) return false;
-  if (block->cr3_key != jit_cr3_key()) return false;
+  if (!jit_block_translation_key_matches(block)) return false;
   if (!jit_verify_source_enabled) return true;
   const x86_jit_block_cold_t *cold = jit_block_cold_const(block);
   if (block->is_trace) {
@@ -9545,14 +10502,23 @@ static bool jit_block_source_matches(const x86_jit_block_t *block, vaddr_t pc) {
           span->len > sizeof(current) ||
           !jit_copy_source(span->pc, span->len, current) ||
           memcmp(cold->source + span->offset, current, span->len) != 0) {
+        if (block->paging) JIT_STAT_INC(paged_source_validation_failures);
         return false;
       }
     }
     return true;
   }
   uint8_t current[X86_JIT_MAX_SOURCE_BYTES];
-  if (!jit_copy_source(pc, block->source_len, current)) return false;
-  return memcmp(cold->source, current, block->source_len) == 0;
+  if (!jit_copy_source(pc, block->source_len, current)) {
+    if (block->paging) JIT_STAT_INC(paged_source_validation_failures);
+    return false;
+  }
+  const bool matches =
+      memcmp(cold->source, current, block->source_len) == 0;
+  if (!matches && block->paging) {
+    JIT_STAT_INC(paged_source_validation_failures);
+  }
+  return matches;
 }
 
 /* Monotonic replacement age; zero is reserved as "never used". */
@@ -9562,9 +10528,17 @@ static uint32_t jit_next_cache_age(void) {
   return jit_cache_age_clock;
 }
 
-/* Hash a PC/CR3 key into the set-associative block cache. */
-static uint32_t jit_cache_set_key(vaddr_t pc, uint32_t cr3_key) {
-  uint32_t hash = pc ^ cr3_key;
+static uint32_t jit_translation_key_hash(x86_jit_translation_key_t key) {
+  uint32_t hash = key.cr3_key;
+  hash ^= key.state * 2246822519u;
+  hash ^= key.paging_generation * 3266489917u;
+  hash ^= hash >> 15;
+  return hash;
+}
+
+/* Hash a PC/translation key into the set-associative block cache. */
+static uint32_t jit_cache_set_key(vaddr_t pc, x86_jit_translation_key_t key) {
+  uint32_t hash = pc ^ jit_translation_key_hash(key);
   hash ^= hash >> 4;
   hash ^= hash >> 12;
   hash ^= hash >> 20;
@@ -9575,8 +10549,8 @@ static uint32_t jit_cache_set_key(vaddr_t pc, uint32_t cr3_key) {
  * Hash a PC/CR3 key into the hotness table.  2654435761 is Knuth's 32-bit
  * multiplicative hash constant, used to spread nearby CR3 values before masking.
  */
-static uint32_t jit_hot_index(vaddr_t pc, uint32_t cr3_key) {
-  uint32_t hash = pc ^ (cr3_key * 2654435761u);
+static uint32_t jit_hot_index(vaddr_t pc, x86_jit_translation_key_t key) {
+  uint32_t hash = pc ^ (jit_translation_key_hash(key) * 2654435761u);
   hash ^= hash >> 7;
   hash ^= hash >> 16;
   return hash & (X86_JIT_HOT_TABLE_SIZE - 1u);
@@ -9593,31 +10567,45 @@ static uint32_t jit_ret_cache_index(vaddr_t pc) {
 /* Clear all indirect RET chain hints. */
 static void jit_ret_cache_clear(void) {
   memset(jit_ret_cache, 0, sizeof(jit_ret_cache));
+  memset(jit_ret_cache_meta, 0, sizeof(jit_ret_cache_meta));
+  memset(jit_ret_cache_generation_slot, 0,
+      sizeof(jit_ret_cache_generation_slot));
 }
 
-/* Publish one chainable non-paged block as a possible RET target. */
+/* Publish one chainable block as a possible RET target. */
 static void jit_ret_cache_publish(const x86_jit_block_t *block) {
   if (block == NULL || !block->valid || block->unsupported ||
       !block->accepts_chain || block->chain_entry == NULL ||
-      block->paging) {
+      (block->paging && !jit_paged_retcache_enabled)) {
+    return;
+  }
+  if (block->paging && !jit_block_translation_key_matches(block)) {
     return;
   }
 
-  x86_jit_ret_cache_entry_t *entry =
-      &jit_ret_cache[jit_ret_cache_index(block->pc)];
+  const uint32_t index = jit_ret_cache_index(block->pc);
+  x86_jit_ret_cache_entry_t *entry = &jit_ret_cache[index];
   entry->target_pc = block->pc;
   entry->pad = 0;
   entry->chain_entry = block->chain_entry;
+  jit_ret_cache_meta[index] = (x86_jit_ret_cache_meta_t){
+    .translation_key = block->translation_key,
+    .block_generation = block->generation,
+  };
+  jit_ret_cache_generation_slot[index] = &block->generation;
 }
 
-/* Return or initialise the hotness record for one PC/CR3 pair. */
-static x86_jit_hot_info_t *jit_hot_info_for(vaddr_t pc, uint32_t cr3_key) {
-  x86_jit_hot_info_t *hot = &jit_hot_info[jit_hot_index(pc, cr3_key)];
-  if (!hot->valid || hot->pc != pc || hot->cr3_key != cr3_key) {
+/* Return or initialise the hotness record for one PC/translation-key pair. */
+static x86_jit_hot_info_t *jit_hot_info_for(vaddr_t pc,
+    x86_jit_translation_key_t key) {
+  x86_jit_hot_info_t *hot = &jit_hot_info[jit_hot_index(pc, key)];
+  if (!hot->valid || hot->pc != pc ||
+      !jit_translation_key_equal(hot->translation_key, key)) {
     *hot = (x86_jit_hot_info_t){
       .valid = true,
       .pc = pc,
-      .cr3_key = cr3_key,
+      .cr3_key = key.cr3_key,
+      .translation_key = key,
       .trace_index = UINT32_MAX,
     };
   }
@@ -9634,18 +10622,18 @@ static bool jit_hot_trace_is_valid(const x86_jit_hot_info_t *hot) {
   const x86_jit_block_t *trace = &jit_cache[hot->trace_index];
   return trace->valid && trace->is_trace &&
          trace->pc == hot->pc &&
-         trace->cr3_key == hot->cr3_key &&
+         jit_trace_translation_key_matches(hot, trace) &&
          trace->generation == hot->trace_generation;
 }
 
 /* Hash the current PC using the current CR3 key. */
 static uint32_t jit_cache_set(vaddr_t pc) {
-  return jit_cache_set_key(pc, jit_cr3_key());
+  return jit_cache_set_key(pc, jit_current_translation_key());
 }
 
-/* Hash a PC/CR3 key into the direct-mapped L0 cache. */
-static uint32_t jit_l0_index_key(vaddr_t pc, uint32_t cr3_key) {
-  uint32_t hash = pc ^ cr3_key;
+/* Hash a PC/translation key into the direct-mapped L0 cache. */
+static uint32_t jit_l0_index_key(vaddr_t pc, x86_jit_translation_key_t key) {
+  uint32_t hash = pc ^ jit_translation_key_hash(key);
   hash ^= hash >> 6;
   hash ^= hash >> 15;
   return hash & (X86_JIT_L0_SIZE - 1u);
@@ -9658,16 +10646,18 @@ static x86_jit_block_t *jit_cache_way(vaddr_t pc, uint32_t way) {
 
 /* Return one way from a block-cache set for an explicit CR3 key. */
 static x86_jit_block_t *jit_cache_way_key(vaddr_t pc, uint32_t way,
-    uint32_t cr3_key) {
-  return &jit_cache[jit_cache_set_key(pc, cr3_key) * X86_JIT_CACHE_WAYS + way];
+    x86_jit_translation_key_t key) {
+  return &jit_cache[jit_cache_set_key(pc, key) * X86_JIT_CACHE_WAYS + way];
 }
 
 /* Probe the direct-mapped L0 cache before walking all ways of the block cache. */
-static x86_jit_block_t *jit_l0_lookup(vaddr_t pc, uint32_t cr3_key) {
+static x86_jit_block_t *jit_l0_lookup(vaddr_t pc,
+    x86_jit_translation_key_t key) {
   if (!jit_l0_cache_enabled || !jit_hot_cold_cache_enabled) return NULL;
 
-  x86_jit_l0_entry_t *l0 = &jit_l0_cache[jit_l0_index_key(pc, cr3_key)];
-  if (!l0->valid || l0->pc != pc || l0->cr3_key != cr3_key ||
+  x86_jit_l0_entry_t *l0 = &jit_l0_cache[jit_l0_index_key(pc, key)];
+  if (!l0->valid || l0->pc != pc ||
+      !jit_translation_key_equal(l0->translation_key, key) ||
       l0->generation != jit_cache_generation ||
       l0->hot_index >= X86_JIT_CACHE_SIZE) {
     return NULL;
@@ -9675,7 +10665,7 @@ static x86_jit_block_t *jit_l0_lookup(vaddr_t pc, uint32_t cr3_key) {
 
   x86_jit_block_t *block = &jit_cache[l0->hot_index];
   if (!block->valid || block->pc != pc || block->source_len == 0 ||
-      block->cr3_key != l0->cr3_key) {
+      !jit_block_translation_key_matches(block)) {
     return NULL;
   }
   if (jit_verify_source_enabled && !jit_block_source_matches(block, pc)) {
@@ -9687,16 +10677,17 @@ static x86_jit_block_t *jit_l0_lookup(vaddr_t pc, uint32_t cr3_key) {
 
 /* Fill the L0 cache with the hot-cache index and current generation. */
 static void jit_l0_fill_key(vaddr_t pc, const x86_jit_block_t *block,
-    uint32_t cr3_key) {
+    x86_jit_translation_key_t key) {
   if (!jit_l0_cache_enabled || !jit_hot_cold_cache_enabled || block == NULL) {
     return;
   }
 
-  x86_jit_l0_entry_t *l0 = &jit_l0_cache[jit_l0_index_key(pc, cr3_key)];
+  x86_jit_l0_entry_t *l0 = &jit_l0_cache[jit_l0_index_key(pc, key)];
   *l0 = (x86_jit_l0_entry_t){
     .valid = true,
     .pc = pc,
-    .cr3_key = cr3_key,
+    .cr3_key = key.cr3_key,
+    .translation_key = key,
     .hot_index = jit_block_index(block),
     .generation = jit_cache_generation,
   };
@@ -9704,13 +10695,13 @@ static void jit_l0_fill_key(vaddr_t pc, const x86_jit_block_t *block,
 
 /* Fill the L0 cache for the current CR3 key. */
 static void jit_l0_fill(vaddr_t pc, const x86_jit_block_t *block) {
-  jit_l0_fill_key(pc, block, jit_cr3_key());
+  jit_l0_fill_key(pc, block, jit_current_translation_key());
 }
 
 /* Lookup a valid block, verifying source bytes if requested. */
 static x86_jit_block_t *jit_cache_lookup(vaddr_t pc) {
-  const uint32_t cr3_key = jit_cr3_key();
-  x86_jit_block_t *block = jit_l0_lookup(pc, cr3_key);
+  const x86_jit_translation_key_t key = jit_current_translation_key();
+  x86_jit_block_t *block = jit_l0_lookup(pc, key);
   if (block != NULL) {
     jit_ret_cache_publish(block);
     return block;
@@ -9718,14 +10709,14 @@ static x86_jit_block_t *jit_cache_lookup(vaddr_t pc) {
 
   const uint32_t ways = jit_4way_cache_enabled ? X86_JIT_CACHE_WAYS : 1u;
   for (uint32_t way = 0; way < ways; way++) {
-    x86_jit_block_t *block = jit_cache_way_key(pc, way, cr3_key);
+    x86_jit_block_t *block = jit_cache_way_key(pc, way, key);
     if (jit_block_source_matches(block, pc)) {
-      jit_l0_fill_key(pc, block, cr3_key);
+      jit_l0_fill_key(pc, block, key);
       jit_ret_cache_publish(block);
       return block;
     }
     if (jit_verify_source_enabled && block->valid && block->pc == pc &&
-        block->cr3_key == cr3_key) {
+        jit_translation_key_equal(block->translation_key, key)) {
       jit_block_invalidate(block);
     }
   }
@@ -9745,7 +10736,11 @@ static void jit_link_block_exits(x86_jit_block_t *block) {
 
     x86_jit_block_t *target = jit_cache_lookup(edge->target_pc);
     if (target != NULL && target->valid && !target->unsupported &&
-        target->accepts_chain && target->cr3_key == block->cr3_key &&
+        target->accepts_chain &&
+        (!block->paging || jit_paged_chain_enabled) &&
+        block->paging == target->paging &&
+        jit_translation_key_equal(block->translation_key,
+            target->translation_key) &&
         target->chain_entry != NULL) {
       jit_patch_edge_to_target(edge, target);
     }
@@ -9762,11 +10757,14 @@ static void jit_link_edges_to_target(x86_jit_block_t *target) {
       target->chain_entry == NULL) {
     return;
   }
+  if (target->paging && !jit_paged_chain_enabled) return;
 
   for (uint32_t i = 0; i < X86_JIT_CACHE_SIZE; i++) {
     x86_jit_block_t *block = &jit_cache[i];
     if (!block->valid || block->unsupported ||
-        block->cr3_key != target->cr3_key) {
+        block->paging != target->paging ||
+        !jit_translation_key_equal(block->translation_key,
+            target->translation_key)) {
       continue;
     }
     for (uint8_t edge_index = 0; edge_index < block->exit_count; edge_index++) {
@@ -9925,10 +10923,11 @@ static bool jit_trace_insn_is_direct_control(const x86_jit_insn_t *insn) {
 
 /* Choose the hot Jcc edge from observed counters, falling back to backwards-branch bias. */
 static bool jit_trace_choose_taken(vaddr_t pc, const x86_jit_insn_t *jcc) {
-  const uint32_t cr3_key = jit_cr3_key();
+  const x86_jit_translation_key_t key = jit_current_translation_key();
   x86_jit_hot_info_t *hot =
-      &jit_hot_info[jit_hot_index(pc, cr3_key)];
-  if (hot->valid && hot->pc == pc && hot->cr3_key == cr3_key &&
+      &jit_hot_info[jit_hot_index(pc, key)];
+  if (hot->valid && hot->pc == pc &&
+      jit_translation_key_equal(hot->translation_key, key) &&
       hot->taken_count != hot->fallthrough_count) {
     return hot->taken_count > hot->fallthrough_count;
   }
@@ -10323,6 +11322,7 @@ static void jit_publish_unsupported(vaddr_t pc) {
   block->pc = pc;
   block->cr3_key = jit_cr3_key();
   block->paging = jit_paging_enabled();
+  block->translation_key = jit_current_translation_key();
   block->source_len = 1;
   block->cold_index = jit_block_index(block);
   if (jit_copy_source(pc, block->source_len, cold->source)) {
@@ -10332,7 +11332,12 @@ static void jit_publish_unsupported(vaddr_t pc) {
     block->unsupported_opcode2 = opcode2;
   }
   block->cache_age = jit_next_cache_age();
-  jit_mark_source_pages(block, pc, block->source_len);
+  if (!jit_mark_source_pages(block, pc, block->source_len)) {
+    block->valid = false;
+    return;
+  }
+  block->cr3_key = jit_cr3_key();
+  block->translation_key = jit_current_translation_key();
   jit_l0_fill(pc, block);
   JIT_STAT_INC(blocks_unsupported);
   if (jit_stats_enabled) {
@@ -10347,12 +11352,13 @@ static x86_jit_block_t *jit_compile_trace(vaddr_t pc, uint32_t max_insns,
   if (!jit_trace_enabled || !jit_chain_enabled || !jit_flat_segments()) {
     return NULL;
   }
-  /*
-   * Paged blocks are already keyed by CR3, but page-table contents can change
-   * without changing CR3.  Keep the first trace compiler on non-paged AM code
-   * until paged trace source verification has its own page-table guard.
-   */
-  if (jit_paging_enabled()) return NULL;
+  if (jit_paging_enabled() &&
+      (!jit_paged_fastpath_enabled || !jit_paged_trace_enabled)) {
+    return NULL;
+  }
+  if (jit_paging_enabled() && !jit_paged_fastpath_mode_ready()) {
+    return NULL;
+  }
 
   x86_jit_insn_t decoded[X86_JIT_TRACE_MAX_INSNS];
   x86_jit_trace_part_t parts[X86_JIT_TRACE_MAX_BLOCKS];
@@ -10517,11 +11523,12 @@ static x86_jit_block_t *jit_compile_trace(vaddr_t pc, uint32_t max_insns,
   block->valid = true;
   block->pc = pc;
   block->cr3_key = jit_cr3_key();
-  block->paging = false;
+  block->paging = jit_paging_enabled();
+  block->translation_key = jit_current_translation_key();
   block->source_len = source_len;
   block->c_entry = (x86_jit_entry_t)block->chain_entry;
   block->generation = jit_cache_generation;
-  block->accepts_chain = true;
+  block->accepts_chain = !block->paging || jit_paged_chain_enabled;
   block->guest_insns = decoded_count;
   block->cache_age = jit_next_cache_age();
   block->cold_index = jit_block_index(block);
@@ -10530,9 +11537,20 @@ static x86_jit_block_t *jit_compile_trace(vaddr_t pc, uint32_t max_insns,
   if (!jit_trace_store_source(block, parts, part_count)) {
     block->valid = false;
     jit_code_used = start_used;
+    if (hot != NULL) hot->trace_failed = true;
+    JIT_STAT_INC(trace_compile_failures);
     return NULL;
   }
-  jit_mark_trace_source_pages(block);
+  if (!jit_mark_trace_source_pages(block)) {
+    block->valid = false;
+    jit_code_used = start_used;
+    if (hot != NULL) hot->trace_failed = true;
+    JIT_STAT_INC(trace_compile_failures);
+    return NULL;
+  }
+  block->cr3_key = jit_cr3_key();
+  block->translation_key = jit_current_translation_key();
+  block->generation = jit_cache_generation;
   jit_l0_fill(pc, block);
   jit_ret_cache_publish(block);
 
@@ -10548,6 +11566,10 @@ static x86_jit_block_t *jit_compile_trace(vaddr_t pc, uint32_t max_insns,
   }
   JIT_STAT_INC(blocks_compiled);
   JIT_STAT_INC(traces_compiled);
+  if (block->paging) {
+    JIT_STAT_INC(paged_blocks_compiled);
+    JIT_STAT_INC(paged_traces_compiled);
+  }
   JIT_STAT_ADD(compiled_insns, decoded_count);
   return block;
 }
@@ -10595,6 +11617,9 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
   if (jit_paging_enabled() && !jit_paged_fastpath_enabled) {
     return NULL;
   }
+  if (jit_paging_enabled() && !jit_paged_fastpath_mode_ready()) {
+    return NULL;
+  }
 
   x86_jit_insn_t decoded[X86_JIT_BLOCK_MAX_INSNS];
   uint32_t decoded_count = 0;
@@ -10623,7 +11648,9 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
   x86_jit_stack_window_t stack_window;
   const bool stack_window_fast =
       jit_analyse_stack_window(decoded, decoded_count, &stack_window);
-  const bool guarded_block = jit_chain_enabled;
+  const bool paged_block = jit_paging_enabled();
+  const bool guarded_block =
+      jit_chain_enabled && (!paged_block || jit_paged_chain_enabled);
   const x86_jit_edge_chainability_t block_edges =
       jit_block_edge_chainability(decoded, decoded_count, end_pc,
           guarded_block);
@@ -10644,7 +11671,8 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
     jit_code_used = start_used;
     return NULL;
   }
-  if (stack_window_fast && !emit_stack_window_guard(&w, pc, &stack_window)) {
+  if (stack_window_fast &&
+      !emit_stack_window_guard(&w, pc, &stack_window, &cold->insns[0])) {
     jit_code_used = start_used;
     return NULL;
   }
@@ -10838,7 +11866,8 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
         return NULL;
       }
     }
-    else if (jit_chain_enabled && cold->insns[i].op == X86_JIT_OP_HELPER &&
+    else if (jit_chain_enabled && (!paged_block || stack_window_fast) &&
+        cold->insns[i].op == X86_JIT_OP_HELPER &&
         cold->insns[i].helper == X86_JIT_HELPER_CALL_REL &&
         jit_target_probe_accepts_chain(jit_branch_target(&cold->insns[i]))) {
       if (!jit_regcache_flush_all(&w, &ctx) ||
@@ -10864,8 +11893,10 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
       ends_with_control = true;
     }
     else if (jit_chain_enabled && fast_chain_block &&
+        jit_indirect_target_cache_runtime_enabled() &&
         cold->insns[i].op == X86_JIT_OP_HELPER &&
-        cold->insns[i].helper == X86_JIT_HELPER_JMP_RM) {
+        cold->insns[i].helper == X86_JIT_HELPER_JMP_RM &&
+        (!paged_block || cold->insns[i].rm_is_reg)) {
       if (!jit_regcache_flush_all(&w, &ctx) ||
           !emit_chained_jmp_rm(&w, &cold->insns[i], insn_count)) {
         jit_code_used = start_used;
@@ -10875,6 +11906,7 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
       ends_with_control = true;
     }
     else if (jit_chain_enabled && fast_chain_block &&
+        jit_indirect_target_cache_runtime_enabled() &&
         cold->insns[i].op == X86_JIT_OP_HELPER &&
         cold->insns[i].helper == X86_JIT_HELPER_RET &&
         cold->insns[i].width == X86_WIDTH_DWORD) {
@@ -10945,6 +11977,7 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
   block->pc = pc;
   block->cr3_key = jit_cr3_key();
   block->paging = jit_paging_enabled();
+  block->translation_key = jit_current_translation_key();
   block->source_len = source_len;
   block->c_entry = (x86_jit_entry_t)block->chain_entry;
   block->generation = jit_cache_generation;
@@ -10959,7 +11992,14 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
     jit_code_used = start_used;
     return NULL;
   }
-  jit_mark_source_pages(block, pc, source_len);
+  if (!jit_mark_source_pages(block, pc, source_len)) {
+    block->valid = false;
+    jit_code_used = start_used;
+    return NULL;
+  }
+  block->cr3_key = jit_cr3_key();
+  block->translation_key = jit_current_translation_key();
+  block->generation = jit_cache_generation;
   jit_l0_fill(pc, block);
   jit_ret_cache_publish(block);
 
@@ -10970,6 +12010,7 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
     jit_link_edges_to_target(block);
   }
   JIT_STAT_INC(blocks_compiled);
+  if (block->paging) JIT_STAT_INC(paged_blocks_compiled);
   JIT_STAT_ADD(compiled_insns, emitted_count);
   return block;
 }
@@ -11025,8 +12066,8 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
 
     x86_jit_hot_info_t *hot = NULL;
     if (jit_trace_enabled && jit_chain_enabled && !block->is_trace &&
-        !block->paging) {
-      hot = jit_hot_info_for(block->pc, block->cr3_key);
+        (!block->paging || jit_paged_trace_enabled)) {
+      hot = jit_hot_info_for(block->pc, block->translation_key);
       if (hot->exec_count != UINT32_MAX) hot->exec_count++;
       if (!hot->trace_failed && !jit_hot_trace_is_valid(hot) &&
           hot->exec_count >= jit_trace_hot_threshold) {
@@ -11044,6 +12085,10 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
       return *executed > 0;
     }
 
+    if (block->paging && block->is_trace) {
+      JIT_STAT_INC(paged_trace_hits);
+    }
+
     if (block->uses_global_loop_accounting) {
       jit_entry_budget = remaining_budget;
     }
@@ -11057,7 +12102,9 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
     if (block->paging) {
       x86_exception_env_valid = true;
       if (setjmp(x86_exception_env) == 0) {
-        ran = block->c_entry(remaining_budget);
+        ran = jit_paged_batch_enabled ?
+            jit_batch_enter(block->c_entry, remaining_budget) :
+            block->c_entry(remaining_budget);
         x86_exception_env_valid = false;
       }
       else {
@@ -11117,6 +12164,9 @@ void isa_jit_flush_all(void) {
 /* Public hook: discard only the private data-translation cache. */
 void isa_jit_flush_data_tlb(void) {
   jit_dtlb_flush();
+  jit_ret_cache_clear();
+  jit_chain_abort = 1;
+  jit_paging_bump_generation();
 }
 
 /* Public hook: cheap pre-check for PMEM writes that may stale JIT state. */
@@ -11136,6 +12186,9 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len) {
 
   if (touches_page_table) {
     jit_dtlb_flush();
+    jit_paging_bump_generation();
+    JIT_STAT_INC(page_table_write_invalidations);
+    jit_invalidate_paged_blocks();
   }
 
   if (!touches_source) {
@@ -11161,6 +12214,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len) {
     }
   }
 
+  bool invalidated_source = false;
   if (needs_full_scan) {
     for (uint32_t i = 0; i < X86_JIT_CACHE_SIZE; i++) {
       x86_jit_block_t *block = &jit_cache[i];
@@ -11169,7 +12223,14 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len) {
       if (!jit_block_source_overlaps_paddr_range(block, addr, end)) continue;
       jit_block_invalidate(block);
       jit_chain_abort = 1;
+      invalidated_source = true;
       JIT_STAT_INC(invalidated_blocks);
+      JIT_STAT_INC(source_alias_invalidations);
+    }
+    if (invalidated_source) {
+      jit_dtlb_clear_entries();
+      memset(jit_l0_cache, 0, sizeof(jit_l0_cache));
+      memset(jit_hot_info, 0, sizeof(jit_hot_info));
     }
     return;
   }
@@ -11187,8 +12248,16 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len) {
       if (!jit_block_source_overlaps_paddr_range(block, addr, end)) continue;
       jit_block_invalidate(block);
       jit_chain_abort = 1;
+      invalidated_source = true;
       JIT_STAT_INC(invalidated_blocks);
+      JIT_STAT_INC(source_alias_invalidations);
     }
+  }
+
+  if (invalidated_source) {
+    jit_dtlb_clear_entries();
+    memset(jit_l0_cache, 0, sizeof(jit_l0_cache));
+    memset(jit_hot_info, 0, sizeof(jit_hot_info));
   }
 }
 
@@ -11254,9 +12323,11 @@ void isa_jit_dump_stats(void) {
       cache_hit_pct / 100u,
       cache_hit_pct % 100u);
   Log("jit: compiled blocks = %" PRIu64
+      ", paged blocks = %" PRIu64
       ", unsupported blocks = %" PRIu64
       ", avg compiled length = %" PRIu64 ".%02" PRIu64 " insn",
       jit_stats.blocks_compiled,
+      jit_stats.paged_blocks_compiled,
       jit_stats.blocks_unsupported,
       avg_compile_len / 100u,
       avg_compile_len % 100u);
@@ -11301,10 +12372,19 @@ void isa_jit_dump_stats(void) {
       jit_stats.native_not_ops,
       jit_stats.native_movzx_ops,
       jit_stats.native_movsx_ops);
-  Log("jit: DTLB read hits = %" PRIu64, jit_stats.dtlb_read_hits);
-  Log("jit: DTLB write hits = %" PRIu64, jit_stats.dtlb_write_hits);
+  Log("jit: DTLB read hits = %" PRIu64
+      " (paged = %" PRIu64 ")",
+      jit_stats.dtlb_read_hits,
+      jit_stats.paged_dtlb_read_hits);
+  Log("jit: DTLB write hits = %" PRIu64
+      " (paged = %" PRIu64 ")",
+      jit_stats.dtlb_write_hits,
+      jit_stats.paged_dtlb_write_hits);
   Log("jit: DTLB fills = %" PRIu64, jit_stats.dtlb_fills);
-  Log("jit: DTLB fallbacks = %" PRIu64, jit_stats.dtlb_fallbacks);
+  Log("jit: DTLB fallbacks = %" PRIu64
+      " (paged = %" PRIu64 ")",
+      jit_stats.dtlb_fallbacks,
+      jit_stats.paged_dtlb_fallbacks);
   Log("jit: DTLB flushes = %" PRIu64, jit_stats.dtlb_flushes);
   Log("jit: flag materialisations emitted = %" PRIu64
       ", guest GPR memory loads emitted = %" PRIu64
@@ -11316,18 +12396,26 @@ void isa_jit_dump_stats(void) {
       jit_stats.native_pmem_guards_emitted);
   Log("jit: direct chain hits = %" PRIu64
       ", direct chain patches = %" PRIu64
+      " (paged patches = %" PRIu64
+      ", paged hits = %" PRIu64 ")"
       ", batch entries = %" PRIu64
       ", traces compiled = %" PRIu64
+      " (paged = %" PRIu64 ")"
       ", trace compile failures = %" PRIu64
       ", trace hits = %" PRIu64
+      " (paged = %" PRIu64 ")"
       ", side exits = %" PRIu64
       ", SMC invalidation exits = %" PRIu64,
       direct_chain_hits,
       jit_stats.direct_chain_patches,
+      jit_stats.paged_chain_patches,
+      jit_stats.paged_chain_hits,
       jit_stats.batch_entries,
       jit_stats.traces_compiled,
+      jit_stats.paged_traces_compiled,
       jit_stats.trace_compile_failures,
       trace_hits,
+      jit_stats.paged_trace_hits,
       side_exits,
       smc_invalidation_exits);
   Log("jit: helper calls = %" PRIu64
@@ -11340,9 +12428,14 @@ void isa_jit_dump_stats(void) {
       jit_stats.helper_incdec_rm_calls);
   Log("jit: native mov-rm-reg slow exits = %" PRIu64,
       mov_rm_reg_slow_exits);
-  Log("jit: indirect target cache hits = %" PRIu64 ", misses = %" PRIu64,
+  Log("jit: indirect target cache hits = %" PRIu64
+      ", misses = %" PRIu64
+      ", paged hits = %" PRIu64
+      ", paged misses = %" PRIu64,
       ret_cache_hits,
-      ret_cache_misses);
+      ret_cache_misses,
+      jit_stats.paged_ret_cache_hits,
+      jit_stats.paged_ret_cache_misses);
   Log("jit: sibling trace hits = %" PRIu64, sibling_trace_hits);
   Log("jit: chain exit reasons budget = %" PRIu64
       ", abort = %" PRIu64
@@ -11393,7 +12486,14 @@ void isa_jit_dump_stats(void) {
       ", trace sibling = %u"
       ", trace loopback = %u"
       ", regcache wide = %u"
-      ", stack fast = %u",
+      ", stack fast = %u"
+      ", paged trace = %u"
+      ", paged chain = %u"
+      ", paged retcache = %u"
+      ", paged batch = %u"
+      ", paged regcache = %u"
+      ", paged stack fast = %u"
+      ", paged aggressive = %u",
       jit_fast_chain_enabled ? 1u : 0u,
       jit_edge_pc_store_enabled ? 1u : 0u,
       jit_chain_abort_check_enabled ? 1u : 0u,
@@ -11401,7 +12501,14 @@ void isa_jit_dump_stats(void) {
       jit_trace_sibling_enabled ? 1u : 0u,
       jit_trace_loopback_enabled ? 1u : 0u,
       jit_regcache_wide_enabled ? 1u : 0u,
-      jit_stack_fast_enabled ? 1u : 0u);
+      jit_stack_fast_enabled ? 1u : 0u,
+      jit_paged_trace_enabled ? 1u : 0u,
+      jit_paged_chain_enabled ? 1u : 0u,
+      jit_paged_retcache_enabled ? 1u : 0u,
+      jit_paged_batch_enabled ? 1u : 0u,
+      jit_paged_regcache_enabled ? 1u : 0u,
+      jit_paged_stack_fast_enabled ? 1u : 0u,
+      jit_paged_aggressive_enabled ? 1u : 0u);
   for (uint32_t helper = 1; helper < X86_JIT_HELPER_COUNT; helper++) {
     if (jit_stats.helper_by_kind[helper] != 0) {
       const char *name = jit_helper_names[helper] != NULL ?
@@ -11414,12 +12521,30 @@ void isa_jit_dump_stats(void) {
       ", page skips = %" PRIu64
       ", precise invalidation scans = %" PRIu64
       ", invalidated blocks = %" PRIu64
+      ", page-table write invalidations = %" PRIu64
+      ", source alias invalidations = %" PRIu64
       ", arena resets = %" PRIu64,
       jit_stats.invalidation_requests,
       jit_stats.invalidation_page_skips,
       jit_stats.precise_invalidation_scans,
       jit_stats.invalidated_blocks,
+      jit_stats.page_table_write_invalidations,
+      jit_stats.source_alias_invalidations,
       jit_stats.arena_resets);
+  Log("jit: paged fallback causes source validation = %" PRIu64
+      ", key mismatches = %" PRIu64
+      ", cross-page = %" PRIu64
+      ", mmio = %" PRIu64
+      ", stack fast = %" PRIu64
+      ", large-page = %" PRIu64
+      ", unsupported mode = %" PRIu64,
+      jit_stats.paged_source_validation_failures,
+      jit_stats.cr3_or_paging_key_mismatches,
+      jit_stats.cross_page_fallbacks,
+      jit_stats.mmio_fallbacks,
+      jit_stats.stack_fast_fallbacks,
+      jit_stats.paged_large_page_fallbacks,
+      jit_stats.unsupported_paging_mode_fallbacks);
   for (uint32_t opcode = 0; opcode < 256u; opcode++) {
     if (jit_stats.unsupported_by_opcode[opcode] != 0) {
       Log("jit: unsupported opcode 0x%02x = %" PRIu64,
