@@ -48,6 +48,9 @@ int main() {
   uint8_t test_mem_nz = 0;
   uint8_t test_reg_z = 0;
   uint8_t setcc_reg = 0;
+  uint32_t high_byte_alu = 0;
+  uint8_t high_byte_test_nz = 0;
+  uint8_t high_byte_cmp_z = 0;
 
   mem8[0] = 0x11u;
   mem8[1] = 0x22u;
@@ -187,6 +190,20 @@ int main() {
         [push_src] "m"(mem32[6])
       : "eax", "ebx", "ecx", "edx", "memory", "cc");
 
+  asm volatile(
+      "movl $0x11223344, %%eax\n\t"
+      "addb $0x10, %%ah\n\t"
+      "testb $0x40, %%ah\n\t"
+      "setnz %[test_nz]\n\t"
+      "cmpb $0x43, %%ah\n\t"
+      "setz %[cmp_z]\n\t"
+      "movl %%eax, %[alu]"
+      : [alu] "=m"(high_byte_alu),
+        [test_nz] "=qm"(high_byte_test_nz),
+        [cmp_z] "=qm"(high_byte_cmp_z)
+      :
+      : "eax", "memory", "cc");
+
   leave_value = leave_roundtrip(&leave_delta);
 
   check(mem8[0] == 0x5au);
@@ -217,6 +234,9 @@ int main() {
   check(test_mem_nz == 1);
   check(test_reg_z == 0);
   check(setcc_reg == 1);
+  check(high_byte_alu == 0x11224344u);
+  check(high_byte_test_nz == 1);
+  check(high_byte_cmp_z == 1);
   check(push_imm_value == 0x11223344u);
   check(push_rm_value == 0xdeadbeefu);
   check(leave_value == 0x31415926u);

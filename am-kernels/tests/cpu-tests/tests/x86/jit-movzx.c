@@ -43,7 +43,37 @@ static uint32_t movzx_ref(void) {
   return sum;
 }
 
+static uint32_t movzx_high_byte_sum(void) {
+  uint32_t ah = 0;
+  uint32_t ch = 0;
+  uint32_t dh = 0;
+  uint32_t bh = 0;
+
+  asm volatile(
+      "movl $0x11223344, %%eax\n\t"
+      "movzbl %%ah, %%esi\n\t"
+      "movl %%esi, %[ah]\n\t"
+      "movl $0x55667788, %%ecx\n\t"
+      "movzbl %%ch, %%esi\n\t"
+      "movl %%esi, %[ch]\n\t"
+      "movl $0x99aabbcc, %%edx\n\t"
+      "movzbl %%dh, %%esi\n\t"
+      "movl %%esi, %[dh]\n\t"
+      "movl $0xddeeff00, %%ebx\n\t"
+      "movzbl %%bh, %%esi\n\t"
+      "movl %%esi, %[bh]\n\t"
+      : [ah] "=m"(ah),
+        [ch] "=m"(ch),
+        [dh] "=m"(dh),
+        [bh] "=m"(bh)
+      :
+      : "eax", "ebx", "ecx", "edx", "esi", "memory");
+
+  return ah + (ch << 8) + (dh << 16) + (bh << 24);
+}
+
 int main(void) {
   check(movzx_sum() == movzx_ref());
+  check(movzx_high_byte_sum() == 0xffbb7733u);
   return 0;
 }

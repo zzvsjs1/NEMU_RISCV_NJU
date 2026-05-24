@@ -177,13 +177,21 @@ void init_proc()
     char *const *argv = (strcmp(init_path, "/bin/onscripter") == 0) ? argv_onscripter : argv_single;
     context_uload(&pcb[0], init_path, argv, envp_empty);
     fg_pcb = &pcb[0];
+#elif defined(NANOS_INIT_GAMES)
+    static char *const argv_pal[] = {"/bin/pal", NULL};
+    static char *const argv_fceux_am[] = {"/bin/fceux", "/share/games/nes/c.nes", NULL};
+    static char *const argv_onscripter[] = {"/bin/onscripter", "-r", "/share/games/ons", NULL};
+    context_uload(&pcb[0], "/bin/fceux", argv_fceux_am, envp_empty);
+    context_uload(&pcb[1], "/bin/onscripter", argv_onscripter, envp_empty);
+    context_uload(&pcb[2], "/bin/pal", argv_pal, envp_empty);
+    fg_pcb = &pcb[0];
 #else
     static char *const argv_pal[] = {"/bin/pal", NULL};
     static char *const argv_fceux_am[] = {"/bin/fceux", "/share/games/nes/c.nes", NULL};
     static char *const argv_onscripter[] = {"/bin/onscripter", "-r", "/share/games/ons", NULL};
-    context_uload(&pcb[2], "/bin/pal", argv_pal, envp_empty);
-    context_uload(&pcb[1], "/bin/onscripter", argv_onscripter, envp_empty);
     context_uload(&pcb[0], "/bin/fceux", argv_fceux_am, envp_empty);
+    context_uload(&pcb[1], "/bin/onscripter", argv_onscripter, envp_empty);
+    context_uload(&pcb[2], "/bin/pal", argv_pal, envp_empty);
 
     fg_pcb = &pcb[0];
 #endif

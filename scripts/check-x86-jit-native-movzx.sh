@@ -36,9 +36,15 @@ fi
 
 native_movzx=$(sed -n 's/.*native movzx ops = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
 [ -n "$native_movzx" ] || fail "missing native movzx stats"
+movzx_helpers=$(sed -n 's/.*helper profile movzx-reg-rm8[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
+movzx_helpers=${movzx_helpers:-0}
 
 if [ "$native_movzx" -lt 1 ]; then
   fail "expected at least one native movzx op, got $native_movzx"
 fi
 
-echo "x86 JIT native-movzx check passed: native_movzx=$native_movzx"
+if [ "$movzx_helpers" -ne 0 ]; then
+  fail "expected high-byte MOVZX to stay native, got movzx-reg-rm8 helpers=$movzx_helpers"
+fi
+
+echo "x86 JIT native-movzx check passed: native_movzx=$native_movzx movzx_helpers=$movzx_helpers"
