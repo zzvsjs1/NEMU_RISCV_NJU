@@ -60,10 +60,10 @@ case "$native_idiv_init" in
 esac
 
 case "$high_byte_test_init" in
-  *'jit_env_flag_enabled("NEMU_X86_JIT_HIGH_BYTE_TEST")'*)
+  *'jit_env_flag_default_enabled("NEMU_X86_JIT_HIGH_BYTE_TEST")'*)
     ;;
   *)
-    fail "NEMU_X86_JIT_HIGH_BYTE_TEST must remain opt-in until Castlevania 3 is visually cleared"
+    fail "NEMU_X86_JIT_HIGH_BYTE_TEST must be default-on after FCEUX helper validation"
     ;;
 esac
 

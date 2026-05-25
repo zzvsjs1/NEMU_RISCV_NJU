@@ -13,30 +13,103 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef CONFIG_HAS_PORT_IO
+uint32_t pio_read(ioaddr_t addr, int len);
+void pio_write(ioaddr_t addr, int len, uint32_t data);
+#endif
+
 /*
- * First x86 JIT milestone.
+ * x86 JIT overview
+ * ================
  *
- * The interpreter in inst.c remains the architectural reference.  This file
- * started by translating a tiny fault-free IA-32 subset into x86-64 code:
+ * The interpreter in inst.c is the architectural reference.  This file is an
+ * opportunistic fast path: it decodes a small, useful IA-32 subset into a local
+ * IR, emits x86-64 host code for the cases that are cheap to prove safe, and
+ * returns to the normal interpreter whenever decode, translation, or runtime
+ * guards cannot prove correctness.
  *
- *   - MOV r32, imm32
- *   - MOV r32, r32
- *   - LEA r32, m
- *   - NOP
+ * Execution pipeline
+ * ------------------
  *
- * The second milestone adds predecoded helper-backed instructions for the
- * common IA-32 integer core used by AM CPU tests: stack traffic, 32-bit
- * memory/register ALU, EFLAGS, calls, returns, and short/direct branches.  The
- * generated block still returns to the interpreter before any unsupported
- * instruction commits, so wider coverage does not weaken the fallback
- * boundary.
+ *   1. isa_jit_exec() is called from cpu_exec() with a guest-instruction
+ *      budget and a smaller device budget.  It never owns the whole emulator;
+ *      timers, devices, and interrupts still decide when to return.
+ *   2. jit_cache_lookup() finds a valid block for the current PC and paging
+ *      key.  A miss calls jit_compile_block(), which decodes at most a bounded
+ *      straight-line block and emits host bytes into the mmap()ed code arena.
+ *   3. The generated block runs through either the plain C function-call ABI or
+ *      the batch trampoline.  Blocks return the number of guest instructions
+ *      completed.  Chained blocks can stay inside the trampoline until budget,
+ *      invalidation, an unsupported edge, or a helper exit forces a return.
+ *   4. Helpers execute exact interpreter-like semantics for decoded operations
+ *      that are not profitable or not safe to lower directly.  A helper may
+ *      read/write guest memory, perform port I/O, or raise the same assertion
+ *      conditions as the interpreter.
  *
- * Paged Nanos-lite execution is supported only for flat segment bases/limits.
- * Instruction fetch and cache validation translate virtual PCs through the x86
- * MMU and key blocks by CR3.  Ordinary paged MOV loads/stores can now use a
- * small guarded DTLB: misses still go through the architectural MMU to preserve
- * faults and A/D-bit updates, while hits let generated code touch PMEM directly
- * when page-table and self-modifying-code guards prove that continuing is safe.
+ * Design invariants
+ * -----------------
+ *
+ *   - Generated code commits guest state only after all guards needed for that
+ *     instruction have passed.  For memory destinations that update EFLAGS, the
+ *     helper path writes memory before publishing new flags so a fault preserves
+ *     the old architectural flags.
+ *   - cpu.pc is stored before helper calls, side exits, and slow paths that may
+ *     report an exception or resume in the interpreter.  Fast native blocks are
+ *     allowed to delay pc stores only while all exits are explicit and patched.
+ *   - Guest memory fast paths touch host PMEM directly only after proving the
+ *     address is inside PMEM and does not overlap translated source bytes or
+ *     page-table bytes that would stale cached code or DTLB entries.
+ *   - The batch trampoline owns the generated-code host ABI.  r12/r13/r14/r15
+ *     may hold pinned cpu, PMEM, DTLB, and source-bitmap bases.  Helper calls
+ *     must still obey the host SysV stack rule: the callee sees RSP % 16 == 8.
+ *   - The local DTLB is an optimisation, not an authority.  Misses, cross-page
+ *     accesses, MMIO, large pages, unsupported paging modes, and possible
+ *     self-modifying writes fall back to the architectural MMU and memory code.
+ *
+ * Main components
+ * ---------------
+ *
+ *   - Runtime options: environment flags are read once by
+ *     jit_init_runtime_options().  Default-on switches use the "set to 0 to
+ *     disable" convention because generated code can bake the chosen ABI.
+ *   - Source validation: translated blocks store source bytes and reverse
+ *     indexes from PMEM page to block.  paddr writes use those reverse indexes
+ *     to invalidate only blocks that might overlap the write.
+ *   - Decode: jit_decode_insn() recognises a focused IA-32 subset.  Unsupported
+ *     encodings are side-effect free and simply leave the interpreter to run the
+ *     original instruction.
+ *   - Helper semantics: jit_helper_exec() implements exact 8/16/32-bit ALU,
+ *     stack, branch, multiply/divide, shift, SETcc, MOVZX/MOVSX, and PIO
+ *     behaviour for decoded instructions.
+ *   - Native emission: emit_* functions append raw x86-64 instruction bytes.
+ *     Their names describe the emitted instruction and operand contract.  The
+ *     byte constants are Intel opcode, prefix, ModR/M, SIB, displacement, and
+ *     immediate encodings; see the "raw emitter magic-number guide" below.
+ *   - Chaining and traces: direct edges can be patched to jump to compiled
+ *     successors.  Hot straight-line paths can be compiled as traces when the
+ *     runtime flags allow it.
+ *
+ * Current limitations
+ * -------------------
+ *
+ *   - This is a 32-bit IA-32 JIT only.  It does not implement IA-32e, PAE, NX,
+ *     x87/SSE/MMX, string instructions, segmentation with non-flat base/limit,
+ *     or a general exception-delivery model inside generated code.
+ *   - The opcode comments use Intel SDM notation: `/digit` means the ModR/M
+ *     reg/opcode field is an opcode extension, `r/m` can name either a register
+ *     or memory effective address, and relative displacements are relative to
+ *     the next instruction.
+ *   - Paged fast paths support normal 4 KiB non-PAE leaves.  CR4.PSE is allowed
+ *     in the global key, but individual 4 MiB PDE.PS leaves fall back because
+ *     reserved-bit and large-page behaviour must stay exact.
+ *   - The local DTLB is direct-mapped by virtual page.  Correctness comes from
+ *     flushes and guards, not from retaining multiple aliases.
+ *   - Register caching and traces are deliberately conservative.  A helper,
+ *     possible fault, unsupported successor, or uncertain flag dependency flushes
+ *     state instead of trying to reason globally.
+ *   - Native instruction coverage is workload-driven.  Missing opcodes are not
+ *     bugs by themselves; they are a request to fall back unless the opcode was
+ *     already decoded and emitted incorrectly.
  */
 
 #if defined(__x86_64__) && defined(CONFIG_X86_JIT) && \
@@ -57,12 +130,21 @@
 #endif
 
 /*
- * IA-32 paging and flag constants used by both decode-time checks and emitted
- * native guards.  The bit positions follow Intel's CR0/CR4/PDE/PTE/EFLAGS
- * layout: CR0.WP is bit 16, CR0.PG is bit 31, CR4.PSE is bit 4, CR4.PAE is
- * bit 5, PTE.P is bit 0, and PDE.PS is bit 7.  Page-directory/table addresses
- * occupy bits 31..12,
- * so the low 12 bits are masked away before comparing CR3 keys or page bases.
+ * IA-32 architectural constants used by decode, helpers, and emitted guards.
+ * These are "magic" only in the sense that Intel defines the bit positions:
+ *
+ *   - CR0.WP: bit 16, supervisor writes honour read-only PTEs when set.
+ *   - CR0.PG: bit 31, paging enable.
+ *   - CR4.PSE: bit 4, 4 MiB PDE.PS pages are architecturally possible.
+ *   - CR4.PAE: bit 5, unsupported by this 32-bit page walker.
+ *   - PTE/PDE.P: bit 0, present.
+ *   - PDE.PS: bit 7, large-page leaf.
+ *   - PDE/PTE address for 4 KiB leaves: bits 31..12, hence the 0xfffff000
+ *     mask.  Linear addresses split as directory[31..22], table[21..12],
+ *     offset[11..0] in the non-PAE 32-bit paging mode used here.
+ *   - EFLAGS status bits: CF/PF/AF/ZF/SF/OF are the normal Intel bit numbers.
+ *     Bit 1 is reserved but fixed to one in visible EFLAGS values.
+ *   - Selector RPL/CPL: low two bits of a segment selector.
  */
 #define X86_CR0_WP 0x00010000u
 #define X86_CR0_PG 0x80000000u
@@ -96,6 +178,8 @@
 #define X86_FLAG_ZF (1u << 6)
 #define X86_FLAG_SF (1u << 7)
 #define X86_FLAG_OF (1u << 11)
+#define X86_EFLAGS_IOPL_SHIFT 12u
+#define X86_SELECTOR_RPL_MASK 0x3u
 /* Full status-flag set written by ADD/SUB-family helpers. */
 #define X86_EFLAGS_STATUS_MASK \
   (X86_FLAG_CF | X86_FLAG_PF | X86_FLAG_AF | \
@@ -123,9 +207,132 @@
 #define X86_DWORD_BASE 0x100000000ll
 
 /*
+ * Host x86-64 encoding helpers.  These name the fields that used to appear as
+ * raw ModR/M, SIB, REX, and Group-opcode magic numbers in emitters.
+ */
+#define X86_HOST_REG_MASK 0x7u
+#define X86_HOST_EXT_REG_BASE 8u
+#define X86_HOST_REX_BASE 0x40u
+#define X86_HOST_REX_B 0x01u
+#define X86_HOST_REX_X 0x02u
+#define X86_HOST_REX_R 0x04u
+#define X86_HOST_REX_W 0x08u
+#define X86_HOST_REX_B_PREFIX (X86_HOST_REX_BASE | X86_HOST_REX_B)
+#define X86_HOST_REX_R_PREFIX (X86_HOST_REX_BASE | X86_HOST_REX_R)
+#define X86_HOST_REX_RB_PREFIX \
+  (X86_HOST_REX_BASE | X86_HOST_REX_R | X86_HOST_REX_B)
+#define X86_HOST_REX_W_PREFIX (X86_HOST_REX_BASE | X86_HOST_REX_W)
+#define X86_HOST_REX_WB_PREFIX \
+  (X86_HOST_REX_BASE | X86_HOST_REX_W | X86_HOST_REX_B)
+#define X86_HOST_REX_WR_PREFIX \
+  (X86_HOST_REX_BASE | X86_HOST_REX_W | X86_HOST_REX_R)
+#define X86_HOST_REX_WRB_PREFIX \
+  (X86_HOST_REX_BASE | X86_HOST_REX_W | X86_HOST_REX_R | X86_HOST_REX_B)
+#define X86_HOST_MODRM_REG_SHIFT 3u
+#define X86_HOST_MODRM_MOD_SHIFT 6u
+#define X86_HOST_MODRM_MOD_REG 3u
+#define X86_HOST_MODRM(mod, reg, rm) \
+  ((uint8_t)(((mod) << X86_HOST_MODRM_MOD_SHIFT) | \
+      (((reg) & X86_HOST_REG_MASK) << X86_HOST_MODRM_REG_SHIFT) | \
+      ((rm) & X86_HOST_REG_MASK)))
+#define X86_HOST_MODRM_REG_DIRECT \
+  (X86_HOST_MODRM_MOD_REG << X86_HOST_MODRM_MOD_SHIFT)
+#define X86_HOST_SIB_SCALE_SHIFT 6u
+#define X86_HOST_SIB_INDEX_SHIFT 3u
+#define X86_HOST_SIB(scale, index, base) \
+  ((uint8_t)(((scale) << X86_HOST_SIB_SCALE_SHIFT) | \
+      (((index) & X86_HOST_REG_MASK) << X86_HOST_SIB_INDEX_SHIFT) | \
+      ((base) & X86_HOST_REG_MASK)))
+#define X86_HOST_SCALE_1 0u
+#define X86_HOST_RAX 0u
+#define X86_HOST_RCX 1u
+#define X86_HOST_RDX 2u
+#define X86_HOST_RBX 3u
+#define X86_HOST_RSP 4u
+#define X86_HOST_RBP 5u
+#define X86_HOST_RSI 6u
+#define X86_HOST_RDI 7u
+#define X86_HOST_R8 8u
+#define X86_HOST_R9 9u
+#define X86_HOST_R10 10u
+#define X86_HOST_R11 11u
+#define X86_HOST_R12 12u
+#define X86_HOST_R13 13u
+#define X86_HOST_R14 14u
+#define X86_HOST_R15 15u
+#define X86_IA32_MOD_NO_DISP 0u
+#define X86_IA32_MOD_DISP8 1u
+#define X86_IA32_MOD_DISP32 2u
+#define X86_IA32_MOD_REG 3u
+#define X86_IA32_RM_SIB 4u
+#define X86_IA32_RM_DISP32 5u
+#define X86_IA32_SIB_NO_INDEX 4u
+#define X86_IA32_SIB_NO_BASE 5u
+#define X86_GROUP2_ROL 0u
+#define X86_GROUP2_ROR 1u
+#define X86_GROUP2_RCL 2u
+#define X86_GROUP2_RCR 3u
+#define X86_GROUP2_SHL 4u
+#define X86_GROUP2_SHR 5u
+#define X86_GROUP2_SAL_ALIAS 6u
+#define X86_GROUP2_SAR 7u
+#define X86_GROUP3_TEST 0u
+#define X86_GROUP3_NOT 2u
+#define X86_GROUP3_NEG 3u
+#define X86_GROUP3_MUL 4u
+#define X86_GROUP3_IMUL 5u
+#define X86_GROUP3_DIV 6u
+#define X86_GROUP3_IDIV 7u
+#define X86_GROUP45_INC 0u
+#define X86_GROUP45_DEC 1u
+#define X86_GROUP5_CALL_RM 2u
+#define X86_GROUP5_JMP_RM 4u
+#define X86_GROUP5_PUSH_RM 6u
+#define X86_HOST_PREFIX_OPERAND_SIZE 0x66u
+#define X86_HOST_OPCODE_ESCAPE_0F 0x0fu
+#define X86_HOST_OP_GROUP1_IMM8 0x80u
+#define X86_HOST_OP_GROUP1_IMM32 0x81u
+#define X86_HOST_OP_MOV_RM8_R8 0x88u
+#define X86_HOST_OP_MOV_RM32_R32 0x89u
+#define X86_HOST_OP_MOV_R32_RM32 0x8bu
+#define X86_HOST_OP_MOV_RM_IMM32 0xc7u
+#define X86_HOST_OP_GROUP2_BYTE_IMM 0xc0u
+#define X86_HOST_OP_GROUP2_IMM 0xc1u
+#define X86_HOST_OP_GROUP2_BYTE_CL 0xd2u
+#define X86_HOST_OP_GROUP2_CL 0xd3u
+#define X86_HOST_OP_GROUP3_BYTE 0xf6u
+#define X86_HOST_OP_GROUP3_NONBYTE 0xf7u
+#define X86_HOST_OP_MOVZX_R32_RM8 0xb6u
+#define X86_HOST_OP_MOVZX_R32_RM16 0xb7u
+#define X86_HOST_OP_MOVSX_R32_RM8 0xbeu
+#define X86_HOST_OP_MOVSX_R32_RM16 0xbfu
+#define X86_HOST_OPCODE_EXT_0 0u
+#define X86_HOST_DISP8_ZERO 0u
+#define X86_IA32_MODRM_MOD_SHIFT 6u
+#define X86_IA32_MODRM_REG_SHIFT 3u
+#define X86_IA32_MODRM_FIELD_MASK 0x7u
+#define X86_IA32_OPCODE_REG_MASK 0x7u
+#define X86_IA32_OPCODE_CC_MASK 0xfu
+#define X86_IA32_ALU_OP_MASK 0x38u
+#define X86_IA32_ALU_ACC_MASK 0xc7u
+#define X86_IA32_ALU_ACC_IMM_NONBYTE 0x05u
+#define X86_IA32_ALU_ACC_IMM_BYTE 0x04u
+#define X86_IA32_ALU_FORM_MASK 0x07u
+
+/*
  * JIT sizing knobs.  Cache, L0, hot, RET, and DTLB sizes are powers of two
- * because the lookup helpers mask hashes instead of using division.  Trace and
- * source limits bound compile time, native code size, and invalidation scans.
+ * because the lookup helpers mask hashes instead of using division.  The limits
+ * are intentionally small enough that compile time and invalidation scans stay
+ * predictable:
+ *
+ *   - BLOCK_MAX_INSNS / DEFAULT_BLOCK_LIMIT bound one linear decode.
+ *   - BATCH_MAX_INSNS caps one generated-code trip before returning to devices.
+ *   - TRACE_* bounds hot trace length and source-byte tracking.
+ *   - CODE_SIZE is the mmap()ed executable arena; BLOCK_CODE_HEADROOM prevents
+ *     one compile from running the writer off the end.
+ *   - SOURCE_* limits keep self-modifying-code reverse maps compact; overflow
+ *     falls back to conservative scans rather than losing correctness.
+ *   - EXIT_EDGE_LIMIT and INCOMING_EDGE_* bound direct-chain patch metadata.
  */
 #define X86_JIT_BLOCK_MAX_INSNS 64u
 #define X86_JIT_BATCH_MAX_INSNS 65536u
@@ -155,6 +362,8 @@
 #define X86_JIT_BLOCK_SOURCE_RANGE_LIMIT 4u
 #define X86_JIT_TRACE_SOURCE_SPAN_LIMIT 12u
 #define X86_JIT_EXIT_EDGE_LIMIT 12u
+#define X86_JIT_INCOMING_EDGE_BUCKETS 8192u
+#define X86_JIT_INCOMING_EDGE_WAYS 8u
 #define X86_JIT_DTLB_SIZE 256u
 /* Per-entry access bits for the private data TLB; writes imply read access. */
 #define X86_JIT_DTLB_READ 0x1u
@@ -305,6 +514,8 @@ typedef enum {
   X86_JIT_HELPER_MOVSX_REG_RM16,
   X86_JIT_HELPER_SHIFT_RM,
   X86_JIT_HELPER_IMUL_REG_RM,
+  X86_JIT_HELPER_PIO_IN,
+  X86_JIT_HELPER_PIO_OUT,
   X86_JIT_HELPER_COUNT,
 } x86_jit_helper_t;
 
@@ -321,6 +532,7 @@ typedef struct {
   bool rm_is_reg;
   bool ends_block;
   bool count_from_cl;
+  bool pio_port_from_dx;
   uint8_t dst;
   uint8_t src;
   uint8_t rm_reg;
@@ -404,6 +616,16 @@ typedef struct {
   uint8_t slow_reason;
 } x86_jit_exit_edge_t;
 
+/* Reverse index entry for quickly finding edges waiting on one target block. */
+typedef struct {
+  bool valid;
+  vaddr_t target_pc;
+  x86_jit_translation_key_t translation_key;
+  uint32_t source_index;
+  uint32_t source_generation;
+  uint8_t edge_index;
+} x86_jit_incoming_edge_ref_t;
+
 /* Hot block metadata kept in the fast cache line.  Large source bytes live cold. */
 typedef struct {
   bool valid;
@@ -459,25 +681,20 @@ typedef struct {
  * so the static asserts below deliberately fail the build if padding changes.
  */
 typedef struct {
-  bool valid;
   uint8_t access;
-  uint32_t cr3_key;
-  uint32_t state;
+  uint8_t pad[3];
   uint32_t vpn;
   paddr_t pg_paddr;
+  uint32_t pad2;
 } x86_jit_dtlb_entry_t;
 
-_Static_assert(offsetof(x86_jit_dtlb_entry_t, valid) == 0,
-    "x86 JIT DTLB valid offset changed");
-_Static_assert(offsetof(x86_jit_dtlb_entry_t, access) == 1,
+_Static_assert(sizeof(x86_jit_dtlb_entry_t) == 16,
+    "x86 JIT DTLB entry size changed");
+_Static_assert(offsetof(x86_jit_dtlb_entry_t, access) == 0,
     "x86 JIT DTLB access offset changed");
-_Static_assert(offsetof(x86_jit_dtlb_entry_t, cr3_key) == 4,
-    "x86 JIT DTLB cr3_key offset changed");
-_Static_assert(offsetof(x86_jit_dtlb_entry_t, state) == 8,
-    "x86 JIT DTLB state offset changed");
-_Static_assert(offsetof(x86_jit_dtlb_entry_t, vpn) == 12,
+_Static_assert(offsetof(x86_jit_dtlb_entry_t, vpn) == 4,
     "x86 JIT DTLB vpn offset changed");
-_Static_assert(offsetof(x86_jit_dtlb_entry_t, pg_paddr) == 16,
+_Static_assert(offsetof(x86_jit_dtlb_entry_t, pg_paddr) == 8,
     "x86 JIT DTLB pg_paddr offset changed");
 
 typedef struct {
@@ -706,7 +923,7 @@ static bool jit_trace_sibling_enabled = true;
 static bool jit_trace_loopback_enabled = true;
 static bool jit_regcache_wide_enabled = true;
 static bool jit_native_idiv_enabled = false;
-static bool jit_native_high_byte_test_enabled = false;
+static bool jit_native_high_byte_test_enabled = true;
 static uint32_t jit_runtime_block_limit = X86_JIT_DEFAULT_BLOCK_LIMIT;
 static uint32_t jit_trace_hot_threshold = X86_JIT_TRACE_HOT_THRESHOLD;
 static x86_jit_block_cold_t jit_cache_cold[X86_JIT_CACHE_SIZE];
@@ -715,6 +932,10 @@ static x86_jit_hot_info_t jit_hot_info[X86_JIT_HOT_TABLE_SIZE];
 static x86_jit_ret_cache_entry_t jit_ret_cache[X86_JIT_RET_CACHE_SIZE];
 static x86_jit_ret_cache_meta_t jit_ret_cache_meta[X86_JIT_RET_CACHE_SIZE];
 static const uint32_t *jit_ret_cache_generation_slot[X86_JIT_RET_CACHE_SIZE];
+static x86_jit_incoming_edge_ref_t
+    jit_incoming_edges[X86_JIT_INCOMING_EDGE_BUCKETS]
+        [X86_JIT_INCOMING_EDGE_WAYS];
+static uint32_t jit_incoming_edge_replace_clock = 0;
 static volatile uint32_t jit_entry_budget = 0;
 static volatile uint32_t jit_loop_extra = 0;
 static volatile uint32_t jit_chain_abort = 0;
@@ -792,6 +1013,8 @@ static const char *const jit_helper_names[X86_JIT_HELPER_COUNT] = {
   [X86_JIT_HELPER_MOVSX_REG_RM16] = "movsx-reg-rm16",
   [X86_JIT_HELPER_SHIFT_RM] = "shift-rm",
   [X86_JIT_HELPER_IMUL_REG_RM] = "imul-reg-rm",
+  [X86_JIT_HELPER_PIO_IN] = "pio-in",
+  [X86_JIT_HELPER_PIO_OUT] = "pio-out",
 };
 #endif
 
@@ -807,6 +1030,11 @@ static const char *const jit_helper_names[X86_JIT_HELPER_COUNT] = {
 
 static bool patch_rel32(uint8_t *disp, const uint8_t *target);
 static void jit_unpatch_incoming_edges(const x86_jit_block_t *target);
+static uint32_t jit_incoming_edge_bucket(vaddr_t pc,
+    x86_jit_translation_key_t key);
+static void jit_incoming_edge_register(x86_jit_block_t *block,
+    uint8_t edge_index);
+static void jit_incoming_edge_register_block(x86_jit_block_t *block);
 static void jit_link_edges_to_target(x86_jit_block_t *target);
 static void jit_link_block_exits(x86_jit_block_t *block);
 static void jit_reset_arena(void);
@@ -816,6 +1044,7 @@ static void jit_cache_bump_generation(void);
 static uint32_t jit_dtlb_state(void);
 static bool jit_dtlb_mark_page_tables(vaddr_t addr);
 static bool jit_batch_cpu_base_available(void);
+static bool jit_batch_dtlb_base_available(void);
 static bool jit_target_probe_accepts_chain(vaddr_t pc);
 static bool jit_range_may_touch_source_pages(paddr_t addr, int len);
 static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out);
@@ -970,7 +1199,7 @@ static void jit_init_runtime_options(void) {
     jit_native_idiv_enabled =
         jit_env_flag_enabled("NEMU_X86_JIT_NATIVE_IDIV");
     jit_native_high_byte_test_enabled =
-        jit_env_flag_enabled("NEMU_X86_JIT_HIGH_BYTE_TEST");
+        jit_env_flag_default_enabled("NEMU_X86_JIT_HIGH_BYTE_TEST");
     jit_runtime_block_limit = jit_env_u32("NEMU_X86_JIT_BLOCK_LIMIT",
         X86_JIT_DEFAULT_BLOCK_LIMIT, 1u, X86_JIT_BLOCK_MAX_INSNS);
     jit_trace_hot_threshold = jit_env_u32("NEMU_X86_JIT_TRACE_THRESHOLD",
@@ -1027,12 +1256,14 @@ static bool jit_paging_mode_supported(void) {
   return !jit_paging_enabled() || (cpu.cr4 & X86_CR4_PAE) == 0;
 }
 
+/* Return false, and count why, when native paged fast paths must not run. */
 static bool jit_paged_fastpath_mode_ready(void) {
   if (jit_paging_mode_supported()) return true;
   JIT_STAT_INC(unsupported_paging_mode_fallbacks);
   return false;
 }
 
+/* Fold current paging mode into the block-cache key when CR0.PG is set. */
 static uint32_t jit_paging_state_key(void) {
   if (!jit_paging_enabled()) return 0u;
 
@@ -1041,6 +1272,7 @@ static uint32_t jit_paging_state_key(void) {
   return state;
 }
 
+/* Snapshot the translation context that must match before reusing a block. */
 static x86_jit_translation_key_t jit_current_translation_key(void) {
   if (!jit_paging_enabled()) {
     return (x86_jit_translation_key_t){0};
@@ -1049,10 +1281,11 @@ static x86_jit_translation_key_t jit_current_translation_key(void) {
   return (x86_jit_translation_key_t){
     .cr3_key = jit_cr3_key(),
     .state = jit_paging_state_key(),
-    .paging_generation = jit_paging_generation,
+      .paging_generation = jit_paging_generation,
   };
 }
 
+/* Compare full block keys, including invalidation generation. */
 static bool jit_translation_key_equal(x86_jit_translation_key_t a,
     x86_jit_translation_key_t b) {
   return a.cr3_key == b.cr3_key &&
@@ -1060,11 +1293,13 @@ static bool jit_translation_key_equal(x86_jit_translation_key_t a,
          a.paging_generation == b.paging_generation;
 }
 
+/* Compare only the active translation context, ignoring generation freshness. */
 static bool jit_translation_context_equal(x86_jit_translation_key_t a,
     x86_jit_translation_key_t b) {
   return a.cr3_key == b.cr3_key && a.state == b.state;
 }
 
+/* Validate that a cached block still belongs to the current paging context. */
 static bool jit_block_translation_key_matches(const x86_jit_block_t *block) {
   if (block == NULL || !block->valid ||
       block->paging != jit_paging_enabled()) {
@@ -1079,6 +1314,7 @@ static bool jit_block_translation_key_matches(const x86_jit_block_t *block) {
   return matches;
 }
 
+/* Validate that a hot trace's saved key and its block key are both current. */
 static bool jit_trace_translation_key_matches(const x86_jit_hot_info_t *hot,
     const x86_jit_block_t *trace) {
   return hot != NULL && trace != NULL &&
@@ -1095,6 +1331,7 @@ static bool jit_fast_chain_runtime_enabled(void) {
           (jit_paged_chain_enabled && jit_paged_batch_enabled));
 }
 
+/* Indirect target caching in paged mode is opt-in because targets key by PC. */
 static bool jit_indirect_target_cache_runtime_enabled(void) {
   return !jit_paging_enabled() || jit_paged_retcache_enabled;
 }
@@ -1152,6 +1389,7 @@ static bool jit_vaddr_to_paddr(vaddr_t addr, uint32_t len, int type,
   return in_pmem_range(*pa, (int)len);
 }
 
+/* Translate one instruction-fetch byte and record walked page-table pages. */
 static bool jit_translate_ifetch_byte(vaddr_t addr, paddr_t *pa) {
   if (!jit_vaddr_to_paddr(addr, 1u, MEM_TYPE_IFETCH, pa)) return false;
   if (jit_paging_enabled() && !jit_dtlb_mark_page_tables(addr)) {
@@ -1273,11 +1511,12 @@ static bool jit_cross_page(vaddr_t addr, uint32_t len) {
 }
 
 /*
- * Fold paging permission mode into a small DTLB state key: bits 0..1 are CPL,
+ * Fold paging permission mode into a small translation key: bits 0..1 are CPL,
  * bit 2 tracks CR0.WP, and bit 3 tracks CR4.PSE.  A change in any of these can
- * change page-permission or large-page behaviour, so cached translations must
- * no longer match.  CR4.PAE is deliberately absent: it is unsupported by this
- * native page walker and guarded as a fallback-only mode before DTLB lookup.
+ * change page-permission or large-page behaviour, so control-register and CPL
+ * changes flush the private DTLB before any stale entry can be reused.  CR4.PAE
+ * is deliberately absent: it is unsupported by this native page walker and
+ * guarded as a fallback-only mode before DTLB lookup.
  */
 static uint32_t jit_dtlb_state(void) {
   uint32_t state = cpu.cs & 0x3u;
@@ -1287,11 +1526,9 @@ static uint32_t jit_dtlb_state(void) {
   return state;
 }
 
-/* Hash virtual page, CR3 key, and permission state into the power-of-two DTLB. */
-static uint32_t jit_dtlb_index(uint32_t vpn, uint32_t cr3_key,
-    uint32_t state) {
-  return (vpn ^ (vpn >> 10) ^ (cr3_key >> PAGE_SHIFT) ^ state) &
-      (X86_JIT_DTLB_SIZE - 1u);
+/* Hash a virtual page into the power-of-two DTLB. */
+static uint32_t jit_dtlb_index(uint32_t vpn) {
+  return vpn & (X86_JIT_DTLB_SIZE - 1u);
 }
 
 /* Drop private data translations while preserving page-table dependency marks. */
@@ -1344,12 +1581,20 @@ static bool jit_range_may_touch_page_table_pages(paddr_t addr, int len) {
 /*
  * Record page-directory and page-table pages walked for `addr`.  The inline DTLB
  * handles only 4 KiB leaves; 4 MiB PDE.PS translations fall back to the MMU so
- * reserved-bit and large-page semantics stay exact.
+ * reserved-bit and large-page semantics stay exact.  In Intel non-PAE 32-bit
+ * paging, a 4 KiB translation consumes linear bits 31..22 as the directory
+ * index, bits 21..12 as the table index, and bits 11..0 as the page offset.  A
+ * 4 MiB page would instead use the directory index plus a 22-bit offset.
  */
 static bool jit_dtlb_mark_page_tables(vaddr_t addr) {
   if (!jit_paging_enabled()) return true;
 
   const paddr_t pd_base = (paddr_t)(cpu.cr3 & X86_PTE_ADDR_MASK);
+  /*
+   * Non-PAE 32-bit paging uses 10 directory bits and 10 table bits.  The
+   * 0x3ff masks below select those 10-bit indexes after removing the 12-bit
+   * page offset.
+   */
   const paddr_t pde_addr =
       pd_base + (paddr_t)(((addr >> 22) & 0x3ffu) * sizeof(uint32_t));
   if (!in_pmem_range(pde_addr, 4)) return false;
@@ -1384,6 +1629,11 @@ static void *jit_dtlb_fallback(void) {
   return NULL;
 }
 
+/*
+ * C slow path for generated DTLB misses.  It returns a host pointer when the
+ * access can safely be completed directly by generated code; otherwise NULL
+ * means "leave this block and let the normal memory path handle it".
+ */
 static void *jit_dtlb_translate(const x86_jit_insn_t *insn, uint32_t addr,
     uint32_t len, uint32_t is_write) {
   const uint32_t access = is_write ? X86_JIT_DTLB_WRITE : X86_JIT_DTLB_READ;
@@ -1400,20 +1650,14 @@ static void *jit_dtlb_translate(const x86_jit_insn_t *insn, uint32_t addr,
   }
 
   const uint32_t vpn = addr >> PAGE_SHIFT;
-  const uint32_t cr3_key = jit_cr3_key();
-  const uint32_t state = jit_dtlb_state();
-  x86_jit_dtlb_entry_t *entry =
-      &jit_dtlb[jit_dtlb_index(vpn, cr3_key, state)];
+  x86_jit_dtlb_entry_t *entry = &jit_dtlb[jit_dtlb_index(vpn)];
 
   /*
    * A DTLB hit still checks PMEM bounds and self-modifying-code/page-table
    * hazards before returning a host pointer.  Writes that may stale code or
    * page walks must use the slow path so the normal invalidation hooks run.
    */
-  if (likely(entry->valid &&
-             entry->cr3_key == cr3_key &&
-             entry->state == state &&
-             entry->vpn == vpn &&
+  if (likely(entry->vpn == vpn &&
              (entry->access & access) != 0)) {
     const paddr_t pa = entry->pg_paddr | (paddr_t)(addr & PAGE_MASK);
 
@@ -1455,10 +1699,7 @@ static void *jit_dtlb_translate(const x86_jit_insn_t *insn, uint32_t addr,
   }
 
   *entry = (x86_jit_dtlb_entry_t){
-      .valid = true,
       .access = is_write ? (X86_JIT_DTLB_READ | X86_JIT_DTLB_WRITE) : access,
-      .cr3_key = cr3_key,
-      .state = state,
       .vpn = vpn,
       .pg_paddr = pa & ~(paddr_t)PAGE_MASK,
   };
@@ -1704,6 +1945,7 @@ static bool jit_range_may_touch_source_pages(paddr_t addr, int len) {
   return false;
 }
 
+/* Convert a PMEM write range into inclusive source-page indexes. */
 static bool jit_source_page_range(paddr_t addr, int len, size_t *first,
     size_t *last) {
   if (len <= 0) return false;
@@ -1729,6 +1971,7 @@ static bool jit_source_page_range(paddr_t addr, int len, size_t *first,
   return true;
 }
 
+/* Test a block's coarse page reverse map against a candidate write range. */
 static bool jit_block_touches_source_page_range(const x86_jit_block_t *block,
     size_t first, size_t last) {
   const x86_jit_block_cold_t *cold = jit_block_cold_const(block);
@@ -1740,6 +1983,7 @@ static bool jit_block_touches_source_page_range(const x86_jit_block_t *block,
   return false;
 }
 
+/* Test a block's precise physical source-byte ranges against a PMEM write. */
 static bool jit_block_source_overlaps_paddr_range(
     const x86_jit_block_t *block, paddr_t addr, paddr_t end) {
   const x86_jit_block_cold_t *cold = jit_block_cold_const(block);
@@ -1800,7 +2044,11 @@ static void jit_flag_set(uint32_t flag, bool val) {
   cpu.eflags |= X86_EFLAGS_FIXED_ONE;
 }
 
-/* Return true when the low byte contains an even number of one bits. */
+/*
+ * Return true when the low byte contains an even number of one bits.  Intel PF
+ * is defined only from the least-significant byte of the result, even for word
+ * and dword operations.
+ */
 static bool jit_parity_even(uint8_t val) {
   val ^= val >> 4;
   val &= X86_PARITY_FOLD_NIBBLE_MASK;
@@ -1815,7 +2063,10 @@ static void jit_set_zsp_flags(uint32_t result, uint8_t width) {
   jit_flag_set(X86_FLAG_PF, jit_parity_even(result & X86_BYTE_MASK));
 }
 
-/* Set flags for ADD-like operations: CF is unsigned carry, OF is signed overflow. */
+/*
+ * Set flags for ADD-like operations: CF is unsigned carry, OF is signed
+ * overflow, and AF is the carry out of bit 3 into bit 4.
+ */
 static void jit_set_add_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
     uint8_t width) {
   const uint32_t mask = jit_width_mask(width);
@@ -1831,7 +2082,10 @@ static void jit_set_add_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
   jit_flag_set(X86_FLAG_OF, ((~(l ^ r) & (l ^ res) & sign) != 0));
 }
 
-/* Set flags for SUB/CMP-like operations; CF represents an unsigned borrow. */
+/*
+ * Set flags for SUB/CMP-like operations; CF represents an unsigned borrow and
+ * AF is the borrow across the low-nibble boundary.
+ */
 static void jit_set_sub_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
     uint8_t width) {
   const uint32_t mask = jit_width_mask(width);
@@ -1846,7 +2100,10 @@ static void jit_set_sub_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
   jit_flag_set(X86_FLAG_OF, (((l ^ r) & (l ^ res) & sign) != 0));
 }
 
-/* Set flags for ADC, including the incoming carry in both unsigned and signed tests. */
+/*
+ * Set flags for ADC, including the incoming carry in both unsigned and signed
+ * tests.  AF still uses the bit-3 to bit-4 carry formula after carry-in.
+ */
 static void jit_set_adc_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
     uint8_t width, uint32_t carry) {
   const uint32_t mask = jit_width_mask(width);
@@ -1865,7 +2122,10 @@ static void jit_set_adc_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
   jit_flag_set(X86_FLAG_OF, signed_raw < min || signed_raw > max);
 }
 
-/* Set flags for SBB, where CF contributes one extra unit to the subtrahend. */
+/*
+ * Set flags for SBB, where CF contributes one extra unit to the subtrahend.
+ * The AF expression detects a borrow across bit 4 after that extra unit.
+ */
 static void jit_set_sbb_flags(uint32_t lhs, uint32_t rhs, uint32_t result,
     uint8_t width, uint32_t carry) {
   const uint32_t mask = jit_width_mask(width);
@@ -1947,7 +2207,10 @@ static uint32_t jit_alu_exec(uint8_t op, uint32_t lhs, uint32_t rhs,
 /*
  * Helper implementation for Group-2 shifts and rotates.  The /reg field uses
  * Intel order: 0 ROL, 1 ROR, 2 RCL, 3 RCR, 4 SHL/SAL, 5 SHR, 6 SHL/SAL alias,
- * 7 SAR.
+ * 7 SAR.  IA-32 masks 8/16/32-bit counts to five bits.  RCL/RCR rotate through
+ * CF, so the helper treats the operand plus CF as a width+1 ring; the 32-bit
+ * case keeps Intel's special effective-count behaviour by using the masked
+ * five-bit count directly.
  */
 static void jit_shift_rm(const x86_jit_insn_t *insn) {
   uint32_t count = insn->count_from_cl ? reg_b(R_ECX) : insn->imm;
@@ -1961,7 +2224,7 @@ static void jit_shift_rm(const x86_jit_insn_t *insn) {
   bool of = false;
   const uint32_t old_eflags = cpu.eflags;
 
-  if (insn->alu_op == 2 || insn->alu_op == 3) {
+  if (insn->alu_op == X86_GROUP2_RCL || insn->alu_op == X86_GROUP2_RCR) {
     uint32_t rotate_count = bits == X86_DWORD_BITS ?
         count : count % (bits + 1u);
     if (rotate_count == 0) return;
@@ -1971,7 +2234,7 @@ static void jit_shift_rm(const x86_jit_insn_t *insn) {
     uint64_t ring = ((uint64_t)(jit_flag_get(X86_FLAG_CF) ? 1u : 0u) << bits) |
         (jit_mask_width(lhs, insn->width) & operand_mask);
 
-    if (insn->alu_op == 2) {
+    if (insn->alu_op == X86_GROUP2_RCL) {
       ring = ((ring << rotate_count) |
           (ring >> ((bits + 1u) - rotate_count))) & ring_mask;
     }
@@ -1984,7 +2247,7 @@ static void jit_shift_rm(const x86_jit_insn_t *insn) {
     cf = ((ring >> bits) & 1u) != 0;
     jit_flag_set(X86_FLAG_CF, cf);
     if (rotate_count == 1) {
-      if (insn->alu_op == 2) {
+      if (insn->alu_op == X86_GROUP2_RCL) {
         jit_flag_set(X86_FLAG_OF,
             (((result & jit_sign_bit(insn->width)) != 0) != cf));
       }
@@ -2000,12 +2263,12 @@ static void jit_shift_rm(const x86_jit_insn_t *insn) {
     return;
   }
 
-  if (insn->alu_op == 0 || insn->alu_op == 1) {
+  if (insn->alu_op == X86_GROUP2_ROL || insn->alu_op == X86_GROUP2_ROR) {
     uint32_t rotate_count = count % bits;
     if (rotate_count == 0) return;
 
     lhs = jit_mask_width(lhs, insn->width);
-    if (insn->alu_op == 0) {
+    if (insn->alu_op == X86_GROUP2_ROL) {
       result = jit_mask_width((lhs << rotate_count) |
           (lhs >> (bits - rotate_count)), insn->width);
       cf = (result & 1u) != 0;
@@ -2031,20 +2294,20 @@ static void jit_shift_rm(const x86_jit_insn_t *insn) {
   }
 
   switch (insn->alu_op) {
-    case 4:
-    case 6:
+    case X86_GROUP2_SHL:
+    case X86_GROUP2_SAL_ALIAS:
       result = jit_mask_width(lhs << count, insn->width);
       if (count <= bits) cf = ((lhs >> (bits - count)) & 1u) != 0;
       if (count == 1) {
         of = (((result ^ lhs) & jit_sign_bit(insn->width)) != 0);
       }
       break;
-    case 5:
+    case X86_GROUP2_SHR:
       result = jit_mask_width(lhs, insn->width) >> count;
       cf = ((lhs >> (count - 1u)) & 1u) != 0;
       if (count == 1) of = (lhs & jit_sign_bit(insn->width)) != 0;
       break;
-    case 7:
+    case X86_GROUP2_SAR:
       result = jit_mask_width(
           (uint32_t)((int32_t)jit_sign_extend(lhs, insn->width) >> count),
           insn->width);
@@ -2134,7 +2397,12 @@ static void jit_imul_acc_rm(const x86_jit_insn_t *insn) {
   jit_flag_set(X86_FLAG_OF, truncated);
 }
 
-/* Unsigned DIV helper for the implicit AX, DX:AX, or EDX:EAX dividend forms. */
+/*
+ * Unsigned DIV helper for the implicit AX, DX:AX, or EDX:EAX dividend forms.
+ * Intel raises #DE for divisor zero or a quotient too large for AL/AX/EAX.  The
+ * helper asserts those cases because this JIT boundary does not construct an
+ * exception frame itself.
+ */
 static void jit_div_rm(const x86_jit_insn_t *insn) {
   const uint32_t lhs = jit_rm_read(insn, insn->width);
 
@@ -2173,7 +2441,12 @@ static void jit_div_rm(const x86_jit_insn_t *insn) {
   }
 }
 
-/* Signed IDIV helper for the implicit AX, DX:AX, or EDX:EAX dividend forms. */
+/*
+ * Signed IDIV helper for the implicit AX, DX:AX, or EDX:EAX dividend forms.
+ * Divisor zero and quotient overflow are Intel #DE cases; here they remain
+ * assertions for the same reason as DIV.  The remainder follows C99 truncation
+ * toward zero, which matches IA-32 IDIV.
+ */
 static void jit_idiv_rm(const x86_jit_insn_t *insn) {
   const uint32_t lhs = jit_rm_read(insn, insn->width);
 
@@ -2348,6 +2621,29 @@ static uint32_t jit_branch_target(const x86_jit_insn_t *insn) {
   return (uint32_t)(insn->next_pc + insn->rel);
 }
 
+/* Extract the current IA-32 I/O privilege level from EFLAGS.IOPL bits 13..12. */
+static uint32_t jit_x86_iopl(void) {
+  return (cpu.eflags >> X86_EFLAGS_IOPL_SHIFT) & X86_SELECTOR_RPL_MASK;
+}
+
+/*
+ * Enforce the privilege check shared by IN and OUT helper paths.  Intel treats
+ * IN/INS/OUT/OUTS as I/O-sensitive: in protected mode the instruction may
+ * execute only when CPL <= IOPL, unless the task's I/O permission bitmap grants
+ * the port.  NEMU's current x86 JIT does not model the bitmap or synthesise a
+ * full #GP frame here, so unsupported user-mode I/O is a correctness assertion
+ * at the JIT boundary.
+ */
+static void jit_require_io_privilege(const x86_jit_insn_t *insn,
+    const char *op) {
+  const uint32_t cpl = cpu.cs & X86_SELECTOR_RPL_MASK;
+  const uint32_t iopl = jit_x86_iopl();
+
+  Assert(cpl <= iopl,
+      "x86 JIT %s from CPL %u with IOPL %u would raise #GP at pc = " FMT_WORD,
+      op, cpl, iopl, insn->pc);
+}
+
 /* Slow semantic executor for decoded helper-backed instructions. */
 static void jit_helper_exec(const x86_jit_insn_t *insn) {
   uint32_t lhs = 0, rhs = 0, result = 0;
@@ -2373,7 +2669,7 @@ static void jit_helper_exec(const x86_jit_insn_t *insn) {
         jit_stats.helper_shift_rm_imm++;
       }
       if (insn->width < 4) jit_stats.helper_shift_rm_width[insn->width]++;
-      jit_stats.helper_shift_rm_op[insn->alu_op & 0x7u]++;
+      jit_stats.helper_shift_rm_op[insn->alu_op & X86_HOST_REG_MASK]++;
     }
   }
 
@@ -2551,6 +2847,21 @@ static void jit_helper_exec(const x86_jit_insn_t *insn) {
     case X86_JIT_HELPER_IMUL_REG_RM:
       jit_imul_reg_rm(insn);
       return;
+#ifdef CONFIG_HAS_PORT_IO
+    case X86_JIT_HELPER_PIO_IN:
+      lhs = insn->pio_port_from_dx ?
+          jit_reg_read(R_EDX, X86_WIDTH_WORD) : (insn->imm & X86_WORD_MASK);
+      jit_require_io_privilege(insn, "in");
+      jit_reg_write(R_EAX, insn->width, pio_read((ioaddr_t)lhs, insn->width));
+      return;
+    case X86_JIT_HELPER_PIO_OUT:
+      lhs = insn->pio_port_from_dx ?
+          jit_reg_read(R_EDX, X86_WIDTH_WORD) : (insn->imm & X86_WORD_MASK);
+      jit_require_io_privilege(insn, "out");
+      pio_write((ioaddr_t)lhs, insn->width,
+          jit_reg_read(R_EAX, insn->width));
+      return;
+#endif
     default:
       panic("x86 JIT helper bad helper op %u", insn->helper);
   }
@@ -2562,6 +2873,99 @@ static void jit_helper_exec(const x86_jit_insn_t *insn) {
  * function name is the assembly contract: for example emit_movabs_rdx() emits
  * `REX.W + BA rd io` for `mov rdx, imm64`, and emit_jcc_rel32_placeholder()
  * emits `0F 80+cc rel32` with the displacement patched later.
+ *
+ * Raw emitter magic-number guide:
+ *
+ *   - 0x40..0x4f are REX prefixes.  Bits are W=0x08, R=0x04, X=0x02,
+ *     B=0x01, added to the fixed 0x40 base.  Common fixed forms below:
+ *       0x41 = REX.B, extends ModR/M r/m or opcode register to r8..r15.
+ *       0x44 = REX.R, extends the ModR/M reg/opcode field.
+ *       0x45 = REX.RB, extends both reg/opcode and r/m fields.
+ *       0x48 = REX.W, selects 64-bit operand size.
+ *       0x49 = REX.WB, 64-bit plus r/m or opcode-register extension.
+ *       0x4c = REX.WR, 64-bit plus reg/opcode extension.
+ *       0x4d = REX.WRB, 64-bit plus reg/opcode and r/m extensions.
+ *   - 0x66 is the operand-size override used for 16-bit host operations.
+ *
+ * Opcode byte catalogue used by emit_u8():
+ *
+ *   - ALU register/memory opcodes follow the Intel Group-1 order.  The
+ *     byte/word/dword pairs are ADD 0x00/0x01, OR 0x08/0x09,
+ *     ADC 0x10/0x11, SBB 0x18/0x19, AND 0x20/0x21,
+ *     SUB 0x28/0x29, XOR 0x30/0x31, CMP 0x38/0x39.
+ *   - 0x03 is ADD r32, r/m32.  0x05 is ADD EAX, imm32.
+ *   - 0x56/0x57 push RSI/RDI; 0x58 pop RAX; 0x5e/0x5f pop RSI/RDI.
+ *   - 0x80/0x81/0x83 are Group-1 immediate ALU forms.
+ *   - 0x84/0x85 are TEST r/m, r byte/non-byte forms.
+ *   - 0x88/0x89 are MOV r/m, r byte/non-byte forms.
+ *   - 0x8b is MOV r, r/m.  0x8d is LEA.
+ *   - 0x9c is PUSHFQ.  0x99 is CDQ in the current operand size.
+ *   - 0xa1/0xa3 are MOV accumulator from/to moffs.  0xa8/0xa9 are
+ *     TEST accumulator, immediate byte/non-byte forms.
+ *   - 0xb8..0xbf are MOV register, immediate opcodes; the low three bits pick
+ *     the register number, and REX.B extends that number.
+ *   - 0x0f introduces two-byte opcodes.  Common second bytes here are 0x80+cc
+ *     for Jcc rel32, 0x90+cc for SETcc, 0xaf for IMUL, 0xb6/0xb7 for MOVZX,
+ *     0xba for BT r/m, imm8, and 0xbe/0xbf for MOVSX.
+ *   - 0xc0/0xc1 and 0xd0..0xd3 are Group-2 shift/rotate opcodes; the ModR/M
+ *     /digit field selects ROL/ROR/RCL/RCR/SHL/SHR/SAL/SAR.
+ *   - 0xc3 is RET.  0xc7 /0 is MOV r/m, imm32.  0xe3 is JRCXZ rel8.
+ *   - 0xe9 is JMP rel32.  0xff is a group opcode used here for CALL/JMP r/m.
+ *   - 0xf6/0xf7 are Group-3 TEST/NOT/NEG/MUL/IMUL/DIV/IDIV opcodes.
+ *
+ * ModR/M and SIB byte catalogue:
+ *
+ *   - ModR/M byte layout is mod[7..6], reg/opcode[5..3], r/m[2..0].  Byte
+ *     0xc0 sets mod=3 for register-direct operands; `(reg & 7) << 3` fills the
+ *     middle field; `(rm & 7)` fills r/m.
+ *   - SIB byte layout is scale[7..6], index[5..3], base[2..0].  The emitted
+ *     code uses SIB only when it needs indexed forms such as `[r10 + rdx]` or
+ *     `[r12 + disp32]`.
+ *   - 0x00, 0x02, 0x03 address [rax], [rdx], and [r11] depending on REX.
+ *   - 0x04 and 0x0c select SIB addressing with EAX/ECX destination fields.
+ *   - 0x12 encodes mod=0, reg=2, r/m=2; with REX prefixes it is often the
+ *     `[r10 + rdx]` SIB form after a following SIB byte.
+ *   - 0x24 is the SIB byte with scale=1, no index, base=rsp/r12.  It is why
+ *     r12-based addressing needs an explicit SIB byte in x86-64.
+ *   - 0x3c with SIB 0x0a encodes byte `[r10 + rcx]` for immediate CMP.
+ *   - 0x42/0x4a are mod=1 disp8 forms over r10 with EAX/ECX reg fields.
+ *   - 0x5c with SIB 0x0a encodes `[r10 + rcx + disp8]` with r11 as reg field.
+ *   - 0x84/0x8c/0x9c with SIB 0x24 are disp32 forms over r12.
+ *   - 0xc0..0xff values are register-direct ModR/M bytes.  The high 0xc0
+ *     means mod=3; the middle three bits name the opcode extension or source
+ *     register; the low three bits name the destination/register operand.
+ *
+ * Local immediates that look like opcodes but are data:
+ *
+ *   - 0x80000000 is INT32_MIN, the only signed 32-bit dividend that overflows
+ *     when divided by -1.
+ *   - 0xffffffff is -1 as an unsigned 32-bit immediate for that IDIV guard.
+ *   - 0xffffff00 and 0xffff0000 preserve the high 24 or high 16 bits when
+ *     writing only AL or AX back into a 32-bit guest register.
+ *
+ * Byte reference inventory:
+ *
+ *   Every direct `emit_u8(w, 0xNN)` byte and every byte that was converted to
+ *   X86_HOST_MODRM()/X86_HOST_SIB() in this file is covered by the catalogue
+ *   above.  For quick auditing, the byte values used by these host encodings
+ *   include:
+ *
+ *   - Prefix/opcode/immediate-control bytes:
+ *     0x0f, 0x29, 0x31, 0x39, 0x41, 0x44, 0x45, 0x48, 0x49, 0x4c, 0x4d,
+ *     0x52, 0x56, 0x57, 0x58, 0x5e, 0x5f, 0x66, 0x80, 0x81, 0x83, 0x84,
+ *     0x85, 0x88, 0x89, 0x8b, 0x8d, 0x99, 0x9c, 0xa1, 0xa3, 0xa8, 0xa9,
+ *     0xaf, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xbb, 0xbe, 0xbf, 0xc0, 0xc1,
+ *     0xc3, 0xc7, 0xd2, 0xd3, 0xe3, 0xe9, 0xf6, 0xf7, 0xff.
+ *   - ModR/M, SIB, and fixed displacement bytes:
+ *     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x09, 0x0a, 0x0b, 0x0c,
+ *     0x12, 0x13, 0x14, 0x15, 0x1b, 0x1c, 0x24, 0x3c, 0x42, 0x4a, 0x5b,
+ *     0x5c, 0x7c, 0x84, 0x8c, 0xc0, 0xc2, 0xc4, 0xc6, 0xc8, 0xc9, 0xca,
+ *     0xcb, 0xd0, 0xd1, 0xd8, 0xd9, 0xda, 0xdb, 0xe1, 0xe2, 0xe8, 0xea,
+ *     0xeb, 0xec, 0xf0, 0xf1, 0xf3, 0xf8, 0xf9, 0xfa, 0xfb, 0xfe.
+ *
+ *   - Relative branches reserve one or four displacement bytes.  patch_rel8()
+ *     and patch_rel32() calculate target - next_instruction after code layout
+ *     is known.
  */
 /* Append one byte to the native code buffer. */
 static bool emit_u8(x86_jit_writer_t *w, uint8_t value) {
@@ -2588,12 +2992,12 @@ static bool emit_u64(x86_jit_writer_t *w, uint64_t value) {
 
 /* Emit host code for movabs rdx; bytes below are x86-64 encodings. */
 static bool emit_movabs_rdx(x86_jit_writer_t *w, uint64_t value) {
-  return emit_u8(w, 0x48) && emit_u8(w, 0xba) && emit_u64(w, value);
+  return emit_u8(w, X86_HOST_REX_W_PREFIX) && emit_u8(w, 0xba) && emit_u64(w, value);
 }
 
 /* Emit host code for movabs rax; bytes below are x86-64 encodings. */
 static bool emit_movabs_rax(x86_jit_writer_t *w, uint64_t value) {
-  return emit_u8(w, 0x48) && emit_u8(w, 0xb8) && emit_u64(w, value);
+  return emit_u8(w, X86_HOST_REX_W_PREFIX) && emit_u8(w, 0xb8) && emit_u64(w, value);
 }
 
 /* Emit host code for mov eax moffs64; bytes below are x86-64 encodings. */
@@ -2608,17 +3012,17 @@ static bool emit_mov_moffs64_eax(x86_jit_writer_t *w, uint64_t addr) {
 
 /* Emit host code for movabs rdi; bytes below are x86-64 encodings. */
 static bool emit_movabs_rdi(x86_jit_writer_t *w, uint64_t value) {
-  return emit_u8(w, 0x48) && emit_u8(w, 0xbf) && emit_u64(w, value);
+  return emit_u8(w, X86_HOST_REX_W_PREFIX) && emit_u8(w, 0xbf) && emit_u64(w, value);
 }
 
 /* Emit host code for mov r10 r13; bytes below are x86-64 encodings. */
 static bool emit_mov_r10_r13(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x4d) && emit_u8(w, 0x89) && emit_u8(w, 0xea);
+  return emit_u8(w, X86_HOST_REX_WRB_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xea);
 }
 
 /* Emit host code for mov r10 r15; bytes below are x86-64 encodings. */
 static bool emit_mov_r10_r15(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x4d) && emit_u8(w, 0x89) && emit_u8(w, 0xfa);
+  return emit_u8(w, X86_HOST_REX_WRB_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xfa);
 }
 
 /* Emit host code for movabs r10; bytes below are x86-64 encodings. */
@@ -2636,30 +3040,30 @@ static bool emit_movabs_r10(x86_jit_writer_t *w, uint64_t value) {
     }
   }
 
-  return emit_u8(w, 0x49) && emit_u8(w, 0xba) && emit_u64(w, value);
+  return emit_u8(w, X86_HOST_REX_WB_PREFIX) && emit_u8(w, 0xba) && emit_u64(w, value);
 }
 
 /* Emit host code for mov r10 ret cache base; bytes below are x86-64 encodings. */
 static bool emit_mov_r10_ret_cache_base(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x49) && emit_u8(w, 0xba) &&
+  return emit_u8(w, X86_HOST_REX_WB_PREFIX) && emit_u8(w, 0xba) &&
          emit_u64(w, (uint64_t)(uintptr_t)jit_ret_cache);
 }
 
 /* Emit host code for mov r10 ret-cache metadata base. */
 static bool emit_mov_r10_ret_cache_meta_base(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x49) && emit_u8(w, 0xba) &&
+  return emit_u8(w, X86_HOST_REX_WB_PREFIX) && emit_u8(w, 0xba) &&
          emit_u64(w, (uint64_t)(uintptr_t)jit_ret_cache_meta);
 }
 
 /* Emit host code for mov r10 ret-cache generation-slot base. */
 static bool emit_mov_r10_ret_cache_generation_slot_base(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x49) && emit_u8(w, 0xba) &&
+  return emit_u8(w, X86_HOST_REX_WB_PREFIX) && emit_u8(w, 0xba) &&
          emit_u64(w, (uint64_t)(uintptr_t)jit_ret_cache_generation_slot);
 }
 
 /* Emit host code for movabs r11; bytes below are x86-64 encodings. */
 static bool emit_movabs_r11(x86_jit_writer_t *w, uint64_t value) {
-  return emit_u8(w, 0x49) && emit_u8(w, 0xbb) && emit_u64(w, value);
+  return emit_u8(w, X86_HOST_REX_WB_PREFIX) && emit_u8(w, 0xbb) && emit_u64(w, value);
 }
 
 /* Emit host code for call rax; bytes below are x86-64 encodings. */
@@ -2687,25 +3091,15 @@ static bool emit_pop_rsi(x86_jit_writer_t *w) {
   return emit_u8(w, 0x5e);
 }
 
-/* Emit host code for push rdx; bytes below are x86-64 encodings. */
-static bool emit_push_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x52);
-}
-
-/* Emit host code for pop rdx; bytes below are x86-64 encodings. */
-static bool emit_pop_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x5a);
-}
-
 /* Emit host code for sub rsp imm8; bytes below are x86-64 encodings. */
 static bool emit_sub_rsp_imm8(x86_jit_writer_t *w, uint8_t value) {
-  return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
+  return emit_u8(w, X86_HOST_REX_W_PREFIX) && emit_u8(w, 0x83) &&
          emit_u8(w, 0xec) && emit_u8(w, value);
 }
 
 /* Emit host code for add rsp imm8; bytes below are x86-64 encodings. */
 static bool emit_add_rsp_imm8(x86_jit_writer_t *w, uint8_t value) {
-  return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
+  return emit_u8(w, X86_HOST_REX_W_PREFIX) && emit_u8(w, 0x83) &&
          emit_u8(w, 0xc4) && emit_u8(w, value);
 }
 
@@ -2726,12 +3120,14 @@ static bool emit_mov_edx_imm32(x86_jit_writer_t *w, uint32_t value) {
 
 /* Emit host code for mov r11d imm32; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_imm32(x86_jit_writer_t *w, uint32_t value) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0xbb) && emit_u32(w, value);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, 0xbb) && emit_u32(w, value);
 }
 
 /* Emit host code for xor edx edx; bytes below are x86-64 encodings. */
 static bool emit_xor_edx_edx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x31) && emit_u8(w, 0xd2);
+  return emit_u8(w, 0x31) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RDX,
+             X86_HOST_RDX));
 }
 
 /* Emit host code for mov m32 rdx imm32; bytes below are x86-64 encodings. */
@@ -2746,202 +3142,303 @@ static bool emit_mov_m8_rdx_al(x86_jit_writer_t *w) {
 
 /* Emit host code for mov m16 r11 ax; bytes below are x86-64 encodings. */
 static bool emit_mov_m16_r11_ax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x66) && emit_u8(w, 0x41) &&
-         emit_u8(w, 0x89) && emit_u8(w, 0x03);
+  return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, X86_HOST_REX_B_PREFIX) &&
+         emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0x03);
 }
 
 /* Emit host code for mov m16 r11 dx; bytes below are x86-64 encodings. */
 static bool emit_mov_m16_r11_dx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x66) && emit_u8(w, 0x41) &&
-         emit_u8(w, 0x89) && emit_u8(w, 0x13);
+  return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, X86_HOST_REX_B_PREFIX) &&
+         emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0x13);
 }
 
+/*
+ * Dense addressing byte guide for the memory helpers below:
+ *
+ *   - 0x84/0x8c/0x9c with SIB 0x24 mean mod=2 disp32, r/m=4 SIB,
+ *     base=r12, no index.  The reg field selects EAX/ECX/R11D.
+ *   - 0x04/0x0c/0x1c with SIB 0x12 mean mod=0, r/m=4 SIB,
+ *     base=r10, index=rdx, scale=1.  The reg field selects EAX/ECX/R11D.
+ *   - 0x44/0x5c with SIB 0x15 and disp8 0 select [r13 + rdx + 0].
+ *     x86-64 cannot encode r13 as a no-displacement base, so the zero
+ *     displacement byte is architectural, not padding.
+ *   - 0x5c with SIB 0x0a means [r10 + rcx + disp8].
+ */
+/* Emit host code for mov dword ptr [r12 + disp32], imm32. */
 static bool emit_mov_m32_r12_disp32_imm32(x86_jit_writer_t *w,
     uint32_t disp, uint32_t value) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0xc7) &&
-         emit_u8(w, 0x84) && emit_u8(w, 0x24) &&
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM_IMM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP32, X86_HOST_OPCODE_EXT_0,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RSP,
+             X86_HOST_RSP)) &&
          emit_u32(w, disp) && emit_u32(w, value);
 }
 
 /* Emit host code for mov ecx m32 rdx; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_m32_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x8b) && emit_u8(w, 0x0a);
-}
-
-/* Emit host code for mov ecx m32 r10; bytes below are x86-64 encodings. */
-static bool emit_mov_ecx_m32_r10(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) && emit_u8(w, 0x0a);
-}
-
-/* Emit host code for mov ecx m32 r11; bytes below are x86-64 encodings. */
-static bool emit_mov_ecx_m32_r11(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) && emit_u8(w, 0x0b);
-}
-
-/* Emit host code for mov r10d m32 r10; bytes below are x86-64 encodings. */
-static bool emit_mov_r10d_m32_r10(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x45) && emit_u8(w, 0x8b) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RCX,
+             X86_HOST_RDX));
 }
 
 /* Emit host code for mov eax m32 r12 disp32; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_m32_r12_disp32(x86_jit_writer_t *w, uint32_t disp) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
-         emit_u8(w, 0x84) && emit_u8(w, 0x24) && emit_u32(w, disp);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP32, X86_HOST_RAX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RSP,
+             X86_HOST_RSP)) &&
+         emit_u32(w, disp);
 }
 
 /* Emit host code for mov ecx m32 r12 disp32; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_m32_r12_disp32(x86_jit_writer_t *w, uint32_t disp) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
-         emit_u8(w, 0x8c) && emit_u8(w, 0x24) && emit_u32(w, disp);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP32, X86_HOST_RCX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RSP,
+             X86_HOST_RSP)) &&
+         emit_u32(w, disp);
 }
 
 /* Emit host code for mov r11d m32 r12 disp32; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_m32_r12_disp32(x86_jit_writer_t *w, uint32_t disp) {
-  return emit_u8(w, 0x45) && emit_u8(w, 0x8b) &&
-         emit_u8(w, 0x9c) && emit_u8(w, 0x24) && emit_u32(w, disp);
+  return emit_u8(w, X86_HOST_REX_RB_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP32, X86_HOST_R11,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RSP,
+             X86_HOST_RSP)) &&
+         emit_u32(w, disp);
 }
 
 /* Emit host code for mov m32 r12 disp32 eax; bytes below are x86-64 encodings. */
 static bool emit_mov_m32_r12_disp32_eax(x86_jit_writer_t *w, uint32_t disp) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x89) &&
-         emit_u8(w, 0x84) && emit_u8(w, 0x24) && emit_u32(w, disp);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP32, X86_HOST_RAX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RSP,
+             X86_HOST_RSP)) &&
+         emit_u32(w, disp);
 }
 
 /* Emit host code for mov eax m32 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_m32_r10_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
-         emit_u8(w, 0x04) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RAX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for mov eax m32 r13 rdx; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_m32_r13_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
-         emit_u8(w, 0x44) && emit_u8(w, 0x15) && emit_u8(w, 0x00);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP8, X86_HOST_RAX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R13)) &&
+         emit_u8(w, X86_HOST_DISP8_ZERO);
 }
 
 /* Emit host code for mov ecx m32 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_m32_r10_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
-         emit_u8(w, 0x0c) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RCX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for movzx eax m8 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_movzx_eax_m8_r10_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
-         emit_u8(w, 0xb6) && emit_u8(w, 0x04) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
+         emit_u8(w, X86_HOST_OP_MOVZX_R32_RM8) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RAX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for movzx eax m16 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_movzx_eax_m16_r10_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
-         emit_u8(w, 0xb7) && emit_u8(w, 0x04) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
+         emit_u8(w, X86_HOST_OP_MOVZX_R32_RM16) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RAX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for movsx eax m8 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_movsx_eax_m8_r10_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
-         emit_u8(w, 0xbe) && emit_u8(w, 0x04) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
+         emit_u8(w, X86_HOST_OP_MOVSX_R32_RM8) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RAX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for movsx eax m16 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_movsx_eax_m16_r10_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
-         emit_u8(w, 0xbf) && emit_u8(w, 0x04) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
+         emit_u8(w, X86_HOST_OP_MOVSX_R32_RM16) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RAX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for movsx eax al; bytes below are x86-64 encodings. */
 static bool emit_movsx_eax_al(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x0f) && emit_u8(w, 0xbe) && emit_u8(w, 0xc0);
+  return emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) && emit_u8(w, 0xbe) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RAX,
+             X86_HOST_RAX));
 }
 
 /* Emit host code for movsx eax ax; bytes below are x86-64 encodings. */
 static bool emit_movsx_eax_ax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x0f) && emit_u8(w, 0xbf) && emit_u8(w, 0xc0);
+  return emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) && emit_u8(w, 0xbf) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RAX,
+             X86_HOST_RAX));
 }
 
 /* Emit host code for movzx ecx m8 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_movzx_ecx_m8_r10_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
-         emit_u8(w, 0xb6) && emit_u8(w, 0x0c) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
+         emit_u8(w, X86_HOST_OP_MOVZX_R32_RM8) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RCX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for movzx ecx m16 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_movzx_ecx_m16_r10_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
-         emit_u8(w, 0xb7) && emit_u8(w, 0x0c) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
+         emit_u8(w, X86_HOST_OP_MOVZX_R32_RM16) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RCX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for mov m8 r10 rdx al; bytes below are x86-64 encodings. */
 static bool emit_mov_m8_r10_rdx_al(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x88) &&
-         emit_u8(w, 0x04) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM8_R8) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RAX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for mov m16 r10 rdx ax; bytes below are x86-64 encodings. */
 static bool emit_mov_m16_r10_rdx_ax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x66) && emit_u8(w, 0x41) && emit_u8(w, 0x89) &&
-         emit_u8(w, 0x04) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RAX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for mov m32 r10 rdx r11d; bytes below are x86-64 encodings. */
 static bool emit_mov_m32_r10_rdx_r11d(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x45) && emit_u8(w, 0x89) &&
-         emit_u8(w, 0x1c) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_RB_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_R11,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for mov m32 r13 rdx r11d; bytes below are x86-64 encodings. */
 static bool emit_mov_m32_r13_rdx_r11d(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x45) && emit_u8(w, 0x89) &&
-         emit_u8(w, 0x5c) && emit_u8(w, 0x15) && emit_u8(w, 0x00);
+  return emit_u8(w, X86_HOST_REX_RB_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP8, X86_HOST_R11,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R13)) &&
+         emit_u8(w, X86_HOST_DISP8_ZERO);
 }
 
 /* Emit host code for mov r11d m32 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_m32_r10_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x45) && emit_u8(w, 0x8b) &&
-         emit_u8(w, 0x1c) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_RB_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_R11,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
+/* Emit host code for mov r11d, dword ptr [r10 + rcx + disp8]. */
 static bool emit_mov_r11d_m32_r10_rcx_disp8(x86_jit_writer_t *w,
     uint8_t disp) {
-  return emit_u8(w, 0x45) && emit_u8(w, 0x8b) &&
-         emit_u8(w, 0x5c) && emit_u8(w, 0x0a) && emit_u8(w, disp);
+  return emit_u8(w, X86_HOST_REX_RB_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP8, X86_HOST_R11,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RCX,
+             X86_HOST_R10)) &&
+         emit_u8(w, disp);
 }
 
+/* Emit host code for mov r11, qword ptr [r10 + rcx + disp8]. */
 static bool emit_mov_r11_m64_r10_rcx_disp8(x86_jit_writer_t *w,
     uint8_t disp) {
-  return emit_u8(w, 0x4d) && emit_u8(w, 0x8b) &&
-         emit_u8(w, 0x5c) && emit_u8(w, 0x0a) && emit_u8(w, disp);
+  return emit_u8(w, X86_HOST_REX_WRB_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP8, X86_HOST_R11,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RCX,
+             X86_HOST_R10)) &&
+         emit_u8(w, disp);
 }
 
 /* Emit host code for mov r11 m64 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_mov_r11_m64_r10_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x4d) && emit_u8(w, 0x8b) &&
-         emit_u8(w, 0x1c) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_WRB_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_R11,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for mov eax m32 r10 disp8; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_m32_r10_disp8(x86_jit_writer_t *w, uint8_t disp) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x8b) &&
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
          emit_u8(w, 0x42) && emit_u8(w, disp);
 }
 
 /* Emit host code for mov m32 r10 rdx eax; bytes below are x86-64 encodings. */
 static bool emit_mov_m32_r10_rdx_eax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x89) &&
-         emit_u8(w, 0x04) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RAX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for not m32 r10 rdx; bytes below are x86-64 encodings. */
 static bool emit_not_m32_r10_rdx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0xf7) &&
-         emit_u8(w, 0x14) && emit_u8(w, 0x12);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_GROUP3_NONBYTE) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_GROUP3_NOT,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RDX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for mov r11d m32 r11; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_m32_r11(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x45) && emit_u8(w, 0x8b) && emit_u8(w, 0x1b);
+  return emit_u8(w, X86_HOST_REX_RB_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_R32_RM32) && emit_u8(w, 0x1b);
 }
 
+/*
+ * Register-direct ModR/M guide for the scalar helpers below:
+ *
+ *   - Values 0xc0..0xff are mod=3 register operands.  The low three bits are
+ *     r/m, and bits 5..3 are either a source register or a Group opcode digit.
+ *   - Examples: 0xc8 is reg=1 rm=0, used by ADD/OR/TEST EAX, ECX forms;
+ *     0xe1 is /4 with ECX, i.e. SHL ECX, imm8; 0xf1 is /6 with ECX, DIV ECX;
+ *     0xf9 is /7 with ECX, IDIV ECX.
+ */
 /* Emit host code for add eax m32 rdx; bytes below are x86-64 encodings. */
 static bool emit_add_eax_m32_rdx(x86_jit_writer_t *w) {
   return emit_u8(w, 0x03) && emit_u8(w, 0x02);
@@ -2949,13 +3446,13 @@ static bool emit_add_eax_m32_rdx(x86_jit_writer_t *w) {
 
 /* Emit host code for shl ecx imm; bytes below are x86-64 encodings. */
 static bool emit_shl_ecx_imm(x86_jit_writer_t *w, uint8_t value) {
-  return value == 0 || (emit_u8(w, 0xc1) && emit_u8(w, 0xe1) && emit_u8(w, value));
+  return value == 0 || (emit_u8(w, X86_HOST_OP_GROUP2_IMM) && emit_u8(w, 0xe1) && emit_u8(w, value));
 }
 
 /* Emit host code for shl edx imm; bytes below are x86-64 encodings. */
 static bool emit_shl_edx_imm(x86_jit_writer_t *w, uint8_t value) {
   return value == 0 ||
-         (emit_u8(w, 0xc1) && emit_u8(w, 0xe2) && emit_u8(w, value));
+         (emit_u8(w, X86_HOST_OP_GROUP2_IMM) && emit_u8(w, 0xe2) && emit_u8(w, value));
 }
 
 /* Emit host code for add eax ecx; bytes below are x86-64 encodings. */
@@ -2975,12 +3472,14 @@ static bool emit_sub_ecx_esi(x86_jit_writer_t *w) {
 
 /* Emit host code for xor ecx eax; bytes below are x86-64 encodings. */
 static bool emit_xor_ecx_eax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x31) && emit_u8(w, 0xc1);
+  return emit_u8(w, 0x31) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RAX,
+             X86_HOST_RCX));
 }
 
 /* Emit host code for xor ecx r11d; bytes below are x86-64 encodings. */
 static bool emit_xor_ecx_r11d(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x44) && emit_u8(w, 0x31) && emit_u8(w, 0xd9);
+  return emit_u8(w, X86_HOST_REX_R_PREFIX) && emit_u8(w, 0x31) && emit_u8(w, 0xd9);
 }
 
 /* Emit host code for add eax imm32; bytes below are x86-64 encodings. */
@@ -2990,9 +3489,10 @@ static bool emit_add_eax_imm32(x86_jit_writer_t *w, uint32_t value) {
 
 /* Emit host code for add esi imm32; bytes below are x86-64 encodings. */
 static bool emit_add_esi_imm32(x86_jit_writer_t *w, uint32_t value) {
-  return emit_u8(w, 0x81) && emit_u8(w, 0xc6) && emit_u32(w, value);
+  return emit_u8(w, X86_HOST_OP_GROUP1_IMM32) && emit_u8(w, 0xc6) && emit_u32(w, value);
 }
 
+/* Emit add eax, imm32 and return the immediate slot for later patching. */
 static bool emit_add_eax_imm32_placeholder(x86_jit_writer_t *w,
     uint8_t **imm) {
   if (!emit_u8(w, 0x05)) return false;
@@ -3002,12 +3502,24 @@ static bool emit_add_eax_imm32_placeholder(x86_jit_writer_t *w,
 
 /* Emit host code for add edx imm32; bytes below are x86-64 encodings. */
 static bool emit_add_edx_imm32(x86_jit_writer_t *w, uint32_t value) {
-  return emit_u8(w, 0x81) && emit_u8(w, 0xc2) && emit_u32(w, value);
+  return emit_u8(w, X86_HOST_OP_GROUP1_IMM32) && emit_u8(w, 0xc2) && emit_u32(w, value);
+}
+
+/* Subtract the guest PMEM base from EAX when the configured base is non-zero. */
+static bool emit_sub_eax_pmem_guest_base(x86_jit_writer_t *w) {
+  if ((uint32_t)CONFIG_MBASE == 0u) return true;
+  return emit_add_eax_imm32(w, 0u - (uint32_t)CONFIG_MBASE);
+}
+
+/* Subtract the guest PMEM base from EDX when the configured base is non-zero. */
+static bool emit_sub_edx_pmem_guest_base(x86_jit_writer_t *w) {
+  if ((uint32_t)CONFIG_MBASE == 0u) return true;
+  return emit_add_edx_imm32(w, 0u - (uint32_t)CONFIG_MBASE);
 }
 
 /* Emit host code for cmp edx imm32; bytes below are x86-64 encodings. */
 static bool emit_cmp_edx_imm32(x86_jit_writer_t *w, uint32_t value) {
-  return emit_u8(w, 0x81) && emit_u8(w, 0xfa) && emit_u32(w, value);
+  return emit_u8(w, X86_HOST_OP_GROUP1_IMM32) && emit_u8(w, 0xfa) && emit_u32(w, value);
 }
 
 /* Emit host code for cmp eax edi; bytes below are x86-64 encodings. */
@@ -3022,68 +3534,70 @@ static bool emit_cmp_esi_edi(x86_jit_writer_t *w) {
 
 /* Emit host code for add m64 rdx imm8; bytes below are x86-64 encodings. */
 static bool emit_add_m64_rdx_imm8(x86_jit_writer_t *w, uint8_t value) {
-  return emit_u8(w, 0x48) && emit_u8(w, 0x83) &&
+  return emit_u8(w, X86_HOST_REX_W_PREFIX) && emit_u8(w, 0x83) &&
          emit_u8(w, 0x02) && emit_u8(w, value);
 }
 
 /* Emit host code for mov edx eax; bytes below are x86-64 encodings. */
 static bool emit_mov_edx_eax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x89) && emit_u8(w, 0xc2);
+  return emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xc2);
 }
 
 /* Emit host code for mov edx ecx; bytes below are x86-64 encodings. */
 static bool emit_mov_edx_ecx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x89) && emit_u8(w, 0xca);
+  return emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xca);
 }
 
 /* Emit host code for mov eax edx; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_edx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x89) && emit_u8(w, 0xd0);
+  return emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xd0);
 }
 
 /* Emit host code for mov eax esi; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_esi(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x89) && emit_u8(w, 0xf0);
+  return emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xf0);
 }
 
 /* Emit host code for mov esi eax; bytes below are x86-64 encodings. */
 static bool emit_mov_esi_eax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x89) && emit_u8(w, 0xc6);
+  return emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xc6);
 }
 
 /* Emit host code for mov r10 rax; bytes below are x86-64 encodings. */
 static bool emit_mov_r10_rax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x49) && emit_u8(w, 0x89) && emit_u8(w, 0xc2);
+  return emit_u8(w, X86_HOST_REX_WB_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xc2);
 }
 
 /* Emit host code for mov r14 rax; bytes below are x86-64 encodings. */
 static bool emit_mov_r14_rax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x49) && emit_u8(w, 0x89) && emit_u8(w, 0xc6);
+  return emit_u8(w, X86_HOST_REX_WB_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xc6);
 }
 
 /* Emit host code for mov eax r11d; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_r11d(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x44) && emit_u8(w, 0x89) && emit_u8(w, 0xd8);
+  return emit_u8(w, X86_HOST_REX_R_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xd8);
 }
 
 /* Emit host code for mov r10d eax; bytes below are x86-64 encodings. */
 static bool emit_mov_r10d_eax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xc2);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xc2);
 }
 
 /* Emit host code for mov r10d ecx; bytes below are x86-64 encodings. */
 static bool emit_mov_r10d_ecx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xca);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xca);
 }
 
 /* Emit host code for mov ecx r10d; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_r10d(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x44) && emit_u8(w, 0x89) && emit_u8(w, 0xd1);
+  return emit_u8(w, X86_HOST_REX_R_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xd1);
 }
 
 /* Emit host code for sub ecx eax; bytes below are x86-64 encodings. */
 static bool emit_sub_ecx_eax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x29) && emit_u8(w, 0xc1);
+  return emit_u8(w, 0x29) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RAX,
+             X86_HOST_RCX));
 }
 
 /* Emit host code for sub eax ecx; bytes below are x86-64 encodings. */
@@ -3093,62 +3607,75 @@ static bool emit_sub_eax_ecx(x86_jit_writer_t *w) {
 
 /* Emit host code for sub r14 rax; bytes below are x86-64 encodings. */
 static bool emit_sub_r14_rax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x49) && emit_u8(w, 0x29) && emit_u8(w, 0xc6);
+  return emit_u8(w, X86_HOST_REX_WB_PREFIX) && emit_u8(w, 0x29) && emit_u8(w, 0xc6);
 }
 
 /* Emit host code for mov r11d ecx; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_ecx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xcb);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xcb);
 }
 
 /* Emit host code for mov r11d eax; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_eax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xc3);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xc3);
 }
 
 /* Emit host code for mov r11d esi; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_esi(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xf3);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xf3);
 }
 
 /* Emit host code for mov r11d edx; bytes below are x86-64 encodings. */
 static bool emit_mov_r11d_edx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0xd3);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) &&
+         emit_u8(w, X86_HOST_OP_MOV_RM32_R32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RDX,
+             X86_HOST_R11));
 }
 
 /* Emit host code for mov edx r11d; bytes below are x86-64 encodings. */
 static bool emit_mov_edx_r11d(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x44) && emit_u8(w, 0x89) && emit_u8(w, 0xda);
+  return emit_u8(w, X86_HOST_REX_R_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xda);
 }
 
 /* Emit host code for mov ecx r11d; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_r11d(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x44) && emit_u8(w, 0x89) && emit_u8(w, 0xd9);
+  return emit_u8(w, X86_HOST_REX_R_PREFIX) && emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xd9);
 }
 
 /* Emit host code for mov ecx edx; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_edx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x89) && emit_u8(w, 0xd1);
+  return emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xd1);
 }
 
 /* Emit host code for mov ecx eax; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_eax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x89) && emit_u8(w, 0xc1);
+  return emit_u8(w, X86_HOST_OP_MOV_RM32_R32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RAX,
+             X86_HOST_RCX));
 }
 
 /* Emit host code for mov eax ecx; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_ecx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x89) && emit_u8(w, 0xc8);
+  return emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xc8);
+}
+
+/* Emit host code for movzx eax al; bytes below are x86-64 encodings. */
+static bool emit_movzx_eax_al(x86_jit_writer_t *w) {
+  return emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
+         emit_u8(w, X86_HOST_OP_MOVZX_R32_RM8) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RAX,
+             X86_HOST_RAX));
 }
 
 /* Emit host code for mov eax edi; bytes below are x86-64 encodings. */
 static bool emit_mov_eax_edi(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x89) && emit_u8(w, 0xf8);
+  return emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xf8);
 }
 
 /* Emit host code for mov ecx edi; bytes below are x86-64 encodings. */
 static bool emit_mov_ecx_edi(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x89) && emit_u8(w, 0xf9);
+  return emit_u8(w, X86_HOST_OP_MOV_RM32_R32) && emit_u8(w, 0xf9);
 }
 
 /* Emit host code for cmp edx ecx; bytes below are x86-64 encodings. */
@@ -3163,59 +3690,93 @@ static bool emit_cmp_edx_eax(x86_jit_writer_t *w) {
 
 /* Emit host code for cmp r11d eax; bytes below are x86-64 encodings. */
 static bool emit_cmp_r11d_eax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x39) && emit_u8(w, 0xc3);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, 0x39) && emit_u8(w, 0xc3);
 }
 
 /* Emit host code for cmp r11d imm32; bytes below are x86-64 encodings. */
 static bool emit_cmp_r11d_imm32(x86_jit_writer_t *w, uint32_t value) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x81) &&
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_GROUP1_IMM32) &&
          emit_u8(w, 0xfb) && emit_u32(w, value);
 }
 
 /* Emit host code for test r11 r11; bytes below are x86-64 encodings. */
 static bool emit_test_r11_r11(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x4d) && emit_u8(w, 0x85) && emit_u8(w, 0xdb);
+  return emit_u8(w, X86_HOST_REX_WRB_PREFIX) && emit_u8(w, 0x85) && emit_u8(w, 0xdb);
 }
 
 /* Emit host code for jmp r11; bytes below are x86-64 encodings. */
 static bool emit_jmp_r11(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0xff) && emit_u8(w, 0xe3);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, 0xff) && emit_u8(w, 0xe3);
 }
 
 /* Emit host code for cmp ecx imm32; bytes below are x86-64 encodings. */
 static bool emit_cmp_ecx_imm32(x86_jit_writer_t *w, uint32_t value) {
-  return emit_u8(w, 0x81) && emit_u8(w, 0xf9) && emit_u32(w, value);
+  return emit_u8(w, X86_HOST_OP_GROUP1_IMM32) && emit_u8(w, 0xf9) && emit_u32(w, value);
 }
 
-static bool emit_cmp_m8_r10_disp8_imm8(x86_jit_writer_t *w, uint8_t disp,
-    uint8_t value) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x80) &&
-         emit_u8(w, 0x7a) && emit_u8(w, disp) && emit_u8(w, value);
+/*
+ * Indexed byte-test/compare helpers below use:
+ *   - 0x3c + SIB 0x0a for [r10 + rcx].
+ *   - 0x3c + SIB 0x0b for [rbx + rcx].
+ *   - 0x7c + SIB 0x0f + disp8 0 for [r15 + rcx + 0].
+ *   - 0x42/0x4a disp8 for [r10 + disp8] with EAX/ECX reg fields.
+ */
+/* Emit host code for cmp m8 r10 rcx imm8; bytes below are x86-64 encodings. */
+static bool emit_cmp_m8_r10_rcx_imm8(x86_jit_writer_t *w, uint8_t value) {
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_GROUP1_IMM8) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_ALU_CMP,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RCX,
+             X86_HOST_R10)) &&
+         emit_u8(w, value);
 }
 
+/* Emit host code for cmp m8 rbx rcx imm8; bytes below are x86-64 encodings. */
+static bool emit_cmp_m8_rbx_rcx_imm8(x86_jit_writer_t *w, uint8_t value) {
+  return emit_u8(w, X86_HOST_OP_GROUP1_IMM8) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_ALU_CMP,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RCX,
+             X86_HOST_RBX)) &&
+         emit_u8(w, value);
+}
+
+/* Emit host code for cmp m8 r15 rcx imm8; bytes below are x86-64 encodings. */
+static bool emit_cmp_m8_r15_rcx_imm8(x86_jit_writer_t *w, uint8_t value) {
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_GROUP1_IMM8) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP8, X86_ALU_CMP,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RCX,
+             X86_HOST_R15)) &&
+         emit_u8(w, X86_HOST_DISP8_ZERO) && emit_u8(w, value);
+}
+
+/* Emit host code for test byte ptr [r10 + disp8], imm8. */
 static bool emit_test_m8_r10_disp8_imm8(x86_jit_writer_t *w, uint8_t disp,
     uint8_t value) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0xf6) &&
-         emit_u8(w, 0x42) && emit_u8(w, disp) && emit_u8(w, value);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_GROUP3_BYTE) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP8, X86_GROUP3_TEST,
+             X86_HOST_RDX)) &&
+         emit_u8(w, disp) && emit_u8(w, value);
 }
 
 /* Emit host code for cmp m32 r10 disp8 ecx; bytes below are x86-64 encodings. */
 static bool emit_cmp_m32_r10_disp8_ecx(x86_jit_writer_t *w, uint8_t disp) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x39) &&
-         emit_u8(w, 0x4a) && emit_u8(w, disp);
-}
-
-/* Emit host code for cmp m32 r10 disp8 r11d; bytes below are x86-64 encodings. */
-static bool emit_cmp_m32_r10_disp8_r11d(x86_jit_writer_t *w, uint8_t disp) {
-  return emit_u8(w, 0x45) && emit_u8(w, 0x39) &&
-         emit_u8(w, 0x5a) && emit_u8(w, disp);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, 0x39) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP8, X86_HOST_RCX,
+             X86_HOST_RDX)) &&
+         emit_u8(w, disp);
 }
 
 /* Emit host code for cmp m32 r10 rcx disp8 r11d; bytes below are x86-64 encodings. */
 static bool emit_cmp_m32_r10_rcx_disp8_r11d(x86_jit_writer_t *w,
     uint8_t disp) {
-  return emit_u8(w, 0x45) && emit_u8(w, 0x39) &&
-         emit_u8(w, 0x5c) && emit_u8(w, 0x0a) && emit_u8(w, disp);
+  return emit_u8(w, X86_HOST_REX_RB_PREFIX) && emit_u8(w, 0x39) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP8, X86_HOST_R11,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RCX,
+             X86_HOST_R10)) &&
+         emit_u8(w, disp);
 }
 
 /* Emit host code for test ecx ecx; bytes below are x86-64 encodings. */
@@ -3225,44 +3786,71 @@ static bool emit_test_ecx_ecx(x86_jit_writer_t *w) {
 
 /* Emit host code for and ecx imm32; bytes below are x86-64 encodings. */
 static bool emit_and_ecx_imm32(x86_jit_writer_t *w, uint32_t value) {
-  return emit_u8(w, 0x81) && emit_u8(w, 0xe1) && emit_u32(w, value);
+  return emit_u8(w, X86_HOST_OP_GROUP1_IMM32) && emit_u8(w, 0xe1) && emit_u32(w, value);
 }
 
 /* Emit host code for and edx imm32; bytes below are x86-64 encodings. */
 static bool emit_and_edx_imm32(x86_jit_writer_t *w, uint32_t value) {
-  return emit_u8(w, 0x81) && emit_u8(w, 0xe2) && emit_u32(w, value);
+  return emit_u8(w, X86_HOST_OP_GROUP1_IMM32) && emit_u8(w, 0xe2) && emit_u32(w, value);
 }
 
 /* Emit host code for shr ecx imm; bytes below are x86-64 encodings. */
 static bool emit_shr_ecx_imm(x86_jit_writer_t *w, uint8_t value) {
-  return value == 0 || (emit_u8(w, 0xc1) && emit_u8(w, 0xe9) && emit_u8(w, value));
+  return value == 0 || (emit_u8(w, X86_HOST_OP_GROUP2_IMM) && emit_u8(w, 0xe9) && emit_u8(w, value));
 }
 
 /* Emit host code for shr r11d imm; bytes below are x86-64 encodings. */
 static bool emit_shr_r11d_imm(x86_jit_writer_t *w, uint8_t value) {
-  return value == 0 || (emit_u8(w, 0x41) && emit_u8(w, 0xc1) &&
+  return value == 0 || (emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OP_GROUP2_IMM) &&
       emit_u8(w, 0xeb) && emit_u8(w, value));
-}
-
-/* Emit host code for test r10d imm32; bytes below are x86-64 encodings. */
-static bool emit_test_r10d_imm32(x86_jit_writer_t *w, uint32_t value) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0xf7) &&
-         emit_u8(w, 0xc2) && emit_u32(w, value);
-}
-
-/* Emit host code for imul eax eax imm32; bytes below are x86-64 encodings. */
-static bool emit_imul_eax_eax_imm32(x86_jit_writer_t *w, uint32_t value) {
-  return emit_u8(w, 0x69) && emit_u8(w, 0xc0) && emit_u32(w, value);
 }
 
 /* Emit host code for add r10 rax; bytes below are x86-64 encodings. */
 static bool emit_add_r10_rax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x49) && emit_u8(w, 0x01) && emit_u8(w, 0xc2);
+  return emit_u8(w, X86_HOST_REX_WB_PREFIX) && emit_u8(w, 0x01) && emit_u8(w, 0xc2);
+}
+
+/*
+ * Address calculation helpers below rely on SIB encodings:
+ *   - 0x14 0x06 selects [r14 + rax] for LEA r10, [r14 + rax].
+ *   - 0x0c 0x0a selects [r10 + rcx] for byte loads.
+ *   - 0x4c 0x0f 0 selects [r15 + rcx + 0], again needing disp8 because r15
+ *     follows the same no-displacement restriction as r13.
+ */
+/* Emit host code for lea r10, [r14 + rax]; bytes below are x86-64 encodings. */
+static bool emit_lea_r10_r14_rax(x86_jit_writer_t *w) {
+  return emit_u8(w, X86_HOST_REX_WRB_PREFIX) && emit_u8(w, 0x8d) &&
+         emit_u8(w, 0x14) && emit_u8(w, 0x06);
+}
+
+/* Put the DTLB entry address jit_dtlb + RAX into R10. */
+static bool emit_dtlb_entry_addr_r10(x86_jit_writer_t *w) {
+  if (jit_batch_dtlb_base_available()) return emit_lea_r10_r14_rax(w);
+  return emit_movabs_r10(w, (uint64_t)(uintptr_t)jit_dtlb) &&
+         emit_add_r10_rax(w);
+}
+
+/* Keep only the low DTLB-index bits in EAX. */
+static bool emit_dtlb_index_mask_eax(x86_jit_writer_t *w) {
+  if (X86_JIT_DTLB_SIZE == 256u) return emit_movzx_eax_al(w);
+  return emit_alu_eax_imm32(w, X86_ALU_AND, X86_JIT_DTLB_SIZE - 1u);
 }
 
 /* Emit host code for add rax r10; bytes below are x86-64 encodings. */
 static bool emit_add_rax_r10(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x4c) && emit_u8(w, 0x01) && emit_u8(w, 0xd0);
+  return emit_u8(w, X86_HOST_REX_WR_PREFIX) && emit_u8(w, 0x01) && emit_u8(w, 0xd0);
+}
+
+/* Emit host code for add rax r13; bytes below are x86-64 encodings. */
+static bool emit_add_rax_r13(x86_jit_writer_t *w) {
+  return emit_u8(w, X86_HOST_REX_WR_PREFIX) && emit_u8(w, 0x01) && emit_u8(w, 0xe8);
+}
+
+/* Add the host PMEM base to RAX, using the pinned r13 base when available. */
+static bool emit_add_rax_pmem_base(x86_jit_writer_t *w) {
+  if (jit_batch_cpu_base_available()) return emit_add_rax_r13(w);
+  return emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) &&
+         emit_add_rax_r10(w);
 }
 
 /* Emit host code for or eax edx; bytes below are x86-64 encodings. */
@@ -3272,27 +3860,35 @@ static bool emit_or_eax_edx(x86_jit_writer_t *w) {
 
 /* Emit host code for lea r11d r11d disp8; bytes below are x86-64 encodings. */
 static bool emit_lea_r11d_r11d_disp8(x86_jit_writer_t *w, int8_t disp) {
-  return emit_u8(w, 0x45) && emit_u8(w, 0x8d) &&
+  return emit_u8(w, X86_HOST_REX_RB_PREFIX) && emit_u8(w, 0x8d) &&
          emit_u8(w, 0x5b) && emit_u8(w, (uint8_t)disp);
 }
 
 /* Emit host code for lea r10d r10d disp8; bytes below are x86-64 encodings. */
 static bool emit_lea_r10d_r10d_disp8(x86_jit_writer_t *w, int8_t disp) {
-  return emit_u8(w, 0x45) && emit_u8(w, 0x8d) &&
+  return emit_u8(w, X86_HOST_REX_RB_PREFIX) && emit_u8(w, 0x8d) &&
          emit_u8(w, 0x52) && emit_u8(w, (uint8_t)disp);
 }
 
 /* Emit host code for movzx ecx m8 r10 rcx; bytes below are x86-64 encodings. */
 static bool emit_movzx_ecx_m8_r10_rcx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
-         emit_u8(w, 0xb6) && emit_u8(w, 0x0c) && emit_u8(w, 0x0a);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
+         emit_u8(w, X86_HOST_OP_MOVZX_R32_RM8) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP, X86_HOST_RCX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RCX,
+             X86_HOST_R10));
 }
 
 /* Emit host code for movzx ecx m8 r15 rcx; bytes below are x86-64 encodings. */
 static bool emit_movzx_ecx_m8_r15_rcx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x0f) &&
-         emit_u8(w, 0xb6) && emit_u8(w, 0x4c) &&
-         emit_u8(w, 0x0f) && emit_u8(w, 0x00);
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
+         emit_u8(w, X86_HOST_OP_MOVZX_R32_RM8) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP8, X86_HOST_RCX,
+             X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RCX,
+             X86_HOST_R15)) &&
+         emit_u8(w, X86_HOST_DISP8_ZERO);
 }
 
 /* Emit host code for pushfq; bytes below are x86-64 encodings. */
@@ -3310,17 +3906,48 @@ static bool emit_test_eax_imm32(x86_jit_writer_t *w, uint32_t value) {
   return emit_u8(w, 0xa9) && emit_u32(w, value);
 }
 
+/* Emit TEST accumulator, immediate using the requested guest operand width. */
 static bool emit_test_eax_imm_width(x86_jit_writer_t *w, uint8_t width,
     uint32_t value) {
   if (width == X86_WIDTH_DWORD) {
     return emit_test_eax_imm32(w, value);
   }
   if (width == X86_WIDTH_WORD) {
-    return emit_u8(w, 0x66) && emit_u8(w, 0xa9) &&
+    /* 0x66 0xa9 is TEST AX, imm16. */
+    return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, 0xa9) &&
            emit_u8(w, (uint8_t)value) && emit_u8(w, (uint8_t)(value >> 8));
   }
   if (width == X86_WIDTH_BYTE) {
+    /* 0xa8 is TEST AL, imm8. */
     return emit_u8(w, 0xa8) && emit_u8(w, (uint8_t)value);
+  }
+  return false;
+}
+
+/* Emit TEST imm against the translated host address in RAX without keeping the loaded value. */
+static bool emit_test_mrax_imm_width(x86_jit_writer_t *w, uint8_t width,
+    uint32_t value) {
+  if (width == X86_WIDTH_BYTE) {
+    /* 0xf6 /0 ib is Group-3 TEST r/m8, imm8; ModR/M selects [RAX]. */
+    return emit_u8(w, X86_HOST_OP_GROUP3_BYTE) &&
+           emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP,
+               X86_GROUP3_TEST, X86_HOST_RAX)) &&
+           emit_u8(w, (uint8_t)value);
+  }
+  if (width == X86_WIDTH_WORD) {
+    /* 0x66 0xf7 /0 iw is TEST r/m16, imm16 at [RAX]. */
+    return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) &&
+           emit_u8(w, X86_HOST_OP_GROUP3_NONBYTE) &&
+           emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP,
+               X86_GROUP3_TEST, X86_HOST_RAX)) &&
+           emit_u8(w, (uint8_t)value) && emit_u8(w, (uint8_t)(value >> 8));
+  }
+  if (width == X86_WIDTH_DWORD) {
+    /* 0xf7 /0 id is TEST r/m32, imm32 at [RAX]. */
+    return emit_u8(w, X86_HOST_OP_GROUP3_NONBYTE) &&
+           emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP,
+               X86_GROUP3_TEST, X86_HOST_RAX)) &&
+           emit_u32(w, value);
   }
   return false;
 }
@@ -3332,12 +3959,14 @@ static bool emit_test_eax_ecx(x86_jit_writer_t *w) {
 
 /* Emit host code for test rax rax; bytes below are x86-64 encodings. */
 static bool emit_test_rax_rax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x48) && emit_u8(w, 0x85) && emit_u8(w, 0xc0);
+  return emit_u8(w, X86_HOST_REX_W_PREFIX) && emit_u8(w, 0x85) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RAX,
+             X86_HOST_RAX));
 }
 
 /* Emit host code for test ax cx; bytes below are x86-64 encodings. */
 static bool emit_test_ax_cx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x66) && emit_u8(w, 0x85) && emit_u8(w, 0xc8);
+  return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, 0x85) && emit_u8(w, 0xc8);
 }
 
 /* Emit host code for test al cl; bytes below are x86-64 encodings. */
@@ -3352,61 +3981,78 @@ static bool emit_or_eax_ecx(x86_jit_writer_t *w) {
 
 /* Emit host code for imul eax ecx; bytes below are x86-64 encodings. */
 static bool emit_imul_eax_ecx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x0f) && emit_u8(w, 0xaf) && emit_u8(w, 0xc1);
+  return emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) && emit_u8(w, 0xaf) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RCX,
+             X86_HOST_RAX));
 }
 
 /* Emit host code for imul ax cx; bytes below are x86-64 encodings. */
 static bool emit_imul_ax_cx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x66) && emit_u8(w, 0x0f) &&
-         emit_u8(w, 0xaf) && emit_u8(w, 0xc1);
+  return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
+         emit_u8(w, 0xaf) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RCX,
+             X86_HOST_RAX));
 }
 
 /* Emit host code for mul ecx; bytes below are x86-64 encodings. */
 static bool emit_mul_ecx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0xf7) && emit_u8(w, 0xe1);
+  /* 0xf7 /4 is MUL r/m32; ModR/M 0xe1 selects /4 with ECX. */
+  return emit_u8(w, X86_HOST_OP_GROUP3_NONBYTE) && emit_u8(w, 0xe1);
 }
 
 /* Emit host code for mul cl; bytes below are x86-64 encodings. */
 static bool emit_mul_cl(x86_jit_writer_t *w) {
-  return emit_u8(w, 0xf6) && emit_u8(w, 0xe1);
+  /* 0xf6 /4 is MUL r/m8; ModR/M 0xe1 selects /4 with CL. */
+  return emit_u8(w, X86_HOST_OP_GROUP3_BYTE) && emit_u8(w, 0xe1);
 }
 
 /* Emit host code for mul cx; bytes below are x86-64 encodings. */
 static bool emit_mul_cx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x66) && emit_u8(w, 0xf7) && emit_u8(w, 0xe1);
+  /* 0x66 0xf7 /4 is MUL r/m16; ModR/M 0xe1 selects CX. */
+  return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, X86_HOST_OP_GROUP3_NONBYTE) && emit_u8(w, 0xe1);
 }
 
 /* Emit host code for imul acc ecx; bytes below are x86-64 encodings. */
 static bool emit_imul_acc_ecx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0xf7) && emit_u8(w, 0xe9);
+  /* 0xf7 /5 is one-operand IMUL r/m32; ModR/M 0xe9 selects /5 with ECX. */
+  return emit_u8(w, X86_HOST_OP_GROUP3_NONBYTE) && emit_u8(w, 0xe9);
 }
 
 /* Emit host code for imul acc cl; bytes below are x86-64 encodings. */
 static bool emit_imul_acc_cl(x86_jit_writer_t *w) {
-  return emit_u8(w, 0xf6) && emit_u8(w, 0xe9);
+  /* 0xf6 /5 is one-operand IMUL r/m8; ModR/M 0xe9 selects /5 with CL. */
+  return emit_u8(w, X86_HOST_OP_GROUP3_BYTE) && emit_u8(w, 0xe9);
 }
 
 /* Emit host code for imul acc cx; bytes below are x86-64 encodings. */
 static bool emit_imul_acc_cx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0x66) && emit_u8(w, 0xf7) && emit_u8(w, 0xe9);
+  /* 0x66 0xf7 /5 is one-operand IMUL r/m16; ModR/M 0xe9 selects CX. */
+  return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, X86_HOST_OP_GROUP3_NONBYTE) && emit_u8(w, 0xe9);
 }
 
+/* Emit a 32-bit Group-2 shift/rotate of EAX by an immediate count. */
 static bool emit_shift_eax_imm(x86_jit_writer_t *w, uint8_t shift_op,
     uint8_t count) {
-  return emit_u8(w, 0xc1) &&
-         emit_u8(w, (uint8_t)(0xc0u | ((shift_op & 0x7u) << 3))) &&
+  /* 0xc1 is Group-2 r/m32, imm8; 0xc0 base means register EAX. */
+  return emit_u8(w, X86_HOST_OP_GROUP2_IMM) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, shift_op,
+             X86_HOST_RAX)) &&
          emit_u8(w, count);
 }
 
+/* Emit a byte/word/dword Group-2 shift/rotate of EAX/AX/AL by imm8. */
 static bool emit_shift_eax_imm_width(x86_jit_writer_t *w, uint8_t shift_op,
     uint8_t width, uint8_t count) {
-  const uint8_t modrm = (uint8_t)(0xc0u | ((shift_op & 0x7u) << 3));
+  const uint8_t modrm =
+      X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, shift_op, X86_HOST_RAX);
 
   if (width == X86_WIDTH_BYTE) {
-    return emit_u8(w, 0xc0) && emit_u8(w, modrm) && emit_u8(w, count);
+    /* 0xc0 is Group-2 r/m8, imm8. */
+    return emit_u8(w, X86_HOST_OP_GROUP2_BYTE_IMM) && emit_u8(w, modrm) && emit_u8(w, count);
   }
   if (width == X86_WIDTH_WORD) {
-    return emit_u8(w, 0x66) && emit_u8(w, 0xc1) &&
+    /* 0x66 0xc1 is Group-2 r/m16, imm8. */
+    return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, X86_HOST_OP_GROUP2_IMM) &&
            emit_u8(w, modrm) && emit_u8(w, count);
   }
   if (width == X86_WIDTH_DWORD) return emit_shift_eax_imm(w, shift_op, count);
@@ -3415,27 +4061,35 @@ static bool emit_shift_eax_imm_width(x86_jit_writer_t *w, uint8_t shift_op,
 
 /* Emit host code for shift eax cl; bytes below are x86-64 encodings. */
 static bool emit_shift_eax_cl(x86_jit_writer_t *w, uint8_t shift_op) {
-  return emit_u8(w, 0xd3) &&
-         emit_u8(w, (uint8_t)(0xc0u | ((shift_op & 0x7u) << 3)));
+  /* 0xd3 is Group-2 r/m32, CL. */
+  return emit_u8(w, X86_HOST_OP_GROUP2_CL) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, shift_op,
+             X86_HOST_RAX));
 }
 
+/* Emit a byte/word/dword Group-2 shift/rotate of EAX/AX/AL by CL. */
 static bool emit_shift_eax_cl_width(x86_jit_writer_t *w, uint8_t shift_op,
     uint8_t width) {
-  const uint8_t modrm = (uint8_t)(0xc0u | ((shift_op & 0x7u) << 3));
+  const uint8_t modrm =
+      X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, shift_op, X86_HOST_RAX);
 
   if (width == X86_WIDTH_BYTE) {
-    return emit_u8(w, 0xd2) && emit_u8(w, modrm);
+    /* 0xd2 is Group-2 r/m8, CL. */
+    return emit_u8(w, X86_HOST_OP_GROUP2_BYTE_CL) && emit_u8(w, modrm);
   }
   if (width == X86_WIDTH_WORD) {
-    return emit_u8(w, 0x66) && emit_u8(w, 0xd3) && emit_u8(w, modrm);
+    /* 0x66 0xd3 is Group-2 r/m16, CL. */
+    return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, X86_HOST_OP_GROUP2_CL) && emit_u8(w, modrm);
   }
   if (width == X86_WIDTH_DWORD) return emit_shift_eax_cl(w, shift_op);
   return false;
 }
 
+/* Emit SHLD/SHRD eax, ecx, imm8 for native double-shift lowering. */
 static bool emit_double_shift_eax_ecx_imm(x86_jit_writer_t *w,
     bool is_right, uint8_t count) {
-  return emit_u8(w, 0x0f) &&
+  /* 0x0f 0xa4 is SHLD; 0x0f 0xac is SHRD; ModR/M 0xc8 selects EAX, ECX. */
+  return emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
          emit_u8(w, is_right ? 0xac : 0xa4) &&
          emit_u8(w, 0xc8) &&
          emit_u8(w, count);
@@ -3443,31 +4097,37 @@ static bool emit_double_shift_eax_ecx_imm(x86_jit_writer_t *w,
 
 /* Emit host code for not eax; bytes below are x86-64 encodings. */
 static bool emit_not_eax(x86_jit_writer_t *w) {
-  return emit_u8(w, 0xf7) && emit_u8(w, 0xd0);
+  /* 0xf7 /2 is NOT r/m32; ModR/M 0xd0 selects EAX. */
+  return emit_u8(w, X86_HOST_OP_GROUP3_NONBYTE) && emit_u8(w, 0xd0);
 }
 
 /* Emit host code for neg eax width; bytes below are x86-64 encodings. */
 static bool emit_neg_eax_width(x86_jit_writer_t *w, uint8_t width) {
   if (width == X86_WIDTH_DWORD) {
-    return emit_u8(w, 0xf7) && emit_u8(w, 0xd8);
+    /* 0xf7 /3 is NEG r/m32; ModR/M 0xd8 selects EAX. */
+    return emit_u8(w, X86_HOST_OP_GROUP3_NONBYTE) && emit_u8(w, 0xd8);
   }
   if (width == X86_WIDTH_WORD) {
-    return emit_u8(w, 0x66) && emit_u8(w, 0xf7) && emit_u8(w, 0xd8);
+    /* 0x66 0xf7 /3 is NEG r/m16. */
+    return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, X86_HOST_OP_GROUP3_NONBYTE) && emit_u8(w, 0xd8);
   }
   if (width == X86_WIDTH_BYTE) {
-    return emit_u8(w, 0xf6) && emit_u8(w, 0xd8);
+    /* 0xf6 /3 is NEG r/m8. */
+    return emit_u8(w, X86_HOST_OP_GROUP3_BYTE) && emit_u8(w, 0xd8);
   }
   return false;
 }
 
 /* Emit host code for div ecx; bytes below are x86-64 encodings. */
 static bool emit_div_ecx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0xf7) && emit_u8(w, 0xf1);
+  /* 0xf7 /6 is DIV r/m32; ModR/M 0xf1 selects ECX. */
+  return emit_u8(w, X86_HOST_OP_GROUP3_NONBYTE) && emit_u8(w, 0xf1);
 }
 
 /* Emit host code for idiv ecx; bytes below are x86-64 encodings. */
 static bool emit_idiv_ecx(x86_jit_writer_t *w) {
-  return emit_u8(w, 0xf7) && emit_u8(w, 0xf9);
+  /* 0xf7 /7 is IDIV r/m32; ModR/M 0xf9 selects ECX. */
+  return emit_u8(w, X86_HOST_OP_GROUP3_NONBYTE) && emit_u8(w, 0xf9);
 }
 
 /* Emit host code for cdq host; bytes below are x86-64 encodings. */
@@ -3480,9 +4140,10 @@ static bool emit_ret(x86_jit_writer_t *w) {
   return emit_u8(w, 0xc3);
 }
 
+/* Emit Jcc rel32 with a displacement slot patched after layout. */
 static bool emit_jcc_rel32_placeholder(x86_jit_writer_t *w, uint8_t cc,
     uint8_t **disp) {
-  if (!emit_u8(w, 0x0f) || !emit_u8(w, 0x80u | (cc & 0xfu))) return false;
+  if (!emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) || !emit_u8(w, 0x80u | (cc & 0xfu))) return false;
   *disp = w->cur;
   return emit_u32(w, 0);
 }
@@ -3533,6 +4194,19 @@ static void patch_u32(uint8_t *dst, uint32_t value) {
 static bool jit_batch_cpu_base_available(void) {
   return jit_batch_trampoline_enabled &&
          (!jit_paging_enabled() || jit_paged_batch_enabled);
+}
+
+/* Return true when generated code can use r14 as a fixed DTLB base. */
+static bool jit_batch_dtlb_base_available(void) {
+  return jit_batch_cpu_base_available() &&
+         !jit_regcache_enabled &&
+         !jit_stack_fast_enabled &&
+         !jit_paged_stack_fast_enabled;
+}
+
+/* Return true when generated code can use rbx as a fixed page-table bitmap. */
+static bool jit_batch_page_table_bitmap_available(void) {
+  return jit_batch_cpu_base_available() && !jit_regcache_enabled;
 }
 
 /* Convert an absolute CPU_state member address to a signed disp32 offset. */
@@ -3624,6 +4298,7 @@ static bool emit_store_reg_eax(x86_jit_writer_t *w, uint8_t reg) {
   return emit_mov_moffs64_eax(w, jit_gpr_addr(reg));
 }
 
+/* Store AX into a guest 16-bit GPR without reading or changing host flags. */
 static bool emit_store_reg_ax_no_flags(x86_jit_writer_t *w, uint8_t reg) {
   JIT_STAT_INC(guest_gpr_stores_emitted);
   Assert(reg < 8, "bad x86 JIT register %u", reg);
@@ -3631,6 +4306,7 @@ static bool emit_store_reg_ax_no_flags(x86_jit_writer_t *w, uint8_t reg) {
          emit_mov_m16_r11_ax(w);
 }
 
+/* Store DX into a guest 16-bit GPR without reading or changing host flags. */
 static bool emit_store_reg_dx_no_flags(x86_jit_writer_t *w, uint8_t reg) {
   JIT_STAT_INC(guest_gpr_stores_emitted);
   Assert(reg < 8, "bad x86 JIT register %u", reg);
@@ -3641,32 +4317,38 @@ static bool emit_store_reg_dx_no_flags(x86_jit_writer_t *w, uint8_t reg) {
 /* Emit a 32-bit REX prefix when either selected host register is r8..r15. */
 static bool emit_rex32_reg_rm(x86_jit_writer_t *w, uint8_t reg,
     uint8_t rm) {
-  uint8_t rex = 0x40u;
-  if (reg >= 8u) rex |= 0x04u;
-  if (rm >= 8u) rex |= 0x01u;
-  return rex == 0x40u || emit_u8(w, rex);
+  /* 0x40 is the fixed REX base; 0x04 is REX.R; 0x01 is REX.B. */
+  uint8_t rex = X86_HOST_REX_BASE;
+  if (reg >= X86_HOST_EXT_REG_BASE) rex |= X86_HOST_REX_R;
+  if (rm >= X86_HOST_EXT_REG_BASE) rex |= X86_HOST_REX_B;
+  return rex == X86_HOST_REX_BASE || emit_u8(w, rex);
 }
 
 /* Emit a register-direct ModR/M byte: mod=3, reg field, and r/m field. */
 static bool emit_modrm_reg_reg(x86_jit_writer_t *w, uint8_t reg,
     uint8_t rm) {
-  return emit_u8(w, (uint8_t)(0xc0u | ((reg & 0x7u) << 3) |
-      (rm & 0x7u)));
+  /* 0xc0 is ModR/M mod=3, i.e. register-direct rather than memory. */
+  return emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, reg, rm));
 }
 
 /* Emit `mov r32, imm32` for any host register encoded by the low three bits. */
 static bool emit_mov_host_imm32(x86_jit_writer_t *w, uint8_t host,
     uint32_t value) {
-  if (host >= 8u && !emit_u8(w, 0x41)) return false;
-  return emit_u8(w, (uint8_t)(0xb8u + (host & 0x7u))) &&
+  /* 0x41 is REX.B for r8d..r15d; 0xb8+rd is MOV r32, imm32. */
+  if (host >= X86_HOST_EXT_REG_BASE &&
+      !emit_u8(w, X86_HOST_REX_B_PREFIX)) {
+    return false;
+  }
+  return emit_u8(w, (uint8_t)(0xb8u + (host & X86_HOST_REG_MASK))) &&
          emit_u32(w, value);
 }
 
 /* Emit a 32-bit host-register copy. */
 static bool emit_mov_host_host(x86_jit_writer_t *w, uint8_t dst,
     uint8_t src) {
+  /* 0x89 is MOV r/m32, r32; ModR/M chooses dst as r/m and src as reg. */
   return emit_rex32_reg_rm(w, src, dst) &&
-         emit_u8(w, 0x89) &&
+         emit_u8(w, X86_HOST_OP_MOV_RM32_R32) &&
          emit_modrm_reg_reg(w, src, dst);
 }
 
@@ -3675,6 +4357,7 @@ static bool emit_alu_host_host(x86_jit_writer_t *w, uint8_t alu_op,
     uint8_t dst, uint8_t src) {
   uint8_t opcode = 0;
   switch (alu_op) {
+    /* Group-1 register form opcodes: the same Intel order as /digit fields. */
     case X86_ALU_ADD: opcode = 0x01; break;
     case X86_ALU_OR:  opcode = 0x09; break;
     case X86_ALU_ADC: opcode = 0x11; break;
@@ -3694,15 +4377,17 @@ static bool emit_alu_host_host(x86_jit_writer_t *w, uint8_t alu_op,
 /* Emit a 32-bit host-register ALU immediate operation using opcode 81 /digit. */
 static bool emit_alu_host_imm32(x86_jit_writer_t *w, uint8_t alu_op,
     uint8_t host, uint32_t imm) {
+  /* 0x81 is Group-1 r/m32, imm32; ModR/M reg/opcode carries alu_op. */
   return emit_rex32_reg_rm(w, 0, host) &&
-         emit_u8(w, 0x81) &&
-         emit_modrm_reg_reg(w, alu_op & 0x7u, host) &&
+         emit_u8(w, X86_HOST_OP_GROUP1_IMM32) &&
+         emit_modrm_reg_reg(w, alu_op & X86_HOST_REG_MASK, host) &&
          emit_u32(w, imm);
 }
 
 /* Emit `test r32, r32` between two host registers. */
 static bool emit_test_host_host(x86_jit_writer_t *w, uint8_t left,
     uint8_t right) {
+  /* 0x85 is TEST r/m32, r32; ModR/M selects the two host registers. */
   return emit_rex32_reg_rm(w, right, left) &&
          emit_u8(w, 0x85) &&
          emit_modrm_reg_reg(w, right, left);
@@ -3715,10 +4400,15 @@ static bool emit_load_guest_to_host(x86_jit_writer_t *w, uint8_t host,
   if (!jit_cpu_disp32(jit_gpr_addr(guest), &disp)) return false;
 
   JIT_STAT_INC(guest_gpr_loads_emitted);
+  /*
+   * 0x8b is MOV r32, r/m32.  ModR/M 0x84 plus SIB 0x24 is the required
+   * r12+disp32 addressing form: mod=2 disp32, r/m=4 SIB, base=r12, no index.
+   */
   return emit_rex32_reg_rm(w, host, 12u) &&
-         emit_u8(w, 0x8b) &&
-         emit_u8(w, (uint8_t)(0x84u | ((host & 0x7u) << 3))) &&
-         emit_u8(w, 0x24) &&
+         emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP32, host, X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RSP,
+             X86_HOST_RSP)) &&
          emit_u32(w, disp);
 }
 
@@ -3729,10 +4419,15 @@ static bool emit_store_host_to_guest(x86_jit_writer_t *w, uint8_t guest,
   if (!jit_cpu_disp32(jit_gpr_addr(guest), &disp)) return false;
 
   JIT_STAT_INC(guest_gpr_stores_emitted);
+  /*
+   * 0x89 is MOV r/m32, r32.  The 0x84/0x24 ModR/M+SIB pair again selects
+   * [r12 + disp32] inside CPU_state.
+   */
   return emit_rex32_reg_rm(w, host, 12u) &&
-         emit_u8(w, 0x89) &&
-         emit_u8(w, (uint8_t)(0x84u | ((host & 0x7u) << 3))) &&
-         emit_u8(w, 0x24) &&
+         emit_u8(w, X86_HOST_OP_MOV_RM32_R32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_DISP32, host, X86_HOST_RSP)) &&
+         emit_u8(w, X86_HOST_SIB(X86_HOST_SCALE_1, X86_HOST_RSP,
+             X86_HOST_RSP)) &&
          emit_u32(w, disp);
 }
 
@@ -3985,22 +4680,9 @@ static bool emit_dtlb_translate_call(x86_jit_writer_t *w,
          emit_pop_rdi(w);
 }
 
-/* Capture the page-mode key that is already guarded before this block runs. */
-static bool jit_paged_dtlb_context_key(uint32_t *cr3_key, uint32_t *state) {
-  if (cr3_key == NULL || state == NULL ||
-      !jit_paging_enabled() || !jit_paging_mode_supported()) {
-    return false;
-  }
-
-  const x86_jit_translation_key_t key = jit_current_translation_key();
-  /*
-   * DTLB entries are indexed by jit_dtlb_state() bits only.  The block
-   * translation key also carries a CR0.PG bit so non-paged and paged compiled
-   * code cannot alias; do not feed that extra bit into the DTLB hash.
-   */
-  *cr3_key = key.cr3_key;
-  *state = key.state & ~(1u << 4);
-  return true;
+/* Return true when the current paging mode can use generated DTLB hit paths. */
+static bool jit_paged_dtlb_mode_ready(void) {
+  return jit_paging_enabled() && jit_paging_mode_supported();
 }
 
 /*
@@ -4010,57 +4692,43 @@ static bool jit_paged_dtlb_context_key(uint32_t *cr3_key, uint32_t *state) {
  */
 static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t width, uint8_t **slow_disp) {
-  uint8_t *miss_disp[9];
+  uint8_t *miss_disp[7];
   uint32_t miss_count = 0;
-  uint32_t cr3_key = 0;
-  uint32_t state = 0;
 
   if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
       width != X86_WIDTH_DWORD) {
     return false;
   }
   if (sizeof(paddr_t) != sizeof(uint32_t)) return false;
-  if (!jit_paged_dtlb_context_key(&cr3_key, &state)) return false;
+  if (!jit_paged_dtlb_mode_ready()) return false;
 
   /*
    * The block entry and direct-chain checks already prove the CR3 and paging
-   * mode key.  Use those constants for the DTLB hash and entry comparisons so
-   * hot memory accesses do not reload cpu.cr3/cr0/cr4/cs on every hit.
+   * mode key.  CR3/state are not stored in each entry, because CR3, CR0/CR4,
+   * and CS privilege changes flush the private DTLB whenever translation or
+   * permission mode changes.
    */
-  if (!emit_mov_edx_eax(w) ||
-      !emit_mov_ecx_eax(w) ||
-      !emit_and_ecx_imm32(w, PAGE_MASK) ||
-      !emit_cmp_ecx_imm32(w, PAGE_SIZE - width) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_A, &miss_disp[miss_count++]) ||
-      !emit_mov_ecx_edx(w) ||
+  if (!emit_mov_edx_eax(w)) return false;
+  if (width != X86_WIDTH_BYTE &&
+      (!emit_mov_ecx_eax(w) ||
+       !emit_and_ecx_imm32(w, PAGE_MASK) ||
+       !emit_cmp_ecx_imm32(w, PAGE_SIZE - width) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_A,
+           &miss_disp[miss_count++]))) {
+    return false;
+  }
+  if (!emit_mov_ecx_edx(w) ||
       !emit_shr_ecx_imm(w, PAGE_SHIFT) ||
-      !emit_mov_r11d_ecx(w) ||
       !emit_mov_eax_ecx(w) ||
-      !emit_shift_eax_imm(w, 5u, 10u) ||
-      !emit_alu_rm32_r32(w, X86_ALU_XOR, R_EAX, R_ECX) ||
-      !emit_alu_eax_imm32(w, X86_ALU_XOR, cr3_key >> PAGE_SHIFT) ||
-      !emit_alu_eax_imm32(w, X86_ALU_XOR, state) ||
-      !emit_alu_eax_imm32(w, X86_ALU_AND, X86_JIT_DTLB_SIZE - 1u) ||
-      !emit_imul_eax_eax_imm32(w, sizeof(x86_jit_dtlb_entry_t)) ||
-      !emit_movabs_r10(w, (uint64_t)(uintptr_t)jit_dtlb) ||
-      !emit_add_r10_rax(w) ||
-      !emit_cmp_m8_r10_disp8_imm8(w,
-          (uint8_t)offsetof(x86_jit_dtlb_entry_t, valid), 0u) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_Z, &miss_disp[miss_count++]) ||
+      !emit_dtlb_index_mask_eax(w) ||
+      !emit_shift_eax_imm(w, 4u, 4u) ||
+      !emit_dtlb_entry_addr_r10(w) ||
       !emit_test_m8_r10_disp8_imm8(w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, access),
           X86_JIT_DTLB_READ) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_Z, &miss_disp[miss_count++]) ||
-      !emit_mov_ecx_imm32(w, state) ||
       !emit_cmp_m32_r10_disp8_ecx(w,
-          (uint8_t)offsetof(x86_jit_dtlb_entry_t, state)) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++]) ||
-      !emit_cmp_m32_r10_disp8_r11d(w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, vpn)) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++]) ||
-      !emit_mov_ecx_imm32(w, cr3_key) ||
-      !emit_cmp_m32_r10_disp8_ecx(w,
-          (uint8_t)offsetof(x86_jit_dtlb_entry_t, cr3_key)) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++])) {
     return false;
   }
@@ -4078,9 +4746,8 @@ static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, pg_paddr)) ||
       !emit_and_edx_imm32(w, PAGE_MASK) ||
       !emit_or_eax_edx(w) ||
-      !emit_add_eax_imm32(w, 0u - (uint32_t)CONFIG_MBASE) ||
-      !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
-      !emit_add_rax_r10(w)) {
+      !emit_sub_eax_pmem_guest_base(w) ||
+      !emit_add_rax_pmem_base(w)) {
     return false;
   }
 
@@ -4104,7 +4771,9 @@ static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
 /*
  * Enter generated code through the optional batch trampoline.  Register ABI:
  *   r12 = &cpu, r13 = guest_to_host(CONFIG_MBASE), r15 = source-page bitmap,
- *   edi = instruction budget, esi = retired instruction count.
+ *   rbx = page-table bitmap when regcache is off, r14 = DTLB base when other
+ *   opt-in users of r14 are off, edi = instruction budget,
+ *   esi = retired instruction count.
  * The callee-saved registers keep these bases live across direct chains.
  */
 static uint32_t jit_batch_enter(x86_jit_entry_t entry,
@@ -4117,14 +4786,25 @@ static uint32_t jit_batch_enter(x86_jit_entry_t entry,
   const uintptr_t cpu_base = (uintptr_t)&cpu;
   const uintptr_t pmem_base = (uintptr_t)guest_to_host(CONFIG_MBASE);
   const uintptr_t source_bitmap = (uintptr_t)jit_source_page_has_code;
+  const uintptr_t dtlb_base = (uintptr_t)jit_dtlb;
+  const uintptr_t page_table_bitmap =
+      (uintptr_t)jit_page_table_page_has_mapping;
   uint32_t ret = 0;
 
   /*
    * The current generated ABI still returns with a plain RET.  This wrapper
    * therefore calls, rather than jumps to, the first generated block.  Direct
    * chains stay inside this saved-register window until a generated exit RETs.
+   *
+   * GCC's function prologue has already aligned RSP before this inline-asm
+   * body.  Keep it aligned at the generated-code call site so the generated
+   * block enters with the normal SysV shape, RSP % 16 == 8.  Helper calls
+   * emitted inside the block rely on that entry shape when they align their
+   * own C calls; adding another 8-byte adjustment here leaves deep host calls
+   * such as SDL_OpenAudio() misaligned.
    */
   __asm__ volatile(
+      "movq %[dtlb_base], %%rax\n\t"
       "movq %[entry], %%r11\n\t"
       "movl %[budget], %%edi\n\t"
       "movq %[cpu_base], %%r8\n\t"
@@ -4137,39 +4817,42 @@ static uint32_t jit_batch_enter(x86_jit_entry_t entry,
       "pushq %%r13\n\t"
       "pushq %%r14\n\t"
       "pushq %%r15\n\t"
+      "movq %[page_table_bitmap], %%rbx\n\t"
       "movq %%r8, %%r12\n\t"
       "movq %%r9, %%r13\n\t"
+      "movq %%rax, %%r14\n\t"
       "movq %%r10, %%r15\n\t"
-      "subq $8, %%rsp\n\t"
       "call *%%r11\n\t"
-      "addq $8, %%rsp\n\t"
       "popq %%r15\n\t"
       "popq %%r14\n\t"
       "popq %%r13\n\t"
       "popq %%r12\n\t"
       "popq %%rbp\n\t"
       "popq %%rbx\n\t"
-      : "=a"(ret)
+      : "=&a"(ret)
       : [entry] "r"(entry),
         [budget] "rm"(remaining_budget),
         [cpu_base] "r"(cpu_base),
         [pmem_base] "r"(pmem_base),
-        [source_bitmap] "r"(source_bitmap)
+        [source_bitmap] "r"(source_bitmap),
+        [dtlb_base] "r"(dtlb_base),
+        [page_table_bitmap] "r"(page_table_bitmap)
       : "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11",
         "memory", "cc");
   return ret;
 }
 
 /*
- * Guard a direct PMEM access.  The emitted code subtracts CONFIG_MBASE with
- * unsigned arithmetic, then checks the resulting offset is within CONFIG_MSIZE.
+ * Guard a direct PMEM access.  The emitted code subtracts a non-zero
+ * CONFIG_MBASE with unsigned arithmetic, then checks the resulting offset is
+ * within CONFIG_MSIZE.
  */
 static bool emit_direct_pmem_guard_edx(x86_jit_writer_t *w, uint32_t len,
     uint8_t **slow_disp) {
   if (len == 0 || len > CONFIG_MSIZE) return false;
 
   JIT_STAT_INC(native_pmem_guards_emitted);
-  return emit_add_edx_imm32(w, 0u - (uint32_t)CONFIG_MBASE) &&
+  return emit_sub_edx_pmem_guest_base(w) &&
          emit_cmp_edx_imm32(w, (uint32_t)CONFIG_MSIZE - len) &&
          emit_jcc_rel32_placeholder(w, X86_CC_A, slow_disp);
 }
@@ -4206,23 +4889,51 @@ static bool emit_direct_store_source_guard_edx(x86_jit_writer_t *w,
          emit_jcc_rel32_placeholder(w, X86_CC_NZ, source_page_slow_disp);
 }
 
-/* Guard direct stores against page-table writes that would stale the DTLB. */
-static bool emit_direct_store_page_table_guard_edx(x86_jit_writer_t *w,
+/*
+ * Guard paged DTLB stores against source-code and page-table writes.  Both
+ * bitmaps are indexed by the same PMEM page, so one page-boundary check and one
+ * page-index calculation is enough for both hazards.
+ */
+static bool emit_paged_store_dependency_guard_edx(x86_jit_writer_t *w,
     uint32_t len, uint8_t **cross_page_slow_disp,
-    uint8_t **page_table_slow_disp) {
+    uint8_t **source_page_slow_disp, uint8_t **page_table_slow_disp) {
   if (len == 0 || len > X86_JIT_SOURCE_PAGE_SIZE) return false;
 
   JIT_STAT_INC(native_pmem_guards_emitted);
-  return emit_mov_ecx_edx(w) &&
-         emit_and_ecx_imm32(w, X86_JIT_SOURCE_PAGE_SIZE - 1u) &&
-         emit_cmp_ecx_imm32(w, X86_JIT_SOURCE_PAGE_SIZE - len) &&
-         emit_jcc_rel32_placeholder(w, X86_CC_A, cross_page_slow_disp) &&
-         emit_mov_ecx_edx(w) &&
-         emit_shr_ecx_imm(w, X86_JIT_SOURCE_PAGE_SHIFT) &&
-         emit_movabs_r10(w, (uint64_t)(uintptr_t)jit_page_table_page_has_mapping) &&
-         emit_movzx_ecx_m8_r10_rcx(w) &&
-         emit_test_ecx_ecx(w) &&
-         emit_jcc_rel32_placeholder(w, X86_CC_NZ, page_table_slow_disp);
+  if (len != X86_WIDTH_BYTE &&
+      (!emit_mov_ecx_edx(w) ||
+       !emit_and_ecx_imm32(w, X86_JIT_SOURCE_PAGE_SIZE - 1u) ||
+       !emit_cmp_ecx_imm32(w, X86_JIT_SOURCE_PAGE_SIZE - len) ||
+       !emit_jcc_rel32_placeholder(w, X86_CC_A, cross_page_slow_disp))) {
+    return false;
+  }
+  if (!emit_mov_ecx_edx(w) ||
+      !emit_shr_ecx_imm(w, X86_JIT_SOURCE_PAGE_SHIFT)) {
+    return false;
+  }
+
+  if (jit_batch_cpu_base_available()) {
+    if (!emit_cmp_m8_r15_rcx_imm8(w, 0u)) return false;
+  }
+  else if (!emit_movabs_r10(w,
+          (uint64_t)(uintptr_t)jit_source_page_has_code) ||
+      !emit_cmp_m8_r10_rcx_imm8(w, 0u)) {
+    return false;
+  }
+  if (!emit_jcc_rel32_placeholder(w, X86_CC_NZ, source_page_slow_disp)) {
+    return false;
+  }
+
+  if (jit_batch_page_table_bitmap_available()) {
+    if (!emit_cmp_m8_rbx_rcx_imm8(w, 0u)) return false;
+  }
+  else if (!emit_movabs_r10(w,
+          (uint64_t)(uintptr_t)jit_page_table_page_has_mapping) ||
+      !emit_cmp_m8_r10_rcx_imm8(w, 0u)) {
+    return false;
+  }
+
+  return emit_jcc_rel32_placeholder(w, X86_CC_NZ, page_table_slow_disp);
 }
 
 /*
@@ -4232,53 +4943,38 @@ static bool emit_direct_store_page_table_guard_edx(x86_jit_writer_t *w,
  */
 static bool emit_paged_dtlb_write_hit_inline(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t width, uint8_t **slow_disp) {
-  uint8_t *miss_disp[13];
+  uint8_t *miss_disp[7];
+  uint8_t *guard_miss_disp[3] = { NULL, NULL, NULL };
   uint32_t miss_count = 0;
-  uint32_t cr3_key = 0;
-  uint32_t state = 0;
 
   if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
       width != X86_WIDTH_DWORD) {
     return false;
   }
   if (sizeof(paddr_t) != sizeof(uint32_t)) return false;
-  if (!jit_paged_dtlb_context_key(&cr3_key, &state)) return false;
+  if (!jit_paged_dtlb_mode_ready()) return false;
 
-  if (!emit_mov_edx_eax(w) ||
-      !emit_push_rdx(w) ||
-      !emit_mov_ecx_eax(w) ||
-      !emit_and_ecx_imm32(w, PAGE_MASK) ||
-      !emit_cmp_ecx_imm32(w, PAGE_SIZE - width) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_A, &miss_disp[miss_count++]) ||
-      !emit_mov_ecx_edx(w) ||
+  if (!emit_mov_edx_eax(w)) return false;
+  if (width != X86_WIDTH_BYTE &&
+      (!emit_mov_ecx_eax(w) ||
+       !emit_and_ecx_imm32(w, PAGE_MASK) ||
+       !emit_cmp_ecx_imm32(w, PAGE_SIZE - width) ||
+      !emit_jcc_rel32_placeholder(w, X86_CC_A,
+           &miss_disp[miss_count++]))) {
+    return false;
+  }
+  if (!emit_mov_ecx_edx(w) ||
       !emit_shr_ecx_imm(w, PAGE_SHIFT) ||
-      !emit_mov_r11d_ecx(w) ||
       !emit_mov_eax_ecx(w) ||
-      !emit_shift_eax_imm(w, 5u, 10u) ||
-      !emit_alu_rm32_r32(w, X86_ALU_XOR, R_EAX, R_ECX) ||
-      !emit_alu_eax_imm32(w, X86_ALU_XOR, cr3_key >> PAGE_SHIFT) ||
-      !emit_alu_eax_imm32(w, X86_ALU_XOR, state) ||
-      !emit_alu_eax_imm32(w, X86_ALU_AND, X86_JIT_DTLB_SIZE - 1u) ||
-      !emit_imul_eax_eax_imm32(w, sizeof(x86_jit_dtlb_entry_t)) ||
-      !emit_movabs_r10(w, (uint64_t)(uintptr_t)jit_dtlb) ||
-      !emit_add_r10_rax(w) ||
-      !emit_cmp_m8_r10_disp8_imm8(w,
-          (uint8_t)offsetof(x86_jit_dtlb_entry_t, valid), 0u) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_Z, &miss_disp[miss_count++]) ||
+      !emit_dtlb_index_mask_eax(w) ||
+      !emit_shift_eax_imm(w, 4u, 4u) ||
+      !emit_dtlb_entry_addr_r10(w) ||
       !emit_test_m8_r10_disp8_imm8(w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, access),
           X86_JIT_DTLB_WRITE) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_Z, &miss_disp[miss_count++]) ||
-      !emit_mov_ecx_imm32(w, state) ||
       !emit_cmp_m32_r10_disp8_ecx(w,
-          (uint8_t)offsetof(x86_jit_dtlb_entry_t, state)) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++]) ||
-      !emit_cmp_m32_r10_disp8_r11d(w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, vpn)) ||
-      !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++]) ||
-      !emit_mov_ecx_imm32(w, cr3_key) ||
-      !emit_cmp_m32_r10_disp8_ecx(w,
-          (uint8_t)offsetof(x86_jit_dtlb_entry_t, cr3_key)) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &miss_disp[miss_count++])) {
     return false;
   }
@@ -4294,27 +4990,24 @@ static bool emit_paged_dtlb_write_hit_inline(x86_jit_writer_t *w,
 
   if (!emit_mov_eax_m32_r10_disp8(w,
           (uint8_t)offsetof(x86_jit_dtlb_entry_t, pg_paddr)) ||
+      !emit_mov_r11d_edx(w) ||
       !emit_and_edx_imm32(w, PAGE_MASK) ||
       !emit_or_eax_edx(w) ||
       !emit_mov_edx_eax(w) ||
-      !emit_add_edx_imm32(w, 0u - (uint32_t)CONFIG_MBASE) ||
-      !emit_direct_store_source_guard_edx(w, width,
-          &miss_disp[miss_count], &miss_disp[miss_count + 1]) ||
-      !emit_direct_store_page_table_guard_edx(w, width,
-          &miss_disp[miss_count + 2], &miss_disp[miss_count + 3])) {
+      !emit_sub_edx_pmem_guest_base(w) ||
+      !emit_paged_store_dependency_guard_edx(w, width,
+          &guard_miss_disp[0], &guard_miss_disp[1],
+          &guard_miss_disp[2])) {
     return false;
   }
-  miss_count += 4;
 
-  if (!emit_add_eax_imm32(w, 0u - (uint32_t)CONFIG_MBASE) ||
-      !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
-      !emit_add_rax_r10(w)) {
+  if (!emit_sub_eax_pmem_guest_base(w) ||
+      !emit_add_rax_pmem_base(w)) {
     return false;
   }
 
   uint8_t *done_disp = NULL;
-  if (!emit_pop_rdx(w) ||
-      !emit_jmp_rel32_placeholder(w, &done_disp)) {
+  if (!emit_jmp_rel32_placeholder(w, &done_disp)) {
     return false;
   }
 
@@ -4322,7 +5015,22 @@ static bool emit_paged_dtlb_write_hit_inline(x86_jit_writer_t *w,
   for (uint32_t i = 0; i < miss_count; i++) {
     if (!patch_rel32(miss_disp[i], miss_native)) return false;
   }
-  if (!emit_pop_rax(w) ||
+  uint8_t *call_disp = NULL;
+  if (!emit_mov_eax_edx(w) ||
+      !emit_jmp_rel32_placeholder(w, &call_disp)) {
+    return false;
+  }
+
+  uint8_t *guard_miss_native = w->cur;
+  for (uint32_t i = 0; i < 3u; i++) {
+    if (guard_miss_disp[i] != NULL &&
+        !patch_rel32(guard_miss_disp[i], guard_miss_native)) {
+      return false;
+    }
+  }
+
+  if (!emit_mov_eax_r11d(w) ||
+      !patch_rel32(call_disp, w->cur) ||
       !emit_dtlb_translate_call(w, insn, width, true) ||
       !emit_test_rax_rax(w) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_Z, slow_disp)) {
@@ -4526,13 +5234,15 @@ static bool jit_alu_reads_carry(uint8_t alu_op) {
 
 /* Emit BT ecx, imm8; the selected guest EFLAGS bit is copied into host CF. */
 static bool emit_bt_ecx_imm8(x86_jit_writer_t *w, uint8_t bit) {
-  return emit_u8(w, 0x0f) && emit_u8(w, 0xba) &&
+  /* 0x0f 0xba /4 is BT r/m32, imm8; ModR/M 0xe1 selects ECX. */
+  return emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) && emit_u8(w, 0xba) &&
          emit_u8(w, 0xe1) && emit_u8(w, bit);
 }
 
 /* Emit BT r11d, imm8; the selected guest EFLAGS bit is copied into host CF. */
 static bool emit_bt_r11d_imm8(x86_jit_writer_t *w, uint8_t bit) {
-  return emit_u8(w, 0x41) && emit_u8(w, 0x0f) && emit_u8(w, 0xba) &&
+  /* REX.B plus 0x0f 0xba /4; ModR/M 0xe3 selects r11d. */
+  return emit_u8(w, X86_HOST_REX_B_PREFIX) && emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) && emit_u8(w, 0xba) &&
          emit_u8(w, 0xe3) && emit_u8(w, bit);
 }
 
@@ -4563,9 +5273,10 @@ static bool emit_alu_rm32_r32(x86_jit_writer_t *w, uint8_t alu_op,
   }
 
   return emit_u8(w, opcode) &&
-         emit_u8(w, (uint8_t)(0xc0u | ((reg & 0x7u) << 3) | (rm & 0x7u)));
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, reg, rm));
 }
 
+/* Emit a width-specific ALU operation with EAX/AX/AL as destination and r11 as source. */
 static bool emit_alu_eax_r11_width(x86_jit_writer_t *w, uint8_t alu_op,
     uint8_t width) {
   uint8_t opcode = 0;
@@ -4582,42 +5293,50 @@ static bool emit_alu_eax_r11_width(x86_jit_writer_t *w, uint8_t alu_op,
     default: return false;
   }
 
-  if (width == X86_WIDTH_WORD && !emit_u8(w, 0x66)) return false;
+  if (width == X86_WIDTH_WORD && !emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE)) return false;
   if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
       width != X86_WIDTH_DWORD) {
     return false;
   }
-  return emit_u8(w, 0x44) && emit_u8(w, opcode) && emit_u8(w, 0xd8);
+  /* 0x44 is REX.R, and ModR/M 0xd8 selects destination EAX with source r11d. */
+  return emit_u8(w, X86_HOST_REX_R_PREFIX) && emit_u8(w, opcode) && emit_u8(w, 0xd8);
 }
 
+/* Emit a Group-1 immediate ALU operation against a 32-bit host register. */
 static bool emit_alu_reg_imm32(x86_jit_writer_t *w, uint8_t alu_op,
     uint8_t reg, uint32_t imm) {
-  return emit_u8(w, 0x81) &&
-         emit_u8(w, (uint8_t)(0xc0u | ((alu_op & 0x7u) << 3) |
-             (reg & 0x7u))) &&
+  /* 0x81 is Group-1 r/m32, imm32; 0xc0 base makes the r/m field a register. */
+  return emit_u8(w, X86_HOST_OP_GROUP1_IMM32) &&
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, alu_op, reg)) &&
          emit_u32(w, imm);
 }
 
+/* Emit a Group-1 immediate ALU operation against EAX. */
 static bool emit_alu_eax_imm32(x86_jit_writer_t *w, uint8_t alu_op,
     uint32_t imm) {
   return emit_alu_reg_imm32(w, alu_op, R_EAX, imm);
 }
 
+/* Emit a byte/word/dword immediate ALU operation against AL/AX/EAX. */
 static bool emit_alu_eax_imm_width(x86_jit_writer_t *w, uint8_t alu_op,
     uint8_t width, uint32_t imm) {
   if (width == X86_WIDTH_DWORD) {
     return emit_alu_eax_imm32(w, alu_op, imm);
   }
   if (width == X86_WIDTH_WORD) {
-    return emit_u8(w, 0x66) &&
-           emit_u8(w, 0x81) &&
-           emit_u8(w, (uint8_t)(0xc0u | ((alu_op & 0x7u) << 3))) &&
+    /* 0x66 0x81 is Group-1 r/m16, imm16. */
+    return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) &&
+           emit_u8(w, X86_HOST_OP_GROUP1_IMM32) &&
+           emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, alu_op,
+               X86_HOST_RAX)) &&
            emit_u8(w, (uint8_t)imm) &&
            emit_u8(w, (uint8_t)(imm >> 8));
   }
   if (width == X86_WIDTH_BYTE) {
-    return emit_u8(w, 0x80) &&
-           emit_u8(w, (uint8_t)(0xc0u | ((alu_op & 0x7u) << 3))) &&
+    /* 0x80 is Group-1 r/m8, imm8. */
+    return emit_u8(w, X86_HOST_OP_GROUP1_IMM8) &&
+           emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, alu_op,
+               X86_HOST_RAX)) &&
            emit_u8(w, (uint8_t)imm);
   }
 
@@ -4656,11 +5375,22 @@ static bool emit_load_pmem_ecx_width(x86_jit_writer_t *w, uint8_t width) {
 static bool emit_load_host_ptr_rax_width(x86_jit_writer_t *w, uint8_t width) {
   switch (width) {
     case X86_WIDTH_BYTE:
-      return emit_u8(w, 0x0f) && emit_u8(w, 0xb6) && emit_u8(w, 0x00);
+      /* 0x0f 0xb6 /r is MOVZX r32, r/m8; ModR/M selects [RAX]. */
+      return emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
+             emit_u8(w, X86_HOST_OP_MOVZX_R32_RM8) &&
+             emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP,
+                 X86_HOST_RAX, X86_HOST_RAX));
     case X86_WIDTH_WORD:
-      return emit_u8(w, 0x0f) && emit_u8(w, 0xb7) && emit_u8(w, 0x00);
+      /* 0x0f 0xb7 /r is MOVZX r32, r/m16; ModR/M selects [RAX]. */
+      return emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
+             emit_u8(w, X86_HOST_OP_MOVZX_R32_RM16) &&
+             emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP,
+                 X86_HOST_RAX, X86_HOST_RAX));
     case X86_WIDTH_DWORD:
-      return emit_u8(w, 0x8b) && emit_u8(w, 0x00);
+      /* 0x8b /r is MOV r32, r/m32; ModR/M selects [RAX]. */
+      return emit_u8(w, X86_HOST_OP_MOV_R32_RM32) &&
+             emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP,
+                 X86_HOST_RAX, X86_HOST_RAX));
     default:
       return false;
   }
@@ -4680,16 +5410,28 @@ static bool emit_store_pmem_eax_width(x86_jit_writer_t *w, uint8_t width) {
   }
 }
 
+/* Store AL/AX/EAX through the host pointer held in R10. */
 static bool emit_store_host_ptr_r10_eax_width(x86_jit_writer_t *w,
     uint8_t width) {
   switch (width) {
     case X86_WIDTH_BYTE:
-      return emit_u8(w, 0x41) && emit_u8(w, 0x88) && emit_u8(w, 0x02);
+      /* REX.B plus 0x88 /r stores AL into byte ptr [R10]. */
+      return emit_u8(w, X86_HOST_REX_B_PREFIX) &&
+             emit_u8(w, X86_HOST_OP_MOV_RM8_R8) &&
+             emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP,
+                 X86_HOST_RAX, X86_HOST_RDX));
     case X86_WIDTH_WORD:
-      return emit_u8(w, 0x66) && emit_u8(w, 0x41) &&
-             emit_u8(w, 0x89) && emit_u8(w, 0x02);
+      /* 0x66 REX.B 0x89 /r stores AX into word ptr [R10]. */
+      return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, X86_HOST_REX_B_PREFIX) &&
+             emit_u8(w, X86_HOST_OP_MOV_RM32_R32) &&
+             emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP,
+                 X86_HOST_RAX, X86_HOST_RDX));
     case X86_WIDTH_DWORD:
-      return emit_u8(w, 0x41) && emit_u8(w, 0x89) && emit_u8(w, 0x02);
+      /* REX.B plus 0x89 /r stores EAX into dword ptr [R10]. */
+      return emit_u8(w, X86_HOST_REX_B_PREFIX) &&
+             emit_u8(w, X86_HOST_OP_MOV_RM32_R32) &&
+             emit_u8(w, X86_HOST_MODRM(X86_IA32_MOD_NO_DISP,
+                 X86_HOST_RAX, X86_HOST_RDX));
     default:
       return false;
   }
@@ -4711,6 +5453,7 @@ static bool emit_test_eax_ecx_width(x86_jit_writer_t *w, uint8_t width) {
 
 static bool jit_native_low_byte_reg(uint8_t reg);
 
+/* Store AL/AX/EAX into a guest register while preserving untouched high bits. */
 static bool emit_store_reg_eax_width(x86_jit_writer_t *w, uint8_t reg,
     uint8_t width) {
   uint32_t keep_mask = 0;
@@ -4740,7 +5483,7 @@ static bool emit_store_reg_eax_width(x86_jit_writer_t *w, uint8_t reg,
 /* Emit host code for load byte reg to eax; bytes below are x86-64 encodings. */
 static bool emit_load_byte_reg_to_eax(x86_jit_writer_t *w, uint8_t reg) {
   if (!emit_load_reg_eax(w, reg & 0x3u)) return false;
-  return reg < 4u || emit_shift_eax_imm(w, 5u, 8u);
+  return reg < 4u || emit_shift_eax_imm(w, X86_GROUP2_SHR, X86_BITS_PER_BYTE);
 }
 
 /* Emit host code for store al to byte reg; bytes below are x86-64 encodings. */
@@ -4750,18 +5493,21 @@ static bool emit_store_al_to_byte_reg(x86_jit_writer_t *w, uint8_t reg) {
          emit_mov_m8_rdx_al(w);
 }
 
+/* Store a freshly loaded r/m value from EAX into the decoded destination register. */
 static bool emit_store_loaded_rm_to_reg(x86_jit_writer_t *w, uint8_t reg,
     uint8_t width) {
   if (width == X86_WIDTH_BYTE) return emit_store_al_to_byte_reg(w, reg);
   return emit_store_reg_eax_width(w, reg, width);
 }
 
+/* Load a guest register into EAX with byte-register and full-register handling. */
 static bool emit_load_reg_to_eax_width(x86_jit_writer_t *w, uint8_t reg,
     uint8_t width) {
   if (width == X86_WIDTH_BYTE) return emit_load_byte_reg_to_eax(w, reg);
   return emit_load_reg_r11d(w, reg) && emit_mov_eax_r11d(w);
 }
 
+/* Translate the guest address in EAX and branch to slow path on DTLB failure. */
 static bool emit_paged_dtlb_translate_addr_eax(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t width, bool is_write,
     uint8_t **slow_disp) {
@@ -4779,6 +5525,7 @@ static bool emit_paged_dtlb_translate_addr_eax(x86_jit_writer_t *w,
          emit_jcc_rel32_placeholder(w, X86_CC_Z, slow_disp);
 }
 
+/* Compute a decoded effective address, then translate it through the JIT DTLB. */
 static bool emit_paged_dtlb_translate_ea(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t width, bool is_write,
     uint8_t **slow_disp) {
@@ -4787,6 +5534,7 @@ static bool emit_paged_dtlb_translate_ea(x86_jit_writer_t *w,
              slow_disp);
 }
 
+/* Translate a memory operand and load its value into EAX. */
 static bool emit_paged_dtlb_load_ea_eax(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t width, bool is_write,
     uint8_t **slow_disp) {
@@ -4797,6 +5545,7 @@ static bool emit_paged_dtlb_load_ea_eax(x86_jit_writer_t *w,
   return emit_load_host_ptr_rax_width(w, width);
 }
 
+/* Emit paged-DTLB native code for MOV reg, r/m memory loads. */
 static bool emit_paged_dtlb_mov_reg_rm_load(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -4826,6 +5575,7 @@ static bool emit_paged_dtlb_mov_reg_rm_load(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for MOV r/m memory stores from a register. */
 static bool emit_paged_dtlb_mov_rm_reg_store(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -4859,6 +5609,7 @@ static bool emit_paged_dtlb_mov_rm_reg_store(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for MOV immediate into an r/m memory destination. */
 static bool emit_paged_dtlb_mov_imm_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -4889,6 +5640,7 @@ static bool emit_paged_dtlb_mov_imm_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for MOV accumulator from absolute moffs. */
 static bool emit_paged_dtlb_mov_eax_moffs(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -4919,6 +5671,7 @@ static bool emit_paged_dtlb_mov_eax_moffs(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for MOV accumulator to absolute moffs. */
 static bool emit_paged_dtlb_mov_moffs_eax(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -4950,6 +5703,7 @@ static bool emit_paged_dtlb_mov_moffs_eax(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for MOVZX reg, memory. */
 static bool emit_paged_dtlb_movzx_reg_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -4984,6 +5738,7 @@ static bool emit_paged_dtlb_movzx_reg_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for MOVSX reg, memory. */
 static bool emit_paged_dtlb_movsx_reg_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5029,6 +5784,7 @@ static bool emit_paged_dtlb_movsx_reg_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for ALU r/m memory destination, register source. */
 static bool emit_paged_dtlb_alu_rm_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5074,6 +5830,7 @@ static bool emit_paged_dtlb_alu_rm_reg(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for ALU r/m memory destination, immediate source. */
 static bool emit_paged_dtlb_alu_imm_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5115,6 +5872,7 @@ static bool emit_paged_dtlb_alu_imm_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for ALU register destination, memory source. */
 static bool emit_paged_dtlb_alu_reg_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5157,6 +5915,7 @@ static bool emit_paged_dtlb_alu_reg_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for TEST memory, register. */
 static bool emit_paged_dtlb_test_rm_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5191,20 +5950,34 @@ static bool emit_paged_dtlb_test_rm_reg(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for TEST memory, immediate. */
 static bool emit_paged_dtlb_test_imm_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (insn->rm_is_reg) return false;
   if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
       width != X86_WIDTH_DWORD) {
     return false;
   }
+  if (insn->rm_is_reg && width == X86_WIDTH_BYTE && insn->rm_reg >= 4u &&
+      !jit_native_high_byte_test_enabled) {
+    return false;
+  }
 
-  if (!emit_paged_dtlb_load_ea_eax(w, insn, width, false, &slow_disp) ||
-      !emit_test_eax_imm_width(w, width, insn->imm) ||
+  if (insn->rm_is_reg) {
+    if (!emit_load_reg_to_eax_width(w, insn->rm_reg, width) ||
+        !emit_test_eax_imm_width(w, width, insn->imm)) {
+      return false;
+    }
+
+    JIT_STAT_INC(native_alu_ops);
+    return emit_capture_status_flags(w, X86_EFLAGS_LOGIC_COPY_MASK);
+  }
+
+  if (!emit_paged_dtlb_translate_ea(w, insn, width, false, &slow_disp) ||
+      !emit_test_mrax_imm_width(w, width, insn->imm) ||
       !emit_capture_status_flags(w, X86_EFLAGS_LOGIC_COPY_MASK) ||
       !emit_jmp_rel32_placeholder(w, &done_disp)) {
     return false;
@@ -5260,6 +6033,7 @@ static bool emit_load_dtlb_value_scratch_eax(x86_jit_writer_t *w) {
   return emit_mov_eax_moffs64(w, (uintptr_t)&jit_dtlb_value_scratch);
 }
 
+/* Emit paged-DTLB native code for PUSH register to the guest stack. */
 static bool emit_paged_dtlb_push_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5288,6 +6062,7 @@ static bool emit_paged_dtlb_push_reg(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for PUSH immediate to the guest stack. */
 static bool emit_paged_dtlb_push_imm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5316,6 +6091,7 @@ static bool emit_paged_dtlb_push_imm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for POP register from the guest stack. */
 static bool emit_paged_dtlb_pop_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5347,6 +6123,7 @@ static bool emit_paged_dtlb_pop_reg(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for POP into a memory r/m destination. */
 static bool emit_paged_dtlb_pop_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *src_slow_disp = NULL;
@@ -5409,6 +6186,7 @@ static bool emit_paged_dtlb_pop_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for near CALL rel32 with a stack write. */
 static bool emit_paged_dtlb_call_rel(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5438,6 +6216,7 @@ static bool emit_paged_dtlb_call_rel(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for RET by loading the target from the stack. */
 static bool emit_paged_dtlb_ret(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5465,6 +6244,7 @@ static bool emit_paged_dtlb_ret(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for JMP through a memory r/m target. */
 static bool emit_paged_dtlb_jmp_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5490,6 +6270,7 @@ static bool emit_paged_dtlb_jmp_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for PUSH r/m, including memory-source fallback. */
 static bool emit_paged_dtlb_push_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *src_slow_disp = NULL;
@@ -5533,6 +6314,7 @@ static bool emit_paged_dtlb_push_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for CALL r/m with an indirect target. */
 static bool emit_paged_dtlb_call_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *src_slow_disp = NULL;
@@ -5579,6 +6361,7 @@ static bool emit_paged_dtlb_call_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for LEAVE, equivalent to MOV ESP, EBP; POP EBP. */
 static bool emit_paged_dtlb_leave(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5610,6 +6393,7 @@ static bool emit_paged_dtlb_leave(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for INC/DEC of a memory r/m operand. */
 static bool emit_paged_dtlb_incdec_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5645,6 +6429,7 @@ static bool emit_paged_dtlb_incdec_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for NOT of a memory r/m operand. */
 static bool emit_paged_dtlb_not_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5676,6 +6461,7 @@ static bool emit_paged_dtlb_not_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for NEG of a memory r/m operand. */
 static bool emit_paged_dtlb_neg_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5708,6 +6494,7 @@ static bool emit_paged_dtlb_neg_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for SETcc into an 8-bit memory destination. */
 static bool emit_paged_dtlb_setcc_rm8(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5735,6 +6522,7 @@ static bool emit_paged_dtlb_setcc_rm8(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for two-operand IMUL register, memory. */
 static bool emit_paged_dtlb_imul_reg_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5778,6 +6566,7 @@ static bool emit_paged_dtlb_imul_reg_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for one-operand unsigned MUL from memory. */
 static bool emit_paged_dtlb_mul_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5830,6 +6619,7 @@ static bool emit_paged_dtlb_mul_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for one-operand signed IMUL from memory. */
 static bool emit_paged_dtlb_imul_acc_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -5882,6 +6672,7 @@ static bool emit_paged_dtlb_imul_acc_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for unsigned DIV from memory with #DE guards. */
 static bool emit_paged_dtlb_div_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *src_slow_disp = NULL;
@@ -5926,6 +6717,7 @@ static bool emit_paged_dtlb_div_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB native code for signed IDIV from memory with #DE guards. */
 static bool emit_paged_dtlb_idiv_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *src_slow_disp = NULL;
@@ -5935,7 +6727,10 @@ static bool emit_paged_dtlb_idiv_rm(x86_jit_writer_t *w,
   uint8_t *overflow_slow_disp = NULL;
   uint8_t *done_disp = NULL;
 
-  if (insn->rm_is_reg || insn->width != X86_WIDTH_DWORD) return false;
+  if (!jit_native_idiv_enabled || insn->rm_is_reg ||
+      insn->width != X86_WIDTH_DWORD) {
+    return false;
+  }
 
   if (!emit_paged_dtlb_load_ea_eax(w, insn, X86_WIDTH_DWORD, false,
           &src_slow_disp) ||
@@ -5956,6 +6751,7 @@ static bool emit_paged_dtlb_idiv_rm(x86_jit_writer_t *w,
       !emit_load_dtlb_value_scratch_eax(w) ||
       !emit_mov_ecx_eax(w) ||
       !emit_mov_eax_r11d(w) ||
+      /* INT32_MIN / -1 is the signed 32-bit IDIV quotient-overflow case. */
       !emit_alu_eax_imm32(w, X86_ALU_CMP, 0x80000000u) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &not_min_disp) ||
       !emit_cmp_ecx_imm32(w, 0xffffffffu) ||
@@ -5985,6 +6781,7 @@ static bool emit_paged_dtlb_idiv_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Store an immediate into a guest register while preserving untouched high bits. */
 static bool emit_store_reg_imm_width(x86_jit_writer_t *w, uint8_t reg,
     uint8_t width, uint32_t imm) {
   uint32_t keep_mask = 0;
@@ -6010,6 +6807,7 @@ static bool emit_store_reg_imm_width(x86_jit_writer_t *w, uint8_t reg,
          emit_store_reg_eax(w, reg);
 }
 
+/* Emit a byte/word/dword ALU operation with EAX/AX/AL and ECX/CX/CL. */
 static bool emit_alu_eax_ecx_width(x86_jit_writer_t *w, uint8_t alu_op,
     uint8_t width) {
   uint8_t opcode = 0;
@@ -6026,7 +6824,7 @@ static bool emit_alu_eax_ecx_width(x86_jit_writer_t *w, uint8_t alu_op,
     default: return false;
   }
 
-  if (width == X86_WIDTH_WORD && !emit_u8(w, 0x66)) return false;
+  if (width == X86_WIDTH_WORD && !emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE)) return false;
   if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
       width != X86_WIDTH_DWORD) {
     return false;
@@ -6034,6 +6832,7 @@ static bool emit_alu_eax_ecx_width(x86_jit_writer_t *w, uint8_t alu_op,
   return emit_u8(w, opcode) && emit_u8(w, 0xc8);
 }
 
+/* Materialise selected host flags into guest EFLAGS and clear requested flags. */
 static bool emit_capture_status_flags_custom(x86_jit_writer_t *w,
     uint32_t copy_mask, uint32_t clear_mask) {
   JIT_STAT_INC(flag_materialisations);
@@ -6048,12 +6847,14 @@ static bool emit_capture_status_flags_custom(x86_jit_writer_t *w,
          emit_store_eflags_eax(w);
 }
 
+/* Materialise selected host flags into guest EFLAGS using normal status clearing. */
 static bool emit_capture_status_flags(x86_jit_writer_t *w,
     uint32_t copy_mask) {
   return emit_capture_status_flags_custom(w, copy_mask,
       X86_EFLAGS_STATUS_MASK & ~copy_mask);
 }
 
+/* Emit the arithmetic body for native register INC/DEC before flag capture. */
 static bool emit_native_incdec_reg_body(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   if (insn->width != X86_WIDTH_DWORD) return false;
@@ -6066,6 +6867,7 @@ static bool emit_native_incdec_reg_body(x86_jit_writer_t *w,
          emit_store_reg_eax(w, insn->dst);
 }
 
+/* Emit a block return after publishing the next PC and completed-instruction count. */
 static bool emit_return_completed(x86_jit_writer_t *w, vaddr_t pc,
     uint32_t count) {
   if (jit_fast_chain_runtime_enabled()) {
@@ -6569,6 +7371,7 @@ static bool jit_incdec_jcc_host_cc(uint8_t cc, uint8_t *host_cc) {
   }
 }
 
+/* Emit a signed-condition branch, including the SF xor OF cases. */
 static bool emit_signed_jcc_condition_jump(x86_jit_writer_t *w, uint8_t cc,
     uint8_t **taken_disp) {
   const bool includes_zf = (cc & 0xfu) == X86_CC_LE ||
@@ -6615,6 +7418,7 @@ static bool emit_signed_jcc_condition_jump(x86_jit_writer_t *w, uint8_t cc,
          emit_jcc_rel32_placeholder(w, host_cc, taken_disp);
 }
 
+/* Emit a guest Jcc condition test that branches to a native displacement slot. */
 static bool emit_jcc_condition_jump(x86_jit_writer_t *w, uint8_t cc,
     uint8_t **taken_disp) {
   uint32_t mask = 0;
@@ -6628,6 +7432,7 @@ static bool emit_jcc_condition_jump(x86_jit_writer_t *w, uint8_t cc,
          emit_jcc_rel32_placeholder(w, host_cc, taken_disp);
 }
 
+/* Emit loop-budget accounting for a backward branch before staying native. */
 static bool emit_backedge_loop_accounting(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, const uint8_t *native_target,
     uint32_t count) {
@@ -6661,6 +7466,7 @@ static bool emit_backedge_loop_accounting(x86_jit_writer_t *w,
   return emit_store_pc_imm(w, jit_branch_target(insn)) && emit_ret(w);
 }
 
+/* Emit a native Jcc backedge with budget checks and interpreter exits. */
 static bool emit_jcc_backedge(x86_jit_writer_t *w, const x86_jit_insn_t *insn,
     const uint8_t *native_target, uint32_t count) {
   uint8_t *taken_disp = NULL;
@@ -6682,6 +7488,7 @@ static bool emit_jcc_backedge(x86_jit_writer_t *w, const x86_jit_insn_t *insn,
   return emit_backedge_loop_accounting(w, insn, native_target, count);
 }
 
+/* Emit the INC/DEC plus Jcc resident-loop fast path. */
 static bool emit_incdec_jcc_resident_backedge(x86_jit_writer_t *w,
     const x86_jit_insn_t *incdec, const x86_jit_insn_t *jcc,
     uint32_t count) {
@@ -6738,6 +7545,7 @@ static bool emit_incdec_jcc_resident_backedge(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit the CMP part of a resident backedge while the hot value is in EAX. */
 static bool emit_cmp_with_resident_eax(x86_jit_writer_t *w,
     const x86_jit_insn_t *cmp, uint8_t resident_reg) {
   if (cmp->width != X86_WIDTH_DWORD || cmp->alu_op != X86_ALU_CMP) {
@@ -6767,6 +7575,7 @@ static bool emit_cmp_with_resident_eax(x86_jit_writer_t *w,
   return false;
 }
 
+/* Emit a fused INC/DEC, CMP, and Jcc resident-loop backedge. */
 static bool emit_incdec_cmp_jcc_resident_backedge(x86_jit_writer_t *w,
     const x86_jit_insn_t *incdec, const x86_jit_insn_t *cmp,
     const x86_jit_insn_t *jcc, uint32_t count) {
@@ -6823,12 +7632,14 @@ static bool emit_incdec_cmp_jcc_resident_backedge(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit native handling for a direct relative JMP. */
 static bool emit_native_jmp_rel(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   JIT_STAT_INC(native_branch_ops);
   return emit_store_pc_imm(w, jit_branch_target(insn));
 }
 
+/* Emit a direct-chain jump when the target block can be patched in. */
 static bool emit_chained_jmp_rel(x86_jit_writer_t *w, x86_jit_block_t *block,
     const x86_jit_insn_t *insn, uint32_t count) {
   JIT_STAT_INC(native_branch_ops);
@@ -6836,6 +7647,7 @@ static bool emit_chained_jmp_rel(x86_jit_writer_t *w, x86_jit_block_t *block,
       X86_JIT_EXIT_JMP, X86_JIT_CHAIN_SLOW_UNLINKED);
 }
 
+/* Emit native handling for an indirect JMP r/m target. */
 static bool emit_native_jmp_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -6869,6 +7681,7 @@ static bool emit_native_jmp_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native handling for a direct relative Jcc. */
 static bool emit_native_jcc_rel(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *taken_disp = NULL;
@@ -6890,6 +7703,7 @@ static bool emit_native_jcc_rel(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit the side exit for one Jcc successor edge. */
 static bool emit_jcc_edge_exit(x86_jit_writer_t *w, x86_jit_block_t *block,
     vaddr_t target_pc, uint32_t count, x86_jit_exit_kind_t kind,
     bool can_chain) {
@@ -6903,6 +7717,7 @@ static bool emit_jcc_edge_exit(x86_jit_writer_t *w, x86_jit_block_t *block,
              X86_JIT_CHAIN_SLOW_UNACCEPTED_SUCCESSOR);
 }
 
+/* Emit a Jcc as two explicit edge exits for later direct chaining. */
 static bool emit_jcc_rel_per_edge(x86_jit_writer_t *w,
     x86_jit_block_t *block, const x86_jit_insn_t *insn, uint32_t count,
     bool fallthrough_can_chain, bool taken_can_chain) {
@@ -7101,30 +7916,35 @@ static bool jit_successor_flags_dead(vaddr_t pc) {
   return false;
 }
 
+/* Capture host status flags only when later guest code can observe them. */
 static bool emit_capture_status_flags_if_live(x86_jit_writer_t *w,
     uint32_t copy_mask, vaddr_t successor_pc) {
   if (jit_successor_flags_dead(successor_pc)) return true;
   return emit_capture_status_flags(w, copy_mask);
 }
 
+/* Decide which host flags are architecturally valid after a native shift. */
 static bool jit_native_shift_flag_copy_mask(uint8_t shift_op, uint8_t count,
     uint8_t *host_op, uint32_t *copy_mask) {
   *host_op = shift_op;
 
   switch (shift_op) {
-    case 0:
-    case 1:
+    /* Group-2 /0 ROL and /1 ROR: only CF is defined for count > 1. */
+    case X86_GROUP2_ROL:
+    case X86_GROUP2_ROR:
       *copy_mask = X86_FLAG_CF;
       if (count == 1) *copy_mask |= X86_FLAG_OF;
       return true;
-    case 4:
-    case 6:
-      *host_op = 4;
+    /* Group-2 /4 SHL and /6 SAL alias; native SHL uses /4. */
+    case X86_GROUP2_SHL:
+    case X86_GROUP2_SAL_ALIAS:
+      *host_op = X86_GROUP2_SHL;
       *copy_mask = X86_FLAG_CF | X86_FLAG_PF | X86_FLAG_ZF | X86_FLAG_SF;
       if (count == 1) *copy_mask |= X86_FLAG_OF;
       return true;
-    case 5:
-    case 7:
+    /* Group-2 /5 SHR and /7 SAR. */
+    case X86_GROUP2_SHR:
+    case X86_GROUP2_SAR:
       *copy_mask = X86_FLAG_CF | X86_FLAG_PF | X86_FLAG_ZF | X86_FLAG_SF;
       if (count == 1) *copy_mask |= X86_FLAG_OF;
       return true;
@@ -7133,6 +7953,7 @@ static bool jit_native_shift_flag_copy_mask(uint8_t shift_op, uint8_t count,
   }
 }
 
+/* Check whether a native shift count has defined flags for the guest width. */
 static bool jit_native_shift_count_safe_width(uint8_t shift_op, uint8_t width,
     uint8_t count) {
   if (width == X86_WIDTH_DWORD) return true;
@@ -7141,19 +7962,22 @@ static bool jit_native_shift_count_safe_width(uint8_t shift_op, uint8_t width,
 
   const uint8_t bits = width * X86_BITS_PER_BYTE;
   switch (shift_op) {
-    case 0:
-    case 1:
+    /* ROL/ROR by an exact operand width leaves the value unchanged. */
+    case X86_GROUP2_ROL:
+    case X86_GROUP2_ROR:
       return (count % bits) != 0;
-    case 4:
-    case 5:
-    case 6:
-    case 7:
+    /* SHL/SAL/SHR/SAR flags become undefined after counts wider than operand. */
+    case X86_GROUP2_SHL:
+    case X86_GROUP2_SHR:
+    case X86_GROUP2_SAL_ALIAS:
+    case X86_GROUP2_SAR:
       return count <= bits;
     default:
       return false;
   }
 }
 
+/* Emit native ALU code for register destination and register source. */
 static bool emit_native_alu_reg_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   if (!emit_load_reg_eax(w, insn->dst) ||
@@ -7174,6 +7998,7 @@ static bool emit_native_alu_reg_reg(x86_jit_writer_t *w,
       jit_native_alu_flag_copy_mask(insn->alu_op), insn->next_pc);
 }
 
+/* Emit native ALU code for register destination and immediate source. */
 static bool emit_native_alu_imm_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   if ((insn->width != X86_WIDTH_BYTE && insn->width != X86_WIDTH_WORD &&
@@ -7199,6 +8024,7 @@ static bool emit_native_alu_imm_reg(x86_jit_writer_t *w,
       jit_native_alu_flag_copy_mask(insn->alu_op), insn->next_pc);
 }
 
+/* Emit native CDQ for the guest accumulator register pair. */
 static bool emit_native_cdq(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   if (insn->width != X86_WIDTH_DWORD) return false;
@@ -7209,6 +8035,7 @@ static bool emit_native_cdq(x86_jit_writer_t *w,
          emit_store_reg_eax(w, R_EDX);
 }
 
+/* Emit native TEST for two guest registers. */
 static bool emit_native_test_reg_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   if (!emit_load_reg_eax(w, insn->dst) ||
@@ -7222,6 +8049,7 @@ static bool emit_native_test_reg_reg(x86_jit_writer_t *w,
       insn->next_pc);
 }
 
+/* Emit native TEST for accumulator and immediate forms. */
 static bool emit_native_test_eax_imm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   if (!emit_load_reg_eax(w, R_EAX) ||
@@ -7234,6 +8062,7 @@ static bool emit_native_test_eax_imm(x86_jit_writer_t *w,
       insn->next_pc);
 }
 
+/* Emit native SHLD/SHRD for double-shift register/immediate forms. */
 static bool emit_native_double_shift_reg_imm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   const uint8_t count = insn->imm & X86_SHIFT_COUNT_MASK;
@@ -7258,6 +8087,7 @@ static bool emit_native_double_shift_reg_imm(x86_jit_writer_t *w,
   return emit_capture_status_flags_custom(w, copy_mask, 0);
 }
 
+/* Emit an instruction that produces host flags without materialising them yet. */
 static bool emit_flag_producer_no_capture(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   switch (insn->op) {
@@ -7308,6 +8138,7 @@ static bool emit_flag_producer_no_capture(x86_jit_writer_t *w,
   }
 }
 
+/* Emit a flag producer while preserving the current register-cache contract. */
 static bool emit_flag_producer_no_capture_regcached(x86_jit_writer_t *w,
     x86_jit_emit_ctx_t *ctx, const x86_jit_insn_t *insn) {
   uint8_t dst_host = 0;
@@ -7358,6 +8189,7 @@ static bool emit_flag_producer_no_capture_regcached(x86_jit_writer_t *w,
   }
 }
 
+/* Emit a flag-producing instruction immediately fused with its following Jcc. */
 static bool emit_fused_flag_producer_jcc(x86_jit_writer_t *w,
     const x86_jit_insn_t *producer, const x86_jit_insn_t *jcc,
     uint32_t count) {
@@ -7388,6 +8220,7 @@ static bool emit_fused_flag_producer_jcc(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit one edge exit for a fused flag-producer plus Jcc pair. */
 static bool emit_fused_jcc_edge_exit(x86_jit_writer_t *w,
     x86_jit_block_t *block, vaddr_t target_pc, uint32_t count,
     x86_jit_exit_kind_t kind, bool can_chain, uint32_t copy_mask) {
@@ -7404,6 +8237,7 @@ static bool emit_fused_jcc_edge_exit(x86_jit_writer_t *w,
              X86_JIT_CHAIN_SLOW_UNACCEPTED_SUCCESSOR);
 }
 
+/* Emit a fused flag-producer/Jcc pair as separate chainable exits. */
 static bool emit_fused_flag_producer_jcc_per_edge(x86_jit_writer_t *w,
     x86_jit_block_t *block, const x86_jit_insn_t *producer,
     const x86_jit_insn_t *jcc, uint32_t count,
@@ -7433,6 +8267,7 @@ static bool emit_fused_flag_producer_jcc_per_edge(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit a fused flag-producer/Jcc resident backedge when the loop can stay native. */
 static bool emit_fused_flag_producer_jcc_resident_backedge(
     x86_jit_writer_t *w, const x86_jit_insn_t *producer,
     const x86_jit_insn_t *jcc, uint32_t count) {
@@ -7486,6 +8321,7 @@ static bool emit_fused_flag_producer_jcc_resident_backedge(
   return true;
 }
 
+/* Emit a fused flag-producer/Jcc generic backedge. */
 static bool emit_fused_flag_producer_jcc_backedge(x86_jit_writer_t *w,
     const x86_jit_insn_t *producer, const x86_jit_insn_t *jcc,
     const uint8_t *native_target, uint32_t count) {
@@ -7514,6 +8350,7 @@ static bool emit_fused_flag_producer_jcc_backedge(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit native ALU code for r/m destination and register source. */
 static bool emit_native_alu_rm_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -7612,6 +8449,7 @@ static bool emit_native_alu_rm_reg(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native ALU code for r/m destination and immediate source. */
 static bool emit_native_alu_imm_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -7696,6 +8534,7 @@ static bool emit_native_alu_imm_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native TEST for r/m and register operands. */
 static bool emit_native_test_rm_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -7761,6 +8600,7 @@ static bool emit_native_test_rm_reg(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native ALU code for register destination and r/m source. */
 static bool emit_native_alu_reg_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -7834,6 +8674,7 @@ static bool emit_native_alu_reg_rm(x86_jit_writer_t *w,
   return done_disp == NULL || patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native MOV reg, r/m using direct PMEM or helper fallback as needed. */
 static bool emit_native_mov_reg_rm_load(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -7878,6 +8719,7 @@ static bool emit_native_mov_reg_rm_load(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native MOV r/m, reg using direct PMEM or helper fallback as needed. */
 static bool emit_native_mov_rm_reg_store(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -7945,6 +8787,7 @@ static bool emit_native_mov_rm_reg_store(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native MOV immediate to r/m using the best available store path. */
 static bool emit_native_mov_imm_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -7986,6 +8829,7 @@ static bool emit_native_mov_imm_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native MOV accumulator from moffs using direct PMEM when safe. */
 static bool emit_native_mov_eax_moffs(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -8034,6 +8878,7 @@ static bool emit_native_mov_eax_moffs(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native MOV accumulator to moffs using direct PMEM when safe. */
 static bool emit_native_mov_moffs_eax(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -8072,6 +8917,7 @@ static bool emit_native_mov_moffs_eax(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native PUSH register for the current stack mode. */
 static bool emit_native_push_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -8106,6 +8952,7 @@ static bool emit_native_push_reg(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit a stack-window guarded native PUSH register. */
 static bool emit_native_push_reg_stack_guarded(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   if (insn->width != X86_WIDTH_DWORD) return false;
@@ -8123,6 +8970,7 @@ static bool emit_native_push_reg_stack_guarded(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit native POP register for the current stack mode. */
 static bool emit_native_pop_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -8158,6 +9006,7 @@ static bool emit_native_pop_reg(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit a stack-window guarded native POP register. */
 static bool emit_native_pop_reg_stack_guarded(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   if (insn->width != X86_WIDTH_DWORD || insn->dst == R_ESP) return false;
@@ -8177,6 +9026,7 @@ static bool emit_native_pop_reg_stack_guarded(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit native CALL rel32, including return-address stack write. */
 static bool emit_native_call_rel(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -8212,6 +9062,7 @@ static bool emit_native_call_rel(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit stack-window guarded native CALL rel32. */
 static bool emit_native_call_rel_stack_guarded(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   if (insn->width != X86_WIDTH_DWORD) return false;
@@ -8230,6 +9081,7 @@ static bool emit_native_call_rel_stack_guarded(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit CALL rel32 with a direct-chain transition to the target block. */
 static bool emit_chained_call_rel(x86_jit_writer_t *w, x86_jit_block_t *block,
     const x86_jit_insn_t *insn, uint32_t count) {
   uint8_t *pmem_slow_disp = NULL;
@@ -8265,6 +9117,7 @@ static bool emit_chained_call_rel(x86_jit_writer_t *w, x86_jit_block_t *block,
   return true;
 }
 
+/* Emit stack-window guarded CALL rel32 with direct-chain support. */
 static bool emit_chained_call_rel_stack_guarded(x86_jit_writer_t *w,
     x86_jit_block_t *block, const x86_jit_insn_t *insn, uint32_t count) {
   if (insn->width != X86_WIDTH_DWORD) return false;
@@ -8284,6 +9137,7 @@ static bool emit_chained_call_rel_stack_guarded(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit paged CALL rel32 that can chain after stack and paging guards pass. */
 static bool emit_chained_paged_call_rel(x86_jit_writer_t *w,
     x86_jit_block_t *block, const x86_jit_insn_t *insn, uint32_t count) {
   uint8_t *slow_disp = NULL;
@@ -8319,6 +9173,7 @@ static bool emit_chained_paged_call_rel(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit native RET for the current stack mode. */
 static bool emit_native_ret(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -8349,6 +9204,7 @@ static bool emit_native_ret(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit stack-window guarded native RET. */
 static bool emit_native_ret_stack_guarded(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   if (insn->width != X86_WIDTH_DWORD) return false;
@@ -8368,6 +9224,7 @@ static bool emit_native_ret_stack_guarded(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit RET with indirect target cache or chain-friendly slow exits. */
 static bool emit_chained_ret(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint32_t count) {
   uint8_t *pmem_slow_disp = NULL;
@@ -8431,6 +9288,7 @@ static bool emit_chained_ret(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit stack-window guarded RET with chain-friendly exits. */
 static bool emit_chained_ret_stack_guarded(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint32_t count) {
   x86_jit_indirect_cache_patches_t patches;
@@ -8459,10 +9317,12 @@ static bool emit_chained_ret_stack_guarded(x86_jit_writer_t *w,
   return true;
 }
 
+/* Patch an optional branch placeholder; NULL means that path was not emitted. */
 static bool patch_optional_rel32(uint8_t *disp, const uint8_t *target) {
   return disp == NULL || patch_rel32(disp, target);
 }
 
+/* Guard a paged RET-cache entry against stale metadata before jumping. */
 static bool emit_paged_ret_cache_meta_guard(x86_jit_writer_t *w,
     x86_jit_indirect_cache_patches_t *patches) {
   const x86_jit_translation_key_t key = jit_current_translation_key();
@@ -8486,6 +9346,7 @@ static bool emit_paged_ret_cache_meta_guard(x86_jit_writer_t *w,
          emit_cmp_r11d_imm32(w, key.paging_generation) &&
          emit_jcc_rel32_placeholder(w, X86_CC_NZ,
              &patches->key_generation_miss_disp) &&
+         /* Scale the cache index by 8 for the generation-slot pointer array. */
          emit_shl_edx_imm(w, 3u) &&
          emit_mov_r10_ret_cache_generation_slot_base(w) &&
          emit_mov_r11_m64_r10_rdx(w) &&
@@ -8501,12 +9362,19 @@ static bool emit_paged_ret_cache_meta_guard(x86_jit_writer_t *w,
              &patches->block_generation_miss_disp);
 }
 
+/* Emit an indirect-target cache lookup and jump for RET/JMP/CALL targets. */
 static bool emit_indirect_target_cache_jump(x86_jit_writer_t *w,
     uint32_t count, x86_jit_indirect_cache_patches_t *patches) {
   memset(patches, 0, sizeof(*patches));
   const bool paged_probe = jit_paging_enabled();
   if (!jit_indirect_target_cache_runtime_enabled()) return false;
 
+  /*
+   * Hash target PC by xor-folding bits 4 and 12, mask to cache size, then
+   * multiply by 16 because each ret-cache entry is {uint32_t pc, padding,
+   * void *native}.  Offset 0 stores the guest target PC; offset 8 stores the
+   * native code pointer.
+   */
   return emit_add_esi_imm32(w, count) &&
          emit_cmp_esi_edi(w) &&
          emit_jcc_rel32_placeholder(w, X86_CC_AE,
@@ -8519,6 +9387,7 @@ static bool emit_indirect_target_cache_jump(x86_jit_writer_t *w,
          emit_xor_ecx_r11d(w) &&
          emit_and_ecx_imm32(w, X86_JIT_RET_CACHE_MASK) &&
          (!paged_probe || emit_mov_edx_ecx(w)) &&
+         /* 4-bit left shift turns the entry index into a 16-byte stride. */
          emit_shl_ecx_imm(w, 4u) &&
          emit_mov_r10_ret_cache_base(w) &&
          emit_mov_r11d_m32_r10_rcx_disp8(w, 0u) &&
@@ -8539,6 +9408,7 @@ static bool emit_indirect_target_cache_jump(x86_jit_writer_t *w,
          emit_jmp_r11(w);
 }
 
+/* Patch and emit slow exits used by the indirect-target cache miss path. */
 static bool emit_indirect_target_cache_slow_exits(x86_jit_writer_t *w,
     x86_jit_indirect_cache_patches_t *patches) {
   uint8_t *budget_native = w->cur;
@@ -8573,6 +9443,7 @@ static bool emit_indirect_target_cache_slow_exits(x86_jit_writer_t *w,
          emit_ret(w);
 }
 
+/* Emit indirect JMP r/m with target-cache direct chaining when available. */
 static bool emit_chained_jmp_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint32_t count) {
   uint8_t *pmem_slow_disp = NULL;
@@ -8617,6 +9488,7 @@ static bool emit_chained_jmp_rm(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit native NEG for r/m, preserving exact memory and flag ordering. */
 static bool emit_native_neg_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -8678,6 +9550,7 @@ static bool emit_native_neg_rm(x86_jit_writer_t *w,
   return emit_capture_status_flags(w, X86_EFLAGS_STATUS_MASK);
 }
 
+/* Emit native INC/DEC for r/m while preserving CF. */
 static bool emit_native_incdec_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -8738,6 +9611,7 @@ static bool emit_native_incdec_rm(x86_jit_writer_t *w,
   return emit_capture_status_flags_custom(w, X86_EFLAGS_INCDEC_COPY_MASK, 0);
 }
 
+/* Emit native two-operand IMUL for register and r/m operands. */
 static bool emit_native_imul_reg_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -8783,6 +9657,7 @@ static bool emit_native_imul_reg_rm(x86_jit_writer_t *w,
   return done_disp == NULL || patch_rel32(done_disp, w->cur);
 }
 
+/* Load a dword r/m operand into ECX for native multiply/divide paths. */
 static bool emit_load_rm_ecx_dword(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t **slow_disp,
     bool *loaded_from_pmem) {
@@ -8808,6 +9683,7 @@ static bool emit_store_edx_eax_pair(x86_jit_writer_t *w) {
          emit_store_reg_eax(w, R_EDX);
 }
 
+/* Emit native one-operand unsigned MUL for r/m source. */
 static bool emit_native_mul_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -8838,6 +9714,7 @@ static bool emit_native_mul_rm(x86_jit_writer_t *w,
   return done_disp == NULL || patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native one-operand signed IMUL for r/m source. */
 static bool emit_native_imul_acc_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -8868,6 +9745,7 @@ static bool emit_native_imul_acc_rm(x86_jit_writer_t *w,
   return done_disp == NULL || patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native unsigned DIV for the safe dword subset, otherwise use helper. */
 static bool emit_native_div_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *src_slow_disp = NULL;
@@ -8906,6 +9784,7 @@ static bool emit_native_div_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native signed IDIV for the safe dword subset, otherwise use helper. */
 static bool emit_native_idiv_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *src_slow_disp = NULL;
@@ -8934,6 +9813,7 @@ static bool emit_native_idiv_rm(x86_jit_writer_t *w,
       !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &wide_slow_disp) ||
       !emit_mov_ecx_r10d(w) ||
       !emit_load_reg_eax(w, R_EAX) ||
+      /* INT32_MIN / -1 is the signed 32-bit IDIV quotient-overflow case. */
       !emit_alu_eax_imm32(w, X86_ALU_CMP, 0x80000000u) ||
       !emit_jcc_rel32_placeholder(w, X86_CC_NZ, &not_min_disp) ||
       !emit_cmp_ecx_imm32(w, 0xffffffffu) ||
@@ -8964,6 +9844,7 @@ static bool emit_native_idiv_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native Group-2 shift/rotate for a register and immediate count. */
 static bool emit_native_shift_reg_imm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -9045,6 +9926,7 @@ static bool emit_native_shift_reg_imm(x86_jit_writer_t *w,
   return emit_capture_status_flags_custom(w, copy_mask, 0);
 }
 
+/* Emit the common r/m-by-CL shift body after count guards are selected. */
 static bool emit_shift_rm_cl_body(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t shift_op, uint32_t copy_mask) {
   if (insn->rm_is_reg) {
@@ -9063,6 +9945,7 @@ static bool emit_shift_rm_cl_body(x86_jit_writer_t *w,
   return emit_capture_status_flags_custom(w, copy_mask, 0);
 }
 
+/* Emit native Group-2 shift/rotate for r/m and CL count. */
 static bool emit_native_shift_rm_cl(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *zero_disp = NULL;
@@ -9152,6 +10035,7 @@ static bool emit_native_shift_rm_cl(x86_jit_writer_t *w,
          patch_rel32(one_done_disp, done_native);
 }
 
+/* Emit paged-DTLB native shift/rotate for memory r/m and immediate count. */
 static bool emit_paged_dtlb_shift_rm_imm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *read_slow_disp = NULL;
@@ -9216,6 +10100,7 @@ static bool emit_paged_dtlb_shift_rm_imm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit paged-DTLB byte/word memory shift/rotate by CL. */
 static bool emit_paged_dtlb_shift_rm_cl_small(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *zero_disp = NULL;
@@ -9296,6 +10181,7 @@ static bool emit_paged_dtlb_shift_rm_cl_small(x86_jit_writer_t *w,
          patch_rel32(one_done_disp, done_native);
 }
 
+/* Emit paged-DTLB dword memory shift/rotate by CL. */
 static bool emit_paged_dtlb_shift_rm_cl(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *zero_disp = NULL;
@@ -9378,6 +10264,7 @@ static bool emit_paged_dtlb_shift_rm_cl(x86_jit_writer_t *w,
          patch_rel32(one_done_disp, done_native);
 }
 
+/* Emit native NOT for r/m, which changes data but leaves flags unchanged. */
 static bool emit_native_not_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -9419,6 +10306,7 @@ static bool emit_native_not_rm(x86_jit_writer_t *w,
   return done_disp == NULL || patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native MOVZX from r/m to register. */
 static bool emit_native_movzx_reg_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -9443,10 +10331,13 @@ static bool emit_native_movzx_reg_rm(x86_jit_writer_t *w,
      * IA-32 byte register numbers 4..7 name AH/CH/DH/BH, not SPL/BPL/SIL/DIL.
      * Decode stores the aliased base register plus four. Shift the full base
      * register down before masking so high-byte MOVZX stays on the native path.
+     * The `5u` shift op is Intel Group-2 /5 SHR; the `8u` count moves
+     * AH/CH/DH/BH into AL before zero-extension.
      */
     const bool high_byte = width == X86_WIDTH_BYTE && insn->rm_reg >= 4;
     if (!emit_load_reg_eax(w, high_byte ? (insn->rm_reg & 0x3u) : insn->rm_reg) ||
-        (high_byte && !emit_shift_eax_imm(w, 5u, 8u)) ||
+        (high_byte &&
+            !emit_shift_eax_imm(w, X86_GROUP2_SHR, X86_BITS_PER_BYTE)) ||
         !emit_alu_eax_imm32(w, X86_ALU_AND, mask) ||
         !emit_store_reg_eax(w, insn->dst)) {
       return false;
@@ -9483,6 +10374,7 @@ static bool emit_native_movzx_reg_rm(x86_jit_writer_t *w,
   return done_disp == NULL || patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native MOVSX from r/m to register. */
 static bool emit_native_movsx_reg_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -9547,6 +10439,7 @@ static bool emit_native_movsx_reg_rm(x86_jit_writer_t *w,
   return done_disp == NULL || patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native TEST r/m, immediate. */
 static bool emit_native_test_imm_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -9611,6 +10504,7 @@ static bool emit_condition_bool_eax(x86_jit_writer_t *w, uint8_t cc) {
          patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native SETcc to an 8-bit r/m destination. */
 static bool emit_native_setcc_rm8(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -9652,6 +10546,7 @@ static bool emit_native_setcc_rm8(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native PUSH immediate for the current stack mode. */
 static bool emit_native_push_imm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *pmem_slow_disp = NULL;
@@ -9687,6 +10582,7 @@ static bool emit_native_push_imm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit stack-window guarded native PUSH immediate. */
 static bool emit_native_push_imm_stack_guarded(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   if (insn->width != X86_WIDTH_DWORD) return false;
@@ -9704,6 +10600,7 @@ static bool emit_native_push_imm_stack_guarded(x86_jit_writer_t *w,
   return true;
 }
 
+/* Emit native PUSH r/m for register or memory source. */
 static bool emit_native_push_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *src_slow_disp = NULL;
@@ -9752,6 +10649,7 @@ static bool emit_native_push_rm(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit stack-window guarded native PUSH r/m. */
 static bool emit_native_push_rm_stack_guarded(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *src_slow_disp = NULL;
@@ -9790,6 +10688,7 @@ static bool emit_native_push_rm_stack_guarded(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native LEAVE as stack read plus ESP/EBP updates. */
 static bool emit_native_leave(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
@@ -9820,6 +10719,7 @@ static bool emit_native_leave(x86_jit_writer_t *w,
   return patch_rel32(done_disp, w->cur);
 }
 
+/* Emit native one-byte INC/DEC register forms with correct CF preservation. */
 static bool emit_native_incdec_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   if (!emit_native_incdec_reg_body(w, insn)) return false;
@@ -9828,6 +10728,7 @@ static bool emit_native_incdec_reg(x86_jit_writer_t *w,
   return emit_capture_status_flags_custom(w, X86_EFLAGS_INCDEC_COPY_MASK, 0);
 }
 
+/* Try to emit the instruction while using the current register-cache state. */
 static bool emit_insn_regcached(x86_jit_writer_t *w,
     x86_jit_emit_ctx_t *ctx, const x86_jit_insn_t *insn) {
   uint8_t dst_host = 0;
@@ -10174,6 +11075,7 @@ static bool emit_insn(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
   }
 }
 
+/* Test whether a Jcc backedge can be chained instead of leaving the block. */
 static bool jit_is_chainable_jcc_backedge(const x86_jit_insn_t *insn,
     vaddr_t block_pc) {
   uint32_t flag = 0;
@@ -10186,6 +11088,7 @@ static bool jit_is_chainable_jcc_backedge(const x86_jit_insn_t *insn,
          jit_branch_target(insn) == block_pc;
 }
 
+/* Test whether an INC/DEC plus Jcc backedge can stay in the resident loop. */
 static bool jit_is_incdec_resident_jcc_backedge(const x86_jit_insn_t *insn,
     vaddr_t block_pc) {
   uint8_t host_cc = 0;
@@ -10197,6 +11100,7 @@ static bool jit_is_incdec_resident_jcc_backedge(const x86_jit_insn_t *insn,
          jit_branch_target(insn) == block_pc;
 }
 
+/* Test whether an instruction is any supported Jcc backedge form. */
 static bool jit_is_any_jcc_backedge(const x86_jit_insn_t *insn,
     vaddr_t block_pc) {
   const bool is_jcc = (insn->op == X86_JIT_OP_JCC_REL) ||
@@ -10233,9 +11137,10 @@ static bool jit_decode_modrm(x86_jit_reader_t *r, uint8_t *mod, uint8_t *reg,
   uint8_t modrm = 0;
   if (!jit_read_u8(r, &modrm)) return false;
 
-  *mod = modrm >> 6;
-  *reg = (modrm >> 3) & 0x7u;
-  *rm = modrm & 0x7u;
+  /* Intel ModR/M: mod bits 7..6, reg/opcode bits 5..3, r/m bits 2..0. */
+  *mod = modrm >> X86_IA32_MODRM_MOD_SHIFT;
+  *reg = (modrm >> X86_IA32_MODRM_REG_SHIFT) & X86_IA32_MODRM_FIELD_MASK;
+  *rm = modrm & X86_IA32_MODRM_FIELD_MASK;
   return true;
 }
 
@@ -10251,33 +11156,45 @@ static bool jit_decode_ea32(x86_jit_reader_t *r, uint8_t mod, uint8_t rm,
   ea->scale = 0;
   ea->disp = 0;
 
-  if (mod == 3) return false;
+  if (mod == X86_IA32_MOD_REG) return false;
 
-  if (rm == 4) {
+  /* r/m=4 selects the following SIB byte in 32-bit addressing. */
+  if (rm == X86_IA32_RM_SIB) {
     uint8_t sib = 0;
     if (!jit_read_u8(r, &sib)) return false;
 
-    const uint8_t base = sib & 0x7u;
-    const uint8_t index = (sib >> 3) & 0x7u;
-    ea->scale = sib >> 6;
-    if (index != 4) ea->index_reg = index;
-    if (!(mod == 0 && base == 5)) ea->base_reg = base;
+    /* SIB: scale bits 7..6, index bits 5..3, base bits 2..0. */
+    const uint8_t base = sib & X86_IA32_MODRM_FIELD_MASK;
+    const uint8_t index =
+        (sib >> X86_HOST_SIB_INDEX_SHIFT) & X86_IA32_MODRM_FIELD_MASK;
+    ea->scale = sib >> X86_HOST_SIB_SCALE_SHIFT;
+    /* index=4 means no index register in IA-32 SIB encoding. */
+    if (index != X86_IA32_SIB_NO_INDEX) ea->index_reg = index;
+    /* base=5 with mod=0 means no base register; a disp32 follows. */
+    if (!(mod == X86_IA32_MOD_NO_DISP &&
+        base == X86_IA32_SIB_NO_BASE)) {
+      ea->base_reg = base;
+    }
   }
-  else if (!(mod == 0 && rm == 5)) {
+  else if (!(mod == X86_IA32_MOD_NO_DISP && rm == X86_IA32_RM_DISP32)) {
     ea->base_reg = rm;
   }
 
-  if (mod == 0) {
-    if (rm == 5 || (rm == 4 && ea->base_reg < 0)) {
+  if (mod == X86_IA32_MOD_NO_DISP) {
+    /* mod=0 and r/m=5, or SIB base=5, is absolute disp32 addressing. */
+    if (rm == X86_IA32_RM_DISP32 ||
+        (rm == X86_IA32_RM_SIB && ea->base_reg < 0)) {
       if (!jit_read_u32(r, &ea->disp)) return false;
     }
   }
-  else if (mod == 1) {
+  else if (mod == X86_IA32_MOD_DISP8) {
+    /* mod=1 adds a sign-extended 8-bit displacement. */
     int32_t disp = 0;
     if (!jit_read_i8(r, &disp)) return false;
     ea->disp = (uint32_t)disp;
   }
-  else if (mod == 2) {
+  else if (mod == X86_IA32_MOD_DISP32) {
+    /* mod=2 adds a 32-bit displacement. */
     if (!jit_read_u32(r, &ea->disp)) return false;
   }
 
@@ -10287,9 +11204,9 @@ static bool jit_decode_ea32(x86_jit_reader_t *r, uint8_t mod, uint8_t rm,
 /* Attach either a register r/m operand or a decoded memory effective address. */
 static bool jit_decode_rm_operand(x86_jit_reader_t *r, uint8_t mod,
     uint8_t rm, x86_jit_insn_t *out) {
-  out->rm_is_reg = mod == 3;
+  out->rm_is_reg = mod == X86_IA32_MOD_REG;
   out->rm_reg = rm;
-  if (mod == 3) return true;
+  if (mod == X86_IA32_MOD_REG) return true;
   return jit_decode_ea32(r, mod, rm, &out->ea);
 }
 
@@ -10307,15 +11224,16 @@ static void jit_mark_helper(x86_jit_insn_t *out, x86_jit_helper_t helper) {
 
 /* Convert the opcode's Group-1 bits 5..3 into the local ALU enum. */
 static int jit_alu_from_opcode(uint8_t opcode) {
-  switch (opcode & 0x38u) {
-    case 0x00: return X86_ALU_ADD;
-    case 0x08: return X86_ALU_OR;
-    case 0x10: return X86_ALU_ADC;
-    case 0x18: return X86_ALU_SBB;
-    case 0x20: return X86_ALU_AND;
-    case 0x28: return X86_ALU_SUB;
-    case 0x30: return X86_ALU_XOR;
-    case 0x38: return X86_ALU_CMP;
+  /* Bits 5..3 encode ADD/OR/ADC/SBB/AND/SUB/XOR/CMP in Intel order. */
+  switch (opcode & X86_IA32_ALU_OP_MASK) {
+    case 0x00: return X86_ALU_ADD;  /* /0 or primary ADD slot. */
+    case 0x08: return X86_ALU_OR;   /* /1 or primary OR slot. */
+    case 0x10: return X86_ALU_ADC;  /* /2 or primary ADC slot. */
+    case 0x18: return X86_ALU_SBB;  /* /3 or primary SBB slot. */
+    case 0x20: return X86_ALU_AND;  /* /4 or primary AND slot. */
+    case 0x28: return X86_ALU_SUB;  /* /5 or primary SUB slot. */
+    case 0x30: return X86_ALU_XOR;  /* /6 or primary XOR slot. */
+    case 0x38: return X86_ALU_CMP;  /* /7 or primary CMP slot. */
     default: return -1;
   }
 }
@@ -10324,6 +11242,28 @@ static int jit_alu_from_opcode(uint8_t opcode) {
  * Decode the supported IA-32 subset into the compact JIT IR.  The decoder keeps
  * unsupported opcodes side-effect free: if it returns false, the interpreter
  * will execute from the original PC.
+ *
+ * Decoder opcode guide:
+ *
+ *   - Intel `/digit` notation below means the ModR/M reg/opcode field is an
+ *     opcode extension, not a guest register operand.
+ *   - 0x66 switches the following supported instruction to 16-bit operand size.
+ *   - 0x40..0x4f are one-byte INC/DEC r32 forms; 0x50..0x5f are PUSH/POP r32.
+ *   - 0x70..0x7f are short Jcc; 0x0f 0x80..0x8f are near Jcc; the low nibble
+ *     is the condition-code index used by jit_cc_eval().
+ *   - 0x88/0x8a and 0x89/0x8b are MOV r/m,r and MOV r,r/m byte/dword forms.
+ *   - 0x8d is LEA; 0x8f /0 is POP r/m; 0x99 is CDQ.
+ *   - Group-1 ALU register/memory opcodes occupy 0x00..0x3f.  Bits 5..3 select
+ *     ADD/OR/ADC/SBB/AND/SUB/XOR/CMP; bits 2..0 select direction and width.
+ *   - 0x80/0x81/0x83 are Group-1 immediate ALU forms.
+ *   - 0xc0/0xc1/0xd0..0xd3 are Group-2 shifts and rotates.
+ *   - 0xc6/0xc7 /0 are MOV imm to r/m.
+ *   - 0x84/0x85 are TEST r/m,r; 0xa0..0xa3 are moffs accumulator MOV forms;
+ *     0xa8/0xa9 are TEST accumulator immediate forms.
+ *   - 0xfe/0xff are Group-4/5 INC/DEC/CALL/JMP/PUSH r/m forms.
+ *   - 0xf6/0xf7 are Group-3 TEST/NOT/NEG/MUL/IMUL/DIV/IDIV forms.
+ *   - 0xe4..0xe7 and 0xec..0xef are IN/OUT, available only with port I/O.
+ *   - 0xc3 is RET, 0xc9 is LEAVE, 0xe8/0xe9/0xeb are CALL/JMP relative forms.
  */
 static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
   memset(out, 0, sizeof(*out));
@@ -10344,7 +11284,7 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
   }
 
   if (opcode >= 0xb8 && opcode <= 0xbf) {
-    out->dst = opcode & 0x7u;
+    out->dst = opcode & X86_IA32_OPCODE_REG_MASK;
     if (out->width == X86_WIDTH_DWORD) {
       out->op = X86_JIT_OP_MOV_IMM_REG;
       return jit_read_u32(r, &out->imm) && jit_finish_decode(r, out);
@@ -10358,14 +11298,14 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
 
   if (opcode >= 0x40 && opcode <= 0x47) {
     jit_mark_helper(out, X86_JIT_HELPER_INCDEC_REG);
-    out->dst = opcode & 0x7u;
+    out->dst = opcode & X86_IA32_OPCODE_REG_MASK;
     out->alu_op = X86_ALU_ADD;
     return jit_finish_decode(r, out);
   }
 
   if (opcode >= 0x48 && opcode <= 0x4f) {
     jit_mark_helper(out, X86_JIT_HELPER_INCDEC_REG);
-    out->dst = opcode & 0x7u;
+    out->dst = opcode & X86_IA32_OPCODE_REG_MASK;
     out->alu_op = X86_ALU_SUB;
     return jit_finish_decode(r, out);
   }
@@ -10373,14 +11313,14 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
   if (opcode >= 0x50 && opcode <= 0x57) {
     if (out->width != X86_WIDTH_DWORD) return false;
     jit_mark_helper(out, X86_JIT_HELPER_PUSH_REG);
-    out->src = opcode & 0x7u;
+    out->src = opcode & X86_IA32_OPCODE_REG_MASK;
     return jit_finish_decode(r, out);
   }
 
   if (opcode >= 0x58 && opcode <= 0x5f) {
     if (out->width != X86_WIDTH_DWORD) return false;
     jit_mark_helper(out, X86_JIT_HELPER_POP_REG);
-    out->dst = opcode & 0x7u;
+    out->dst = opcode & X86_IA32_OPCODE_REG_MASK;
     return jit_finish_decode(r, out);
   }
 
@@ -10388,7 +11328,7 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
     if (out->width != X86_WIDTH_DWORD) return false;
     int32_t rel = 0;
     if (!jit_read_i8(r, &rel)) return false;
-    out->cc = opcode & 0xfu;
+    out->cc = opcode & X86_IA32_OPCODE_CC_MASK;
     out->rel = rel;
     out->ends_block = true;
     if (jit_jcc_native_supported(out->cc)) {
@@ -10428,7 +11368,7 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
 
     if (opcode == 0x89) {
       out->src = reg;
-      if (mod == 3 && out->width == X86_WIDTH_DWORD) {
+      if (mod == X86_IA32_MOD_REG && out->width == X86_WIDTH_DWORD) {
         out->op = X86_JIT_OP_MOV_REG_REG;
         out->dst = rm;
       }
@@ -10438,7 +11378,7 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
     }
     else {
       out->dst = reg;
-      if (mod == 3 && out->width == X86_WIDTH_DWORD) {
+      if (mod == X86_IA32_MOD_REG && out->width == X86_WIDTH_DWORD) {
         out->op = X86_JIT_OP_MOV_REG_REG;
         out->src = rm;
       }
@@ -10483,7 +11423,7 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
 
   const int alu_op = jit_alu_from_opcode(opcode);
   if (opcode < 0x40 && alu_op >= 0 &&
-      ((opcode & 0x07u) <= 0x03u)) {
+      ((opcode & X86_IA32_ALU_FORM_MASK) <= 0x03u)) {
     uint8_t mod = 0, reg = 0, rm = 0;
     if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
         !jit_decode_rm_operand(r, mod, rm, out)) {
@@ -10491,13 +11431,13 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
     }
 
     out->alu_op = (uint8_t)alu_op;
-    const uint8_t form = opcode & 0x07u;
+    const uint8_t form = opcode & X86_IA32_ALU_FORM_MASK;
     if (form == 0x00u || form == 0x02u) {
       out->width = X86_WIDTH_BYTE;
     }
     if (form == 0x00u || form == 0x01u) {
       out->src = reg;
-      if (mod == 3 && out->width == X86_WIDTH_DWORD) {
+      if (mod == X86_IA32_MOD_REG && out->width == X86_WIDTH_DWORD) {
         out->op = X86_JIT_OP_ALU_REG_REG;
         out->dst = rm;
       }
@@ -10508,7 +11448,7 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
     else {
       out->src = rm;
       out->dst = reg;
-      if (mod == 3 && out->width == X86_WIDTH_DWORD) {
+      if (mod == X86_IA32_MOD_REG && out->width == X86_WIDTH_DWORD) {
         out->op = X86_JIT_OP_ALU_REG_REG;
       }
       else {
@@ -10617,7 +11557,7 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
 
     out->width = opcode == 0x84 ? X86_WIDTH_BYTE : out->width;
     out->src = reg;
-    if (mod == 3 && out->width == X86_WIDTH_DWORD) {
+    if (mod == X86_IA32_MOD_REG && out->width == X86_WIDTH_DWORD) {
       out->op = X86_JIT_OP_TEST_REG_REG;
       out->dst = rm;
     }
@@ -10658,7 +11598,12 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
     return jit_finish_decode(r, out);
   }
 
-  if ((opcode & 0xc7u) == 0x05u && jit_alu_from_opcode(opcode) >= 0) {
+  /*
+   * Accumulator immediate ALU non-byte forms: opcode mask 11000111b leaves
+   * bits 5..3 as the ALU selector and matches opcodes 05/0d/15/.../3d.
+   */
+  if ((opcode & X86_IA32_ALU_ACC_MASK) == X86_IA32_ALU_ACC_IMM_NONBYTE &&
+      jit_alu_from_opcode(opcode) >= 0) {
     if (out->width == X86_WIDTH_DWORD) {
       if (!jit_read_u32(r, &out->imm)) return false;
     }
@@ -10676,7 +11621,12 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
     return jit_finish_decode(r, out);
   }
 
-  if ((opcode & 0xc7u) == 0x04u && jit_alu_from_opcode(opcode) >= 0) {
+  /*
+   * Accumulator immediate ALU byte forms: same bits 5..3 selector, but the low
+   * form is 04/0c/14/.../3c and the immediate is imm8.
+   */
+  if ((opcode & X86_IA32_ALU_ACC_MASK) == X86_IA32_ALU_ACC_IMM_BYTE &&
+      jit_alu_from_opcode(opcode) >= 0) {
     uint8_t imm = 0;
     if (!jit_read_u8(r, &imm)) return false;
 
@@ -10696,20 +11646,23 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
     }
 
     out->width = opcode == 0xfe ? X86_WIDTH_BYTE : out->width;
-    if (reg == 0 || reg == 1) {
-      out->alu_op = reg == 0 ? X86_ALU_ADD : X86_ALU_SUB;
+    /* Group-4/5 /0 is INC r/m, /1 is DEC r/m. */
+    if (reg == X86_GROUP45_INC || reg == X86_GROUP45_DEC) {
+      out->alu_op = reg == X86_GROUP45_INC ? X86_ALU_ADD : X86_ALU_SUB;
       jit_mark_helper(out, X86_JIT_HELPER_INCDEC_RM);
       return jit_finish_decode(r, out);
     }
     if (opcode == 0xfe) return false;
     if (out->width != X86_WIDTH_DWORD) return false;
-    if (reg == 2 || reg == 4) {
+    /* Group-5 /2 is CALL r/m and /4 is JMP r/m. */
+    if (reg == X86_GROUP5_CALL_RM || reg == X86_GROUP5_JMP_RM) {
       out->ends_block = true;
-      jit_mark_helper(out, reg == 2 ?
+      jit_mark_helper(out, reg == X86_GROUP5_CALL_RM ?
           X86_JIT_HELPER_CALL_RM : X86_JIT_HELPER_JMP_RM);
       return jit_finish_decode(r, out);
     }
-    if (reg == 6) {
+    /* Group-5 /6 is PUSH r/m. */
+    if (reg == X86_GROUP5_PUSH_RM) {
       jit_mark_helper(out, X86_JIT_HELPER_PUSH_RM);
       return jit_finish_decode(r, out);
     }
@@ -10724,7 +11677,8 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
     }
 
     out->width = opcode == 0xf6 ? X86_WIDTH_BYTE : out->width;
-    if (reg == 0) {
+    /* Group-3 /0 is TEST r/m, imm. */
+    if (reg == X86_GROUP3_TEST) {
       if (out->width == X86_WIDTH_DWORD) {
         if (!jit_read_u32(r, &out->imm)) return false;
       }
@@ -10740,19 +11694,22 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
       return jit_finish_decode(r, out);
     }
 
-    if (reg == 2 || reg == 3) {
-      jit_mark_helper(out, reg == 2 ?
+    /* Group-3 /2 is NOT r/m and /3 is NEG r/m. */
+    if (reg == X86_GROUP3_NOT || reg == X86_GROUP3_NEG) {
+      jit_mark_helper(out, reg == X86_GROUP3_NOT ?
           X86_JIT_HELPER_NOT_RM : X86_JIT_HELPER_NEG_RM);
       return jit_finish_decode(r, out);
     }
-    if (reg == 4 || reg == 5 || reg == 6 || reg == 7) {
+    /* Group-3 /4../7 are MUL, IMUL, DIV, IDIV. */
+    if (reg == X86_GROUP3_MUL || reg == X86_GROUP3_IMUL ||
+        reg == X86_GROUP3_DIV || reg == X86_GROUP3_IDIV) {
       static const x86_jit_helper_t gp3_helpers[] = {
         X86_JIT_HELPER_MUL_RM,
         X86_JIT_HELPER_IMUL_ACC_RM,
         X86_JIT_HELPER_DIV_RM,
         X86_JIT_HELPER_IDIV_RM,
       };
-      jit_mark_helper(out, gp3_helpers[reg - 4u]);
+      jit_mark_helper(out, gp3_helpers[reg - X86_GROUP3_MUL]);
       return jit_finish_decode(r, out);
     }
     return false;
@@ -10799,6 +11756,28 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
     return jit_finish_decode(r, out);
   }
 
+#ifdef CONFIG_HAS_PORT_IO
+  if ((opcode >= 0xe4 && opcode <= 0xe7) ||
+      (opcode >= 0xec && opcode <= 0xef)) {
+    /*
+     * IN/OUT opcodes: e4..e7 use an imm8 port, ec..ef use DX.  Bit 1 selects
+     * IN versus OUT and bit 0 selects byte versus operand-size width.
+     */
+    const bool port_from_dx = opcode >= 0xec;
+    const bool is_in = (opcode & 0x02u) == 0;
+    out->width = (opcode & 0x01u) != 0 ? out->width : X86_WIDTH_BYTE;
+    out->pio_port_from_dx = port_from_dx;
+    jit_mark_helper(out, is_in ? X86_JIT_HELPER_PIO_IN :
+        X86_JIT_HELPER_PIO_OUT);
+    if (!port_from_dx) {
+      uint8_t imm8 = 0;
+      if (!jit_read_u8(r, &imm8)) return false;
+      out->imm = imm8;
+    }
+    return jit_finish_decode(r, out);
+  }
+#endif
+
   if (opcode == 0xc3) {
     if (out->width != X86_WIDTH_DWORD) return false;
     out->ends_block = true;
@@ -10816,11 +11795,12 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
     uint8_t opcode2 = 0;
     if (!jit_read_u8(r, &opcode2)) return false;
 
+    /* 0F 80..8F are near Jcc rel32; low nibble is the condition code. */
     if (opcode2 >= 0x80 && opcode2 <= 0x8f) {
       if (out->width != X86_WIDTH_DWORD) return false;
       uint32_t rel = 0;
       if (!jit_read_u32(r, &rel)) return false;
-      out->cc = opcode2 & 0xfu;
+      out->cc = opcode2 & X86_IA32_OPCODE_CC_MASK;
       out->rel = (int32_t)rel;
       out->ends_block = true;
       if (jit_jcc_native_supported(out->cc)) {
@@ -10832,6 +11812,7 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
       return jit_finish_decode(r, out);
     }
 
+    /* 0F 90..9F are SETcc r/m8; low nibble is the condition code. */
     if (opcode2 >= 0x90 && opcode2 <= 0x9f) {
       uint8_t mod = 0, reg = 0, rm = 0;
       if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
@@ -10839,12 +11820,13 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
         return false;
       }
       (void)reg;
-      out->cc = opcode2 & 0xfu;
+      out->cc = opcode2 & X86_IA32_OPCODE_CC_MASK;
       out->width = X86_WIDTH_BYTE;
       jit_mark_helper(out, X86_JIT_HELPER_SETCC_RM8);
       return jit_finish_decode(r, out);
     }
 
+    /* 0F AF /r is two-operand IMUL r32, r/m32. */
     if (opcode2 == 0xaf) {
       uint8_t mod = 0, reg = 0, rm = 0;
       if (!jit_decode_modrm(r, &mod, &reg, &rm) ||
@@ -10856,6 +11838,7 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
       return jit_finish_decode(r, out);
     }
 
+    /* 0F A4 is SHLD r/m32,r32,imm8; 0F AC is SHRD.  Local 0/1 means left/right. */
     if (opcode2 == 0xa4 || opcode2 == 0xac) {
       if (out->width != X86_WIDTH_DWORD) return false;
       uint8_t mod = 0, reg = 0, rm = 0;
@@ -10872,6 +11855,7 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
       return jit_finish_decode(r, out);
     }
 
+    /* 0F B6/B7 are MOVZX from byte/word to dword. */
     if ((opcode2 == 0xb6 || opcode2 == 0xb7) &&
         out->width == X86_WIDTH_DWORD) {
       uint8_t mod = 0, reg = 0, rm = 0;
@@ -10885,6 +11869,7 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
       return jit_finish_decode(r, out);
     }
 
+    /* 0F BE/BF are MOVSX from byte/word to signed word/dword. */
     if ((opcode2 == 0xbe &&
             (out->width == X86_WIDTH_WORD ||
              out->width == X86_WIDTH_DWORD)) ||
@@ -11014,11 +11999,13 @@ static bool jit_stack_window_guest_esp_write(const x86_jit_insn_t *insn) {
   }
 }
 
+/* Count and reject a candidate stack-window fast path. */
 static bool jit_stack_window_reject(bool paged) {
   if (paged) JIT_STAT_INC(stack_fast_fallbacks);
   return false;
 }
 
+/* Analyse whether a block's stack accesses fit the direct-PMEM stack window. */
 static bool jit_analyse_stack_window(const x86_jit_insn_t *insns,
     uint32_t count, x86_jit_stack_window_t *window) {
   memset(window, 0, sizeof(*window));
@@ -11129,6 +12116,7 @@ static size_t jit_align_code(size_t value) {
   return (value + X86_JIT_CODE_ALIGN - 1u) & ~(size_t)(X86_JIT_CODE_ALIGN - 1u);
 }
 
+/* Re-check paged source bytes after page-table writes bumped the generation. */
 static bool jit_block_revalidate_paging_generation(x86_jit_block_t *block) {
   if (!block->paging ||
       block->translation_key.paging_generation == jit_paging_generation) {
@@ -11213,8 +12201,14 @@ static uint32_t jit_next_cache_age(void) {
   return jit_cache_age_clock;
 }
 
+/* Mix CR3 and paging-state bits for cache/hot-table indexing. */
 static uint32_t jit_translation_key_hash(x86_jit_translation_key_t key) {
   uint32_t hash = key.cr3_key;
+  /*
+   * 2246822519 is a common 32-bit avalanche multiplier.  It has no architectural
+   * meaning; it only spreads small paging-state values across the power-of-two
+   * cache and hot-table indexes.
+   */
   hash ^= key.state * 2246822519u;
   hash ^= hash >> 15;
   return hash;
@@ -11227,6 +12221,15 @@ static uint32_t jit_cache_set_key(vaddr_t pc, x86_jit_translation_key_t key) {
   hash ^= hash >> 12;
   hash ^= hash >> 20;
   return hash & (X86_JIT_CACHE_SETS - 1u);
+}
+
+/* Hash a target PC and translation key into the incoming-edge table. */
+static uint32_t jit_incoming_edge_bucket(vaddr_t pc,
+    x86_jit_translation_key_t key) {
+  uint32_t hash = pc ^ (jit_translation_key_hash(key) * 2246822519u);
+  hash ^= hash >> 5;
+  hash ^= hash >> 13;
+  return hash & (X86_JIT_INCOMING_EDGE_BUCKETS - 1u);
 }
 
 /*
@@ -11430,6 +12433,70 @@ static void jit_link_block_exits(x86_jit_block_t *block) {
   }
 }
 
+/* Check that a recorded incoming-edge reference still names the same edge. */
+static bool jit_incoming_edge_ref_live(
+    const x86_jit_incoming_edge_ref_t *ref) {
+  if (ref == NULL || !ref->valid || ref->source_index >= X86_JIT_CACHE_SIZE) {
+    return false;
+  }
+
+  x86_jit_block_t *source = &jit_cache[ref->source_index];
+  if (!source->valid || source->generation != ref->source_generation ||
+      !jit_translation_key_equal(source->translation_key,
+          ref->translation_key) ||
+      ref->edge_index >= source->exit_count) {
+    return false;
+  }
+
+  const x86_jit_exit_edge_t *edge = &source->exits[ref->edge_index];
+  return edge->valid && edge->target_pc == ref->target_pc;
+}
+
+/* Register one exit edge so the target can later patch or unpatch it. */
+static void jit_incoming_edge_register(x86_jit_block_t *block,
+    uint8_t edge_index) {
+  if (block == NULL || !block->valid || block->unsupported ||
+      edge_index >= block->exit_count) {
+    return;
+  }
+
+  const x86_jit_exit_edge_t *edge = &block->exits[edge_index];
+  if (!edge->valid) return;
+
+  const uint32_t bucket = jit_incoming_edge_bucket(edge->target_pc,
+      block->translation_key);
+  x86_jit_incoming_edge_ref_t *slot = NULL;
+  for (uint32_t way = 0; way < X86_JIT_INCOMING_EDGE_WAYS; way++) {
+    x86_jit_incoming_edge_ref_t *candidate = &jit_incoming_edges[bucket][way];
+    if (!jit_incoming_edge_ref_live(candidate)) {
+      slot = candidate;
+      break;
+    }
+  }
+  if (slot == NULL) {
+    slot = &jit_incoming_edges[bucket]
+        [jit_incoming_edge_replace_clock++ & (X86_JIT_INCOMING_EDGE_WAYS - 1u)];
+  }
+
+  *slot = (x86_jit_incoming_edge_ref_t){
+    .valid = true,
+    .target_pc = edge->target_pc,
+    .translation_key = block->translation_key,
+    .source_index = jit_block_index(block),
+    .source_generation = block->generation,
+    .edge_index = edge_index,
+  };
+}
+
+/* Register every chainable exit in a block as an incoming edge candidate. */
+static void jit_incoming_edge_register_block(x86_jit_block_t *block) {
+  if (block == NULL || !block->valid || block->unsupported) return;
+
+  for (uint8_t i = 0; i < block->exit_count; i++) {
+    jit_incoming_edge_register(block, i);
+  }
+}
+
 /* Link existing incoming edges after compiling a new target block. */
 static void jit_link_edges_to_target(x86_jit_block_t *target) {
   if (!jit_chain_enabled || target == NULL || !target->valid ||
@@ -11439,20 +12506,24 @@ static void jit_link_edges_to_target(x86_jit_block_t *target) {
   }
   if (target->paging && !jit_paged_chain_enabled) return;
 
-  for (uint32_t i = 0; i < X86_JIT_CACHE_SIZE; i++) {
-    x86_jit_block_t *block = &jit_cache[i];
-    if (!block->valid || block->unsupported ||
-        block->paging != target->paging ||
-        !jit_translation_key_equal(block->translation_key,
+  const uint32_t bucket = jit_incoming_edge_bucket(target->pc,
+      target->translation_key);
+  for (uint32_t way = 0; way < X86_JIT_INCOMING_EDGE_WAYS; way++) {
+    x86_jit_incoming_edge_ref_t *ref = &jit_incoming_edges[bucket][way];
+    if (!jit_incoming_edge_ref_live(ref)) {
+      ref->valid = false;
+      continue;
+    }
+    if (ref->target_pc != target->pc ||
+        !jit_translation_key_equal(ref->translation_key,
             target->translation_key)) {
       continue;
     }
-    for (uint8_t edge_index = 0; edge_index < block->exit_count; edge_index++) {
-      x86_jit_exit_edge_t *edge = &block->exits[edge_index];
-      if (edge->valid && edge->target_pc == target->pc) {
-        jit_patch_edge_to_target(edge, target);
-      }
-    }
+
+    x86_jit_block_t *source = &jit_cache[ref->source_index];
+    if (source->unsupported || source->paging != target->paging) continue;
+
+    jit_patch_edge_to_target(&source->exits[ref->edge_index], target);
   }
 }
 
@@ -11619,6 +12690,7 @@ static bool jit_trace_choose_taken(vaddr_t pc, const x86_jit_insn_t *jcc) {
   return jit_branch_target(jcc) <= pc;
 }
 
+/* Detect loops while selecting trace parts by PC. */
 static bool jit_trace_seen_pc(const x86_jit_trace_part_t *parts,
     uint32_t part_count, vaddr_t pc) {
   for (uint32_t i = 0; i < part_count; i++) {
@@ -11627,6 +12699,7 @@ static bool jit_trace_seen_pc(const x86_jit_trace_part_t *parts,
   return false;
 }
 
+/* Test whether a block already contains a resident backedge unsuitable for trace merge. */
 static bool jit_trace_block_has_resident_backedge(
     const x86_jit_insn_t *insns, uint32_t count, vaddr_t pc) {
   if (count >= 2u &&
@@ -11646,6 +12719,7 @@ static bool jit_trace_block_has_resident_backedge(
          jit_branch_target(&insns[count - 1u]) == pc;
 }
 
+/* Decode a hot trace by following selected direct-control successors. */
 static bool jit_trace_decode(vaddr_t pc, uint32_t max_insns,
     x86_jit_insn_t *trace_insns, uint32_t *trace_count,
     x86_jit_trace_part_t *parts, uint32_t *part_count,
@@ -11751,6 +12825,7 @@ static bool jit_trace_decode(vaddr_t pc, uint32_t max_insns,
          last_part->hot_target == pc;
 }
 
+/* Check whether a trace Jcc successor can ignore materialised guest flags. */
 static bool jit_trace_jcc_successor_flags_dead(
     const x86_jit_trace_part_t *part) {
   return part != NULL &&
@@ -11758,6 +12833,7 @@ static bool jit_trace_jcc_successor_flags_dead(
          jit_successor_flags_dead(part->cold_target);
 }
 
+/* Emit a trace side exit for the not-selected Jcc successor. */
 static bool emit_trace_jcc_side_exit(x86_jit_writer_t *w,
     x86_jit_block_t *block, const x86_jit_insn_t *jcc,
     const x86_jit_trace_part_t *part, x86_jit_emit_ctx_t *ctx) {
@@ -11794,6 +12870,7 @@ static bool emit_trace_jcc_side_exit(x86_jit_writer_t *w,
   return patch_rel32(hot_disp, w->cur);
 }
 
+/* Emit a trace Jcc side exit that can use live host flags directly. */
 static bool emit_trace_jcc_side_exit_host_flags(x86_jit_writer_t *w,
     x86_jit_block_t *block, const x86_jit_insn_t *jcc,
     const x86_jit_trace_part_t *part, x86_jit_emit_ctx_t *ctx) {
@@ -11830,6 +12907,7 @@ static bool emit_trace_jcc_side_exit_host_flags(x86_jit_writer_t *w,
   return patch_rel32(hot_disp, w->cur);
 }
 
+/* Emit the final Jcc exit at the end of a trace. */
 static bool emit_trace_jcc_final_exit(x86_jit_writer_t *w,
     x86_jit_block_t *block, const x86_jit_insn_t *jcc,
     const x86_jit_trace_part_t *part) {
@@ -11884,6 +12962,7 @@ static bool emit_trace_jcc_final_exit(x86_jit_writer_t *w,
              X86_JIT_EXIT_TAKEN, X86_JIT_CHAIN_SLOW_COLD_TRACE);
 }
 
+/* Emit the final trace Jcc exit while consuming live host flags. */
 static bool emit_trace_jcc_final_exit_host_flags(x86_jit_writer_t *w,
     x86_jit_block_t *block, const x86_jit_insn_t *jcc,
     const x86_jit_trace_part_t *part) {
@@ -12236,6 +13315,7 @@ static x86_jit_block_t *jit_compile_trace(vaddr_t pc, uint32_t max_insns,
 
   __builtin___clear_cache((char *)w.start, (char *)w.cur);
   jit_code_used = jit_align_code((size_t)(w.cur - jit_code));
+  jit_incoming_edge_register_block(block);
   jit_link_block_exits(block);
   jit_link_edges_to_target(block);
 
@@ -12279,6 +13359,7 @@ static void jit_reset_arena(void) {
   memset(jit_cache_cold, 0, sizeof(jit_cache_cold));
   memset(jit_l0_cache, 0, sizeof(jit_l0_cache));
   memset(jit_hot_info, 0, sizeof(jit_hot_info));
+  memset(jit_incoming_edges, 0, sizeof(jit_incoming_edges));
   jit_ret_cache_clear();
   memset(jit_source_page_has_code, 0, sizeof(jit_source_page_has_code));
   memset(jit_source_page_blocks, 0, sizeof(jit_source_page_blocks));
@@ -12420,16 +13501,11 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
         ctx.uses_loop_accounting = true;
         break;
       }
-      const bool fallthrough_can_chain =
-          jit_edge_accepts_chain(guarded_block, cold->insns[i + 1u].next_pc);
-      const bool taken_can_chain =
-          jit_edge_accepts_chain(guarded_block,
-              jit_branch_target(&cold->insns[i + 1u]));
-      if (fallthrough_can_chain || taken_can_chain) {
+      if (guarded_block) {
         if (!jit_regcache_flush_all(&w, &ctx) ||
             !emit_fused_flag_producer_jcc_per_edge(&w, block,
             &cold->insns[i], &cold->insns[i + 1u], fused_count,
-            fallthrough_can_chain, taken_can_chain)) {
+            true, true)) {
           jit_code_used = start_used;
           return NULL;
         }
@@ -12470,9 +13546,7 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
       ctx.uses_loop_accounting = true;
       ctx.uses_global_loop_accounting = true;
     }
-    else if (cold->insns[i].op == X86_JIT_OP_JMP_REL &&
-        jit_edge_accepts_chain(guarded_block,
-            jit_branch_target(&cold->insns[i]))) {
+    else if (cold->insns[i].op == X86_JIT_OP_JMP_REL && guarded_block) {
       if (!jit_regcache_flush_all(&w, &ctx) ||
           !emit_chained_jmp_rel(&w, block, &cold->insns[i], insn_count)) {
         jit_code_used = start_used;
@@ -12480,24 +13554,8 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
       }
       ends_with_chained_control = true;
     }
-    else if (cold->insns[i].op == X86_JIT_OP_JMP_REL && guarded_block) {
-      if (!jit_regcache_flush_all(&w, &ctx) ||
-          !emit_store_pc_imm(&w, jit_branch_target(&cold->insns[i])) ||
-          !emit_ret_count_side_exit(&w, insn_count,
-              X86_JIT_CHAIN_SLOW_UNACCEPTED_SUCCESSOR)) {
-        jit_code_used = start_used;
-        return NULL;
-      }
-      ends_with_chained_control = true;
-      ends_with_control = true;
-    }
     else if (cold->insns[i].op == X86_JIT_OP_JCC_REL) {
-      const bool fallthrough_can_chain =
-          jit_edge_accepts_chain(guarded_block, cold->insns[i].next_pc);
-      const bool taken_can_chain =
-          jit_edge_accepts_chain(guarded_block,
-              jit_branch_target(&cold->insns[i]));
-      if (!fallthrough_can_chain && !taken_can_chain) {
+      if (!guarded_block) {
         if (!emit_insn_regcached(&w, &ctx, &cold->insns[i])) {
           jit_code_used = start_used;
           return NULL;
@@ -12508,7 +13566,7 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
       }
       if (!jit_regcache_flush_all(&w, &ctx) ||
           !emit_jcc_rel_per_edge(&w, block, &cold->insns[i], insn_count,
-              fallthrough_can_chain, taken_can_chain)) {
+              true, true)) {
         jit_code_used = start_used;
         return NULL;
       }
@@ -12546,10 +13604,9 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
         return NULL;
       }
     }
-    else if (jit_chain_enabled && (!paged_block || stack_window_fast) &&
+    else if (guarded_block && (!paged_block || stack_window_fast) &&
         cold->insns[i].op == X86_JIT_OP_HELPER &&
-        cold->insns[i].helper == X86_JIT_HELPER_CALL_REL &&
-        jit_target_probe_accepts_chain(jit_branch_target(&cold->insns[i]))) {
+        cold->insns[i].helper == X86_JIT_HELPER_CALL_REL) {
       if (!jit_regcache_flush_all(&w, &ctx) ||
           !(stack_window_fast ?
               emit_chained_call_rel_stack_guarded(&w, block, &cold->insns[i],
@@ -12562,10 +13619,9 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
       ends_with_chained_control = true;
       ends_with_control = true;
     }
-    else if (jit_chain_enabled && paged_block &&
+    else if (guarded_block && paged_block &&
         cold->insns[i].op == X86_JIT_OP_HELPER &&
-        cold->insns[i].helper == X86_JIT_HELPER_CALL_REL &&
-        jit_target_probe_accepts_chain(jit_branch_target(&cold->insns[i]))) {
+        cold->insns[i].helper == X86_JIT_HELPER_CALL_REL) {
       if (!jit_regcache_flush_all(&w, &ctx) ||
           !emit_chained_paged_call_rel(&w, block, &cold->insns[i],
               insn_count)) {
@@ -12643,9 +13699,7 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
   }
 
   if (!ends_with_chained_control) {
-    const bool fallthrough_can_chain = !ends_with_control &&
-        jit_edge_accepts_chain(guarded_block, end_pc);
-    if (fallthrough_can_chain) {
+    if (!ends_with_control && guarded_block) {
       if (!emit_chain_exit(&w, block, end_pc, emitted_count,
           X86_JIT_EXIT_FALLTHROUGH, X86_JIT_CHAIN_SLOW_UNLINKED)) {
         jit_code_used = start_used;
@@ -12699,6 +13753,7 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
   __builtin___clear_cache((char *)w.start, (char *)w.cur);
   jit_code_used = jit_align_code((size_t)(w.cur - jit_code));
   if (chainable_block || block->exit_count != 0) {
+    jit_incoming_edge_register_block(block);
     jit_link_block_exits(block);
     jit_link_edges_to_target(block);
   }
@@ -12845,6 +13900,7 @@ void isa_jit_flush_all(void) {
   memset(jit_cache_cold, 0, sizeof(jit_cache_cold));
   memset(jit_l0_cache, 0, sizeof(jit_l0_cache));
   memset(jit_hot_info, 0, sizeof(jit_hot_info));
+  memset(jit_incoming_edges, 0, sizeof(jit_incoming_edges));
   jit_ret_cache_clear();
   memset(jit_source_page_has_code, 0, sizeof(jit_source_page_has_code));
   memset(jit_source_page_blocks, 0, sizeof(jit_source_page_blocks));

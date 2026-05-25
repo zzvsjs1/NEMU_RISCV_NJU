@@ -7,7 +7,8 @@
 
 void syscall_request_resched(void);
 
-#if defined(__ARCH_MIPS32_NEMU) || defined(__ARCH_RISCV32_NEMU) || defined(__ARCH_RISCV64_NEMU)
+#if defined(__ARCH_X86_NEMU) || defined(__ARCH_MIPS32_NEMU) || \
+    defined(__ARCH_RISCV32_NEMU) || defined(__ARCH_RISCV64_NEMU)
 #define NEMU_PLATFORM_CONSTANTS_ONLY
 #include <nemu.h>
 #undef NEMU_PLATFORM_CONSTANTS_ONLY
@@ -16,7 +17,16 @@ void syscall_request_resched(void);
 
 static inline void fb_mmio_outl(uintptr_t addr, uint32_t data)
 {
+#if defined(__ARCH_X86_NEMU)
+    /*
+     * x86-nemu exposes the VGA control block on the port-I/O bus.  The other
+     * NEMU targets use memory-mapped device registers at the same logical
+     * offsets, so keep one capture path and swap only the bus operation here.
+     */
+    asm volatile("outl %%eax, %%dx" : : "a"(data), "d"((uint16_t)addr));
+#else
     *(volatile uint32_t *)addr = data;
+#endif
 }
 #else
 #define NEMU_LAZY_FB_CAPTURE 0

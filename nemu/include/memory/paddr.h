@@ -29,6 +29,7 @@ static inline bool in_pmem_range(paddr_t addr, int len)
 word_t paddr_read(paddr_t addr, int len);
 word_t paddr_ifetch(paddr_t addr);
 void paddr_write(paddr_t addr, int len, word_t data);
+void paddr_write_no_jit_invalidate(paddr_t addr, int len, word_t data);
 
 #ifndef CONFIG_TARGET_AM
 #include <stdio.h>

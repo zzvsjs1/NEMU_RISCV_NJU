@@ -95,7 +95,12 @@ static uint32_t x86_set_ad_bits(paddr_t entry_addr, uint32_t entry, bool dirty) 
   }
 
   if (updated != entry) {
-    paddr_write(entry_addr, 4, updated);
+    /*
+     * Setting Accessed/Dirty bits does not change the physical page or loosen
+     * permissions, so existing JIT DTLB entries remain valid.  The guest still
+     * observes the architectural PTE/PDE update in PMEM.
+     */
+    paddr_write_no_jit_invalidate(entry_addr, 4, updated);
   }
 
   return updated;

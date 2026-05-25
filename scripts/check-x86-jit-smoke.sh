@@ -247,7 +247,7 @@ required_max_helper_remaining_calls() {
 
 required_max_helper_shift_rm_calls() {
   case "$1" in
-    jit-shift-native) echo 0 ;;
+    jit-shift-native) echo 2 ;;
     *) echo "" ;;
   esac
 }

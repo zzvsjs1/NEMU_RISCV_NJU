@@ -229,8 +229,11 @@ static void require_kernel(Decode *s, const char *op) {
  */
 enum {
   CR0_PE = 1u << 0,
+  CR0_WP = 1u << 16,
   CR0_PG = 1u << 31,
   CR3_PWT_PCD_MASK = 0x18u,
+  CR4_PSE = 1u << 4,
+  CR4_PAE = 1u << 5,
 };
 
 static uint32_t *sreg_visible_ptr(int idx) {
@@ -272,10 +275,16 @@ static uint32_t desc_limit(uint32_t lo, uint32_t hi) {
 }
 
 void x86_seg_load_from_descriptor(int idx, uint16_t selector, uint32_t lo, uint32_t hi) {
+  uint32_t old_cpl = cpu.cs & X86_SELECTOR_RPL_MASK;
   *sreg_visible_ptr(idx) = selector;
   cpu.seg_cache[idx].base = desc_base(lo, hi);
   cpu.seg_cache[idx].limit = desc_limit(lo, hi);
   cpu.seg_cache[idx].attr = hi;
+
+  if (idx == X86_SREG_CS &&
+      (selector & X86_SELECTOR_RPL_MASK) != old_cpl) {
+    isa_jit_flush_data_tlb();
+  }
 }
 
 static uint32_t seg_linear(int idx, vaddr_t off, int len, const char *op) {
@@ -1272,12 +1281,24 @@ static word_t cr_read(Decode *s, int cr_idx) {
   }
 }
 
+static inline uint32_t cr3_translation_key(word_t data) {
+  return data & ~X86_PAGE_OFFSET_MASK;
+}
+
+static inline uint32_t cr0_translation_bits(word_t data) {
+  return data & (CR0_PG | CR0_WP);
+}
+
+static inline uint32_t cr4_translation_bits(word_t data) {
+  return data & (CR4_PSE | CR4_PAE);
+}
+
 /* Write CR0/CR2/CR3/CR4 and enforce the small set of architectural constraints modelled here. */
 static void cr_write(Decode *s, int cr_idx, word_t data) {
   require_kernel(s, "mov to control register");
 
   switch (cr_idx) {
-    case X86_CR0_INDEX:
+    case X86_CR0_INDEX: {
       /*
        * Paging without protected mode is architecturally invalid.  AM enables
        * paging from the flat protected-mode reset state, so this rejects only
@@ -1285,21 +1306,38 @@ static void cr_write(Decode *s, int cr_idx, word_t data) {
        */
       Assert((data & CR0_PG) == 0 || (data & CR0_PE) != 0,
           "x86 mov to CR0 sets PG while PE is clear at pc = " FMT_WORD, s->pc);
+      const uint32_t old_cr0_translation = cr0_translation_bits(cpu.cr0);
       cpu.cr0 = data;
-      isa_jit_flush_data_tlb();
+      if (cr0_translation_bits(cpu.cr0) != old_cr0_translation) {
+        isa_jit_flush_data_tlb();
+      }
       break;
+    }
     case X86_CR2_INDEX:
       /* CR2 is normally written by page-fault hardware; monitor tests may still restore it. */
       cpu.cr2 = data;
       break;
-    case X86_CR3_INDEX:
-      cpu.cr3 = (data & ~X86_PAGE_OFFSET_MASK) | (data & CR3_PWT_PCD_MASK);
-      isa_jit_flush_data_tlb();
+    case X86_CR3_INDEX: {
+      const uint32_t old_cr3_key = cr3_translation_key(cpu.cr3);
+      cpu.cr3 = cr3_translation_key(data) | (data & CR3_PWT_PCD_MASK);
+      /*
+       * NEMU already invalidates the JIT DTLB on guest page-table writes.
+       * Re-loading the same page-directory base on a context return therefore
+       * does not make cached translations stale.
+       */
+      if (cr3_translation_key(cpu.cr3) != old_cr3_key) {
+        isa_jit_flush_data_tlb();
+      }
       break;
-    case X86_CR4_INDEX:
+    }
+    case X86_CR4_INDEX: {
+      const uint32_t old_cr4_translation = cr4_translation_bits(cpu.cr4);
       cpu.cr4 = data;
-      isa_jit_flush_data_tlb();
+      if (cr4_translation_bits(cpu.cr4) != old_cr4_translation) {
+        isa_jit_flush_data_tlb();
+      }
       break;
+    }
     default:
       INV(s->pc);
       break;

@@ -157,3 +157,25 @@ void paddr_write(paddr_t addr, int len, word_t data)
            panic("address = " FMT_PADDR " is out of bound of pmem [" FMT_PADDR ", " FMT_PADDR ") at pc = " FMT_WORD,
                  addr, CONFIG_MBASE, CONFIG_MBASE + CONFIG_MSIZE, cpu.pc));
 }
+
+void paddr_write_no_jit_invalidate(paddr_t addr, int len, word_t data)
+{
+    if (likely(in_pmem_range(addr, len)))
+    {
+#ifdef CONFIG_MTRACE
+        /*
+         * Keep memory tracing identical to paddr_write(); only the JIT
+         * invalidation hook is skipped by this specialised write path.
+         */
+        if (mtrace_in_range(addr, len))
+        {
+            log_write("mtrace write pc=" FMT_WORD " addr=" FMT_PADDR " len=%d data=" FMT_WORD "\n",
+                      cpu.pc, addr, len, data);
+        }
+#endif
+        pmem_write(addr, len, data);
+        return;
+    }
+
+    paddr_write(addr, len, data);
+}

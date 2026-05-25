@@ -317,6 +317,16 @@ static inline word_t query_pending_intr()
     {
         return INTR_EMPTY;
     }
+#elif defined(CONFIG_ISA_x86)
+    /*
+     * x86 has an STI shadow that must count down through isa_query_intr(), but
+     * when there is no pending interrupt and no shadow, the ISA query is a
+     * guaranteed empty result on the hot JIT return path.
+     */
+    if (likely(!cpu.INTR && cpu.sti_shadow == 0))
+    {
+        return INTR_EMPTY;
+    }
 #endif
     return isa_query_intr();
 }
