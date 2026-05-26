@@ -3981,17 +3981,19 @@ static bool emit_or_eax_ecx(x86_jit_writer_t *w) {
 
 /* Emit host code for imul eax ecx; bytes below are x86-64 encodings. */
 static bool emit_imul_eax_ecx(x86_jit_writer_t *w) {
+  /* 0F AF /r writes the product to ModR/M.reg, so reg=EAX and r/m=ECX. */
   return emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) && emit_u8(w, 0xaf) &&
-         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RCX,
-             X86_HOST_RAX));
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RAX,
+             X86_HOST_RCX));
 }
 
 /* Emit host code for imul ax cx; bytes below are x86-64 encodings. */
 static bool emit_imul_ax_cx(x86_jit_writer_t *w) {
+  /* 0F AF /r writes the product to ModR/M.reg, so reg=AX and r/m=CX. */
   return emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE) && emit_u8(w, X86_HOST_OPCODE_ESCAPE_0F) &&
          emit_u8(w, 0xaf) &&
-         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RCX,
-             X86_HOST_RAX));
+         emit_u8(w, X86_HOST_MODRM(X86_HOST_MODRM_MOD_REG, X86_HOST_RAX,
+             X86_HOST_RCX));
 }
 
 /* Emit host code for mul ecx; bytes below are x86-64 encodings. */
@@ -4796,12 +4798,11 @@ static uint32_t jit_batch_enter(x86_jit_entry_t entry,
    * therefore calls, rather than jumps to, the first generated block.  Direct
    * chains stay inside this saved-register window until a generated exit RETs.
    *
-   * GCC's function prologue has already aligned RSP before this inline-asm
-   * body.  Keep it aligned at the generated-code call site so the generated
-   * block enters with the normal SysV shape, RSP % 16 == 8.  Helper calls
-   * emitted inside the block rely on that entry shape when they align their
-   * own C calls; adding another 8-byte adjustment here leaves deep host calls
-   * such as SDL_OpenAudio() misaligned.
+   * The compiler may enter this inline-asm body with either stack phase after
+   * its own prologue, especially under LTO.  Build a private aligned call frame
+   * after loading all C operands, so generated code always enters with the
+   * normal SysV shape, RSP % 16 == 8.  Helper calls emitted inside the block
+   * rely on that entry shape before they call back into C.
    */
   __asm__ volatile(
       "movq %[dtlb_base], %%rax\n\t"
@@ -4811,6 +4812,10 @@ static uint32_t jit_batch_enter(x86_jit_entry_t entry,
       "movq %[pmem_base], %%r9\n\t"
       "movq %[source_bitmap], %%r10\n\t"
       "xorl %%esi, %%esi\n\t"
+      "movq %%rsp, %%rcx\n\t"
+      "andq $-16, %%rsp\n\t"
+      "subq $8, %%rsp\n\t"
+      "pushq %%rcx\n\t"
       "pushq %%rbx\n\t"
       "pushq %%rbp\n\t"
       "pushq %%r12\n\t"
@@ -4829,6 +4834,8 @@ static uint32_t jit_batch_enter(x86_jit_entry_t entry,
       "popq %%r12\n\t"
       "popq %%rbp\n\t"
       "popq %%rbx\n\t"
+      "popq %%rcx\n\t"
+      "movq %%rcx, %%rsp\n\t"
       : "=&a"(ret)
       : [entry] "r"(entry),
         [budget] "rm"(remaining_budget),

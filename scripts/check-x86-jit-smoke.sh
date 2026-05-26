@@ -921,6 +921,11 @@ for test_name in "${TESTS[@]}"; do
     cat "$out" >&2
     exit 2
   fi
+  if grep -q '\*\*\*FAIL\*\*\*\|HIT BAD TRAP' "$out"; then
+    echo "$test_name reported failure" >&2
+    cat "$out" >&2
+    exit 2
+  fi
 
   require_min_jit_instructions "$out" "$test_name" "$(required_jit_instructions "$test_name")"
   require_max_unsupported_hits "$out" "$test_name" "$(required_max_unsupported_hits "$test_name")"

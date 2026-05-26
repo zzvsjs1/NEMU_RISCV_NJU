@@ -34,6 +34,10 @@ if ! NEMU_JIT_STATS=1 NEMU_X86_JIT_HELPERS=1 \
   fail "jit-imul CPU test failed"
 fi
 
+if grep -q '\*\*\*FAIL\*\*\*\|HIT BAD TRAP' "$out"; then
+  fail "jit-imul CPU test reported failure"
+fi
+
 native_imul=$(sed -n 's/.*native imul ops = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
 [ -n "$native_imul" ] || fail "missing native imul stats"
 
