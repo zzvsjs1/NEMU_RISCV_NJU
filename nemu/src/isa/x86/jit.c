@@ -112,6 +112,9 @@ void pio_write(ioaddr_t addr, int len, uint32_t data);
  *     already decoded and emitted incorrectly.
  */
 
+/* -------------------------------------------------------------------------- */
+/* Build gates and public JIT availability. */
+
 #if defined(__x86_64__) && defined(CONFIG_X86_JIT) && \
     defined(CONFIG_TARGET_NATIVE_ELF) && !defined(CONFIG_TRACE) && \
     !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
@@ -128,6 +131,9 @@ void pio_write(ioaddr_t addr, int len, uint32_t data);
 #else
 #define X86_JIT_STATS 0
 #endif
+
+/* -------------------------------------------------------------------------- */
+/* Architectural and host encoding constants. */
 
 /*
  * IA-32 architectural constants used by decode, helpers, and emitted guards.
@@ -368,6 +374,9 @@ void pio_write(ioaddr_t addr, int len, uint32_t data);
 /* Per-entry access bits for the private data TLB; writes imply read access. */
 #define X86_JIT_DTLB_READ 0x1u
 #define X86_JIT_DTLB_WRITE 0x2u
+
+/* -------------------------------------------------------------------------- */
+/* Core data model shared by decode, emission, cache, and runtime hooks. */
 
 typedef uint32_t (*x86_jit_entry_t)(uint32_t remaining_budget);
 
@@ -884,6 +893,9 @@ enum {
   X86_CC_G  = 0xf,  /* ZF == 0 && SF == OF; signed greater-than. */
 };
 
+/* -------------------------------------------------------------------------- */
+/* Runtime state, feature toggles, statistics, and forward declarations. */
+
 bool isa_jit_invalidation_active = false;
 
 #if X86_JIT_ENABLED
@@ -1029,6 +1041,7 @@ static const char *const jit_helper_names[X86_JIT_HELPER_COUNT] = {
   } while (0)
 
 static bool patch_rel32(uint8_t *disp, const uint8_t *target);
+static bool patch_optional_rel32(uint8_t *disp, const uint8_t *target);
 static void jit_unpatch_incoming_edges(const x86_jit_block_t *target);
 static uint32_t jit_incoming_edge_bucket(vaddr_t pc,
     x86_jit_translation_key_t key);
@@ -1057,6 +1070,10 @@ static bool emit_shift_eax_imm(x86_jit_writer_t *w, uint8_t shift_op,
     uint8_t count);
 static bool jit_native_alu_writes_result(uint8_t alu_op);
 static bool jit_helper_may_touch_guest_memory(const x86_jit_insn_t *insn);
+static bool jit_helper_movzx_source_width(x86_jit_helper_t helper,
+    uint8_t *width, uint32_t *mask);
+static bool jit_helper_movsx_source_width(x86_jit_helper_t helper,
+    uint8_t *width);
 static uint32_t jit_native_alu_flag_copy_mask(uint8_t alu_op);
 static bool emit_capture_status_flags(x86_jit_writer_t *w,
     uint32_t copy_mask);
@@ -1095,6 +1112,9 @@ static bool jit_decode_block(vaddr_t pc, uint32_t max_insns,
     x86_jit_insn_t *insns, uint32_t *count_out, vaddr_t *end_pc_out);
 static void jit_analyse_block(const x86_jit_insn_t *insns, uint32_t count,
     x86_jit_emit_ctx_t *ctx);
+
+/* -------------------------------------------------------------------------- */
+/* Runtime option parsing. */
 
 /* Return true when an environment flag is set to a non-empty, non-"0" value. */
 static bool jit_env_flag_enabled(const char *name) {
@@ -1234,6 +1254,9 @@ static uint64_t jit_percent_x100(uint64_t numerator, uint64_t denominator) {
 }
 #endif
 
+/* -------------------------------------------------------------------------- */
+/* Translation-key and paging-mode helpers. */
+
 /* IA-32 paging is active when CR0.PG is set. */
 static bool jit_paging_enabled(void) {
   return (cpu.cr0 & X86_CR0_PG) != 0;
@@ -1281,7 +1304,7 @@ static x86_jit_translation_key_t jit_current_translation_key(void) {
   return (x86_jit_translation_key_t){
     .cr3_key = jit_cr3_key(),
     .state = jit_paging_state_key(),
-      .paging_generation = jit_paging_generation,
+    .paging_generation = jit_paging_generation,
   };
 }
 
@@ -1346,6 +1369,9 @@ static bool jit_flat_segments(void) {
 
   return true;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Source-byte validation and reader helpers. */
 
 /* Fetch instruction bytes directly from PMEM for flat, non-paged execution. */
 static bool jit_flat_direct_fetch(vaddr_t pc, uint32_t len,
@@ -1510,6 +1536,33 @@ static bool jit_cross_page(vaddr_t addr, uint32_t len) {
   return len == 0 || (uint32_t)(addr & PAGE_MASK) + len > PAGE_SIZE;
 }
 
+/* The native fast paths only inline byte, word, and dword guest data accesses. */
+static inline bool jit_supported_data_width(uint32_t width) {
+  return width == X86_WIDTH_BYTE ||
+         width == X86_WIDTH_WORD ||
+         width == X86_WIDTH_DWORD;
+}
+
+/* Some shift helpers intentionally handle only byte and word operands. */
+static inline bool jit_supported_narrow_data_width(uint32_t width) {
+  return width == X86_WIDTH_BYTE || width == X86_WIDTH_WORD;
+}
+
+/* MOVSX destination and selected IMUL paths intentionally reject byte width. */
+static inline bool jit_supported_word_or_dword_width(uint32_t width) {
+  return width == X86_WIDTH_WORD || width == X86_WIDTH_DWORD;
+}
+
+/* TEST on AH/BH/CH/DH can be forced through the helper by runtime option. */
+static inline bool jit_native_high_byte_test_blocked(
+    const x86_jit_insn_t *insn, uint32_t width) {
+  return insn->rm_is_reg && width == X86_WIDTH_BYTE && insn->rm_reg >= 4u &&
+         !jit_native_high_byte_test_enabled;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Private DTLB and page-table dependency tracking. */
+
 /*
  * Fold paging permission mode into a small translation key: bits 0..1 are CPL,
  * bit 2 tracks CR0.WP, and bit 3 tracks CR4.PSE.  A change in any of these can
@@ -1642,9 +1695,12 @@ static void *jit_dtlb_translate(const x86_jit_insn_t *insn, uint32_t addr,
   cpu.pc = insn->pc;
   jit_fault_guest_count = jit_loop_extra + insn->ordinal;
 
-  if ((len != X86_WIDTH_BYTE && len != X86_WIDTH_WORD &&
-          len != X86_WIDTH_DWORD) ||
+  if (!jit_supported_data_width(len) ||
       jit_cross_page(addr, len)) {
+    /*
+     * Keep the stat tied to the address/length predicate even when an
+     * unsupported width is already taking the fallback.
+     */
     if (jit_cross_page(addr, len)) JIT_STAT_INC(cross_page_fallbacks);
     return jit_dtlb_fallback();
   }
@@ -1706,6 +1762,9 @@ static void *jit_dtlb_translate(const x86_jit_insn_t *insn, uint32_t addr,
   JIT_STAT_INC(dtlb_fills);
   return guest_to_host(pa);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Block metadata and source-invalidation indexes. */
 
 /* Convert a hot-cache pointer to its index for cold-side arrays and reverse maps. */
 static uint32_t jit_block_index(const x86_jit_block_t *block) {
@@ -1995,6 +2054,9 @@ static bool jit_block_source_overlaps_paddr_range(
   }
   return false;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Helper semantic execution. */
 
 /* Build an all-ones mask for an 8-, 16-, or 32-bit guest operand. */
 static uint32_t jit_width_mask(uint8_t width) {
@@ -2967,6 +3029,10 @@ static void jit_helper_exec(const x86_jit_insn_t *insn) {
  *     and patch_rel32() calculate target - next_instruction after code layout
  *     is known.
  */
+
+/* -------------------------------------------------------------------------- */
+/* Writer and raw emitter primitives. */
+
 /* Append one byte to the native code buffer. */
 static bool emit_u8(x86_jit_writer_t *w, uint8_t value) {
   if (w->cur >= w->end) return false;
@@ -4433,6 +4499,9 @@ static bool emit_store_host_to_guest(x86_jit_writer_t *w, uint8_t guest,
          emit_u32(w, disp);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Register cache support. */
+
 /*
  * Register-cache host sets.  rbx/rbp/r14 are callee-saved and compact for
  * normal blocks; traces may also use r8..r11 because the trampoline owns the
@@ -4687,6 +4756,9 @@ static bool jit_paged_dtlb_mode_ready(void) {
   return jit_paging_enabled() && jit_paging_mode_supported();
 }
 
+/* -------------------------------------------------------------------------- */
+/* DTLB, PMEM, and stack fast-path emission. */
+
 /*
  * Inline read-DTLB fast path.  Input EAX is a guest virtual address; on hit, the
  * result is a host pointer in RAX.  All miss tests branch to `miss_native`,
@@ -4697,8 +4769,7 @@ static bool emit_paged_dtlb_read_hit_inline(x86_jit_writer_t *w,
   uint8_t *miss_disp[7];
   uint32_t miss_count = 0;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
   if (sizeof(paddr_t) != sizeof(uint32_t)) return false;
@@ -4954,8 +5025,7 @@ static bool emit_paged_dtlb_write_hit_inline(x86_jit_writer_t *w,
   uint8_t *guard_miss_disp[3] = { NULL, NULL, NULL };
   uint32_t miss_count = 0;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
   if (sizeof(paddr_t) != sizeof(uint32_t)) return false;
@@ -5046,6 +5116,9 @@ static bool emit_paged_dtlb_write_hit_inline(x86_jit_writer_t *w,
 
   return patch_rel32(done_disp, w->cur);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Stack fast-path support. */
 
 /* Load a 32-bit stack value from PMEM offset EDX into EAX. */
 static bool emit_stack_load_dword_eax(x86_jit_writer_t *w) {
@@ -5301,8 +5374,7 @@ static bool emit_alu_eax_r11_width(x86_jit_writer_t *w, uint8_t alu_op,
   }
 
   if (width == X86_WIDTH_WORD && !emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE)) return false;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
   /* 0x44 is REX.R, and ModR/M 0xd8 selects destination EAX with source r11d. */
@@ -5459,6 +5531,7 @@ static bool emit_test_eax_ecx_width(x86_jit_writer_t *w, uint8_t width) {
 }
 
 static bool jit_native_low_byte_reg(uint8_t reg);
+static bool jit_native_byte_width_rejects_reg(uint8_t width, uint8_t reg);
 
 /* Store AL/AX/EAX into a guest register while preserving untouched high bits. */
 static bool emit_store_reg_eax_width(x86_jit_writer_t *w, uint8_t reg,
@@ -5514,6 +5587,9 @@ static bool emit_load_reg_to_eax_width(x86_jit_writer_t *w, uint8_t reg,
   return emit_load_reg_r11d(w, reg) && emit_mov_eax_r11d(w);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Paged DTLB instruction emission. */
+
 /* Translate the guest address in EAX and branch to slow path on DTLB failure. */
 static bool emit_paged_dtlb_translate_addr_eax(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn, uint8_t width, bool is_write,
@@ -5560,8 +5636,7 @@ static bool emit_paged_dtlb_mov_reg_rm_load(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->rm_is_reg) return false;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
 
@@ -5590,8 +5665,7 @@ static bool emit_paged_dtlb_mov_rm_reg_store(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->rm_is_reg) return false;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
   if (width == X86_WIDTH_BYTE && insn->src >= 8u) return false;
@@ -5624,8 +5698,7 @@ static bool emit_paged_dtlb_mov_imm_rm(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->rm_is_reg) return false;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
 
@@ -5654,8 +5727,7 @@ static bool emit_paged_dtlb_mov_eax_moffs(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
 
@@ -5685,8 +5757,7 @@ static bool emit_paged_dtlb_mov_moffs_eax(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
 
@@ -5718,13 +5789,7 @@ static bool emit_paged_dtlb_movzx_reg_rm(x86_jit_writer_t *w,
   uint8_t width = 0;
 
   if (insn->rm_is_reg) return false;
-  if (insn->helper == X86_JIT_HELPER_MOVZX_REG_RM8) {
-    width = X86_WIDTH_BYTE;
-  }
-  else if (insn->helper == X86_JIT_HELPER_MOVZX_REG_RM16) {
-    width = X86_WIDTH_WORD;
-  }
-  else {
+  if (!jit_helper_movzx_source_width(insn->helper, &width, NULL)) {
     return false;
   }
 
@@ -5753,16 +5818,10 @@ static bool emit_paged_dtlb_movsx_reg_rm(x86_jit_writer_t *w,
   uint8_t width = 0;
 
   if (insn->rm_is_reg) return false;
-  if (insn->width != X86_WIDTH_WORD && insn->width != X86_WIDTH_DWORD) {
+  if (!jit_supported_word_or_dword_width(insn->width)) {
     return false;
   }
-  if (insn->helper == X86_JIT_HELPER_MOVSX_REG_RM8) {
-    width = X86_WIDTH_BYTE;
-  }
-  else if (insn->helper == X86_JIT_HELPER_MOVSX_REG_RM16) {
-    width = X86_WIDTH_WORD;
-  }
-  else {
+  if (!jit_helper_movsx_source_width(insn->helper, &width)) {
     return false;
   }
 
@@ -5800,18 +5859,18 @@ static bool emit_paged_dtlb_alu_rm_reg(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->rm_is_reg) return false;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
-  if (width == X86_WIDTH_BYTE && !jit_native_low_byte_reg(insn->src)) {
+  if (jit_native_byte_width_rejects_reg(width, insn->src)) {
     return false;
   }
+  const bool reads_carry = jit_alu_reads_carry(insn->alu_op);
+  const uint32_t flag_copy_mask = jit_native_alu_flag_copy_mask(insn->alu_op);
 
   if (!emit_paged_dtlb_load_ea_eax(w, insn, width, writes_result,
           &slow_disp) ||
-      (jit_alu_reads_carry(insn->alu_op) &&
-          !emit_guest_cf_to_host_cf_ecx(w)) ||
+      (reads_carry && !emit_guest_cf_to_host_cf_ecx(w)) ||
       !emit_load_reg_r11d(w, insn->src) ||
       !emit_alu_eax_r11_width(w, insn->alu_op, width)) {
     return false;
@@ -5819,8 +5878,7 @@ static bool emit_paged_dtlb_alu_rm_reg(x86_jit_writer_t *w,
   if (writes_result && !emit_store_host_ptr_r10_eax_width(w, width)) {
     return false;
   }
-  if (!emit_capture_status_flags(w,
-          jit_native_alu_flag_copy_mask(insn->alu_op)) ||
+  if (!emit_capture_status_flags(w, flag_copy_mask) ||
       !emit_jmp_rel32_placeholder(w, &done_disp)) {
     return false;
   }
@@ -5846,23 +5904,22 @@ static bool emit_paged_dtlb_alu_imm_rm(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->rm_is_reg) return false;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
+  const bool reads_carry = jit_alu_reads_carry(insn->alu_op);
+  const uint32_t flag_copy_mask = jit_native_alu_flag_copy_mask(insn->alu_op);
 
   if (!emit_paged_dtlb_load_ea_eax(w, insn, width, writes_result,
           &slow_disp) ||
-      (jit_alu_reads_carry(insn->alu_op) &&
-          !emit_guest_cf_to_host_cf_ecx(w)) ||
+      (reads_carry && !emit_guest_cf_to_host_cf_ecx(w)) ||
       !emit_alu_eax_imm_width(w, insn->alu_op, width, insn->imm)) {
     return false;
   }
   if (writes_result && !emit_store_host_ptr_r10_eax_width(w, width)) {
     return false;
   }
-  if (!emit_capture_status_flags(w,
-          jit_native_alu_flag_copy_mask(insn->alu_op)) ||
+  if (!emit_capture_status_flags(w, flag_copy_mask) ||
       !emit_jmp_rel32_placeholder(w, &done_disp)) {
     return false;
   }
@@ -5888,25 +5945,24 @@ static bool emit_paged_dtlb_alu_reg_rm(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->rm_is_reg) return false;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
-  if (width == X86_WIDTH_BYTE && !jit_native_low_byte_reg(insn->dst)) {
+  if (jit_native_byte_width_rejects_reg(width, insn->dst)) {
     return false;
   }
+  const bool reads_carry = jit_alu_reads_carry(insn->alu_op);
+  const uint32_t flag_copy_mask = jit_native_alu_flag_copy_mask(insn->alu_op);
 
   if (!emit_paged_dtlb_load_ea_eax(w, insn, width, false, &slow_disp) ||
       !emit_mov_ecx_eax(w) ||
       !emit_load_reg_eax(w, insn->dst) ||
-      (jit_alu_reads_carry(insn->alu_op) &&
-          !emit_guest_cf_to_host_cf_r11(w)) ||
+      (reads_carry && !emit_guest_cf_to_host_cf_r11(w)) ||
       !emit_alu_eax_ecx_width(w, insn->alu_op, width)) {
     return false;
   }
   if (writes_result && !emit_store_reg_eax(w, insn->dst)) return false;
-  if (!emit_capture_status_flags(w,
-          jit_native_alu_flag_copy_mask(insn->alu_op)) ||
+  if (!emit_capture_status_flags(w, flag_copy_mask) ||
       !emit_jmp_rel32_placeholder(w, &done_disp)) {
     return false;
   }
@@ -5930,11 +5986,10 @@ static bool emit_paged_dtlb_test_rm_reg(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->rm_is_reg) return false;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
-  if (width == X86_WIDTH_BYTE && !jit_native_low_byte_reg(insn->src)) {
+  if (jit_native_byte_width_rejects_reg(width, insn->src)) {
     return false;
   }
 
@@ -5964,12 +6019,10 @@ static bool emit_paged_dtlb_test_imm_rm(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
-  if (insn->rm_is_reg && width == X86_WIDTH_BYTE && insn->rm_reg >= 4u &&
-      !jit_native_high_byte_test_enabled) {
+  if (jit_native_high_byte_test_blocked(insn, width)) {
     return false;
   }
 
@@ -6408,8 +6461,7 @@ static bool emit_paged_dtlb_incdec_rm(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->rm_is_reg) return false;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
   if (insn->alu_op != X86_ALU_ADD && insn->alu_op != X86_ALU_SUB) {
@@ -6444,8 +6496,7 @@ static bool emit_paged_dtlb_not_rm(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->rm_is_reg) return false;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
 
@@ -6476,8 +6527,7 @@ static bool emit_paged_dtlb_neg_rm(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->rm_is_reg) return false;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
 
@@ -6536,8 +6586,7 @@ static bool emit_paged_dtlb_imul_reg_rm(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (insn->rm_is_reg ||
-      (width != X86_WIDTH_WORD && width != X86_WIDTH_DWORD)) {
+  if (insn->rm_is_reg || !jit_supported_word_or_dword_width(width)) {
     return false;
   }
 
@@ -6581,8 +6630,7 @@ static bool emit_paged_dtlb_mul_rm(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->rm_is_reg ||
-      (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-          width != X86_WIDTH_DWORD)) {
+      !jit_supported_data_width(width)) {
     return false;
   }
 
@@ -6634,8 +6682,7 @@ static bool emit_paged_dtlb_imul_acc_rm(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->rm_is_reg ||
-      (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-          width != X86_WIDTH_DWORD)) {
+      !jit_supported_data_width(width)) {
     return false;
   }
 
@@ -6832,12 +6879,14 @@ static bool emit_alu_eax_ecx_width(x86_jit_writer_t *w, uint8_t alu_op,
   }
 
   if (width == X86_WIDTH_WORD && !emit_u8(w, X86_HOST_PREFIX_OPERAND_SIZE)) return false;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
   return emit_u8(w, opcode) && emit_u8(w, 0xc8);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Lazy flag materialisation and side-exit counters. */
 
 /* Materialise selected host flags into guest EFLAGS and clear requested flags. */
 static bool emit_capture_status_flags_custom(x86_jit_writer_t *w,
@@ -6972,6 +7021,9 @@ static bool emit_chain_budget_guard(x86_jit_writer_t *w, vaddr_t pc,
 
   return patch_rel32(ok_disp, w->cur);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Direct-chain and trace-loop emission. */
 
 /*
  * Emit a patchable direct-chain exit.
@@ -7757,6 +7809,11 @@ static bool jit_native_low_byte_reg(uint8_t reg) {
   return reg < 4u;
 }
 
+/* These native byte forms only encode AL/CL/DL/BL without a REX complication. */
+static bool jit_native_byte_width_rejects_reg(uint8_t width, uint8_t reg) {
+  return width == X86_WIDTH_BYTE && !jit_native_low_byte_reg(reg);
+}
+
 /* Select which host status flags are safe to copy after native ALU emission. */
 static uint32_t jit_native_alu_flag_copy_mask(uint8_t alu_op) {
   switch (alu_op) {
@@ -7777,6 +7834,48 @@ static uint32_t jit_native_alu_flag_copy_mask(uint8_t alu_op) {
 /* Return true for a Jcc decoded in the native branch IR form. */
 static bool jit_is_native_jcc(const x86_jit_insn_t *insn) {
   return insn->op == X86_JIT_OP_JCC_REL;
+}
+
+/* Helpers whose source width is encoded by the helper kind itself. */
+static bool jit_helper_is_movzx_reg_rm(x86_jit_helper_t helper) {
+  return helper == X86_JIT_HELPER_MOVZX_REG_RM8 ||
+         helper == X86_JIT_HELPER_MOVZX_REG_RM16;
+}
+
+/* Helpers whose source width is encoded by the helper kind itself. */
+static bool jit_helper_is_movsx_reg_rm(x86_jit_helper_t helper) {
+  return helper == X86_JIT_HELPER_MOVSX_REG_RM8 ||
+         helper == X86_JIT_HELPER_MOVSX_REG_RM16;
+}
+
+/* Decode the MOVZX source width carried by the helper kind. */
+static bool jit_helper_movzx_source_width(x86_jit_helper_t helper,
+    uint8_t *width, uint32_t *mask) {
+  if (helper == X86_JIT_HELPER_MOVZX_REG_RM8) {
+    *width = X86_WIDTH_BYTE;
+    if (mask != NULL) *mask = X86_BYTE_MASK;
+    return true;
+  }
+  if (helper == X86_JIT_HELPER_MOVZX_REG_RM16) {
+    *width = X86_WIDTH_WORD;
+    if (mask != NULL) *mask = X86_WORD_MASK;
+    return true;
+  }
+  return false;
+}
+
+/* Decode the MOVSX source width carried by the helper kind. */
+static bool jit_helper_movsx_source_width(x86_jit_helper_t helper,
+    uint8_t *width) {
+  if (helper == X86_JIT_HELPER_MOVSX_REG_RM8) {
+    *width = X86_WIDTH_BYTE;
+    return true;
+  }
+  if (helper == X86_JIT_HELPER_MOVSX_REG_RM16) {
+    *width = X86_WIDTH_WORD;
+    return true;
+  }
+  return false;
 }
 
 /* Conservative check for helpers that may read/write guest memory or stack. */
@@ -7930,6 +8029,9 @@ static bool emit_capture_status_flags_if_live(x86_jit_writer_t *w,
   return emit_capture_status_flags(w, copy_mask);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Native instruction emission. */
+
 /* Decide which host flags are architecturally valid after a native shift. */
 static bool jit_native_shift_flag_copy_mask(uint8_t shift_op, uint8_t count,
     uint8_t *host_op, uint32_t *copy_mask) {
@@ -7964,7 +8066,7 @@ static bool jit_native_shift_flag_copy_mask(uint8_t shift_op, uint8_t count,
 static bool jit_native_shift_count_safe_width(uint8_t shift_op, uint8_t width,
     uint8_t count) {
   if (width == X86_WIDTH_DWORD) return true;
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD) return false;
+  if (!jit_supported_narrow_data_width(width)) return false;
   if (count == 0) return true;
 
   const uint8_t bits = width * X86_BITS_PER_BYTE;
@@ -8008,9 +8110,8 @@ static bool emit_native_alu_reg_reg(x86_jit_writer_t *w,
 /* Emit native ALU code for register destination and immediate source. */
 static bool emit_native_alu_imm_reg(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
-  if ((insn->width != X86_WIDTH_BYTE && insn->width != X86_WIDTH_WORD &&
-          insn->width != X86_WIDTH_DWORD) ||
-      (insn->width == X86_WIDTH_BYTE && !jit_native_low_byte_reg(insn->dst))) {
+  if (!jit_supported_data_width(insn->width) ||
+      jit_native_byte_width_rejects_reg(insn->width, insn->dst)) {
     return false;
   }
 
@@ -8367,26 +8468,26 @@ static bool emit_native_alu_rm_reg(x86_jit_writer_t *w,
   const bool writes_result = jit_native_alu_writes_result(insn->alu_op);
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
+  const bool reads_carry = jit_alu_reads_carry(insn->alu_op);
+  const uint32_t flag_copy_mask = jit_native_alu_flag_copy_mask(insn->alu_op);
+  const bool src_is_high_byte = width == X86_WIDTH_BYTE && insn->src >= 4u;
 
   if (insn->rm_is_reg) {
     if (width == X86_WIDTH_BYTE) {
       if (!emit_load_byte_reg_to_eax(w, insn->src) ||
           !emit_mov_r11d_eax(w) ||
           !emit_load_byte_reg_to_eax(w, insn->rm_reg) ||
-          (jit_alu_reads_carry(insn->alu_op) &&
-              !emit_guest_cf_to_host_cf_ecx(w)) ||
+          (reads_carry && !emit_guest_cf_to_host_cf_ecx(w)) ||
           !emit_alu_eax_r11_width(w, insn->alu_op, width)) {
         return false;
       }
     }
     else if (!emit_load_reg_r11d(w, insn->src) ||
         !emit_load_reg_eax(w, insn->rm_reg) ||
-        (jit_alu_reads_carry(insn->alu_op) &&
-            !emit_guest_cf_to_host_cf_ecx(w)) ||
+        (reads_carry && !emit_guest_cf_to_host_cf_ecx(w)) ||
         !emit_alu_eax_r11_width(w, insn->alu_op, width)) {
       return false;
     }
@@ -8399,8 +8500,7 @@ static bool emit_native_alu_rm_reg(x86_jit_writer_t *w,
     }
 
     JIT_STAT_INC(native_alu_ops);
-    return emit_capture_status_flags(w,
-        jit_native_alu_flag_copy_mask(insn->alu_op));
+    return emit_capture_status_flags(w, flag_copy_mask);
   }
 
   if (!emit_guest_ea_eax(w, &insn->ea) ||
@@ -8415,13 +8515,12 @@ static bool emit_native_alu_rm_reg(x86_jit_writer_t *w,
     return false;
   }
 
-  if ((jit_alu_reads_carry(insn->alu_op) &&
-          !emit_guest_cf_to_host_cf_r11(w)) ||
+  if ((reads_carry && !emit_guest_cf_to_host_cf_r11(w)) ||
       !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
       !emit_load_pmem_eax_width(w, width)) {
     return false;
   }
-  if (width == X86_WIDTH_BYTE && insn->src >= 4u) {
+  if (src_is_high_byte) {
     if (!emit_mov_ecx_eax(w) ||
         !emit_load_byte_reg_to_eax(w, insn->src) ||
         !emit_mov_r11d_eax(w) ||
@@ -8436,8 +8535,7 @@ static bool emit_native_alu_rm_reg(x86_jit_writer_t *w,
 
   if (writes_result && !emit_store_pmem_eax_width(w, width)) return false;
 
-  if (!emit_capture_status_flags(w,
-          jit_native_alu_flag_copy_mask(insn->alu_op)) ||
+  if (!emit_capture_status_flags(w, flag_copy_mask) ||
       !emit_jmp_rel32_placeholder(w, &done_disp)) {
     return false;
   }
@@ -8466,16 +8564,16 @@ static bool emit_native_alu_imm_rm(x86_jit_writer_t *w,
   const bool writes_result = jit_native_alu_writes_result(insn->alu_op);
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
+  const bool reads_carry = jit_alu_reads_carry(insn->alu_op);
+  const uint32_t flag_copy_mask = jit_native_alu_flag_copy_mask(insn->alu_op);
 
   if (insn->rm_is_reg) {
     if (width == X86_WIDTH_BYTE) {
       if (!emit_load_byte_reg_to_eax(w, insn->rm_reg) ||
-          (jit_alu_reads_carry(insn->alu_op) &&
-              !emit_guest_cf_to_host_cf_r11(w)) ||
+          (reads_carry && !emit_guest_cf_to_host_cf_r11(w)) ||
           !emit_alu_eax_imm_width(w, insn->alu_op, width, insn->imm)) {
         return false;
       }
@@ -8485,8 +8583,7 @@ static bool emit_native_alu_imm_rm(x86_jit_writer_t *w,
       }
     }
     else if (!emit_load_reg_eax(w, insn->rm_reg) ||
-        (jit_alu_reads_carry(insn->alu_op) &&
-            !emit_guest_cf_to_host_cf_r11(w)) ||
+        (reads_carry && !emit_guest_cf_to_host_cf_r11(w)) ||
         !emit_alu_eax_imm_width(w, insn->alu_op, width, insn->imm)) {
       return false;
     }
@@ -8495,8 +8592,7 @@ static bool emit_native_alu_imm_rm(x86_jit_writer_t *w,
     }
 
     JIT_STAT_INC(native_alu_ops);
-    return emit_capture_status_flags(w,
-        jit_native_alu_flag_copy_mask(insn->alu_op));
+    return emit_capture_status_flags(w, flag_copy_mask);
   }
 
   if (!emit_guest_ea_eax(w, &insn->ea) ||
@@ -8511,8 +8607,7 @@ static bool emit_native_alu_imm_rm(x86_jit_writer_t *w,
     return false;
   }
 
-  if ((jit_alu_reads_carry(insn->alu_op) &&
-          !emit_guest_cf_to_host_cf_r11(w)) ||
+  if ((reads_carry && !emit_guest_cf_to_host_cf_r11(w)) ||
       !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
       !emit_load_pmem_eax_width(w, width) ||
       !emit_alu_eax_imm_width(w, insn->alu_op, width, insn->imm)) {
@@ -8521,8 +8616,7 @@ static bool emit_native_alu_imm_rm(x86_jit_writer_t *w,
 
   if (writes_result && !emit_store_pmem_eax_width(w, width)) return false;
 
-  if (!emit_capture_status_flags(w,
-          jit_native_alu_flag_copy_mask(insn->alu_op)) ||
+  if (!emit_capture_status_flags(w, flag_copy_mask) ||
       !emit_jmp_rel32_placeholder(w, &done_disp)) {
     return false;
   }
@@ -8548,10 +8642,10 @@ static bool emit_native_test_rm_reg(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
+  const bool src_is_high_byte = width == X86_WIDTH_BYTE && insn->src >= 4u;
 
   if (insn->rm_is_reg) {
     if (width == X86_WIDTH_BYTE) {
@@ -8579,7 +8673,7 @@ static bool emit_native_test_rm_reg(x86_jit_writer_t *w,
       !emit_load_pmem_eax_width(w, width)) {
     return false;
   }
-  if (width == X86_WIDTH_BYTE && insn->src >= 4u) {
+  if (src_is_high_byte) {
     if (!emit_mov_r11d_eax(w) ||
         !emit_load_byte_reg_to_eax(w, insn->src) ||
         !emit_mov_ecx_eax(w) ||
@@ -8615,26 +8709,25 @@ static bool emit_native_alu_reg_rm(x86_jit_writer_t *w,
   const bool writes_result = jit_native_alu_writes_result(insn->alu_op);
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
+  const bool reads_carry = jit_alu_reads_carry(insn->alu_op);
+  const uint32_t flag_copy_mask = jit_native_alu_flag_copy_mask(insn->alu_op);
 
   if (insn->rm_is_reg) {
     if (width == X86_WIDTH_BYTE) {
       if (!emit_load_byte_reg_to_eax(w, insn->rm_reg) ||
           !emit_mov_ecx_eax(w) ||
           !emit_load_byte_reg_to_eax(w, insn->dst) ||
-          (jit_alu_reads_carry(insn->alu_op) &&
-              !emit_guest_cf_to_host_cf_r11(w)) ||
+          (reads_carry && !emit_guest_cf_to_host_cf_r11(w)) ||
           !emit_alu_eax_ecx_width(w, insn->alu_op, width)) {
         return false;
       }
     }
     else if (!emit_load_reg_eax(w, insn->dst) ||
         !emit_load_reg_ecx(w, insn->rm_reg) ||
-        (jit_alu_reads_carry(insn->alu_op) &&
-            !emit_guest_cf_to_host_cf_r11(w)) ||
+        (reads_carry && !emit_guest_cf_to_host_cf_r11(w)) ||
         !emit_alu_eax_ecx_width(w, insn->alu_op, width)) {
       return false;
     }
@@ -8648,8 +8741,7 @@ static bool emit_native_alu_reg_rm(x86_jit_writer_t *w,
         !(width == X86_WIDTH_BYTE ?
             emit_load_byte_reg_to_eax(w, insn->dst) :
             emit_load_reg_eax(w, insn->dst)) ||
-        (jit_alu_reads_carry(insn->alu_op) &&
-            !emit_guest_cf_to_host_cf_r11(w)) ||
+        (reads_carry && !emit_guest_cf_to_host_cf_r11(w)) ||
         !emit_alu_eax_ecx_width(w, insn->alu_op, width)) {
       return false;
     }
@@ -8662,8 +8754,7 @@ static bool emit_native_alu_reg_rm(x86_jit_writer_t *w,
     return false;
   }
 
-  if (!emit_capture_status_flags(w,
-          jit_native_alu_flag_copy_mask(insn->alu_op))) {
+  if (!emit_capture_status_flags(w, flag_copy_mask)) {
     return false;
   }
 
@@ -8678,7 +8769,7 @@ static bool emit_native_alu_reg_rm(x86_jit_writer_t *w,
 
   JIT_STAT_INC(native_alu_ops);
   if (!insn->rm_is_reg) JIT_STAT_INC(native_pmem_loads);
-  return done_disp == NULL || patch_rel32(done_disp, w->cur);
+  return patch_optional_rel32(done_disp, w->cur);
 }
 
 /* Emit native MOV reg, r/m using direct PMEM or helper fallback as needed. */
@@ -8688,8 +8779,7 @@ static bool emit_native_mov_reg_rm_load(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
   if (width == X86_WIDTH_BYTE &&
@@ -8735,8 +8825,7 @@ static bool emit_native_mov_rm_reg_store(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
   if (width == X86_WIDTH_BYTE && insn->src >= 8u) return false;
@@ -8803,8 +8892,7 @@ static bool emit_native_mov_imm_rm(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
 
@@ -8843,8 +8931,7 @@ static bool emit_native_mov_eax_moffs(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
 
@@ -8894,8 +8981,7 @@ static bool emit_native_mov_moffs_eax(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
 
@@ -9504,8 +9590,7 @@ static bool emit_native_neg_rm(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
   if (insn->rm_is_reg) {
@@ -9566,12 +9651,11 @@ static bool emit_native_incdec_rm(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
-  if (width == X86_WIDTH_BYTE && insn->rm_is_reg &&
-      !jit_native_low_byte_reg(insn->rm_reg)) {
+  if (insn->rm_is_reg &&
+      jit_native_byte_width_rejects_reg(width, insn->rm_reg)) {
     return false;
   }
   if (insn->alu_op != X86_ALU_ADD && insn->alu_op != X86_ALU_SUB) {
@@ -9661,7 +9745,7 @@ static bool emit_native_imul_reg_rm(x86_jit_writer_t *w,
     return false;
   }
 
-  return done_disp == NULL || patch_rel32(done_disp, w->cur);
+  return patch_optional_rel32(done_disp, w->cur);
 }
 
 /* Load a dword r/m operand into ECX for native multiply/divide paths. */
@@ -9718,7 +9802,7 @@ static bool emit_native_mul_rm(x86_jit_writer_t *w,
 
   JIT_STAT_INC(native_mul_ops);
   if (pmem_load) JIT_STAT_INC(native_pmem_loads);
-  return done_disp == NULL || patch_rel32(done_disp, w->cur);
+  return patch_optional_rel32(done_disp, w->cur);
 }
 
 /* Emit native one-operand signed IMUL for r/m source. */
@@ -9749,7 +9833,7 @@ static bool emit_native_imul_acc_rm(x86_jit_writer_t *w,
 
   JIT_STAT_INC(native_imul_ops);
   if (pmem_load) JIT_STAT_INC(native_pmem_loads);
-  return done_disp == NULL || patch_rel32(done_disp, w->cur);
+  return patch_optional_rel32(done_disp, w->cur);
 }
 
 /* Emit native unsigned DIV for the safe dword subset, otherwise use helper. */
@@ -9863,8 +9947,7 @@ static bool emit_native_shift_reg_imm(x86_jit_writer_t *w,
   const uint8_t width = insn->width;
 
   if (insn->count_from_cl ||
-      (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-          width != X86_WIDTH_DWORD)) {
+      !jit_supported_data_width(width)) {
     return false;
   }
 
@@ -10053,8 +10136,7 @@ static bool emit_paged_dtlb_shift_rm_imm(x86_jit_writer_t *w,
 
   const uint8_t width = insn->width;
   if (insn->rm_is_reg || insn->count_from_cl ||
-      (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-          width != X86_WIDTH_DWORD)) {
+      !jit_supported_data_width(width)) {
     return false;
   }
 
@@ -10122,7 +10204,7 @@ static bool emit_paged_dtlb_shift_rm_cl_small(x86_jit_writer_t *w,
   uint32_t one_mask = 0;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD) return false;
+  if (!jit_supported_narrow_data_width(width)) return false;
   if (!jit_native_shift_flag_copy_mask(insn->alu_op, 2u,
           &shift_op, &many_mask) ||
       !jit_native_shift_flag_copy_mask(insn->alu_op, 1u,
@@ -10310,7 +10392,7 @@ static bool emit_native_not_rm(x86_jit_writer_t *w,
   }
 
   JIT_STAT_INC(native_not_ops);
-  return done_disp == NULL || patch_rel32(done_disp, w->cur);
+  return patch_optional_rel32(done_disp, w->cur);
 }
 
 /* Emit native MOVZX from r/m to register. */
@@ -10318,18 +10400,10 @@ static bool emit_native_movzx_reg_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
   uint8_t *done_disp = NULL;
-  uint32_t width = 0;
+  uint8_t width = 0;
   uint32_t mask = 0;
 
-  if (insn->helper == X86_JIT_HELPER_MOVZX_REG_RM8) {
-    width = X86_WIDTH_BYTE;
-    mask = X86_BYTE_MASK;
-  }
-  else if (insn->helper == X86_JIT_HELPER_MOVZX_REG_RM16) {
-    width = X86_WIDTH_WORD;
-    mask = X86_WORD_MASK;
-  }
-  else {
+  if (!jit_helper_movzx_source_width(insn->helper, &width, &mask)) {
     return false;
   }
 
@@ -10378,7 +10452,7 @@ static bool emit_native_movzx_reg_rm(x86_jit_writer_t *w,
   }
 
   JIT_STAT_INC(native_movzx_ops);
-  return done_disp == NULL || patch_rel32(done_disp, w->cur);
+  return patch_optional_rel32(done_disp, w->cur);
 }
 
 /* Emit native MOVSX from r/m to register. */
@@ -10386,18 +10460,12 @@ static bool emit_native_movsx_reg_rm(x86_jit_writer_t *w,
     const x86_jit_insn_t *insn) {
   uint8_t *slow_disp = NULL;
   uint8_t *done_disp = NULL;
-  uint32_t width = 0;
+  uint8_t width = 0;
 
-  if (insn->width != X86_WIDTH_WORD && insn->width != X86_WIDTH_DWORD) {
+  if (!jit_supported_word_or_dword_width(insn->width)) {
     return false;
   }
-  if (insn->helper == X86_JIT_HELPER_MOVSX_REG_RM8) {
-    width = X86_WIDTH_BYTE;
-  }
-  else if (insn->helper == X86_JIT_HELPER_MOVSX_REG_RM16) {
-    width = X86_WIDTH_WORD;
-  }
-  else {
+  if (!jit_helper_movsx_source_width(insn->helper, &width)) {
     return false;
   }
 
@@ -10443,7 +10511,7 @@ static bool emit_native_movsx_reg_rm(x86_jit_writer_t *w,
 
   JIT_STAT_INC(native_movsx_ops);
   if (!insn->rm_is_reg) JIT_STAT_INC(native_pmem_loads);
-  return done_disp == NULL || patch_rel32(done_disp, w->cur);
+  return patch_optional_rel32(done_disp, w->cur);
 }
 
 /* Emit native TEST r/m, immediate. */
@@ -10453,12 +10521,10 @@ static bool emit_native_test_imm_rm(x86_jit_writer_t *w,
   uint8_t *done_disp = NULL;
   const uint8_t width = insn->width;
 
-  if (width != X86_WIDTH_BYTE && width != X86_WIDTH_WORD &&
-      width != X86_WIDTH_DWORD) {
+  if (!jit_supported_data_width(width)) {
     return false;
   }
-  if (insn->rm_is_reg && width == X86_WIDTH_BYTE && insn->rm_reg >= 4u &&
-      !jit_native_high_byte_test_enabled) {
+  if (jit_native_high_byte_test_blocked(insn, width)) {
     return false;
   }
 
@@ -10810,6 +10876,9 @@ static bool emit_insn_regcached(x86_jit_writer_t *w,
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Instruction emission dispatcher. */
+
 /* Emit host code for insn; bytes below are x86-64 encodings. */
 static bool emit_insn(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
   switch (insn->op) {
@@ -10843,6 +10912,10 @@ static bool emit_insn(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
        * DTLB helper paths keep misses on the architectural MMU and only let
        * generated code dereference PMEM after page-table, permission, MMIO,
        * and self-modifying-code guards pass.
+       *
+       * Keep the ordered cascade below intact: the first successful native
+       * predicate is the existing lowering priority, and the final helper call
+       * is the correctness-preserving fallback.
        */
       if (jit_paging_enabled() && jit_helper_may_touch_guest_memory(insn)) {
         if (insn->helper == X86_JIT_HELPER_MOV_REG_RM &&
@@ -10885,13 +10958,11 @@ static bool emit_insn(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
             emit_paged_dtlb_test_imm_rm(w, insn)) {
           return true;
         }
-        if ((insn->helper == X86_JIT_HELPER_MOVZX_REG_RM8 ||
-                insn->helper == X86_JIT_HELPER_MOVZX_REG_RM16) &&
+        if (jit_helper_is_movzx_reg_rm(insn->helper) &&
             emit_paged_dtlb_movzx_reg_rm(w, insn)) {
           return true;
         }
-        if ((insn->helper == X86_JIT_HELPER_MOVSX_REG_RM8 ||
-                insn->helper == X86_JIT_HELPER_MOVSX_REG_RM16) &&
+        if (jit_helper_is_movsx_reg_rm(insn->helper) &&
             emit_paged_dtlb_movsx_reg_rm(w, insn)) {
           return true;
         }
@@ -11065,12 +11136,10 @@ static bool emit_insn(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
       if (insn->helper == X86_JIT_HELPER_NEG_RM) {
         if (emit_native_neg_rm(w, insn)) return true;
       }
-      if (insn->helper == X86_JIT_HELPER_MOVZX_REG_RM8 ||
-          insn->helper == X86_JIT_HELPER_MOVZX_REG_RM16) {
+      if (jit_helper_is_movzx_reg_rm(insn->helper)) {
         if (emit_native_movzx_reg_rm(w, insn)) return true;
       }
-      if (insn->helper == X86_JIT_HELPER_MOVSX_REG_RM8 ||
-          insn->helper == X86_JIT_HELPER_MOVSX_REG_RM16) {
+      if (jit_helper_is_movsx_reg_rm(insn->helper)) {
         if (emit_native_movsx_reg_rm(w, insn)) return true;
       }
       if (insn->helper == X86_JIT_HELPER_SETCC_RM8) {
@@ -11081,6 +11150,9 @@ static bool emit_insn(x86_jit_writer_t *w, const x86_jit_insn_t *insn) {
       return false;
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Reader and IA-32 decode support. */
 
 /* Test whether a Jcc backedge can be chained instead of leaving the block. */
 static bool jit_is_chainable_jcc_backedge(const x86_jit_insn_t *insn,
@@ -11896,6 +11968,9 @@ static bool jit_decode_insn(x86_jit_reader_t *r, x86_jit_insn_t *out) {
   return false;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Block analysis and stack-window selection. */
+
 /* Initialise per-block emission state and invalidate every register-cache slot. */
 static void jit_emit_ctx_init(x86_jit_emit_ctx_t *ctx) {
   memset(ctx, 0, sizeof(*ctx));
@@ -12117,6 +12192,9 @@ static bool jit_analyse_stack_window(const x86_jit_insn_t *insns,
   }
   return true;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Cache lookup, source validation, and direct chaining. */
 
 /* Align native block starts for friendlier instruction-cache fetch and patching. */
 static size_t jit_align_code(size_t value) {
@@ -12659,6 +12737,9 @@ static void jit_classify_block_chainability(const x86_jit_insn_t *insns,
     jit_stats.blocks_not_chainable_unsupported_successor++;
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Trace selection and trace compilation. */
 
 typedef struct {
   vaddr_t pc;
@@ -13341,6 +13422,9 @@ static x86_jit_block_t *jit_compile_trace(vaddr_t pc, uint32_t max_insns,
   return block;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Code arena and block compilation. */
+
 /* Allocate the executable code arena on first use. */
 static bool jit_ensure_code_cache(void) {
   if (jit_code != NULL) return true;
@@ -13770,11 +13854,17 @@ static x86_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns) {
   return block;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Public entry points. */
+
 /* Public hook: report whether the x86 JIT can be used in this process. */
 bool isa_jit_available(void) {
   if (jit_runtime_disabled()) return false;
   return jit_ensure_code_cache();
 }
+
+/* -------------------------------------------------------------------------- */
+/* Public execution entry. */
 
 /*
  * Public hook: run a bounded JIT batch.  The caller supplies the instruction
@@ -13901,6 +13991,9 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
   return *executed > 0;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Public invalidation and flush hooks. */
+
 /* Public hook: discard every compiled block and every JIT-owned lookup table. */
 void isa_jit_flush_all(void) {
   memset(jit_cache, 0, sizeof(jit_cache));
@@ -14014,6 +14107,9 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len) {
     memset(jit_hot_info, 0, sizeof(jit_hot_info));
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Statistics and diagnostics. */
 
 /* Public hook: print optional JIT counters collected during execution. */
 void isa_jit_dump_stats(void) {
@@ -14357,6 +14453,9 @@ void isa_jit_dump_stats(void) {
 }
 
 #else
+
+/* -------------------------------------------------------------------------- */
+/* Compiled-out public stubs. */
 
 /* Stub hook used when this binary cannot host the x86 JIT. */
 bool isa_jit_available(void) {
