@@ -355,6 +355,7 @@
 #include <klib-macros.h>
 
 static uint32_t uptime_ms() { return io_read(AM_TIMER_UPTIME).us / 1000; }
+
 #define Start_Timer() Begin_Time = uptime_ms()
 #define Stop_Timer() End_Time = uptime_ms()
 
@@ -403,6 +404,7 @@ typedef struct record
 {
     struct record *Ptr_Comp;
     Enumeration Discr;
+
     union
     {
         struct
@@ -411,11 +413,13 @@ typedef struct record
             int Int_Comp;
             char Str_Comp[31];
         } var_1;
+
         struct
         {
             Enumeration E_Comp_2;
             char Str_2_Comp[31];
         } var_2;
+
         struct
         {
             char Ch_1_Comp;
@@ -746,6 +750,7 @@ Enumeration Enum_Par_Val;
 } /* Func_3 */
 
 Boolean pass = true;
+
 Boolean check(int cond)
 {
     if (!cond)

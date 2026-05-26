@@ -456,6 +456,7 @@ static void SLWrap(void)
 }
 
 static uint32 lastread;
+
 static void M90PPU(uint32 A)
 {
     if ((IRQMode & 3) == 2)

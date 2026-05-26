@@ -90,10 +90,10 @@ static size_t mem_read(SDL_RWops *rw, void *buf, size_t size, size_t nmemb)
     const size_t bytes = full_objects * size;
 
     /*
-   * SDL_RWread(), like fread(), reports complete objects.  Copy only the
-   * complete object bytes so callers never observe a partial element as a
-   * successful read.
-   */
+     * SDL_RWread(), like fread(), reports complete objects.  Copy only the
+     * complete object bytes so callers never observe a partial element as a
+     * successful read.
+     */
 
     if (bytes > 0)
     {

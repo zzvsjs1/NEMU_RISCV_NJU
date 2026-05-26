@@ -27,8 +27,11 @@ int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained)
 }
 
 void SDL_CloseAudio(void) {}
+
 void SDL_PauseAudio(int pause_on) { (void)pause_on; }
+
 void SDL_LockAudio(void) {}
+
 void SDL_UnlockAudio(void) {}
 
 static int64_t memory_size(SDL_RWops *rw)
@@ -101,10 +104,10 @@ static int memory_close(SDL_RWops *rw)
 static SDL_RWops *open_memory_rw(const uint8_t *data, size_t size)
 {
     /*
-   * Provide just enough RWops behaviour for the mixer loader: size, seek,
-   * read, and close. This makes short reads and seek clamping explicit in the
-   * test rather than depending on host stdio semantics.
-   */
+     * Provide just enough RWops behaviour for the mixer loader: size, seek,
+     * read, and close. This makes short reads and seek clamping explicit in the
+     * test rather than depending on host stdio semantics.
+     */
     MemoryRW *ctx = (MemoryRW *)calloc(1, sizeof(*ctx));
     assert(ctx != NULL);
 
@@ -142,10 +145,10 @@ static uint8_t *read_whole_file(const char *path, size_t *size)
 int main(int argc, char **argv)
 {
     /*
-   * The default path is host-relative because this unit test includes mixer.c
-   * directly and runs outside the Navy filesystem.  The in-app ONS mixer test
-   * covers the same decoder through the logical /share path.
-   */
+     * The default path is host-relative because this unit test includes mixer.c
+     * directly and runs outside the Navy filesystem.  The in-app ONS mixer test
+     * covers the same decoder through the logical /share path.
+     */
     const char *path = argc > 1 ? argv[1] : "navy-apps/fsimg/share/music/rhythm/Do.ogg";
     size_t ogg_size = 0;
     uint8_t *ogg = read_whole_file(path, &ogg_size);

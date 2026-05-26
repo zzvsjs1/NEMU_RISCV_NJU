@@ -28,6 +28,7 @@ extern "C"
     {
         return getenv("CONFIG_") ?: CONFIG_;
     }
+
 #undef CONFIG_
 #define CONFIG_ CONFIG_prefix()
 
@@ -84,9 +85,9 @@ extern "C"
         size_t len;
         char *s;
         /*
-    * when max_width is not zero long lines in string s (if any) get
-    * wrapped not to exceed the max_width value
-    */
+         * when max_width is not zero long lines in string s (if any) get
+         * wrapped not to exceed the max_width value
+         */
         int max_width;
     };
     struct gstr str_new(void);

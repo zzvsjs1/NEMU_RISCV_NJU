@@ -9,6 +9,7 @@ class Block
 {
   public:
     Block() {}
+
     void block_init(uint32_t nIndexIn, const char *sDataIn, const char *sPrevHashIn);
     const char *GetHash();               //·µ»Ø¹þÏ£Öµ
     void MineBlock(const char *diffStr); //ÍÚ¿ó

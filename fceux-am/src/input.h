@@ -18,26 +18,31 @@ struct INPUTC
         else
             return 0;
     }
+
     void Write(uint8 w)
     {
         if (_Write)
             _Write(w);
     }
+
     void Strobe(int w)
     {
         if (_Strobe)
             _Strobe(w);
     }
+
     void Update(int w, void *data, int arg)
     {
         if (_Update)
             _Update(w, data, arg);
     }
+
     void SLHook(int w, uint8 *bg, uint8 *spr, uint32 linets, int final)
     {
         if (_SLHook)
             _SLHook(w, bg, spr, linets, final);
     }
+
     void Draw(int w, uint8 *buf, int arg)
     {
         if (_Draw)
@@ -64,26 +69,31 @@ struct INPUTCFC
         else
             return ret;
     }
+
     void Write(uint8 v)
     {
         if (_Write)
             _Write(v);
     }
+
     void Strobe()
     {
         if (_Strobe)
             _Strobe();
     }
+
     void Update(void *data, int arg)
     {
         if (_Update)
             _Update(data, arg);
     }
+
     void SLHook(uint8 *bg, uint8 *spr, uint32 linets, int final)
     {
         if (_SLHook)
             _SLHook(bg, spr, linets, final);
     }
+
     void Draw(uint8 *buf, int arg)
     {
         if (_Draw)

@@ -234,6 +234,7 @@ typedef struct MatchState
     lua_State *L;
     int matchdepth;      /* control for recursive depth (to avoid C stack overflow) */
     unsigned char level; /* total number of captures (finished or unfinished) */
+
     struct
     {
         const char *init;
@@ -1370,6 +1371,7 @@ static const union
 struct cD
 {
     char c;
+
     union
     {
         double d;

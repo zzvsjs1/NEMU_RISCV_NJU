@@ -59,6 +59,7 @@ class EMUFILE
             unfail();
         return ret;
     }
+
     void unfail() { failbit = false; }
 
     bool eof() { return size() == ftell(); }
@@ -107,6 +108,7 @@ class EMUFILE_FILE
     ~EMUFILE_FILE() {}
 
     bool is_open() { return true; }
+
     int fprintf(const char *format, ...) { return 0; };
 
     int fgetc()
@@ -168,7 +170,9 @@ class EMUFILE_FILE
     }
 
     int ftell() { return curpos; }
+
     int size() { return filesize; }
+
     void fflush() {}
 };
 
@@ -209,6 +213,7 @@ class EMUFILE_FILE : public EMUFILE
     {
         return ::fgetc(fp);
     }
+
     virtual int fputc(int c)
     {
         return ::fputc(c, fp);

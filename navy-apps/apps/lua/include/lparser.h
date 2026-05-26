@@ -53,11 +53,13 @@ typedef enum
 typedef struct expdesc
 {
     expkind k;
+
     union
     {
         lua_Integer ival; /* for VKINT */
         lua_Number nval;  /* for VKFLT */
         int info;         /* for generic use */
+
         struct
         {               /* for indexed variables (VINDEXED) */
             short idx;  /* index (R/K) */
@@ -65,6 +67,7 @@ typedef struct expdesc
             lu_byte vt; /* whether 't' is register (VLOCAL) or upvalue (VUPVAL) */
         } ind;
     } u;
+
     int t; /* patch list of 'exit when true' */
     int f; /* patch list of 'exit when false' */
 } expdesc;
@@ -101,6 +104,7 @@ typedef struct Dyndata
         int n;
         int size;
     } actvar;
+
     Labellist gt;    /* list of pending gotos */
     Labellist label; /* list of active labels */
 } Dyndata;

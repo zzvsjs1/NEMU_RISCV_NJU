@@ -151,6 +151,7 @@ static void MMC1MIRROR(void)
 }
 
 static uint64 lreset;
+
 static DECLFW(MMC1_write)
 {
     int n = (A >> 13) - 4;

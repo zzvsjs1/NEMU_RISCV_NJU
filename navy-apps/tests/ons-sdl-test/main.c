@@ -20,9 +20,9 @@ static uint32_t timer_once(uint32_t interval, void *param)
     uint32_t *hits = (uint32_t *)param;
 
     /*
-   * Returning zero asks SDL to remove this timer.  This checks the exact
-   * one-shot style ONScripter uses for script wait events.
-   */
+     * Returning zero asks SDL to remove this timer.  This checks the exact
+     * one-shot style ONScripter uses for script wait events.
+     */
     (*hits)++;
     return 0;
 }
@@ -30,10 +30,10 @@ static uint32_t timer_once(uint32_t interval, void *param)
 static void check_memory_rwops(void)
 {
     /*
-   * ONScripter uses SDL_RWops as a common abstraction over memory and files.
-   * These assertions protect seek, tell, and object-count read semantics that
-   * image and script loaders rely on.
-   */
+     * ONScripter uses SDL_RWops as a common abstraction over memory and files.
+     * These assertions protect seek, tell, and object-count read semantics that
+     * image and script loaders rely on.
+     */
     const char text[] = "abcdef";
     char out[4] = {};
     SDL_RWops *rw = SDL_RWFromMem((void *)text, sizeof(text) - 1);
@@ -50,10 +50,10 @@ static void check_memory_rwops(void)
 static void check_file_rwops(void)
 {
     /*
-   * Use a fixed logical /share file rather than a host-relative path.  This is
-   * the contract that lets the same test exercise native ramdisk and NEMU disk
-   * image setups without knowing which backing store provided the bytes.
-   */
+     * Use a fixed logical /share file rather than a host-relative path.  This is
+     * the contract that lets the same test exercise native ramdisk and NEMU disk
+     * image setups without knowing which backing store provided the bytes.
+     */
     SDL_RWops *rw = SDL_RWFromFile("/share/files/num", "r");
     char out[5] = {};
     assert(rw != NULL);
@@ -66,10 +66,10 @@ static void check_file_rwops(void)
 static void check_events(void)
 {
     /*
-   * Public pushed events must round-trip through miniSDL's queue before any
-   * NDL polling is involved. This protects scripted wait/event paths that
-   * inject SDL_USEREVENT directly.
-   */
+     * Public pushed events must round-trip through miniSDL's queue before any
+     * NDL polling is involved. This protects scripted wait/event paths that
+     * inject SDL_USEREVENT directly.
+     */
     SDL_Event pushed = {};
     SDL_Event got = {};
     pushed.type = SDL_USEREVENT;
@@ -87,11 +87,11 @@ static void check_events(void)
 static void check_mouse_events(void)
 {
     /*
-   * ONScripter reads both queued mouse events and the current mouse state.  This
-   * covers the edge where a button event updates coordinates, then a later motion
-   * event replaces button state; the cursor patch depends on those values staying
-   * coherent.
-   */
+     * ONScripter reads both queued mouse events and the current mouse state.  This
+     * covers the edge where a button event updates coordinates, then a later motion
+     * event replaces button state; the cursor patch depends on those values staying
+     * coherent.
+     */
     SDL_Event pushed = {};
     SDL_Event got = {};
 
@@ -150,11 +150,11 @@ static void check_mouse_motion_coalescing(void)
     SDL_Event got = {};
 
     /*
-   * Raw NDL motion is coalesced inside miniSDL's private pump path, but
-   * SDL_PushEvent() is a public API.  ONScripter and tests that inject events
-   * directly must still get exactly the events they pushed.  This specifically
-   * protects the cursor-restore fix from losing synthetic drag/move samples.
-   */
+     * Raw NDL motion is coalesced inside miniSDL's private pump path, but
+     * SDL_PushEvent() is a public API.  ONScripter and tests that inject events
+     * directly must still get exactly the events they pushed.  This specifically
+     * protects the cursor-restore fix from losing synthetic drag/move samples.
+     */
     pushed.type = SDL_MOUSEMOTION;
     pushed.motion.x = 101;
     pushed.motion.y = 102;
@@ -178,10 +178,10 @@ static void check_timer(void)
     assert(id != NULL);
 
     /*
-   * miniSDL has no host thread on Navy, so timer callbacks are pumped from
-   * normal SDL activity.  Polling and delaying here gives the timer machinery
-   * a deterministic place to run.
-   */
+     * miniSDL has no host thread on Navy, so timer callbacks are pumped from
+     * normal SDL activity.  Polling and delaying here gives the timer machinery
+     * a deterministic place to run.
+     */
     for (int i = 0; i < 10 && timer_hits == 0; i++)
     {
         SDL_Delay(1);
@@ -193,10 +193,10 @@ static void check_timer(void)
 static void check_image_rwops(void)
 {
     /*
-   * Image detection should inspect signatures without consuming the stream,
-   * then IMG_Load_RW should accept a ramdisk BMP copied into memory. This is
-   * the same split used by ONScripter asset loading.
-   */
+     * Image detection should inspect signatures without consuming the stream,
+     * then IMG_Load_RW should accept a ramdisk BMP copied into memory. This is
+     * the same split used by ONScripter asset loading.
+     */
     static const uint8_t png_sig[8] = {
         0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
 

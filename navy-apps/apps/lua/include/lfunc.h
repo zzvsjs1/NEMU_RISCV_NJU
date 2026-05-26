@@ -31,6 +31,7 @@ struct UpVal
 {
     TValue *v;       /* points to stack or to its own value */
     lu_mem refcount; /* reference counter */
+
     union
     {
         struct
@@ -38,6 +39,7 @@ struct UpVal
             UpVal *next; /* linked list */
             int touched; /* mark to avoid cycles with dead threads */
         } open;
+
         TValue value; /* the value (when closed) */
     } u;
 };

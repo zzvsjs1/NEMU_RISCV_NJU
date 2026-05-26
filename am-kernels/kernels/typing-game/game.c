@@ -19,6 +19,7 @@ enum
     GREEN,
     PURPLE
 };
+
 struct character
 {
     char ch;

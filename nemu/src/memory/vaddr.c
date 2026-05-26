@@ -224,9 +224,9 @@ void vaddr_write(vaddr_t addr, int len, word_t data)
             int first_len = PAGE_SIZE - (int)(addr & PAGE_MASK);
             int second_len = len - first_len;
             paddr_t first_pa = translated_paddr_or_panic(addr, first_len,
-                                                          MEM_TYPE_WRITE, "vaddr_write");
+                                                         MEM_TYPE_WRITE, "vaddr_write");
             paddr_t second_pa = translated_paddr_or_panic(addr + (vaddr_t)first_len, second_len,
-                                                           MEM_TYPE_WRITE, "vaddr_write");
+                                                          MEM_TYPE_WRITE, "vaddr_write");
 
             paddr_write(first_pa, first_len, data);
             paddr_write(second_pa, second_len, data >> (first_len * 8));

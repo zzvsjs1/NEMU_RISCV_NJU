@@ -16,6 +16,7 @@
 #define TILE_W 4
 #define SCREEN_W 320
 #define SCREEN_H 200
+
 static inline void set_color(int c)
 {
 }

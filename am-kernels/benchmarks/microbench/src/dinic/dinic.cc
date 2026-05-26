@@ -6,7 +6,9 @@ const int INF = 0x3f3f3f;
 struct Edge
 {
     int from, to, cap, flow;
+
     Edge() {}
+
     Edge(int from, int to, int cap, int flow)
     {
         this->from = from;

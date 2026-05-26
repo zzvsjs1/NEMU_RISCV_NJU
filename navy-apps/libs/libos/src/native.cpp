@@ -208,10 +208,10 @@ static void open_display()
     lseek(fb_memfd, 0, SEEK_SET);
 
     /*
-   * Headless runs still need /proc/dispinfo and /dev/fb to behave like normal
-   * Navy devices, but they must not open a host window.  This is important for
-   * Codex and CI sessions where SDL video access may hang or be unavailable.
-   */
+     * Headless runs still need /proc/dispinfo and /dev/fb to behave like normal
+     * Navy devices, but they must not open a host window.  This is important for
+     * Codex and CI sessions where SDL video access may hang or be unavailable.
+     */
 
     if (use_dummy_video())
     {
@@ -403,12 +403,12 @@ struct Init
         setenv("PATH", newpath, 1); // overwrite the current PATH
 
         /*
-     * Do not call host SDL_Init(0) here.  This shared object is preloaded into
-     * Navy native apps that also define miniSDL's SDL_Init(), and the global
-     * host initialisation can block under dummy/headless drivers before the app
-     * reaches main().  Each simulated device below initialises the exact host
-     * SDL subsystem it needs.
-     */
+         * Do not call host SDL_Init(0) here.  This shared object is preloaded into
+         * Navy native apps that also define miniSDL's SDL_Init(), and the global
+         * host initialisation can block under dummy/headless drivers before the app
+         * reaches main().  Each simulated device below initialises the exact host
+         * SDL subsystem it needs.
+         */
 
         if (!getenv("NWM_APP"))
         {
@@ -417,6 +417,7 @@ struct Init
         open_event();
         open_audio();
     }
+
     ~Init()
     {
     }

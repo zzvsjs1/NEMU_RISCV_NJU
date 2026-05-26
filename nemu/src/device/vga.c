@@ -192,6 +192,7 @@ static void vga_fps_count_frame(bool had_dirty, uint64_t dirty_area)
 }
 #else
 static void init_vga_fps_counter() {}
+
 static void vga_fps_count_vmem_write(uint32_t offset, int len, uint64_t fb_size)
 {
     (void)offset;

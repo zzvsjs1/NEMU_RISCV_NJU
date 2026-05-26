@@ -10,9 +10,9 @@
 #include "lobject.h"
 
 /*
-* WARNING: if you change the order of this enumeration,
-* grep "ORDER TM" and "ORDER OP"
-*/
+ * WARNING: if you change the order of this enumeration,
+ * grep "ORDER TM" and "ORDER OP"
+ */
 typedef enum
 {
     TM_INDEX,

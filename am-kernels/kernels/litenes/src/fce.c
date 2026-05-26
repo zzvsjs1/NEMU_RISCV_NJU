@@ -6,6 +6,7 @@
 #include <klib.h>
 
 static int frame_cnt;
+
 static inline bool candraw() { return frame_cnt % (1 + FRAME_SKIP) == 0; }
 
 static uint32_t canvas[SCR_W * SCR_H];

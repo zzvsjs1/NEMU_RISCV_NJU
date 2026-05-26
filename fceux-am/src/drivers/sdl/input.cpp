@@ -89,8 +89,8 @@ static uint32 JSreturn = 0;
 static uint8 g_keyState[256] = {};
 
 /**
-* Hook for transformer board
-*/
+ * Hook for transformer board
+ */
 unsigned int *GetKeyboard(void)
 {
     return (unsigned int *)(g_keyState);

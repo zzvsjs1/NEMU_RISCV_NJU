@@ -338,6 +338,7 @@ typedef struct TString
     lu_byte extra;  /* reserved words for short strings; "has hash" for longs */
     lu_byte shrlen; /* length for short strings */
     unsigned int hash;
+
     union
     {
         size_t lnglen;         /* length for long strings */
@@ -515,6 +516,7 @@ typedef union TKey
         TValuefields;
         int next; /* for chaining (offset for next node) */
     } nk;
+
     TValue tvk;
 } TKey;
 

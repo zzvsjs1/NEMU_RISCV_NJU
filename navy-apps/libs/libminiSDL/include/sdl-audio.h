@@ -10,14 +10,14 @@ typedef struct
     uint16_t samples;
     uint16_t padding;
     /*
-   * size is kept for SDL source compatibility.  SDL_OpenAudio() derives the
-   * real transfer size from samples, channels, and format when pumping NDL.
-   */
+     * size is kept for SDL source compatibility.  SDL_OpenAudio() derives the
+     * real transfer size from samples, channels, and format when pumping NDL.
+     */
     uint32_t size;
     /*
-   * The callback is not invoked by a separate audio thread in miniSDL.  It is
-   * pumped from SDL_Delay(), SDL_PumpEvents(), and unpause prefill paths.
-   */
+     * The callback is not invoked by a separate audio thread in miniSDL.  It is
+     * pumped from SDL_Delay(), SDL_PumpEvents(), and unpause prefill paths.
+     */
     void (*callback)(void *userdata, uint8_t *stream, int len);
     void *userdata;
 } SDL_AudioSpec;

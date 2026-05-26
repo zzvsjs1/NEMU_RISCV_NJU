@@ -180,7 +180,7 @@ static void SQReload(int x, uint8 V)
         lengthcount[x] = lengthtable[(V >> 3) & 0x1f];
 
     /* use the low 8 bits data from pulse period
-   * instead of from the sweep period */
+     * instead of from the sweep period */
     /* https://forums.nesdev.com/viewtopic.php?t=219&p=1431 */
     curfreq[x] = (curfreq[x] & 0xff) | ((V & 7) << 8);
     RectDutyCount[x] = 7;
@@ -563,11 +563,11 @@ void FCEU_SoundCPUHook(int cycles)
             if (FSettings.SndRate)
             {
                 /*
-         * DMCacc is normally negative here.  Clamp the timestamp rewind so
-         * a late DMC edge cannot move before the start of the current audio
-         * buffer; otherwise the PCM mixer may read or write at the wrong
-         * position and turn valid samples into harsh noise.
-         */
+                 * DMCacc is normally negative here.  Clamp the timestamp rewind so
+                 * a late DMC edge cannot move before the start of the current audio
+                 * buffer; otherwise the PCM mixer may read or write at the wrong
+                 * position and turn valid samples into harsh noise.
+                 */
                 const uint32 rewind = (uint32)-DMCacc;
                 const uint32 available = soundtsoffs + timestamp;
                 const uint32 fudge = rewind < available ? rewind : available;
@@ -1088,6 +1088,7 @@ void SetNESSoundMap(void)
 }
 
 static int32 inbuf = 0;
+
 int FlushEmulateSound(void)
 {
     int x;
@@ -1351,8 +1352,11 @@ void SetSoundVariables(void)
 }
 #else
 void FCEU_SoundCPUHook(int cycles) {}
+
 void FCEUSND_Power(void) {}
+
 int FlushEmulateSound(void) { return 0; }
+
 void SetSoundVariables(void) {}
 #endif
 

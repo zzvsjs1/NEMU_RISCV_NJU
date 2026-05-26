@@ -198,23 +198,23 @@ typedef __uint128_t fixedptud;
     }
 
     /*
- * Note: adding and substracting fixedpt numbers can be done by using
- * the regular integer operators + and -.
- */
+     * Note: adding and substracting fixedpt numbers can be done by using
+     * the regular integer operators + and -.
+     */
 
     /**
- * Convert the given fixedpt number to a decimal string.
- * The max_dec argument specifies how many decimal digits to the right
- * of the decimal point to generate. If set to -1, the "default" number
- * of decimal digits will be used (2 for 32-bit fixedpt width, 10 for
- * 64-bit fixedpt width); If set to -2, "all" of the digits will
- * be returned, meaning there will be invalid, bogus digits outside the
- * specified precisions.
- */
+     * Convert the given fixedpt number to a decimal string.
+     * The max_dec argument specifies how many decimal digits to the right
+     * of the decimal point to generate. If set to -1, the "default" number
+     * of decimal digits will be used (2 for 32-bit fixedpt width, 10 for
+     * 64-bit fixedpt width); If set to -2, "all" of the digits will
+     * be returned, meaning there will be invalid, bogus digits outside the
+     * specified precisions.
+     */
     void fixedpt_str(fixedpt A, char *str, int max_dec);
 
     /* Converts the given fixedpt number into a string, using a static
- * (non-threadsafe) string buffer */
+     * (non-threadsafe) string buffer */
     static inline char *fixedpt_cstr(const fixedpt A, const int max_dec)
     {
         static char str[25];
@@ -227,7 +227,7 @@ typedef __uint128_t fixedptud;
     fixedpt fixedpt_sqrt(fixedpt A);
 
     /* Returns the sine of the given fixedpt number.
- * Note: the loss of precision is extraordinary! */
+     * Note: the loss of precision is extraordinary! */
     fixedpt fixedpt_sin(fixedpt fp);
 
     /* Returns the cosine of the given fixedpt number */

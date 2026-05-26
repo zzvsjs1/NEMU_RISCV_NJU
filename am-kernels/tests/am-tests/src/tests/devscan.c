@@ -23,6 +23,7 @@ static void timer_test()
 }
 
 static uint8_t vmem[512 << 10];
+
 static inline gpuptr_t to_guest(void *ptr) { return ptr ? (uint8_t *)ptr - vmem : AM_GPU_NULL; }
 
 static void video_test()

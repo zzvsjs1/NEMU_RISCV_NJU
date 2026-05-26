@@ -212,6 +212,7 @@ static void conf_default_message_callback(const char *s)
 
 static void (*conf_message_callback)(const char *s) =
     conf_default_message_callback;
+
 void conf_set_message_callback(void (*fn)(const char *s))
 {
     conf_message_callback = fn;
@@ -320,6 +321,7 @@ static int conf_set_sym_val(struct symbol *sym, int def, int def_flags, char *p)
 }
 
 #define LINE_GROWTH 16
+
 static int add_byte(int c, char **lineptr, size_t slen, size_t *n)
 {
     char *nline;
@@ -1373,14 +1375,14 @@ bool conf_set_all_new_symbols(enum conf_def_mode mode)
 {
     struct symbol *sym, *csym;
     int i, cnt, pby, pty, ptm; /* pby: probability of bool     = y
-                     * pty: probability of tristate = y
-                     * ptm: probability of tristate = m
-                     */
+                                * pty: probability of tristate = y
+                                * ptm: probability of tristate = m
+                                */
 
     pby = 50;
     pty = ptm = 33; /* can't go as the default in switch-case
-                   * below, otherwise gcc whines about
-                   * -Wmaybe-uninitialized */
+                     * below, otherwise gcc whines about
+                     * -Wmaybe-uninitialized */
 
     if (mode == def_random)
     {

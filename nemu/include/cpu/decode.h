@@ -19,6 +19,7 @@ typedef struct
         word_t imm;
         sword_t simm;
     };
+
     IFDEF(CONFIG_ISA_x86, rtlreg_t val);
     IFDEF(CONFIG_ISA_x86, uint8_t type);
     IFDEF(CONFIG_ISA_x86, uint8_t reg);
@@ -64,6 +65,7 @@ typedef struct Decode
 
 // --- prototype of decode helpers ---
 #define def_DHelper(name) void concat(decode_, name)(Decode * s, int width)
+
 // empty decode helper
 static inline def_DHelper(empty) {}
 
@@ -214,7 +216,7 @@ finish:
         const void *__instpat_end = &&__instpat_end_;
 
 #define INSTPAT_END() \
-    __instpat_end_:; \
+    __instpat_end_ :; \
     }
 
 #endif

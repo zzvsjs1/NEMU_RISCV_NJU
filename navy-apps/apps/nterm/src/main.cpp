@@ -108,6 +108,7 @@ void refresh_terminal()
     { \
         SDLK_##KEYNAME, #KEYNAME, NOSHIFT, SHIFT \
     }
+
 static const struct
 {
     int keycode;

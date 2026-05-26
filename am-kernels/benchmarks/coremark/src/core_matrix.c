@@ -62,6 +62,7 @@ void printmat(MATDAT *A, ee_u32 N, char *name)
         ee_printf("\n");
     }
 }
+
 void printmatC(MATRES *C, ee_u32 N, char *name)
 {
     ee_u32 i, j;

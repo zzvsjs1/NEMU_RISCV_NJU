@@ -11,6 +11,7 @@ typedef struct
 {
     int *x, n, cap[H];
 } tower;
+
 static tower t[3];
 
 static void init_tower(tower *t)

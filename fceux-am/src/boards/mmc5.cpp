@@ -61,6 +61,7 @@ static INLINE void MMC5SPRVROM_BANK2(uint32 A, uint32 V)
         MMC5SPRVPage[(A) >> 10] = MMC5SPRVPage[((A) >> 10) + 1] = &CHRptr[0][(V) << 11] - (A);
     }
 }
+
 static INLINE void MMC5BGVROM_BANK2(uint32 A, uint32 V)
 {
     if (CHRptr[0])
@@ -78,6 +79,7 @@ static INLINE void MMC5SPRVROM_BANK4(uint32 A, uint32 V)
         MMC5SPRVPage[(A) >> 10] = MMC5SPRVPage[((A) >> 10) + 1] = MMC5SPRVPage[((A) >> 10) + 2] = MMC5SPRVPage[((A) >> 10) + 3] = &CHRptr[0][(V) << 12] - (A);
     }
 }
+
 static INLINE void MMC5BGVROM_BANK4(uint32 A, uint32 V)
 {
     if (CHRptr[0])
@@ -95,6 +97,7 @@ static INLINE void MMC5SPRVROM_BANK8(uint32 V)
         MMC5SPRVPage[0] = MMC5SPRVPage[1] = MMC5SPRVPage[2] = MMC5SPRVPage[3] = MMC5SPRVPage[4] = MMC5SPRVPage[5] = MMC5SPRVPage[6] = MMC5SPRVPage[7] = &CHRptr[0][(V) << 13];
     }
 }
+
 static INLINE void MMC5BGVROM_BANK8(uint32 V)
 {
     if (CHRptr[0])
@@ -209,6 +212,7 @@ static void mmc5_PPUWrite(uint32 A, uint8 V)
 }
 
 extern uint32 NTRefreshAddr;
+
 uint8 FASTCALL mmc5_PPURead(uint32 A)
 {
     bool split = false;
@@ -349,6 +353,7 @@ cartdata MMC5CartList[] =
 };
 
 #define MMC5_NOCARTS (sizeof(MMC5CartList) / sizeof(MMC5CartList[0]))
+
 int DetectMMC5WRAMSize(uint32 crc32)
 {
     int x;

@@ -153,6 +153,7 @@ char item_tag(void);
 
 /* item list manipulation for lxdialog use */
 #define MAXITEMSTR 200
+
 struct dialog_item
 {
     char str[MAXITEMSTR]; /* prompt displayed */

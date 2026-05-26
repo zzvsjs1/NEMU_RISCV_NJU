@@ -17,9 +17,9 @@
 #endif
 
 /*
-* WARNING: if you change the order of this enumeration,
-* grep "ORDER RESERVED"
-*/
+ * WARNING: if you change the order of this enumeration,
+ * grep "ORDER RESERVED"
+ */
 enum RESERVED
 {
     /* terminal symbols denoted by reserved words */

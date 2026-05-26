@@ -10,14 +10,14 @@
 #define PAGEWALK_TEST_MODE 64
 #endif
 
-#define CHECK(cond)                                                   \
-    do                                                                \
-    {                                                                 \
-        if (!(cond))                                                  \
-        {                                                             \
+#define CHECK(cond) \
+    do \
+    { \
+        if (!(cond)) \
+        { \
             printf("check failed at line %d: %s\n", __LINE__, #cond); \
-            return 1;                                                 \
-        }                                                             \
+            return 1; \
+        } \
     } while (0)
 
 enum

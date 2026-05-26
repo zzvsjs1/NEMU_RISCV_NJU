@@ -17,6 +17,7 @@ static char *b = NULL;
 #define B(y, x) b[(y) * W + x]
 #define C(y, x) ' ' == b[(y) * W + x]
 #define V(i) B(y[i], x[i])
+
 static int rnd(int a) { return rand() % a; }
 
 static void show_board()

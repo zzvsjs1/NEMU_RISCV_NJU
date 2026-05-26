@@ -12,6 +12,7 @@
 uint8 *UNIFchrrama = 0;
 
 void AddExState(void *v, uint32 s, int type, const char *desc) {}
+
 void FCEU_CheatAddRAM(int s, uint32 A, uint8 *p) {}
 
 #ifndef __ISA_NATIVE__

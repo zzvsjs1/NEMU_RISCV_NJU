@@ -47,10 +47,22 @@ int main(void)
     SDL_SoftStretchUpdate(src, NULL, dst, &dstrect);
 
     static const uint32_t expected[16] = {
-        1, 1, 2, 2,
-        1, 1, 2, 2,
-        3, 3, 4, 4,
-        3, 3, 4, 4,
+        1,
+        1,
+        2,
+        2,
+        1,
+        1,
+        2,
+        2,
+        3,
+        3,
+        4,
+        4,
+        3,
+        3,
+        4,
+        4,
     };
 
     assert(dstrect.x == 0 && dstrect.y == 0);

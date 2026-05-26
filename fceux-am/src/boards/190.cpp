@@ -41,6 +41,7 @@ static DECLFW(Mapper190_Write89)
     prgr = V & 7;
     Mapper190_Sync();
 }
+
 static DECLFW(Mapper190_WriteCD)
 {
     prgr = 8 | (V & 7);

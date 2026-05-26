@@ -148,7 +148,7 @@ void paddr_write(paddr_t addr, int len, word_t data)
 #ifdef CONFIG_ISA_x86
             if (unlikely(isa_jit_may_invalidate_paddr(addr, len)))
 #endif
-            isa_jit_invalidate_paddr(addr, len);
+                isa_jit_invalidate_paddr(addr, len);
         }
 #endif
         return;

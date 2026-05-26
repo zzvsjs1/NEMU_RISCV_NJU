@@ -2,18 +2,19 @@
 #define ARCH_H__
 
 #ifndef __USE_GNU
-# define __USE_GNU
+#define __USE_GNU
 #endif
 
 #include <ucontext.h>
 
-struct Context {
-  uintptr_t ksp;
-  void *vm_head;
-  ucontext_t uc;
+struct Context
+{
+    uintptr_t ksp;
+    void *vm_head;
+    ucontext_t uc;
 #ifdef __x86_64__
-  // skip the red zone of the stack frame, see the amd64 ABI manual for details
-  uint8_t redzone[128];
+    // skip the red zone of the stack frame, see the amd64 ABI manual for details
+    uint8_t redzone[128];
 #endif
 };
 
@@ -32,10 +33,10 @@ struct Context {
 #elif defined(__riscv)
 // FIXME: may be wrong
 #define GPR1 uc.uc_mcontext.__gregs[REG_A0]
-#define GPR2 uc.uc_mcontext.__gregs[REG_A0+1]
-#define GPR3 uc.uc_mcontext.__gregs[REG_A0+2]
-#define GPR4 uc.uc_mcontext.__gregs[REG_A0+3]
-#define GPRx uc.uc_mcontext.__gregs[REG_A0+4]
+#define GPR2 uc.uc_mcontext.__gregs[REG_A0 + 1]
+#define GPR3 uc.uc_mcontext.__gregs[REG_A0 + 2]
+#define GPR4 uc.uc_mcontext.__gregs[REG_A0 + 3]
+#define GPRx uc.uc_mcontext.__gregs[REG_A0 + 4]
 #else
 #error Unsupported architecture
 #endif

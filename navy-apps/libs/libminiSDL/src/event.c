@@ -44,10 +44,10 @@ static int eventMatchesMask(const SDL_Event *ev, uint32_t mask)
 static uint8_t lookupMouseButton(const char *name)
 {
     /*
-   * NDL names wheel movement as input records, while old SDL exposes wheel
-   * ticks through synthetic button numbers.  Translate at the boundary so
-   * application code can stay SDL-compatible.
-   */
+     * NDL names wheel movement as input records, while old SDL exposes wheel
+     * ticks through synthetic button numbers.  Translate at the boundary so
+     * application code can stay SDL-compatible.
+     */
 
     if (strcmp(name, "LEFT") == 0)
         return SDL_BUTTON_LEFT;
@@ -69,10 +69,10 @@ static uint8_t lookupMouseButton(const char *name)
 static uint8_t translateMouseButtons(int buttons)
 {
     /*
-   * NDL reports a compact physical-button bitfield.  SDL stores button state
-   * as SDL_BUTTON(n) masks, so keep that representation inside queued events
-   * and the cached mouse state.
-   */
+     * NDL reports a compact physical-button bitfield.  SDL stores button state
+     * as SDL_BUTTON(n) masks, so keep that representation inside queued events
+     * and the cached mouse state.
+     */
     uint8_t state = 0;
 
     if (buttons & NDL_MOUSE_LEFT_MASK)
@@ -142,11 +142,11 @@ static int replacePendingMouseMotion(const SDL_Event *ev)
         return 0;
 
     /*
-   * Coalesce only motion events that are still adjacent at the queue tail.
-   * Replacing an older motion across a button, wheel, or key event would move
-   * the cursor event to the wrong side of that input, which can change click
-   * semantics in ONScripter.
-   */
+     * Coalesce only motion events that are still adjacent at the queue tail.
+     * Replacing an older motion across a button, wheel, or key event would move
+     * the cursor event to the wrong side of that input, which can change click
+     * semantics in ONScripter.
+     */
     const int last = previousQueueIndex(queueTail);
 
     if (eventQueue[last].type != SDL_MOUSEMOTION)
@@ -166,10 +166,10 @@ static void enqueueEvent(const SDL_Event *ev)
 static void enqueueMouseMotionEvent(const SDL_Event *ev)
 {
     /*
-   * Motion can be coalesced only after updating cached state.  SDL_GetMouseState()
-   * should expose the latest cursor position even if the older motion event is
-   * replaced before the app polls it.
-   */
+     * Motion can be coalesced only after updating cached state.  SDL_GetMouseState()
+     * should expose the latest cursor position even if the older motion event is
+     * replaced before the app polls it.
+     */
     updateMouseStateFromEvent(ev);
 
     if (replacePendingMouseMotion(ev))
@@ -234,10 +234,10 @@ static void pumpInputEvents(void)
             sscanf(buf, "%*s %d %d %d", &x, &y, &buttons) == 3)
         {
             /*
-         * NDL reports physical framebuffer coordinates.  NEMU may already have
-         * undone host-window resize scaling, but SDL apps still draw inside the
-         * centred NDL canvas, so this second translation removes the canvas border.
-         */
+             * NDL reports physical framebuffer coordinates.  NEMU may already have
+             * undone host-window resize scaling, but SDL apps still draw inside the
+             * centred NDL canvas, so this second translation removes the canvas border.
+             */
             NDL_TranslateMouse(&x, &y);
             SDL_Event ev = {};
             ev.type = SDL_MOUSEMOTION;
@@ -325,10 +325,10 @@ int SDL_PushEvent(SDL_Event *ev)
     if (ev == NULL)
         return -1;
     /*
-   * User events share the same queue as device events.  Updating derived state
-   * here is harmless for non-input events and keeps manually injected input
-   * consistent with events read from NDL.
-   */
+     * User events share the same queue as device events.  Updating derived state
+     * here is harmless for non-input events and keeps manually injected input
+     * consistent with events read from NDL.
+     */
     enqueueEvent(ev);
     return 0;
 }
@@ -338,10 +338,10 @@ void SDL_PumpEvents(void)
     void SDL_CheckTimers(void);
 
     /*
-   * miniSDL has no background event thread.  Polling events is also the safe
-   * point for timers and audio because games call it frequently and all three
-   * services remain serialised on the main thread.
-   */
+     * miniSDL has no background event thread.  Polling events is also the safe
+     * point for timers and audio because games call it frequently and all three
+     * services remain serialised on the main thread.
+     */
     pumpInputEvents();
     SDL_CheckTimers();
 
@@ -357,10 +357,10 @@ int SDL_PollEvent(SDL_Event *ev)
 int SDL_WaitEvent(SDL_Event *event)
 {
     /*
-   * The Navy environment does not provide a blocking SDL wait primitive.  The
-   * busy wait still calls SDL_PollEvent(), so timers and audio continue to be
-   * pumped while the application waits for input.
-   */
+     * The Navy environment does not provide a blocking SDL wait primitive.  The
+     * busy wait still calls SDL_PollEvent(), so timers and audio continue to be
+     * pumped while the application waits for input.
+     */
     while (!SDL_PollEvent(event))
     { /* busy-wait */
     }
@@ -386,9 +386,9 @@ int SDL_PeepEvents(SDL_Event *ev, int numevents, int action, uint32_t mask)
     int tmp_count = 0;
 
     /*
-   * Rebuild the queue after scanning. This keeps event ordering stable while
-   * allowing SDL_GETEVENT to remove only the events that matched the mask.
-   */
+     * Rebuild the queue after scanning. This keeps event ordering stable while
+     * allowing SDL_GETEVENT to remove only the events that matched the mask.
+     */
     while (!queueEmpty())
     {
         SDL_Event cur;

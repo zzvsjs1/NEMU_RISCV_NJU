@@ -70,7 +70,7 @@ static struct rule
 
 static regex_t re[NR_REGEX] = {};
 
-/* 
+/*
  * Rules are used for many times.
  * Therefore we compile them only once before any usage.
  */
@@ -780,10 +780,10 @@ static word_t eval(int start, int end, bool *success)
 static void preProcess()
 {
     /*
-   * Unary '-' and dereference '*' share tokens with binary operators.  The
-   * previous token decides the role: after an operand they remain binary,
-   * otherwise they become prefix unary operators.
-   */
+     * Unary '-' and dereference '*' share tokens with binary operators.  The
+     * previous token decides the role: after an operand they remain binary,
+     * otherwise they become prefix unary operators.
+     */
     for (size_t i = 0; i < numOfTokens; i++)
     {
         const TokenType type = tokens[i].type;

@@ -17,4 +17,3 @@ _Static_assert(sizeof(struct timeval) == 2 * sizeof(long),
                "struct timeval must contain two long-sized fields");
 _Static_assert(sizeof(struct timespec) == 2 * sizeof(long),
                "struct timespec must contain two long-sized fields");
-

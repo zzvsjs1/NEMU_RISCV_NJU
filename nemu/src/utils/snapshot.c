@@ -135,10 +135,10 @@ void load_snapshot(const char *path)
     g_nr_guest_instr = header.nr_guest_instr;
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
     /*
-   * Snapshot loading replaces PMEM wholesale. Any native block compiled before
-   * the restore describes old source bytes, even if the restored CPU state has
-   * the same pc and satp, so discard the JIT cache before execution resumes.
-   */
+     * Snapshot loading replaces PMEM wholesale. Any native block compiled before
+     * the restore describes old source bytes, even if the restored CPU state has
+     * the same pc and satp, so discard the JIT cache before execution resumes.
+     */
     isa_jit_flush_all();
 #endif
     printf("Loaded snapshot: %s\n", path);

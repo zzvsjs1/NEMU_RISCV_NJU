@@ -97,6 +97,7 @@ ee_s16 calc_func(ee_s16 *pdata, core_results *res)
         return retval;
     }
 }
+
 /* Function: cmp_complex
     Compare the data item in a list cell.
 
@@ -218,6 +219,7 @@ ee_u16 core_bench_list(core_results *res, ee_s16 finder_idx)
 #endif
     return retval;
 }
+
 /* Function: core_list_init
     Initialize list with data.
 
@@ -411,6 +413,7 @@ list_head *core_list_find(list_head *list, list_data *info)
         return list;
     }
 }
+
 /* Function: core_list_reverse
     Reverse a list
 
@@ -437,6 +440,7 @@ list_head *core_list_reverse(list_head *list)
     }
     return next;
 }
+
 /* Function: core_list_mergesort
     Sort the list in place without recursion.
 

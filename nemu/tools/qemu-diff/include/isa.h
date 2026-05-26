@@ -38,6 +38,7 @@ union isa_gdb_regs
         uint32_t cs, ss, ds, es, fs, gs;
 #endif
     };
+
     struct
     {
         uint32_t array[77];

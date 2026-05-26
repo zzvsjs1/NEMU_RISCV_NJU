@@ -24,7 +24,7 @@
  * Both Voleyball and Zanac by Whirlind Manu shares the same PCB, but with
  * some differences: Voleyball has 8K CHR ROM and 8K ROM at 6000K, Zanac
  * have 8K CHR RAM and banked 16K ROM mapper at 6000 as two 8K banks.
-*
+ *
  * Super Mario Bros 2j (Alt Small) uses additionally IRQ timer to drive framerate
  *
  * PCB for this mapper is "09-034A"

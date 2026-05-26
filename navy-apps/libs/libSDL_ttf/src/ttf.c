@@ -12,11 +12,13 @@
 struct TTF_Font
 {
     stbtt_fontinfo *finfo;
+
     struct
     {
         uint8_t *buf;
         size_t size;
     } file;
+
     int ptsize;
     fixedpt factor;
     int height;

@@ -97,6 +97,7 @@ static DECLFR(ASWRAM)
 {
     return (SWRAM[A - 0x4400]);
 }
+
 static DECLFW(BSWRAM)
 {
     SWRAM[A - 0x4400] = V;

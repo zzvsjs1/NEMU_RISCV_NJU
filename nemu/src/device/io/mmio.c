@@ -48,7 +48,7 @@ void add_mmio_map(const char *name, paddr_t addr, void *space, uint32_t len,
         report_mmio_overlap(name, left, right,
                             "pmem", pmem_left, pmem_right - 1u);
     }
-    
+
     for (int i = 0; i < nr_map; i++)
     {
         if (left <= maps[i].high && right >= maps[i].low)

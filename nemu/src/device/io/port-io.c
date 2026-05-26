@@ -28,10 +28,10 @@ void add_pio_map(const char *name, ioaddr_t addr, void *space, uint32_t len, io_
     assert(nr_map < NR_MAP);
     assert(addr + len <= PORT_IO_SPACE_MAX);
     /*
-   * Port IO is a separate 16-bit bus used by some configurations instead of
-   * MMIO.  The same IOMap callback contract is reused, but the address never
-   * goes through the physical-memory decoder.
-   */
+     * Port IO is a separate 16-bit bus used by some configurations instead of
+     * MMIO.  The same IOMap callback contract is reused, but the address never
+     * goes through the physical-memory decoder.
+     */
     maps[nr_map] = (IOMap){.name = name, .low = addr, .high = addr + len - 1, .space = space, .callback = callback};
     Log("Add port-io map '%s' at [" FMT_PADDR ", " FMT_PADDR "]",
         maps[nr_map].name, maps[nr_map].low, maps[nr_map].high);

@@ -82,11 +82,11 @@ typedef __int64 int64;
 typedef unsigned __int64 uint64;
 #define __restrict__
 #define INLINE __inline
-#define GINLINE     /* Can't declare a function INLINE
-                       and global in MSVC.  Bummer.
+#define GINLINE     /* Can't declare a function INLINE \
+                       and global in MSVC.  Bummer. \
                     */
-#define PSS_STYLE 2 /* Does MSVC compile for anything
-                       other than Windows/DOS targets?
+#define PSS_STYLE 2 /* Does MSVC compile for anything \
+                       other than Windows/DOS targets? \
                     */
 
 #endif

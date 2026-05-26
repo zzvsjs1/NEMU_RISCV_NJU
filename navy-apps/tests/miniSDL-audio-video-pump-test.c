@@ -7,15 +7,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CHECK(cond)                                                         \
-    do                                                                      \
-    {                                                                       \
-        if (!(cond))                                                        \
-        {                                                                   \
-            fprintf(stderr, "%s:%d: check failed: %s\n",                   \
-                    __FILE__, __LINE__, #cond);                             \
-            exit(1);                                                        \
-        }                                                                   \
+#define CHECK(cond) \
+    do \
+    { \
+        if (!(cond)) \
+        { \
+            fprintf(stderr, "%s:%d: check failed: %s\n", \
+                    __FILE__, __LINE__, #cond); \
+            exit(1); \
+        } \
     } while (0)
 
 static int fake_audio_capacity = 65536;

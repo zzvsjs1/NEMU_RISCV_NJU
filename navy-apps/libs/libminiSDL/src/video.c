@@ -62,10 +62,10 @@ static void draw_rect_with_audio_pump(uint32_t *pixels, int x, int y, int w, int
 static uint32_t *ensure_update_argb_buffer(size_t pixels)
 {
     /*
-   * Framebuffer updates are serialised through the SDL call path, so one
-   * process-wide scratch buffer is enough.  It grows to the largest dirty
-   * rectangle seen and avoids repeated allocation during palette refreshes.
-   */
+     * Framebuffer updates are serialised through the SDL call path, so one
+     * process-wide scratch buffer is enough.  It grows to the largest dirty
+     * rectangle seen and avoids repeated allocation during palette refreshes.
+     */
 
     if (pixels <= update_argb_cap)
     {
@@ -218,10 +218,10 @@ static void build_palette_argb_lut(const SDL_Palette *palette, uint32_t lut[256]
         ncolors = 256;
 
     /*
-   * Convert the 256-entry palette once per update.  PAL's 8-bit screen path
-   * otherwise packs r/g/b/a again for every destination pixel, so a full
-   * 800x600 frame repeats the same 256 choices 480,000 times.
-   */
+     * Convert the 256-entry palette once per update.  PAL's 8-bit screen path
+     * otherwise packs r/g/b/a again for every destination pixel, so a full
+     * 800x600 frame repeats the same 256 choices 480,000 times.
+     */
     for (int i = 0; i < ncolors; i++)
     {
         const SDL_Color c = palette->colors[i];
@@ -542,11 +542,11 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h)
     }
 
     /*
-   * SDL_UpdateRect(surface, 0, 0, 0, 0) is the conventional full-surface
-   * refresh.  A rectangle with only one zero dimension is empty; drawing it as
-   * a full row/column can turn a bad glyph or clipping rectangle into a large
-   * framebuffer update.
-   */
+     * SDL_UpdateRect(surface, 0, 0, 0, 0) is the conventional full-surface
+     * refresh.  A rectangle with only one zero dimension is empty; drawing it as
+     * a full row/column can turn a bad glyph or clipping rectangle into a large
+     * framebuffer update.
+     */
 
     if (!clip_surface_rect(s, &x, &y, &w, &h))
     {
@@ -556,14 +556,14 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h)
     if (s->format->BitsPerPixel == 32)
     {
         /*
-       * NDL_DrawRect() expects a tightly packed w*h pixel array.  The screen
-       * surface itself is pitched by the full surface width, so passing a
-       * pointer into the middle of the surface only works for full-width
-       * updates.  ONScripter often updates small dirty rectangles; pack those
-       * rows first so every destination row starts from the correct source row.
-       * Full-width paths stay zero-copy because scene changes are often already
-       * full rows and those writes are batched again by NDL/Nanos/NEMU.
-       */
+         * NDL_DrawRect() expects a tightly packed w*h pixel array.  The screen
+         * surface itself is pitched by the full surface width, so passing a
+         * pointer into the middle of the surface only works for full-width
+         * updates.  ONScripter often updates small dirty rectangles; pack those
+         * rows first so every destination row starts from the correct source row.
+         * Full-width paths stay zero-copy because scene changes are often already
+         * full rows and those writes are batched again by NDL/Nanos/NEMU.
+         */
         const int bpp = s->format->BytesPerPixel;
         const int pitch = s->pitch;
         uint8_t *src = (uint8_t *)s->pixels + y * pitch + x * bpp;
@@ -621,12 +621,12 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h)
         build_palette_argb_lut(s->format->palette, palette_argb);
 
         /*
-       * NDL_DrawRect() consumes 32-bit ARGB pixels, while PAL keeps its real
-       * screen as an 8-bit indexed surface.  Reuse one conversion buffer and
-       * look up pre-packed colours; this removes a malloc/free pair per frame
-       * and replaces four byte-field loads/shifts per pixel with one table
-       * lookup.
-       */
+         * NDL_DrawRect() consumes 32-bit ARGB pixels, while PAL keeps its real
+         * screen as an 8-bit indexed surface.  Reuse one conversion buffer and
+         * look up pre-packed colours; this removes a malloc/free pair per frame
+         * and replaces four byte-field loads/shifts per pixel with one table
+         * lookup.
+         */
         for (int row = 0; row < h; ++row)
         {
             uint8_t *rowp = src + row * pitch;
@@ -652,10 +652,10 @@ void SDL_UpdateRect(SDL_Surface *s, int x, int y, int w, int h)
 static inline int maskToShift(uint32_t mask)
 {
     /*
-   * This miniSDL supports the canonical byte-aligned masks used by Navy apps.
-   * Rejecting arbitrary masks keeps conversion code simple and makes unsupported
-   * formats fail at surface creation rather than during later blits.
-   */
+     * This miniSDL supports the canonical byte-aligned masks used by Navy apps.
+     * Rejecting arbitrary masks keeps conversion code simple and makes unsupported
+     * formats fail at surface creation rather than during later blits.
+     */
     switch (mask)
     {
     case 0x000000ff:
@@ -763,14 +763,14 @@ SDL_Surface *SDL_CreateRGBSurface(uint32_t flags, int width, int height, int dep
             return NULL;
         }
         /*
-     * SDL callers are allowed to update or palette-convert a newly-created
-     * surface before they have painted every pixel. PAL does this during
-     * startup: gpScreenReal is a hardware 8-bit surface, palette changes can
-     * trigger SDL_UpdateRect(), and the first title frames do not necessarily
-     * overwrite every byte immediately. Start every owned surface at palette
-     * index / pixel value 0 so those early updates show black instead of stale
-     * allocator contents or pixels left by the previous Navy app.
-     */
+         * SDL callers are allowed to update or palette-convert a newly-created
+         * surface before they have painted every pixel. PAL does this during
+         * startup: gpScreenReal is a hardware 8-bit surface, palette changes can
+         * trigger SDL_UpdateRect(), and the first title frames do not necessarily
+         * overwrite every byte immediately. Start every owned surface at palette
+         * index / pixel value 0 so those early updates show black instead of stale
+         * allocator contents or pixels left by the previous Navy app.
+         */
         if (bytes != 0)
         {
             memset(s->pixels, 0, bytes);
@@ -784,10 +784,10 @@ SDL_Surface *SDL_CreateRGBSurfaceFrom(void *pixels, int width, int height, int d
                                       int pitch, uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask)
 {
     /*
-   * SDL_PREALLOC means ownership stays with the caller.  The surface metadata
-   * still uses miniSDL's normal format allocation, but SDL_FreeSurface() must
-   * leave the pixel storage alone.
-   */
+     * SDL_PREALLOC means ownership stays with the caller.  The surface metadata
+     * still uses miniSDL's normal format allocation, but SDL_FreeSurface() must
+     * leave the pixel storage alone.
+     */
     SDL_Surface *s = SDL_CreateRGBSurface(SDL_PREALLOC, width, height, depth,
                                           Rmask, Gmask, Bmask, Amask);
     if (s == NULL)
@@ -846,11 +846,11 @@ SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, uint32_t flags)
     if (flags & SDL_HWSURFACE)
     {
         /*
-     * NDL_OpenCanvas() clears the physical framebuffer, while this sync clears
-     * the app's newly-created hardware surface inside that canvas. This covers
-     * programs like PAL that open a smaller 8-bit surface after NTerm and then
-     * change palettes before the whole logical screen has been repainted.
-     */
+         * NDL_OpenCanvas() clears the physical framebuffer, while this sync clears
+         * the app's newly-created hardware surface inside that canvas. This covers
+         * programs like PAL that open a smaller 8-bit surface after NTerm and then
+         * change palettes before the whole logical screen has been repainted.
+         */
         SDL_UpdateRect(s, 0, 0, 0, 0);
     }
 
@@ -893,10 +893,10 @@ void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_
     if (src_w == dst_area->w && src_h == dst_area->h)
     {
         /*
-     * The same-size path keeps SDL_BlitSurface()'s richer clipping behaviour.
-     * A local destination rectangle avoids writing back through dst_full when
-     * the caller passed NULL, matching normal SDL "whole destination" usage.
-     */
+         * The same-size path keeps SDL_BlitSurface()'s richer clipping behaviour.
+         * A local destination rectangle avoids writing back through dst_full when
+         * the caller passed NULL, matching normal SDL "whole destination" usage.
+         */
         SDL_Rect src_rect = {
             .x = src_x,
             .y = src_y,
@@ -912,11 +912,11 @@ void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_
     }
 
     /*
-   * PAL renders into a 320x200 8-bit buffer and stretches it to the real
-   * screen. Nearest-neighbour scaling is enough here: it is deterministic,
-   * cheap for NEMU, and preserves the indexed palette values until the final
-   * SDL_UpdateRect() palette conversion.
-   */
+     * PAL renders into a 320x200 8-bit buffer and stretches it to the real
+     * screen. Nearest-neighbour scaling is enough here: it is deterministic,
+     * cheap for NEMU, and preserves the indexed palette values until the final
+     * SDL_UpdateRect() palette conversion.
+     */
     const int dst_x = dst_area->x;
     const int dst_y = dst_area->y;
     const int dst_w = dst_area->w;
@@ -946,18 +946,18 @@ void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_
     }
 
     /*
-   * Scale with integer error accumulators instead of doing one division for
-   * every destination pixel.  For a 320x200 -> 800x600 PAL frame this removes
-   * 480,000 inner-loop divisions while preserving the same floor-based nearest
-   * neighbour mapping:
-   *
-   *   source column = floor((output column - area x) * source width /
-   *                         destination width)
-   *
-   * The error value is the remainder of that division.  Adding src_w each
-   * output pixel and carrying whenever it reaches dst_w is the same arithmetic
-   * as the formula above, just spread over the row.
-   */
+     * Scale with integer error accumulators instead of doing one division for
+     * every destination pixel.  For a 320x200 -> 800x600 PAL frame this removes
+     * 480,000 inner-loop divisions while preserving the same floor-based nearest
+     * neighbour mapping:
+     *
+     *   source column = floor((output column - area x) * source width /
+     *                         destination width)
+     *
+     * The error value is the remainder of that division.  Adding src_w each
+     * output pixel and carrying whenever it reaches dst_w is the same arithmetic
+     * as the formula above, just spread over the row.
+     */
     int y_num = (clip_y0 - dst_y) * src_h;
     int src_row = y_num / dst_h;
     int y_err = y_num % dst_h;
@@ -1096,17 +1096,17 @@ void SDL_SoftStretchUpdate(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst
     build_palette_argb_lut(dst->format->palette, palette_argb);
 
     /*
-   * PAL normally does SDL_SoftStretch() into an 8-bit hardware surface and then
-   * SDL_UpdateRect(), which reads the same 800x600 indexed pixels back to build
-   * a 32-bit framebuffer image.  This combined path writes both outputs in one
-   * nearest-neighbour pass:
-   *
-   *   - dst->pixels stays current, so later palette-only refreshes still work;
-   *   - argb is sent to /dev/fb immediately, avoiding a second full-screen pass.
-   *
-   * That second point matters on NEMU because every extra full-screen pass also
-   * feeds the foreground shadow and VGA dirty-rectangle pipeline.
-   */
+     * PAL normally does SDL_SoftStretch() into an 8-bit hardware surface and then
+     * SDL_UpdateRect(), which reads the same 800x600 indexed pixels back to build
+     * a 32-bit framebuffer image.  This combined path writes both outputs in one
+     * nearest-neighbour pass:
+     *
+     *   - dst->pixels stays current, so later palette-only refreshes still work;
+     *   - argb is sent to /dev/fb immediately, avoiding a second full-screen pass.
+     *
+     * That second point matters on NEMU because every extra full-screen pass also
+     * feeds the foreground shadow and VGA dirty-rectangle pipeline.
+     */
     int y_num = (clip_y0 - dst_y) * src_h;
     int src_row = y_num / dst_h;
     int y_err = y_num % dst_h;
@@ -1183,10 +1183,10 @@ void SDL_SetPalette(SDL_Surface *s, int flags, SDL_Color *colors, int firstcolor
     if (s->flags & SDL_HWSURFACE)
     {
         /*
-     * The physical framebuffer stores ARGB pixels, not palette indices.  When
-     * a hardware-surface palette changes, every existing index can map to a
-     * new colour, so the whole canvas must be republished through UpdateRect().
-     */
+         * The physical framebuffer stores ARGB pixels, not palette indices.  When
+         * a hardware-surface palette changes, every existing index can map to a
+         * new colour, so the whole canvas must be republished through UpdateRect().
+         */
         SDL_UpdateRect(s, 0, 0, 0, 0);
     }
 }
@@ -1256,9 +1256,9 @@ int SDL_LockSurface(SDL_Surface *s)
     (void)s;
 
     /*
-   * Surfaces are plain memory buffers in miniSDL.  There is no separate video
-   * backend lock to acquire, so this only preserves the SDL API shape.
-   */
+     * Surfaces are plain memory buffers in miniSDL.  There is no separate video
+     * backend lock to acquire, so this only preserves the SDL API shape.
+     */
     return 0;
 }
 

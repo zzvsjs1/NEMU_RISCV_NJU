@@ -2,6 +2,7 @@
 #define _aosdfjk02fmasf
 
 #define MAXBUTTCONFIG 4
+
 typedef struct
 {
     uint8 ButtType[MAXBUTTCONFIG];

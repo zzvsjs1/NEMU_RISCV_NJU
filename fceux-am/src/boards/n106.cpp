@@ -265,6 +265,7 @@ static DECLFW(Mapper19_write)
 
 #if SOUND_CONFIG != SOUND_NONE
 static int dwave = 0;
+
 static void DoNamcoSound(int32 *Wave, int Count)
 {
     assert(0);

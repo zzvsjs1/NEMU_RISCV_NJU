@@ -183,6 +183,7 @@ void S74LS374NA_Init(CartInfo *info)
 }
 
 static int type;
+
 static void S8259Synco(void)
 {
     int x;

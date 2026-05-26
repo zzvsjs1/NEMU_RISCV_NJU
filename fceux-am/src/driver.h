@@ -288,6 +288,7 @@ enum EMUSPEED_SET
     EMUSPEED_FASTER,
     EMUSPEED_FASTEST
 };
+
 void FCEUD_SetEmulationSpeed(int cmd);
 void FCEUD_TurboOn(void);
 void FCEUD_TurboOff(void);

@@ -28,11 +28,11 @@ void device_update()
     static uint64_t last = 0;
     uint64_t now = get_time();
     /*
-   * The CPU loop may execute a small batch of guest instructions before asking
-   * devices to poll host state.  This time gate keeps SDL and timer work close
-   * to TIMER_HZ while still allowing the interpreter/JIT loop to avoid a host
-   * syscall after every single guest instruction.
-   */
+     * The CPU loop may execute a small batch of guest instructions before asking
+     * devices to poll host state.  This time gate keeps SDL and timer work close
+     * to TIMER_HZ while still allowing the interpreter/JIT loop to avoid a host
+     * syscall after every single guest instruction.
+     */
 
     if (now - last < 1000000 / TIMER_HZ)
     {
@@ -69,10 +69,10 @@ void device_update()
             int y = event.motion.y;
 #ifdef CONFIG_HAS_VGA
             /*
-         * SDL reports window coordinates.  The guest sees framebuffer
-         * coordinates, which may differ when the visible window is scaled, so
-         * translate before the event is queued in the emulated mouse device.
-         */
+             * SDL reports window coordinates.  The guest sees framebuffer
+             * coordinates, which may differ when the visible window is scaled, so
+             * translate before the event is queued in the emulated mouse device.
+             */
             vga_translate_mouse_position(&x, &y);
 #endif
             send_mouse_motion(x, y, event.motion.state);
@@ -85,10 +85,10 @@ void device_update()
             int y = event.button.y;
 #ifdef CONFIG_HAS_VGA
             /*
-         * Button events carry the pointer position at the time of the click.
-         * Translate the position with the same rule as motion events so Navy's
-         * /dev/events stream never mixes host-window and guest-screen axes.
-         */
+             * Button events carry the pointer position at the time of the click.
+             * Translate the position with the same rule as motion events so Navy's
+             * /dev/events stream never mixes host-window and guest-screen axes.
+             */
             vga_translate_mouse_position(&x, &y);
 #endif
             send_mouse_button(event.button.button,
@@ -98,10 +98,10 @@ void device_update()
         }
         case SDL_MOUSEWHEEL:
             /*
-         * SDL2 wheel events do not carry a reliable cursor position.  The mouse
-         * device therefore reuses the last translated motion/button position so
-         * the downstream /dev/events record still has coordinates in guest space.
-         */
+             * SDL2 wheel events do not carry a reliable cursor position.  The mouse
+             * device therefore reuses the last translated motion/button position so
+             * the downstream /dev/events record still has coordinates in guest space.
+             */
             send_mouse_wheel(event.wheel.x, event.wheel.y);
             break;
 #endif

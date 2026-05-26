@@ -198,10 +198,10 @@ int main()
     check(first == 7);
 
     /*
-   * Keep satp unchanged but remap the same virtual function entry to different
-   * physical instructions. A stale JIT block would keep returning 7 here because
-   * the virtual PC and satp tag are unchanged.
-   */
+     * Keep satp unchanged but remap the same virtual function entry to different
+     * physical instructions. A stale JIT block would keep returning 7 here because
+     * the virtual PC and satp tag are unchanged.
+     */
     alias_l0[(ALIAS_VA >> 12) & 0x3ffu] =
         pte_for_page(code_page_b, PTE_V | PTE_R | PTE_X | PTE_A);
     local_sfence_vma();

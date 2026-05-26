@@ -33,10 +33,10 @@ int main(void)
         SURFACE_W = 4,
         SURFACE_H = 3,
         /*
-     * The old clipping bug converted a negative clipped height into a uint16_t
-     * value near 65535.  This larger backing store lets that bad loop complete
-     * and keeps the failure as an assertion instead of a host segfault.
-     */
+         * The old clipping bug converted a negative clipped height into a uint16_t
+         * value near 65535.  This larger backing store lets that bad loop complete
+         * and keeps the failure as an assertion instead of a host segfault.
+         */
         GUARD_BYTES = SURFACE_W * 65536,
     };
 
@@ -56,9 +56,9 @@ int main(void)
     SDL_FillRect(surface, &below_surface, 0xff);
 
     /*
-   * A rectangle that starts below the surface is empty.  The byte selected here
-   * is the first location the buggy unsigned-height loop used to overwrite.
-   */
+     * A rectangle that starts below the surface is empty.  The byte selected here
+     * is the first location the buggy unsigned-height loop used to overwrite.
+     */
     assert(pixels[(SURFACE_H + 1) * SURFACE_W + 1] == 0x5a);
 
     SDL_FreeSurface(surface);

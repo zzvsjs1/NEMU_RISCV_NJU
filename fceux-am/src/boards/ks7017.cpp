@@ -74,6 +74,7 @@ static DECLFW(UNLKS7017Write)
         mirr = ((V & 8) >> 3) ^ 1;
     }
 }
+
 static DECLFR(FDSRead4030)
 {
     X6502_IRQEnd(FCEU_IQEXT);

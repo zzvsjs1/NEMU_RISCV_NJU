@@ -14,11 +14,11 @@ typedef struct
     uint32 SaveGameLen[4]; // How much memory to save/load.
 
     // Set by iNES/UNIF loading code.
-    int mirror; // As set in the header or chunk.
-        // iNES/UNIF specific.  Intended
-        // to help support games like "Karnov"
-        // that are not really MMC3 but are
-        // set to mapper 4.
+    int mirror;  // As set in the header or chunk.
+                 // iNES/UNIF specific.  Intended
+                 // to help support games like "Karnov"
+                 // that are not really MMC3 but are
+                 // set to mapper 4.
     int battery; // Presence of an actual battery.
     int ines2;
     int submapper; // Submappers as defined by NES 2.0

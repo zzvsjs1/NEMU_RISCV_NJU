@@ -86,12 +86,12 @@ int main(void)
     assert(font != NULL);
 
     /*
-   * ONScripter scripts depend on CJK glyphs, punctuation, and blank-space
-   * metrics. The table records whether a glyph should produce visible ink
-   * while still requiring a positive advance for layout.  Blank glyphs are an
-   * edge case because a zero-sized surface is valid, but a zero advance would
-   * collapse script text.
-   */
+     * ONScripter scripts depend on CJK glyphs, punctuation, and blank-space
+     * metrics. The table records whether a glyph should produce visible ink
+     * while still requiring a positive advance for layout.  Blank glyphs are an
+     * edge case because a zero-sized surface is valid, but a zero advance would
+     * collapse script text.
+     */
     const struct
     {
         uint16_t codepoint;

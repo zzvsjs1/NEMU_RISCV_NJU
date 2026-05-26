@@ -17,6 +17,7 @@ struct bfi
     char cmd;
     struct bfi *next, *jmp;
 };
+
 struct mem
 {
     char val;
@@ -53,15 +54,15 @@ void bf()
     screen_clear();
 
     /*
-   *  For each character, if it's a valid BF command add it onto the
-   *  end of the program. If the input is stdin use the '!' character
-   *  to mark the end of the program and the start of the data, but
-   *  only if we have a complete program.  The 'j' variable points
-   *  at the list of currently open '[' commands, one is matched off
-   *  by each ']'.  A ']' without a matching '[' is not a legal BF
-   *  command and so is ignored.  If there are any '[' commands left
-   *  over at the end they are not valid BF commands and so are ignored.
-   */
+     *  For each character, if it's a valid BF command add it onto the
+     *  end of the program. If the input is stdin use the '!' character
+     *  to mark the end of the program and the start of the data, but
+     *  only if we have a complete program.  The 'j' variable points
+     *  at the list of currently open '[' commands, one is matched off
+     *  by each ']'.  A ']' without a matching '[' is not a legal BF
+     *  command and so is ignored.  If there are any '[' commands left
+     *  over at the end they are not valid BF commands and so are ignored.
+     */
     const char *s = prog;
     while ((ch = *(s++)) != '\0')
     {

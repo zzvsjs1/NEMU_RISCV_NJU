@@ -293,18 +293,23 @@ static const byte cpu_zn_flag_table[256] = {
 // Interrupt Addresses
 
 word cpu_nmi_interrupt_address() { return memory_readw(0xFFFA); }
+
 word cpu_reset_interrupt_address() { return memory_readw(0xFFFC); }
+
 word cpu_irq_interrupt_address() { return memory_readw(0xFFFE); }
 
 // Stack Routines
 
 void cpu_stack_pushb(byte data) { memory_writeb(0x100 + cpu.SP--, data); }
+
 void cpu_stack_pushw(word data)
 {
     memory_writew(0xFF + cpu.SP, data);
     cpu.SP -= 2;
 }
+
 byte cpu_stack_popb() { return memory_readb(0x100 + ++cpu.SP); }
+
 word cpu_stack_popw()
 {
     cpu.SP += 2;
@@ -362,19 +367,24 @@ void cpu_op_sbc()
 // Bit Manipulation Operations
 
 void cpu_op_and() { cpu_update_zn_flags(cpu.A &= op_value); }
+
 void cpu_op_bit()
 {
     cpu_modify_flag(zero_bp, !(cpu.A & op_value));
     cpu.P = (cpu.P & 0x3F) | (0xC0 & op_value);
 }
+
 void cpu_op_eor() { cpu_update_zn_flags(cpu.A ^= op_value); }
+
 void cpu_op_ora() { cpu_update_zn_flags(cpu.A |= op_value); }
+
 void cpu_op_asla()
 {
     cpu_modify_flag(carry_bp, cpu.A & 0x80);
     cpu.A <<= 1;
     cpu_update_zn_flags(cpu.A);
 }
+
 void cpu_op_asl()
 {
     cpu_modify_flag(carry_bp, op_value & 0x80);
@@ -383,6 +393,7 @@ void cpu_op_asl()
     cpu_update_zn_flags(op_value);
     memory_writeb(op_address, op_value);
 }
+
 void cpu_op_lsra()
 {
     int value = cpu.A >> 1;
@@ -390,6 +401,7 @@ void cpu_op_lsra()
     cpu.A = value & 0xFF;
     cpu_update_zn_flags(value);
 }
+
 void cpu_op_lsr()
 {
     cpu_modify_flag(carry_bp, op_value & 0x01);
@@ -407,6 +419,7 @@ void cpu_op_rola()
     cpu.A = value & 0xFF;
     cpu_update_zn_flags(cpu.A);
 }
+
 void cpu_op_rol()
 {
     op_value <<= 1;
@@ -416,6 +429,7 @@ void cpu_op_rol()
     memory_writeb(op_address, op_value);
     cpu_update_zn_flags(op_value);
 }
+
 void cpu_op_rora()
 {
     unsigned char carry = cpu_flag_set(carry_bp);
@@ -424,6 +438,7 @@ void cpu_op_rora()
     cpu_modify_flag(zero_bp, cpu.A == 0);
     cpu_modify_flag(negative_bp, !!carry);
 }
+
 void cpu_op_ror()
 {
     unsigned char carry = cpu_flag_set(carry_bp);
@@ -437,36 +452,51 @@ void cpu_op_ror()
 // Loading
 
 void cpu_op_lda() { cpu_update_zn_flags(cpu.A = op_value); }
+
 void cpu_op_ldx() { cpu_update_zn_flags(cpu.X = op_value); }
+
 void cpu_op_ldy() { cpu_update_zn_flags(cpu.Y = op_value); }
 
 // Storing
 
 void cpu_op_sta() { memory_writeb(op_address, cpu.A); }
+
 void cpu_op_stx() { memory_writeb(op_address, cpu.X); }
+
 void cpu_op_sty() { memory_writeb(op_address, cpu.Y); }
 
 // Transfering
 
 void cpu_op_tax() { cpu_update_zn_flags(cpu.X = cpu.A); }
+
 void cpu_op_txa() { cpu_update_zn_flags(cpu.A = cpu.X); }
+
 void cpu_op_tay() { cpu_update_zn_flags(cpu.Y = cpu.A); }
+
 void cpu_op_tya() { cpu_update_zn_flags(cpu.A = cpu.Y); }
+
 void cpu_op_tsx() { cpu_update_zn_flags(cpu.X = cpu.SP); }
+
 void cpu_op_txs() { cpu.SP = cpu.X; }
 
 // Branching Positive
 
 void cpu_op_bcs() { cpu_branch(cpu_flag_set(carry_bp)); }
+
 void cpu_op_beq() { cpu_branch(cpu_flag_set(zero_bp)); }
+
 void cpu_op_bmi() { cpu_branch(cpu_flag_set(negative_bp)); }
+
 void cpu_op_bvs() { cpu_branch(cpu_flag_set(overflow_bp)); }
 
 // Branching Negative
 
 void cpu_op_bne() { cpu_branch(!cpu_flag_set(zero_bp)); }
+
 void cpu_op_bcc() { cpu_branch(!cpu_flag_set(carry_bp)); }
+
 void cpu_op_bpl() { cpu_branch(!cpu_flag_set(negative_bp)); }
+
 void cpu_op_bvc() { cpu_branch(!cpu_flag_set(overflow_bp)); }
 
 // Jumping
@@ -480,6 +510,7 @@ void cpu_op_jsr()
     cpu_stack_pushw(cpu.PC - 1);
     cpu.PC = op_address;
 }
+
 void cpu_op_rts() { cpu.PC = cpu_stack_popw() + 1; }
 
 // Interruptions
@@ -491,6 +522,7 @@ void cpu_op_brk()
     cpu.P |= unused_flag | break_flag;
     cpu.PC = cpu_nmi_interrupt_address();
 }
+
 void cpu_op_rti()
 {
     cpu.P = cpu_stack_popb() | unused_flag;
@@ -500,17 +532,25 @@ void cpu_op_rti()
 // Flags
 
 void cpu_op_clc() { cpu_unset_flag(carry_bp); }
+
 void cpu_op_cld() { cpu_unset_flag(decimal_bp); }
+
 void cpu_op_cli() { cpu_unset_flag(interrupt_bp); }
+
 void cpu_op_clv() { cpu_unset_flag(overflow_bp); }
+
 void cpu_op_sec() { cpu_set_flag(carry_bp); }
+
 void cpu_op_sed() { cpu_set_flag(decimal_bp); }
+
 void cpu_op_sei() { cpu_set_flag(interrupt_bp); }
 
 // Comparison
 
 void cpu_op_cmp() { cpu_compare(cpu.A); }
+
 void cpu_op_cpx() { cpu_compare(cpu.X); }
+
 void cpu_op_cpy() { cpu_compare(cpu.Y); }
 
 // Increment
@@ -521,7 +561,9 @@ void cpu_op_inc()
     memory_writeb(op_address, result);
     cpu_update_zn_flags(result);
 }
+
 void cpu_op_inx() { cpu_update_zn_flags(++cpu.X); }
+
 void cpu_op_iny() { cpu_update_zn_flags(++cpu.Y); }
 
 // Decrement
@@ -532,18 +574,23 @@ void cpu_op_dec()
     memory_writeb(op_address, result);
     cpu_update_zn_flags(result);
 }
+
 void cpu_op_dex() { cpu_update_zn_flags(--cpu.X); }
+
 void cpu_op_dey() { cpu_update_zn_flags(--cpu.Y); }
 
 // Stack
 
 void cpu_op_php() { cpu_stack_pushb(cpu.P | 0x30); }
+
 void cpu_op_pha() { cpu_stack_pushb(cpu.A); }
+
 void cpu_op_pla()
 {
     cpu.A = cpu_stack_popb();
     cpu_update_zn_flags(cpu.A);
 }
+
 void cpu_op_plp() { cpu.P = (cpu_stack_popb() & 0xEF) | 0x20; }
 
 // Extended Instruction Set
@@ -553,8 +600,11 @@ void cpu_op_aso()
     cpu_op_asl();
     cpu_op_ora();
 }
+
 void cpu_op_axa() { memory_writeb(op_address, cpu.A & cpu.X & (op_address >> 8)); }
+
 void cpu_op_axs() { memory_writeb(op_address, cpu.A & cpu.X); }
+
 void cpu_op_dcm()
 {
     op_value--;
@@ -562,23 +612,28 @@ void cpu_op_dcm()
     memory_writeb(op_address, op_value);
     cpu_op_cmp();
 }
+
 void cpu_op_ins()
 {
     op_value = (op_value + 1) & 0xFF;
     memory_writeb(op_address, op_value);
     cpu_op_sbc();
 }
+
 void cpu_op_lax() { cpu_update_zn_flags(cpu.A = cpu.X = op_value); }
+
 void cpu_op_lse()
 {
     cpu_op_lsr();
     cpu_op_eor();
 }
+
 void cpu_op_rla()
 {
     cpu_op_rol();
     cpu_op_and();
 }
+
 void cpu_op_rra()
 {
     cpu_op_ror();

@@ -25,8 +25,7 @@ void set_nemu_state(int state, vaddr_t pc, int halt_ret)
  * are fetched for context without changing the real CPU pc; this gives enough
  * bytes for the user to find the failing instruction in the disassembly.
  */
-__attribute__((noinline))
-void invalid_inst(vaddr_t thispc)
+__attribute__((noinline)) void invalid_inst(vaddr_t thispc)
 {
     uint32_t temp[2];
     vaddr_t pc = thispc;

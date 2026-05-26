@@ -1,17 +1,17 @@
 /***************************************************************************************
-* Copyright (c) 2014-2022 Zihao Yu, Nanjing University
-*
-* NEMU is licensed under Mulan PSL v2.
-* You can use this software according to the terms and conditions of the Mulan PSL v2.
-* You may obtain a copy of Mulan PSL v2 at:
-*          http://license.coscl.org.cn/MulanPSL2
-*
-* THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-* EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-* MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
-*
-* See the Mulan PSL v2 for more details.
-***************************************************************************************/
+ * Copyright (c) 2014-2022 Zihao Yu, Nanjing University
+ *
+ * NEMU is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ *
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ *
+ * See the Mulan PSL v2 for more details.
+ ***************************************************************************************/
 
 #include <device/map.h>
 #include <utils.h>
@@ -54,11 +54,11 @@ static int key_f = 0, key_r = 0;
 static void key_enqueue(uint32_t am_scancode)
 {
     /*
-   * The guest observes key events by polling one 32-bit data register.  Queue
-   * host SDL events here so short key presses are not lost between two guest
-   * reads.  Unlike mouse motion there is no safe coalescing rule for key down/up
-   * pairs, so overflow stays fatal rather than silently changing input history.
-   */
+     * The guest observes key events by polling one 32-bit data register.  Queue
+     * host SDL events here so short key presses are not lost between two guest
+     * reads.  Unlike mouse motion there is no safe coalescing rule for key down/up
+     * pairs, so overflow stays fatal rather than silently changing input history.
+     */
     key_queue[key_r] = am_scancode;
     key_r = (key_r + 1) % KEY_QUEUE_LEN;
     Assert(key_r != key_f, "key queue overflow!");
@@ -102,9 +102,9 @@ static void i8042_data_io_handler(uint32_t offset, int len, bool is_write)
     assert(!is_write);
     assert(offset == 0);
     /*
-   * Reading the data port consumes exactly one queued AM scancode.  A zero value
-   * is the idle contract, so software can poll without a separate status port.
-   */
+     * Reading the data port consumes exactly one queued AM scancode.  A zero value
+     * is the idle contract, so software can poll without a separate status port.
+     */
     i8042_data_port_base[0] = key_dequeue();
 }
 

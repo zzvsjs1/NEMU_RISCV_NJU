@@ -421,25 +421,25 @@ FCEUD_GetTimeFreq(void)
 }
 
 /**
-* Prints a textual message without adding a newline at the end.
-*
-* @param text The text of the message.
-*
-* TODO: This function should have a better name.
-**/
+ * Prints a textual message without adding a newline at the end.
+ *
+ * @param text The text of the message.
+ *
+ * TODO: This function should have a better name.
+ **/
 void FCEUD_Message(const char *text)
 {
     printf("%s", text);
 }
 
 /**
-* Shows an error message in a message box.
-* (For now: prints to stderr.)
-*
-* If running in GTK mode, display a dialog message box of the error.
-*
-* @param errormsg Text of the error message.
-**/
+ * Shows an error message in a message box.
+ * (For now: prints to stderr.)
+ *
+ * If running in GTK mode, display a dialog message box of the error.
+ *
+ * @param errormsg Text of the error message.
+ **/
 void FCEUD_PrintError(const char *errormsg)
 {
     printf("%s\n", errormsg);
@@ -458,12 +458,20 @@ DUMMY(FCEUD_MovieReplayFrom)
 DUMMY(FCEUD_ToggleStatusIcon)
 DUMMY(FCEUD_AviRecordTo)
 DUMMY(FCEUD_AviStop)
+
 void FCEUI_AviVideoUpdate(const unsigned char *buffer) {}
+
 int FCEUD_ShowStatusIcon(void) { return 0; }
+
 bool FCEUI_AviIsRecording(void) { return false; }
+
 void FCEUI_UseInputPreset(int preset) {}
+
 bool FCEUD_PauseAfterPlayback() { return false; }
+
 // These are actually fine, but will be unused and overriden by the current UI code.
 void FCEUD_TurboOn(void) { NoWaiting |= 1; }
+
 void FCEUD_TurboOff(void) { NoWaiting &= ~1; }
+
 void FCEUD_TurboToggle(void) { NoWaiting ^= 1; }

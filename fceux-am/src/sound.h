@@ -29,7 +29,7 @@ typedef struct
           high-level manner(VRC7) in HQ mode.  Interestingly,
           this device has slightly better sound quality(updated more
           often) in lq mode than in high-quality mode.  Maybe that
-     	      should be fixed. :)
+              should be fixed. :)
        */
     void (*NeoFill)(int32 *Wave, int Count);
     void (*HiFill)(void);

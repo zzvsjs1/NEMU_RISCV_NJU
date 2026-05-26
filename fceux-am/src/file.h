@@ -53,11 +53,13 @@ struct ArchiveScanRecord
         : type(-1), numFilesInArchive(0)
     {
     }
+
     ArchiveScanRecord(int _type, int _numFiles)
     {
         type = _type;
         numFilesInArchive = _numFiles;
     }
+
     int type;
 
     //be careful: this is the number of files in the archive.

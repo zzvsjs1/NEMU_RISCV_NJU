@@ -6,10 +6,10 @@
 bool ioe_init()
 {
     /*
-   * Navy already exposes devices through NDL.  This libam layer keeps AM-style
-   * applications such as FCEUX usable as normal Navy processes by translating
-   * AM register accesses to the same /dev files used by miniSDL.
-   */
+     * Navy already exposes devices through NDL.  This libam layer keeps AM-style
+     * applications such as FCEUX usable as normal Navy processes by translating
+     * AM register accesses to the same /dev files used by miniSDL.
+     */
     NDL_Init(0);
     return true;
 }
@@ -29,10 +29,10 @@ void __am_audio_init()
 void __am_timer_rtc(AM_TIMER_RTC_T *rtc)
 {
     /*
-   * Nanos-lite provides a monotonic timer through gettimeofday/NDL, but not a
-   * real wall clock.  Return a stable placeholder so callers do not read
-   * uninitialised fields.
-   */
+     * Nanos-lite provides a monotonic timer through gettimeofday/NDL, but not a
+     * real wall clock.  Return a stable placeholder so callers do not read
+     * uninitialised fields.
+     */
     rtc->year = 1900;
     rtc->month = 1;
     rtc->day = 1;
@@ -55,10 +55,10 @@ static void __am_gpu_config(AM_GPU_CONFIG_T *cfg)
     if (!canvas_opened)
     {
         /*
-     * Opening a zero-sized NDL canvas means "use the whole display".  AM GPU
-     * coordinates are already physical framebuffer coordinates, so a full-size
-     * canvas avoids an extra centring offset inside NDL_DrawRect().
-     */
+         * Opening a zero-sized NDL canvas means "use the whole display".  AM GPU
+         * coordinates are already physical framebuffer coordinates, so a full-size
+         * canvas avoids an extra centring offset inside NDL_DrawRect().
+         */
         NDL_OpenCanvas(&width, &height);
         canvas_opened = true;
     }
@@ -78,9 +78,9 @@ static void __am_gpu_status(AM_GPU_STATUS_T *status)
 static void __am_gpu_fbdraw(AM_GPU_FBDRAW_T *draw)
 {
     /*
-   * AM uses a separate sync flag, while NDL flushes through /dev/fb writes.
-   * A sync-only request therefore has no extra work here.
-   */
+     * AM uses a separate sync flag, while NDL flushes through /dev/fb writes.
+     * A sync-only request therefore has no extra work here.
+     */
 
     if (draw->pixels == NULL || draw->w <= 0 || draw->h <= 0)
     {
@@ -164,9 +164,9 @@ static void __am_input_keybrd(AM_INPUT_KEYBRD_T *kbd)
     else
     {
         /*
-     * Mouse records are valid NDL events, but AM_INPUT_KEYBRD reports only one
-     * keyboard event per read.  Mouse-aware AM apps should poll AM_INPUT_MOUSE.
-     */
+         * Mouse records are valid NDL events, but AM_INPUT_KEYBRD reports only one
+         * keyboard event per read.  Mouse-aware AM apps should poll AM_INPUT_MOUSE.
+         */
         kbd->keydown = false;
         kbd->keycode = AM_KEY_NONE;
         return;
@@ -300,9 +300,9 @@ static void __am_audio_play(AM_AUDIO_PLAY_T *play)
 static void __am_disk_config(AM_DISK_CONFIG_T *cfg)
 {
     /*
-   * Navy applications should use libc files.  There is no raw block-device ABI
-   * above nanos-lite that matches AM_DISK_BLKIO, so report disk as absent.
-   */
+     * Navy applications should use libc files.  There is no raw block-device ABI
+     * above nanos-lite that matches AM_DISK_BLKIO, so report disk as absent.
+     */
     cfg->present = false;
     cfg->blksz = 0;
     cfg->blkcnt = 0;
@@ -323,8 +323,11 @@ static void __am_timer_config(AM_TIMER_CONFIG_T *cfg)
     cfg->present = true;
     cfg->has_rtc = true;
 }
+
 static void __am_input_config(AM_INPUT_CONFIG_T *cfg) { cfg->present = true; }
+
 static void __am_uart_config(AM_UART_CONFIG_T *cfg) { cfg->present = false; }
+
 static void __am_net_config(AM_NET_CONFIG_T *cfg) { cfg->present = false; }
 
 typedef void (*handler_t)(void *buf);

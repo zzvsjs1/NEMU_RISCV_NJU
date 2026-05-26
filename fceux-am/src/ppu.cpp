@@ -71,9 +71,11 @@ static bool new_ppu_reset = false;
 int test = 0;
 
 #define _BITS 8
+
 struct BITREVLUT
 {
     uint8 lut[1 << _BITS];
+
     BITREVLUT()
     {
         int bits = _BITS;
@@ -308,7 +310,9 @@ struct PPUREGS
 } ppur;
 
 int newppu_get_scanline() { return ppur.status.sl; }
+
 int newppu_get_dot() { return ppur.status.cycle; }
+
 void newppu_hacky_emergency_reset()
 {
     if (ppur.status.end_cycle == 0)
@@ -670,6 +674,7 @@ void ppu_getScroll(int &xpos, int &ypos)
             ypos += 240;
     }
 }
+
 //---------------
 
 static DECLFR(A2002)
@@ -1470,6 +1475,7 @@ static void Fixit1(void)
 }
 
 void MMC5_hb(int); //Ugh ugh ugh.
+
 static void DoLine(void)
 {
     if (scanline >= 240 && scanline != totalscanlines)
@@ -1595,6 +1601,7 @@ void FCEUI_DisableSpriteLimitation(int a)
 }
 
 static uint8 numsprites, SpriteBlurp;
+
 static void FetchSpriteData(void)
 {
     uint8 ns, sb;
@@ -2469,6 +2476,7 @@ static inline int PaletteAdjustPixel(int pixel, uint8 ppu1)
 }
 
 int framectr = 0;
+
 int FCEUX_PPU_Loop(int skip)
 {
 

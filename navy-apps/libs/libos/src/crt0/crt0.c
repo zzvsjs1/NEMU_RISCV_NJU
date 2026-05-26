@@ -5,6 +5,7 @@
 int main(int argc, char *argv[], char *envp[]);
 void __libc_init_array(void);
 extern char **environ;
+
 void call_main(uintptr_t *args)
 {
     // Fallback empty vectors if args is not provided

@@ -105,7 +105,7 @@ fixedpt fixedpt_sqrt(fixedpt A)
     return (l);
 }
 
-/* Returns the sine of the given fixedpt number. 
+/* Returns the sine of the given fixedpt number.
  * Note: the loss of precision is extraordinary! */
 fixedpt fixedpt_sin(fixedpt fp)
 {

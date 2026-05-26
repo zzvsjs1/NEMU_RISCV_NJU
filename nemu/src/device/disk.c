@@ -188,11 +188,11 @@ static uint8_t *guest_buffer_to_host(uint32_t guest_addr, size_t bytes, paddr_t 
            guest_addr, (uint32_t)PMEM_BASE);
 
     /*
-    * The guest provides a PMEM address in the MMIO register.  Keep the offset
-    * step explicit (`addr - PMEM_BASE`); this NEMU tree's guest_to_host()
-    * accepts CONFIG_MBASE-based physical addresses, so the PMEM base is added
-    * back after the range check has a normalised offset to reason about.
-    */
+     * The guest provides a PMEM address in the MMIO register.  Keep the offset
+     * step explicit (`addr - PMEM_BASE`); this NEMU tree's guest_to_host()
+     * accepts CONFIG_MBASE-based physical addresses, so the PMEM base is added
+     * back after the range check has a normalised offset to reason about.
+     */
     const paddr_t pmem_offset = (paddr_t)guest_addr - PMEM_BASE;
     const paddr_t paddr = (paddr_t)CONFIG_MBASE + pmem_offset;
 
@@ -232,10 +232,10 @@ static void read_blocks(uint8_t *buf, uint32_t blkno, uint32_t blkcnt)
     }
 
     /*
-   * The ramdisk image size is not required to be a multiple of 512 bytes.
-   * Only the short padded tail needs clearing; full-block reads should avoid
-   * doubling the memory traffic with a redundant memset().
-   */
+     * The ramdisk image size is not required to be a multiple of 512 bytes.
+     * Only the short padded tail needs clearing; full-block reads should avoid
+     * doubling the memory traffic with a redundant memset().
+     */
 
     if (available < bytes)
     {
@@ -258,10 +258,10 @@ static void write_blocks(const uint8_t *buf, uint32_t blkno, uint32_t blkcnt)
     Assert(fflush(disk_img) == 0, "disk: flush failed: %s", strerror(errno));
 
     /*
-   * Keep the mapped read view coherent with guest writes.  Writes are uncommon
-   * for the Navy ramdisk, but file-test uses them and later reads must observe
-   * the updated bytes even if the host has not yet refreshed the shared page.
-   */
+     * Keep the mapped read view coherent with guest writes.  Writes are uncommon
+     * for the Navy ramdisk, but file-test uses them and later reads must observe
+     * the updated bytes even if the host has not yet refreshed the shared page.
+     */
 
     if (disk_map != NULL && offset + bytes <= disk_map_size)
     {
@@ -303,12 +303,12 @@ static void do_blkio(void)
         read_blocks(buf, blkno, blkcnt);
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
         /*
-        * Disk reads are DMA into guest PMEM, bypassing paddr_write(). If the guest
-        * loads code from the ramdisk, translated blocks covering that destination
-        * range must be invalidated just like ordinary self-modifying stores. The
-        * physical address returned by guest_buffer_to_host() is reused here so the
-        * JIT sees the same PMEM byte interval that the DMA copy just replaced.
-        */
+         * Disk reads are DMA into guest PMEM, bypassing paddr_write(). If the guest
+         * loads code from the ramdisk, translated blocks covering that destination
+         * range must be invalidated just like ordinary self-modifying stores. The
+         * physical address returned by guest_buffer_to_host() is reused here so the
+         * JIT sees the same PMEM byte interval that the DMA copy just replaced.
+         */
         if (unlikely(isa_jit_invalidation_active))
         {
             Assert(bytes <= INT32_MAX, "disk: DMA read is too large for JIT invalidation");

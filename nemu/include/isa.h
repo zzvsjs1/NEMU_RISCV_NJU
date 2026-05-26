@@ -35,12 +35,14 @@ enum
     MMU_FAIL,
     MMU_DYNAMIC
 };
+
 enum
 {
     MEM_TYPE_IFETCH,
     MEM_TYPE_READ,
     MEM_TYPE_WRITE
 };
+
 enum
 {
     MEM_RET_OK,

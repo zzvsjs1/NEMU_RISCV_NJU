@@ -95,10 +95,10 @@ static size_t memory_read(SDL_RWops *rw, void *buf, size_t size, size_t nmemb)
     ctx->pos += (int64_t)bytes;
 
     /*
-   * SDL_RWread returns the number of complete objects, not the number of
-   * bytes.  Returning partial objects would make callers believe more whole
-   * data was available than we actually copied.
-   */
+     * SDL_RWread returns the number of complete objects, not the number of
+     * bytes.  Returning partial objects would make callers believe more whole
+     * data was available than we actually copied.
+     */
     return bytes / size;
 }
 
@@ -168,10 +168,10 @@ static void put_u32le(uint8_t *p, uint32_t value)
 static uint8_t *make_mono_wav(size_t *size)
 {
     /*
-   * Generate a tiny valid PCM WAV in memory so the mixer test does not depend
-   * solely on external OGG assets. Little-endian fields are written by helper
-   * functions to match the file format exactly.
-   */
+     * Generate a tiny valid PCM WAV in memory so the mixer test does not depend
+     * solely on external OGG assets. Little-endian fields are written by helper
+     * functions to match the file format exactly.
+     */
     const uint16_t channels = 1;
     const uint16_t bits = 16;
     const uint32_t rate = 11025;
@@ -197,10 +197,10 @@ static uint8_t *make_mono_wav(size_t *size)
     for (uint32_t i = 0; i < samples; i++)
     {
         /*
-     * A tiny ramp is enough to prove the loader accepts real PCM data.  The
-     * channel-finished callback later proves the mixer consumes it through
-     * the normal audio callback path.
-     */
+         * A tiny ramp is enough to prove the loader accepts real PCM data.  The
+         * channel-finished callback later proves the mixer consumes it through
+         * the normal audio callback path.
+         */
         int16_t sample = (int16_t)((int)i * 256 - 8192);
         put_u16le(wav + 44 + i * 2, (uint16_t)sample);
     }
@@ -216,10 +216,10 @@ int main(void)
     CHECK(Mix_OpenAudio(22050, MIX_DEFAULT_FORMAT, 2, 512) == 0);
 
     /*
-   * The query immediately after opening locks down the audio format that the
-   * rest of the test assumes. A mismatch here would make later channel and
-   * callback checks hard to interpret.
-   */
+     * The query immediately after opening locks down the audio format that the
+     * rest of the test assumes. A mismatch here would make later channel and
+     * callback checks hard to interpret.
+     */
     int frequency = 0;
     uint16_t format = 0;
     int channels = 0;
@@ -236,10 +236,10 @@ int main(void)
     uint8_t *ogg = read_whole_file("/share/music/rhythm/empty.ogg", &ogg_size);
     SDL_RWops *ogg_rw = open_memory_rw(ogg, ogg_size);
     /*
-   * The empty music file reaches end-of-stream quickly but still has to trigger
-   * the normal music-finished callback.  This catches scene-transition cases
-   * where ONS stops or swaps BGM while the mixer is being pumped by SDL_Delay().
-   */
+     * The empty music file reaches end-of-stream quickly but still has to trigger
+     * the normal music-finished callback.  This catches scene-transition cases
+     * where ONS stops or swaps BGM while the mixer is being pumped by SDL_Delay().
+     */
     Mix_Music *music = Mix_LoadMUS_RW(ogg_rw);
     CHECK(music != NULL);
     CHECK(SDL_RWclose(ogg_rw) == 0);
@@ -264,10 +264,10 @@ int main(void)
     ogg = read_whole_file("/share/music/rhythm/Do.ogg", &ogg_size);
     ogg_rw = open_memory_rw(ogg, ogg_size);
     /*
-   * ONS uses short OGG clips as sound effects, not only as streamed music.  The
-   * chunk path must therefore decode through Mix_LoadWAV_RW, report a concrete
-   * PCM format, and still drive the channel-finished callback.
-   */
+     * ONS uses short OGG clips as sound effects, not only as streamed music.  The
+     * chunk path must therefore decode through Mix_LoadWAV_RW, report a concrete
+     * PCM format, and still drive the channel-finished callback.
+     */
     Mix_Chunk *ogg_chunk = Mix_LoadWAV_RW(ogg_rw, 1);
     CHECK(ogg_chunk != NULL);
     CHECK(ogg_chunk->format == AUDIO_S16SYS);

@@ -95,7 +95,7 @@ Window::Window(WindowManager *wm, const char *cmd, const char *const *argv, cons
         if (p == 0)
         { // child
 #ifdef __ISA_NATIVE__
-            // install a parent death signal in the chlid
+          // install a parent death signal in the chlid
             int r = prctl(PR_SET_PDEATHSIG, SIGTERM);
 
             if (r == -1)

@@ -69,6 +69,7 @@ typedef struct CallInfo
     StkId func;                       /* function index in the stack */
     StkId top;                        /* top for this function */
     struct CallInfo *previous, *next; /* dynamic call link */
+
     union
     {
         struct
@@ -76,6 +77,7 @@ typedef struct CallInfo
             StkId base; /* base for this function */
             const Instruction *savedpc;
         } l;
+
         struct
         {                    /* only for C functions */
             lua_KFunction k; /* continuation in case of yields */
@@ -83,6 +85,7 @@ typedef struct CallInfo
             lua_KContext ctx; /* context info. in case of yields */
         } c;
     } u;
+
     ptrdiff_t extra;
     short nresults; /* expected number of results from this function */
     unsigned short callstatus;
@@ -94,7 +97,7 @@ typedef struct CallInfo
 #define CIST_OAH (1 << 0)       /* original value of 'allowhook' */
 #define CIST_LUA (1 << 1)       /* call is running a Lua function */
 #define CIST_HOOKED (1 << 2)    /* call is running a debug hook */
-#define CIST_FRESH (1 << 3)     /* call is running on a fresh invocation
+#define CIST_FRESH (1 << 3)     /* call is running on a fresh invocation \
                                    of luaV_execute */
 #define CIST_YPCALL (1 << 4)    /* call is a yieldable protected call */
 #define CIST_TAIL (1 << 5)      /* call was tail called */

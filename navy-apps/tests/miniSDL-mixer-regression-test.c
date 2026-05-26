@@ -41,15 +41,15 @@ static void tracked_free(void *ptr)
 #include "../libs/libSDL_mixer/src/mixer.c"
 #undef free
 
-#define CHECK(cond)                                                         \
-    do                                                                      \
-    {                                                                       \
-        if (!(cond))                                                        \
-        {                                                                   \
-            fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__,       \
-                    __LINE__, #cond);                                       \
-            exit(1);                                                        \
-        }                                                                   \
+#define CHECK(cond) \
+    do \
+    { \
+        if (!(cond)) \
+        { \
+            fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, \
+                    __LINE__, #cond); \
+            exit(1); \
+        } \
     } while (0)
 
 int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained)
@@ -60,6 +60,7 @@ int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained)
 }
 
 void SDL_CloseAudio(void) {}
+
 void SDL_PauseAudio(int pause_on) { (void)pause_on; }
 
 void SDL_LockAudio(void)

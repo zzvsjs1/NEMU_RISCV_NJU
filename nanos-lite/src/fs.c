@@ -124,6 +124,7 @@ enum
 
 static size_t special_offsets[NR_SPECIAL_FILES];
 static OpenFile open_files[MAX_REGULAR_OPEN_FILES];
+
 /*
  * Find a special device or proc file by exact pathname.
  */

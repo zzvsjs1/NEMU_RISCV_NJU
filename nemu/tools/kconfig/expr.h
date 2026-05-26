@@ -102,11 +102,11 @@ extern "C"
     };
 
     /*
- * Represents a configuration symbol.
- *
- * Choices are represented as a special kind of symbol and have the
- * SYMBOL_CHOICE bit set in 'flags'.
- */
+     * Represents a configuration symbol.
+     *
+     * Choices are represented as a special kind of symbol and have the
+     * SYMBOL_CHOICE bit set in 'flags'.
+     */
     struct symbol
     {
         /* The next symbol in the same bucket in the symbol hash table */
@@ -119,26 +119,26 @@ extern "C"
         enum symbol_type type;
 
         /*
-     * The calculated value of the symbol. The SYMBOL_VALID bit is set in
-     * 'flags' when this is up to date. Note that this value might differ
-     * from the user value set in e.g. a .config file, due to visibility.
-     */
+         * The calculated value of the symbol. The SYMBOL_VALID bit is set in
+         * 'flags' when this is up to date. Note that this value might differ
+         * from the user value set in e.g. a .config file, due to visibility.
+         */
         struct symbol_value curr;
 
         /*
-     * Values for the symbol provided from outside. def[S_DEF_USER] holds
-     * the .config value.
-     */
+         * Values for the symbol provided from outside. def[S_DEF_USER] holds
+         * the .config value.
+         */
         struct symbol_value def[S_DEF_COUNT];
 
         /*
-     * An upper bound on the tristate value the user can set for the symbol
-     * if it is a boolean or tristate. Calculated from prompt dependencies,
-     * which also inherit dependencies from enclosing menus, choices, and
-     * ifs. If 'n', the user value will be ignored.
-     *
-     * Symbols lacking prompts always have visibility 'n'.
-     */
+         * An upper bound on the tristate value the user can set for the symbol
+         * if it is a boolean or tristate. Calculated from prompt dependencies,
+         * which also inherit dependencies from enclosing menus, choices, and
+         * ifs. If 'n', the user value will be ignored.
+         *
+         * Symbols lacking prompts always have visibility 'n'.
+         */
         tristate visible;
 
         /* SYMBOL_* flags */
@@ -154,8 +154,8 @@ extern "C"
         struct expr_value rev_dep;
 
         /*
-     * "Weak" reverse dependencies through being implied by other symbols
-     */
+         * "Weak" reverse dependencies through being implied by other symbols
+         */
         struct expr_value implied;
     };
 
@@ -193,19 +193,19 @@ extern "C"
 #define SYMBOL_HASHSIZE 9973
 
     /* A property represent the config options that can be associated
- * with a config "symbol".
- * Sample:
- * config FOO
- *         default y
- *         prompt "foo prompt"
- *         select BAR
- * config BAZ
- *         int "BAZ Value"
- *         range 1..255
- *
- * Please, also check parser.y:print_symbol() when modifying the
- * list of property types!
- */
+     * with a config "symbol".
+     * Sample:
+     * config FOO
+     *         default y
+     *         prompt "foo prompt"
+     *         select BAR
+     * config BAZ
+     *         int "BAZ Value"
+     *         range 1..255
+     *
+     * Please, also check parser.y:print_symbol() when modifying the
+     * list of property types!
+     */
     enum prop_type
     {
         P_UNKNOWN,
@@ -228,8 +228,8 @@ extern "C"
         struct expr_value visible;
         struct expr *expr; /* the optional conditional part of the property */
         struct menu *menu; /* the menu the property are associated with
-                                * valid for: P_SELECT, P_RANGE, P_CHOICE,
-                                * P_PROMPT, P_DEFAULT, P_MENU, P_COMMENT */
+                            * valid for: P_SELECT, P_RANGE, P_CHOICE,
+                            * P_PROMPT, P_DEFAULT, P_MENU, P_COMMENT */
         struct file *file; /* what file was this property defined */
         int lineno;        /* what lineno was this property defined */
     };
@@ -244,11 +244,11 @@ extern "C"
         if (st->text)
 
     /*
- * Represents a node in the menu tree, as seen in e.g. menuconfig (though used
- * for all front ends). Each symbol, menu, etc. defined in the Kconfig files
- * gets a node. A symbol defined in multiple locations gets one node at each
- * location.
- */
+     * Represents a node in the menu tree, as seen in e.g. menuconfig (though used
+     * for all front ends). Each symbol, menu, etc. defined in the Kconfig files
+     * gets a node. A symbol defined in multiple locations gets one node at each
+     * location.
+     */
     struct menu
     {
         /* The next menu node at the same level */
@@ -261,28 +261,28 @@ extern "C"
         struct menu *list;
 
         /*
-     * The symbol associated with the menu node. Choices are implemented as
-     * a special kind of symbol. NULL for menus, comments, and ifs.
-     */
+         * The symbol associated with the menu node. Choices are implemented as
+         * a special kind of symbol. NULL for menus, comments, and ifs.
+         */
         struct symbol *sym;
 
         /*
-     * The prompt associated with the node. This holds the prompt for a
-     * symbol as well as the text for a menu or comment, along with the
-     * type (P_PROMPT, P_MENU, etc.)
-     */
+         * The prompt associated with the node. This holds the prompt for a
+         * symbol as well as the text for a menu or comment, along with the
+         * type (P_PROMPT, P_MENU, etc.)
+         */
         struct property *prompt;
 
         /*
-     * 'visible if' dependencies. If more than one is given, they will be
-     * ANDed together.
-     */
+         * 'visible if' dependencies. If more than one is given, they will be
+         * ANDed together.
+         */
         struct expr *visibility;
 
         /*
-     * Ordinary dependencies from e.g. 'depends on' and 'if', ANDed
-     * together
-     */
+         * Ordinary dependencies from e.g. 'depends on' and 'if', ANDed
+         * together
+         */
         struct expr *dep;
 
         /* MENU_* flags */

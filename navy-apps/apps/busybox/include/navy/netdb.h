@@ -2,6 +2,7 @@ typedef uint32_t socklen_t;
 typedef unsigned short int sa_family_t;
 
 typedef uint32_t in_addr_t;
+
 struct in_addr
 {
     in_addr_t s_addr;

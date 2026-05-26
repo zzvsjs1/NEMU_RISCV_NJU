@@ -20,11 +20,13 @@ typedef struct
     union
     {
         uint32_t gpr[8];
+
         struct
         {
             uint32_t eax, ecx, edx, ebx, esp, ebp, esi, edi;
         };
     };
+
     uint32_t eflags;
     uint32_t pc;
     uint32_t cs;

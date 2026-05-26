@@ -6,6 +6,7 @@
 
 // asm-generic/termios.h
 #define TIOCGWINSZ 0x5413
+
 struct winsize
 {
     unsigned short ws_row;

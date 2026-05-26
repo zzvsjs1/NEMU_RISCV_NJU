@@ -170,14 +170,14 @@ void BlitScreen(uint8 *XBuf)
         else
         {
             /*
-       * NES pixels are low resolution by design.  Integer nearest-neighbour
-       * scaling keeps the image sharp.  Build a full-width NES image band,
-       * then publish it in one full-width draw; this lets NDL and nanos-lite
-       * take their fast contiguous framebuffer path instead of hundreds of
-       * row-sized syscalls per emulated frame.  The top and bottom borders stay
-       * untouched after the initial black restore, so each frame moves only the
-       * visible NES band instead of the whole 800x600 display.
-       */
+             * NES pixels are low resolution by design.  Integer nearest-neighbour
+             * scaling keeps the image sharp.  Build a full-width NES image band,
+             * then publish it in one full-width draw; this lets NDL and nanos-lite
+             * take their fast contiguous framebuffer path instead of hundreds of
+             * row-sized syscalls per emulated frame.  The top and bottom borders stay
+             * untouched after the initial black restore, so each frame moves only the
+             * visible NES band instead of the whole 800x600 display.
+             */
             uint32_t *dst0 = screen_frame + i * scale * frame_w + x;
             for (int px = 0; px < NWIDTH; px++)
             {

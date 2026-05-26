@@ -568,6 +568,7 @@ static void setup_temp_free(vorb *f, void *p, int sz)
 #define CRC32_POLY 0x04c11db7 // from spec
 
 static uint32 crc_table[256];
+
 static void crc32_init(void)
 {
     int i, j;
@@ -5684,6 +5685,7 @@ typedef union
     float f;
     int i;
 } float_conv;
+
 typedef char stb_vorbis_float_size_test[sizeof(float) == 4 && sizeof(int) == 4];
 #define FASTDEF(x) float_conv x
 // add (1<<23) to convert to int, then divide by 2^SHIFT, then add 0.5/2^SHIFT to round

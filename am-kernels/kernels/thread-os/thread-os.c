@@ -13,6 +13,7 @@ typedef union task
         void (*entry)(void *);
         Context *context;
     };
+
     uint8_t stack[8192];
 } Task;
 
@@ -22,11 +23,13 @@ Task *currents[MAX_CPU];
 // user-defined tasks
 
 int locked = 0;
+
 void lock()
 {
     while (atomic_xchg(&locked, 1))
         ;
 }
+
 void unlock() { atomic_xchg(&locked, 0); }
 
 void func(void *arg)

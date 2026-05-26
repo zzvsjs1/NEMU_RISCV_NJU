@@ -14,7 +14,7 @@
 #endif
 
 static SDL_AudioSpec g_spec;
-static int g_paused = 1; // start paused per spec
+static int g_paused = 1;          // start paused per spec
 static int g_bytes_per_frame = 0; // channels * bytes_per_sample
 static int g_device_capacity = 0;
 static int g_target_queue_bytes = 0;

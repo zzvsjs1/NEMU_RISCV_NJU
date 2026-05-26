@@ -127,8 +127,8 @@ int main(void)
     check(load_to_x0_keeps_following_state(0x12345678u, &bytes[2]) ==
           0x12345679u);
     /* With NEMU_MOUSE_SCRIPT providing one event, the x0 load must consume it.
-   * Without a script this still passes, but it does not exercise the side
-   * effect. */
+     * Without a script this still passes, but it does not exercise the side
+     * effect. */
     check(load_to_x0_consumes_mouse_event() == 0u);
 
     return 0;

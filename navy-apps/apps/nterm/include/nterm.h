@@ -20,6 +20,7 @@ class Terminal
         const char *pattern;
         void (Terminal::*handle)(int *args);
     };
+
     static Pattern esc_seqs[];
 
     char *buf, input[256], cooked[256];
@@ -59,10 +60,12 @@ class Terminal
     } mode;
 
     int w, h;
+
     struct Cursor
     {
         int x, y;
     } cursor, saved;
+
     uint8_t col_f, col_b;
 
     Terminal(int width, int height);

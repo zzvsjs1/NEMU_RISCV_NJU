@@ -2,14 +2,17 @@
 #include <klib-macros.h>
 
 #define STACK_SIZE (4096 * 8)
+
 typedef union
 {
     uint8_t stack[STACK_SIZE];
+
     struct
     {
         Context *cp;
     };
 } PCB;
+
 static PCB pcb[2], pcb_boot, *current = &pcb_boot;
 
 static void f(void *arg)

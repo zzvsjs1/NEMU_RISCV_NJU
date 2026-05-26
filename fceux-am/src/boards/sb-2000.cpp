@@ -173,6 +173,7 @@ static void UNLSB2000Close(void)
 */
     WRAM = /*CHRRAM = */ NULL;
 }
+
 /*
 static void UNLSB2000IRQHook() {
     X6502_IRQBegin(FCEU_IQEXT);

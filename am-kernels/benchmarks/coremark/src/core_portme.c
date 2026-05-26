@@ -51,6 +51,7 @@ void start_time(void)
 {
     start_time_val = uptime_ms();
 }
+
 /* Function : stop_time
     This function will be called right after ending the timed portion of the benchmark.
 
@@ -61,6 +62,7 @@ void stop_time(void)
 {
     stop_time_val = uptime_ms();
 }
+
 /* Function : get_time
     Return an abstract "ticks" number that signifies time on the system.
 
@@ -105,6 +107,7 @@ void portable_init(core_portable *p, int *argc, char *argv[])
     }
     p->portable_id = 1;
 }
+
 /* Function : portable_fini
     Target specific final code
 */

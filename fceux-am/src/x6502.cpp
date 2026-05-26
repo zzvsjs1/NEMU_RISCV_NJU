@@ -823,9 +823,10 @@ void X6502_Reset(void)
 {
     _IRQlow = FCEU_IQRESET;
 }
+
 /**
-* Initializes the 6502 CPU
-**/
+ * Initializes the 6502 CPU
+ **/
 void X6502_Init(void)
 {
     unsigned int i;
@@ -851,6 +852,7 @@ void X6502_Init(void)
 }
 
 extern int StackAddrBackup;
+
 void X6502_Power(void)
 {
     _count = _tcount = _IRQlow = _PC = _A = _X = _Y = _P = _PI = _DB = _jammed = 0;

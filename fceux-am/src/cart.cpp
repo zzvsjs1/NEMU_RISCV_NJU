@@ -86,6 +86,7 @@ static INLINE void setpageptr(int s, uint32 A, uint8 *p, int ram)
 }
 
 static uint8 nothing[8192];
+
 void ResetCartMapping(void)
 {
     int x;
@@ -347,6 +348,7 @@ void setntamem(uint8 *p, int ram, uint32 b)
 }
 
 static int mirrorhard = 0;
+
 void setmirrorw(int a, int b, int c, int d)
 {
     FCEUPPU_LineUpdate();

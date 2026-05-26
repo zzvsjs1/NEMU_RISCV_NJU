@@ -510,6 +510,7 @@ extern "C"
     // less than the total fonts. If an error occurs, -1 is returned.
 
     STBTT_DEF int stbtt_GetFontOffsetForIndex(const unsigned char *data, int index);
+
     // Each .ttf/.ttc file may have more than one font. Each font has a sequential
     // index number starting from 0. Call this function to get the font offset for
     // a given index; it returns -1 if the index is out of range. A regular .ttf
@@ -605,6 +606,7 @@ extern "C"
     STBTT_DEF void stbtt_GetGlyphHMetrics(const stbtt_fontinfo *info, int glyph_index, int *advanceWidth, int *leftSideBearing);
     STBTT_DEF int stbtt_GetGlyphKernAdvance(const stbtt_fontinfo *info, int glyph1, int glyph2);
     STBTT_DEF int stbtt_GetGlyphBox(const stbtt_fontinfo *info, int glyph_index, int *x0, int *y0, int *x1, int *y1);
+
     // as above, but takes one or more glyph indices for greater efficiency
 
     typedef struct stbtt_kerningentry
@@ -639,6 +641,7 @@ extern "C"
 #ifndef stbtt_vertex            // you can predefine this to use different values \
                                 // (we share this with other code at RAD)
 #define stbtt_vertex_type short // can't use stbtt_int16 because that's not visible in the header file
+
     typedef struct
     {
         stbtt_vertex_type x, y, cx, cy, cx1, cy1;
@@ -786,7 +789,7 @@ extern "C"
 
     enum
     { // languageID for STBTT_PLATFORM_ID_MICROSOFT; same as LCID...
-        // problematic because there are e.g. 16 english LCIDs and 16 arabic LCIDs
+      // problematic because there are e.g. 16 english LCIDs and 16 arabic LCIDs
         STBTT_MS_LANG_ENGLISH = 0x0409,
         STBTT_MS_LANG_ITALIAN = 0x0410,
         STBTT_MS_LANG_CHINESE = 0x0804,
@@ -1035,8 +1038,11 @@ static stbtt__buf stbtt__cff_index_get(stbtt__buf b, int i)
 #define ttFixed(p) ttLONG(p)
 
 static stbtt_uint16 ttUSHORT(stbtt_uint8 *p) { return p[0] * 256 + p[1]; }
+
 static stbtt_int16 ttSHORT(stbtt_uint8 *p) { return p[0] * 256 + p[1]; }
+
 static stbtt_uint32 ttULONG(stbtt_uint8 *p) { return (p[0] << 24) + (p[1] << 16) + (p[2] << 8) + p[3]; }
+
 static stbtt_int32 ttLONG(stbtt_uint8 *p) { return (p[0] << 24) + (p[1] << 16) + (p[2] << 8) + p[3]; }
 
 #define stbtt_tag4(p, c0, c1, c2, c3) ((p)[0] == (c0) && (p)[1] == (c1) && (p)[2] == (c2) && (p)[3] == (c3))

@@ -35,13 +35,13 @@ static void clear_full_framebuffer(int width, int height)
     assert(black_frame != NULL);
 
     /*
-   * NDL centers an app canvas inside the physical display. If a new app opens
-   * a smaller canvas, its later NDL_DrawRect() calls only repaint that centered
-   * rectangle; pixels outside the canvas keep the previous app's framebuffer
-   * contents. Clear the whole physical framebuffer once at canvas-open time so
-   * transitions such as NTerm -> PAL do not leave NTerm's white background
-   * around PAL's smaller game image.
-   */
+     * NDL centers an app canvas inside the physical display. If a new app opens
+     * a smaller canvas, its later NDL_DrawRect() calls only repaint that centered
+     * rectangle; pixels outside the canvas keep the previous app's framebuffer
+     * contents. Clear the whole physical framebuffer once at canvas-open time so
+     * transitions such as NTerm -> PAL do not leave NTerm's white background
+     * around PAL's smaller game image.
+     */
     assert(lseek(fbFd, 0, SEEK_SET) == 0);
     assert(write(fbFd, black_frame, frame_bytes) == (ssize_t)frame_bytes);
 
@@ -71,10 +71,10 @@ uint32_t NDL_GetTicks()
 int NDL_PollEvent(char *buf, int len)
 {
     /*
-   * /dev/events already serialises keyboard and mouse records as short text
-   * lines.  NDL leaves the text format intact; miniSDL is the layer that maps
-   * names and coordinates to SDL event structures.
-   */
+     * /dev/events already serialises keyboard and mouse records as short text
+     * lines.  NDL leaves the text format intact; miniSDL is the layer that maps
+     * names and coordinates to SDL event structures.
+     */
     // Open keyborad file.
 
     if (eventsFd == -1)
@@ -100,10 +100,10 @@ void NDL_OpenCanvas(int *w, int *h)
     if (getenv("NWM_APP"))
     {
         /*
-     * Under NWM, file descriptors 3/4/5 are part of the window-manager ABI:
-     * fd 4 requests the window size, fd 3 reports mmap readiness, and fd 5 is
-     * the framebuffer.  Standalone Navy apps skip this path and use /dev/fb.
-     */
+         * Under NWM, file descriptors 3/4/5 are part of the window-manager ABI:
+         * fd 4 requests the window size, fd 3 reports mmap readiness, and fd 5 is
+         * the framebuffer.  Standalone Navy apps skip this path and use /dev/fb.
+         */
         int fbctl = 4;
         fbdev = 5;
         screen_w = *w;
@@ -168,13 +168,13 @@ void NDL_OpenCanvas(int *w, int *h)
 void NDL_TranslateMouse(int *x, int *y)
 {
     /*
-   * Mouse devices report physical framebuffer positions, but apps draw inside
-   * the centred canvas. Convert to canvas-local coordinates and keep edge
-   * input inside the drawable area once a canvas size is known.  This is the
-   * second half of mouse coordinate normalisation: NEMU first maps resized host
-   * window positions back to framebuffer space, then NDL maps framebuffer space
-   * to the app canvas.
-   */
+     * Mouse devices report physical framebuffer positions, but apps draw inside
+     * the centred canvas. Convert to canvas-local coordinates and keep edge
+     * input inside the drawable area once a canvas size is known.  This is the
+     * second half of mouse coordinate normalisation: NEMU first maps resized host
+     * window positions back to framebuffer space, then NDL maps framebuffer space
+     * to the app canvas.
+     */
 
     if (x != NULL)
     {
@@ -215,10 +215,10 @@ void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
     }
 
     /*
-   * If the rectangle covers whole physical framebuffer rows, one contiguous
-   * write is enough.  This is the common full-screen image path for ONScripter
-   * on a 400x300 canvas, and it avoids one syscall and one VGA sync per row.
-   */
+     * If the rectangle covers whole physical framebuffer rows, one contiguous
+     * write is enough.  This is the common full-screen image path for ONScripter
+     * on a 400x300 canvas, and it avoids one syscall and one VGA sync per row.
+     */
 
     if (canvas_x + x == 0 && w == screen_w)
     {
@@ -246,10 +246,10 @@ void NDL_OpenAudio(int freq, int channels, int samples)
     if (sbctlFd < 0)
     {
         /*
-     * The same descriptor is also used by NDL_QueryAudio().  Open it read/write
-     * here so audio clients can configure the stream and then poll writable
-     * capacity without reopening the control device.
-     */
+         * The same descriptor is also used by NDL_QueryAudio().  Open it read/write
+         * here so audio clients can configure the stream and then poll writable
+         * capacity without reopening the control device.
+         */
         sbctlFd = open("/dev/sbctl", O_RDWR | O_CLOEXEC);
         assert(sbctlFd >= 0);
     }
@@ -259,10 +259,10 @@ void NDL_OpenAudio(int freq, int channels, int samples)
     cfg[1] = (uint32_t)channels;
     cfg[2] = (uint32_t)samples;
     /*
-   * The sound-control device treats this three-word write as the complete
-   * stream configuration.  SDL's sample format is not sent here; callers must
-   * ensure the byte stream written to /dev/sb matches the device expectation.
-   */
+     * The sound-control device treats this three-word write as the complete
+     * stream configuration.  SDL's sample format is not sent here; callers must
+     * ensure the byte stream written to /dev/sb matches the device expectation.
+     */
     // Write exactly 12 bytes
     ssize_t w = write(sbctlFd, cfg, sizeof(cfg));
     assert(w == (ssize_t)sizeof(cfg));
@@ -293,10 +293,10 @@ int NDL_PlayAudio(void *buf, int len)
 {
     assert(sbFd >= 0);
     /*
-   * /dev/sb write is blocking until all bytes are accepted.  Looping here keeps
-   * miniSDL's audio pump simple: once it has queried enough free space, it can
-   * treat a short write as progress rather than rebuilding the callback buffer.
-   */
+     * /dev/sb write is blocking until all bytes are accepted.  Looping here keeps
+     * miniSDL's audio pump simple: once it has queried enough free space, it can
+     * treat a short write as progress rather than rebuilding the callback buffer.
+     */
     int written = 0;
     while (written < len)
     {
@@ -321,10 +321,10 @@ int NDL_QueryAudio()
 
     int free_bytes = 0;
     /*
-   * The control device returns remaining writable capacity in bytes.  SDL uses
-   * that value to avoid overfilling the queue before making a blocking write to
-   * /dev/sb.
-   */
+     * The control device returns remaining writable capacity in bytes.  SDL uses
+     * that value to avoid overfilling the queue before making a blocking write to
+     * /dev/sb.
+     */
     ssize_t r = read(sbctlFd, &free_bytes, sizeof(free_bytes));
 
     if (r < (ssize_t)sizeof(free_bytes))

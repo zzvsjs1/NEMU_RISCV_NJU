@@ -30,7 +30,7 @@
  *    Study Hall (128K PRG (in 512K flash chip), 8K CHR RAM, Horizontal Mirroring, Flash enabled)
  * Although Xmas 2013 uses a different board, where LEDs can be controlled (with writes to the $8000-BFFF space),
  * it otherwise functions identically.
-*/
+ */
 
 #include "mapinc.h"
 #include "../ines.h"

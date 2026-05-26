@@ -74,6 +74,7 @@ static DECLFW(M187WriteLo)
 }
 
 static uint8 prot_data[4] = {0x83, 0x83, 0x42, 0x00};
+
 static DECLFR(M187Read)
 {
     return prot_data[EXPREGS[1] & 3];

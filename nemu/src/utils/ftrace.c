@@ -265,6 +265,8 @@ void ftrace_ret(vaddr_t pc)
 }
 #else
 void ftrace_init(const char *elf_file) {}
+
 void ftrace_call(vaddr_t pc, vaddr_t target) {}
+
 void ftrace_ret(vaddr_t pc) {}
 #endif

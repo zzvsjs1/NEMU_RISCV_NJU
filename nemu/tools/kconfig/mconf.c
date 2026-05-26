@@ -294,6 +294,7 @@ static void show_helptext(const char *title, const char *text);
 static void show_help(struct menu *menu);
 
 static char filename[PATH_MAX + 1];
+
 static void set_config_filename(const char *config_filename)
 {
     static char menu_backtitle[PATH_MAX + 128];
@@ -317,9 +318,11 @@ struct subtitle_part
     struct list_head entries;
     const char *text;
 };
+
 static LIST_HEAD(trail);
 
 static struct subtitle_list *subtitles;
+
 static void set_subtitle(void)
 {
     struct subtitle_part *sp;

@@ -160,6 +160,7 @@ static void UNL8237APW(uint32 A, uint8 V)
         }
     }
 }
+
 static DECLFW(UNL8237Write)
 {
     uint8 dat = V;

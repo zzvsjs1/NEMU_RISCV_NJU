@@ -959,6 +959,7 @@ STBIDEF int stbi_is_hdr_from_memory(stbi_uc const *buffer, int len)
 static float stbi__h2l_gamma_i = 1.0f / 2.2f, stbi__h2l_scale_i = 1.0f;
 
 STBIDEF void stbi_hdr_to_ldr_gamma(float gamma) { stbi__h2l_gamma_i = 1 / gamma; }
+
 STBIDEF void stbi_hdr_to_ldr_scale(float scale) { stbi__h2l_scale_i = 1 / scale; }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -2016,6 +2017,7 @@ static void stbi__idct_block(stbi_uc *out, int out_stride, short data[64])
 }
 
 #define STBI__MARKER_none 0xff
+
 // if there's a pending marker from the entropy stream, return that
 // otherwise, fetch from the stream and get a marker. if there's no
 // marker, return 0xff, which is never a valid marker value
@@ -2827,6 +2829,7 @@ static stbi_uc *stbi__resample_row_generic(stbi_uc *out, stbi_uc *in_near, stbi_
 // this is a reduced-precision calculation of YCbCr-to-RGB introduced
 // to make sure the code produces the same results in both SIMD and scalar
 #define stbi__float2fixed(x) (((int)((x) * 4096.0f + 0.5f)) << 8)
+
 static void stbi__YCbCr_to_RGB_row(stbi_uc *out, const stbi_uc *y, const stbi_uc *pcb, const stbi_uc *pcr, int count, int step)
 {
     int i;
@@ -3678,6 +3681,7 @@ static const stbi_uc stbi__zdefault_length[288] =
 static const stbi_uc stbi__zdefault_distance[32] =
     {
         5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5};
+
 /*
 Init algorithm:
 {

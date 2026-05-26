@@ -18,11 +18,11 @@ typedef struct
     Uint8 volume;
 
     /*
-   * SDL_mixer normally converts chunks to the opened device format at load
-   * time.  This small Navy implementation keeps the original PCM format and
-   * expands it in the audio callback, so the source metadata needs to travel
-   * with the chunk.
-   */
+     * SDL_mixer normally converts chunks to the opened device format at load
+     * time.  This small Navy implementation keeps the original PCM format and
+     * expands it in the audio callback, so the source metadata needs to travel
+     * with the chunk.
+     */
     int frequency;
     Uint16 format;
     Uint8 channels;
