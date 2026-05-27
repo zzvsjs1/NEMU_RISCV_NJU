@@ -10,25 +10,28 @@ support several guest ISAs and provides a monitor, register and memory
 inspection, expression evaluation, watchpoints, snapshotting, differential
 testing, paging, interrupts, exceptions, and a small set of emulated devices.
 
-This repository focuses on RV32IM system-mode execution and the current
-RISC-V64 Nanos-lite bring-up. It adds practical work needed by this local
-RISC-V project:
+This repository focuses on RV32IM and RV64IM system-mode execution, the x86
+Nanos-lite path, and the local performance experiments around RISC-V and IA-32
+execution. It adds practical work needed by this local full-system emulation
+project:
 
 - `nemu`: the emulator core, RISC-V32/RISC-V64 executors, device models, and
-  optional RISC-V JIT acceleration.
+  optional RISC-V and x86 JIT acceleration.
 - `abstract-machine`: the AM runtime and the RISC-V NEMU device abstraction.
-- `nanos-lite`: the small OS used to run Navy applications on NEMU for both
-  RV32 and the active RV64 bring-up path.
+- `nanos-lite`: the small OS used to run Navy applications on NEMU for RV32,
+  RV64, and x86.
 - `navy-apps`: user programs, libraries, file-system image generation, PAL game
   integration, and RV64 build fixes needed by the Nanos-lite app set.
 - `am-kernels`: CPU tests and benchmarks, including MicroBench and JITBench.
 - `fceux-am`: an AM port of the FCEUX NES emulator for native and RISC-V32 NEMU
   runs.
+- `scripts` and `tools`: repeatable checks, environment setup, cleanup helpers,
+  and local build tooling.
 
 The current `master` branch is the RISC-V32 and RISC-V64 performance-improved
 version. Older branches are kept as comparison points, so behaviour and speed
 can be compared across the original baseline, disk/ONScripter work, non-JIT
-performance work, the early JIT version, and the RV64 bring-up work.
+performance work, the early JIT version, and the RV64 implementation work.
 
 ## RISC-V Execution Design
 
@@ -48,6 +51,11 @@ semantics now live in one direct decode file:
 ```text
 nemu/src/isa/riscv64/inst.c
 ```
+
+In the current tree, `nemu/src/isa/riscv64` is a symbolic link to the shared
+`nemu/src/isa/riscv32` implementation. This came from `8dc8207 Share RISC-V
+interpreter and sync upstream files`: the path above is still the RV64 entry
+point from the build system's point of view, but the implementation is shared.
 
 That file fetches one 32-bit base instruction, decodes operands from the raw
 instruction word, and dispatches through direct `INSTPAT` patterns. Helper
@@ -100,6 +108,65 @@ The RV64 JIT has three important safety mechanisms:
   data privilege state when needed, and instruction-fetch generation. A miss
   returns to the C dispatcher for full validation.
 
+## x86 JIT Design
+
+The x86 side is a separate IA-32 guest path. It has an interpreter in
+`nemu/src/isa/x86/inst.c` and an optional x86-64 native JIT in:
+
+```text
+nemu/src/isa/x86/jit.c
+```
+
+The x86 JIT was introduced by `f7769c2 Add x86 JIT`, expanded through the
+`Improve X86 JIT performance` series, hardened for paged fast paths in
+`3473e79 Harden x86 paged JIT fast paths`, and refactored in
+`a77584f Refactor X86 JIT`. The current `440c0d0 Reformatting codes` commit is
+mostly formatting and should not be treated as the source of the JIT design.
+
+The design is deliberately conservative. The interpreter remains the
+architectural reference; the JIT decodes a focused IA-32 subset into a local IR,
+emits host x86-64 bytes only for cases that are cheap to guard, and falls back
+before unsupported or fault-sensitive instructions can partially commit. Native
+blocks run inside the common `cpu_exec()` budget, return the number of retired
+guest instructions, and let the normal CPU loop keep device polling and
+interrupt checks bounded.
+
+The x86 JIT has these main pieces:
+
+- Build and runtime gates: it is available only on x86-64 native ELF
+  interpreter builds with tracing, DiffTest, watchpoints, memory tracing, and
+  function tracing disabled.
+- A bounded decode/compile pipeline: cache lookup, block decode, optional trace
+  compilation, native byte emission, source-byte recording, and cache publish.
+- Helper semantics: decoded but awkward operations use helper calls for exact
+  8/16/32-bit ALU, stack, branch, multiply/divide, shift, SETcc, MOVZX/MOVSX,
+  and PIO behaviour.
+- Source invalidation: translated blocks record physical source pages and source
+  bytes. PMEM writes use reverse indexes to discard stale blocks, with a broad
+  scan fallback when a fixed index overflows.
+- Paged fast paths: normal non-PAE 4 KiB paging can use a private direct-mapped
+  DTLB after guard checks. DTLB misses, MMIO, large pages, PAE, uncertain
+  permission cases, cross-page accesses, and self-modifying writes leave native
+  code or call the normal MMU/memory path.
+- Chaining and traces: direct exits can be patched to compiled successors, and
+  hot straight-line paths can become traces when runtime flags allow it.
+
+Known x86 JIT design limitations:
+
+- It is an IA-32 JIT only. It does not implement IA-32e, PAE, NX, x87, SSE,
+  MMX, string instructions, non-flat segmentation, or a complete exception
+  delivery model inside generated code.
+- Opcode coverage is workload-driven. A missing opcode is expected to fall back;
+  only a decoded/emitted opcode with wrong semantics is a correctness bug.
+- The private DTLB is an optimisation, not an authority. Correctness depends on
+  generation counters, flushes, guards, and fallback paths.
+- Runtime feature flags are read once because generated code may bake ABI and
+  guard layout decisions into native code. Changing environment variables after
+  NEMU starts has no effect.
+- Some performance features remain opt-in because their correctness/performance
+  trade-off is still being validated. In particular,
+  `NEMU_X86_JIT_NATIVE_IDIV` is not a default-on path.
+
 ## Branch Roles
 
 | Branch | Role |
@@ -108,7 +175,11 @@ The RV64 JIT has three important safety mechanisms:
 | `legacy/baseline-master` | Original baseline before disk, ONScripter, performance, and JIT work |
 | `legacy/onscripter-disk` | Legacy disk-backed Navy/ONScripter branch |
 | `performance_improve` | Non-JIT performance baseline |
-| `performance_improve_jit` | Old pre-migration name for the current JIT work |
+
+Older local histories or discussions may mention `performance_improve_jit`, but
+that branch is not present in the current local/remote branch list. Use `master`
+for the current JIT work unless you have an old checkout that still contains
+that branch name.
 
 ## Environment
 
@@ -338,11 +409,12 @@ make -B -C nemu ISA=riscv32
 Useful dependencies include a RISC-V toolchain that can emit RV32IM with Zicsr
 using `-march=rv32im_zicsr -mabi=ilp32` and RV64IM with Zicsr/Zifencei using
 `-march=rv64im_zicsr_zifencei -mabi=lp64`, plus readline, ncurses, flex, and
-bison. LLVM is only needed for instruction tracing/disassembly builds; this tree
-uses `llvm-config` when `CONFIG_ITRACE` is enabled, and `nemu/llvm.sh` currently
-defaults to LLVM 18 while still accepting explicit supported versions.
+bison. Instruction tracing and instruction-queue disassembly now use the
+Capstone path under `nemu/tools/capstone`; the old LLVM disassembler path was
+removed when `8dc8207 Share RISC-V interpreter and sync upstream files` replaced
+`nemu/src/utils/disasm.cc` with the current C implementation.
 
-### RISC-V64 Nanos-lite Bring-up
+### RISC-V64 Nanos-lite
 
 The RV64 path currently targets `RV64IM_Zicsr_Zifencei` with the `lp64` ABI and
 soft-float userspace libraries. `compiler-rt` is part of the RV64 build because
@@ -363,18 +435,21 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
 
 The current Nanos-lite RV64 process order starts ONScripter first, then FCEUX,
 then PAL. That order makes framebuffer, disk, audio, and large-app loader issues
-show up quickly while the branch is being brought up. The normal RV64 bring-up
-configuration uses the direct interpreter. Use the RV64 JIT defconfigs below
-when testing native acceleration separately.
+show up quickly. The normal RV64 configuration uses the direct interpreter. Use
+the RV64 JIT defconfigs below when testing native acceleration separately.
 
 ## JIT Configuration
 
-The RV32 and RV64 JIT menus live in `nemu/menuconfig`. They are visible only for
-native ELF interpreter builds on supported x86-64 hosts when tracing,
+The x86, RV32, and RV64 JIT menus live in `nemu/menuconfig`. They are visible
+only for native ELF interpreter builds on supported x86-64 hosts when tracing,
 watchpoints, memory/function tracing, and DiffTest are disabled, because those
 features require interpreter per-instruction hooks.
 
 ```text
+x86 JIT acceleration
+  [*] Enable x86 x86-64 JIT
+  [ ] Collect x86 JIT statistics
+
 RISC-V32 JIT
   [*] Enable RISC-V32 x86-64 JIT
   [ ] Collect RISC-V32 JIT statistics
@@ -387,9 +462,12 @@ RISC-V64 execution acceleration
 Normal performance runs should keep JIT enabled and JIT statistics disabled.
 Statistics are useful for diagnosis, but the extra counters add overhead.
 
-For RV64, the common defconfigs are:
+Common defconfigs:
 
 ```bash
+# IA-32 guest with x86 JIT and counters enabled by the defconfig.
+make -C nemu x86-am-jit_defconfig
+
 # Direct-interpreter RV64 headless run.
 make -C nemu riscv64-am-headless_defconfig
 
@@ -403,7 +481,7 @@ make -C nemu riscv64-am-headless-jit-stats_defconfig
 Runtime controls:
 
 ```bash
-# Force interpreter / non-JIT execution for comparison.
+# Force RV32 interpreter / non-JIT execution for comparison.
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
   make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
 
@@ -411,38 +489,49 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
   make -C am-kernels/benchmarks/coremark ARCH=riscv64-nemu run
 
+# The same global switch also disables x86 JIT. x86 additionally accepts
+# NEMU_X86_JIT=0, which disables only the x86 JIT runtime gate.
+NEMU_DISABLE_JIT=1 make -C am-kernels/tests/cpu-tests ARCH=x86-nemu run
+NEMU_X86_JIT=0 make -C am-kernels/tests/cpu-tests ARCH=x86-nemu run
+
 # Disable RV64 direct cross-block links while keeping the rest of the JIT.
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
   NEMU_DISABLE_RV64_JIT_DIRECT_LINK=1 \
   make -C am-kernels/benchmarks/coremark ARCH=riscv64-nemu run
 
-# Print JIT counters when CONFIG_RV32_JIT_STATS or CONFIG_RV64_JIT_STATS is enabled.
+# Print JIT counters when the matching CONFIG_*_JIT_STATS option is enabled.
+NEMU_JIT_STATS=1 make -C am-kernels/tests/cpu-tests ARCH=x86-nemu run
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_JIT_STATS=1 \
   make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_JIT_STATS=1 \
   make -C am-kernels/benchmarks/coremark ARCH=riscv64-nemu run
 ```
 
-`NEMU_DISABLE_JIT=1` only disables JIT in a binary built with `CONFIG_RV32_JIT`
-or `CONFIG_RV64_JIT`. It is not a general "pure interpreter" switch. If an RV32
-binary is built with `CONFIG_RV32_FAST_EXEC`, the CPU loop can still use the
-fast executor. For a guaranteed pure RV32 interpreter run, rebuild NEMU with the
-acceleration mode set to `CONFIG_RV32_ACCEL_NONE`. For RV64, use
+`NEMU_DISABLE_JIT=1` only disables JIT in a binary built with `CONFIG_X86_JIT`,
+`CONFIG_RV32_JIT`, or `CONFIG_RV64_JIT`. It is not a general "pure interpreter"
+switch. If an RV32 binary is built with `CONFIG_RV32_FAST_EXEC`, the CPU loop can
+still use the fast executor. For a guaranteed pure RV32 interpreter run, rebuild
+NEMU with the acceleration mode set to `CONFIG_RV32_ACCEL_NONE`. For RV64, use
 `riscv64-am-headless_defconfig` or unset `CONFIG_RV64_JIT`.
 
-Useful correctness checks:
+x86-only runtime switches are useful when bisecting JIT behaviour:
 
-```bash
-scripts/check-nemu-arch-config-selection.sh
-scripts/check-nemu-upstream-isa-selection.sh
-scripts/check-riscv-difftest-state.sh
-scripts/check-rv64-new-interpreter.sh
-scripts/check-rv64-jit-correctness.sh
-scripts/check-rv64-jit-io.sh
-scripts/check-rv64-jit-wop.sh
-scripts/check-rv64-jit-store-invalidation.sh
-scripts/check-rv64-jit-performance.sh
+```text
+NEMU_X86_JIT=0                    disable x86 JIT after build
+NEMU_X86_JIT_HELPERS=0            keep only the tiny native-only subset
+NEMU_X86_JIT_VERIFY_SOURCE=1      re-check stored source bytes
+NEMU_X86_JIT_TRACE=1              enable hot trace compilation
+NEMU_X86_JIT_REGCACHE=1           enable the optional register cache path
+NEMU_X86_JIT_PAGED_AGGRESSIVE=1   enable the grouped paged experimental paths
+NEMU_X86_JIT_NATIVE_IDIV=1        enable native IDIV emission
+NEMU_X86_JIT_BLOCK_LIMIT=<n>      clamp translated block length
+NEMU_X86_JIT_TRACE_THRESHOLD=<n>  set the hot-trace threshold
 ```
+
+Most default-on x86 knobs can be disabled with the explicit `=0` spelling, for
+example `NEMU_X86_JIT_BATCH=0`, `NEMU_X86_JIT_CHAIN=0`,
+`NEMU_X86_JIT_FAST_CHAIN=0`, `NEMU_X86_JIT_L0_CACHE=0`,
+`NEMU_X86_JIT_PAGED_BATCH=0`, or `NEMU_X86_JIT_HIGH_BYTE_TEST=0`.
 
 ## RISC-V Exception Model
 
@@ -477,7 +566,7 @@ that the interpreter would raise.
 - The RISC-V support is focused on the RV32IM and RV64IM NEMU/Nanos-lite
   workflows used by this tree. It is not a complete privileged-platform model
   for every RISC-V extension.
-- RV64 support is a NEMU/Nanos-lite bring-up path for the local app set. It now
+- RV64 support is implemented for the local NEMU/Nanos-lite app workflow. It
   uses the direct interpreter as the reference path and can optionally use the
   RV64 x86-64 JIT for supported native ELF runs. The detailed Sv32 limitations
   below are RV32-specific unless they say otherwise; RV64 translated memory uses
@@ -556,53 +645,60 @@ right execution path deliberately.
 
 ## Performance Measurements
 
-The first table contains local reference numbers from the current RV32 JIT
-branch, measured in this checkout on 2026-05-16 with dummy SDL video/audio
-drivers. They are useful for checking trend direction, but re-measure on your
-own CPU because host frequency scaling, scheduler load, thermal limits, and
-laptop performance-core / efficiency-core placement can change the result.
+The current matrix is script-driven. The numbers below are local samples from
+this checkout on 2026-05-27 with dummy SDL video/audio drivers. They are useful
+for checking trend direction, but re-measure on your own CPU because host
+frequency scaling, scheduler load, thermal limits, and performance-core /
+efficiency-core placement can change the result.
 
-| Branch / mode | Benchmark | Result |
-|---------------|-----------|--------|
-| `master`, strict exceptions, JIT enabled | MicroBench | `27098 Marks`, `2,860,733,499 instr/s` |
-| `master`, strict exceptions, JIT enabled | JITBench | `ALU 8.436 ms`, `Memory 3.528 ms`, `4,049,658,568 instr/s` |
-| `master`, strict exceptions, `NEMU_DISABLE_JIT=1` | MicroBench | `3322 Marks`, `275,864,060 instr/s` |
-| `master`, strict exceptions, `NEMU_DISABLE_JIT=1` | JITBench | `ALU 157.041 ms`, `Memory 77.442 ms`, `302,722,837 instr/s` |
-| exported non-strict `6d946ee`, JIT enabled | MicroBench | `25041 Marks`, `2,480,000,000 instr/s` |
-| exported non-strict `6d946ee`, JIT enabled | JITBench | `ALU 7.304 ms`, `Memory 4.352 ms`, `4,520,000,000 instr/s` |
-| `performance_improve` | MicroBench | `3141 Marks`, `271,000,633 instr/s` |
-| `legacy/baseline-master` | MicroBench | `694 Marks`, `58,319,798 instr/s` |
+| Scope | Benchmark | Mode | Result |
+|-------|-----------|------|--------|
+| RV32 JIT | MicroBench | JIT enabled | `25374 Marks`, `2,615,873,637 instr/s` |
+| RV32 JIT | MicroBench | `NEMU_DISABLE_JIT=1` | `1531 Marks`, `130,571,528 instr/s` |
+| RV32 JIT | JITBench | JIT enabled | `ALU 7.052 ms`, `Memory 3.559 ms` |
+| RV32 JIT | JITBench | `NEMU_DISABLE_JIT=1` | `ALU 367.962 ms`, `Memory 164.339 ms` |
+| RV64 JIT | BranchMark | interpreter | `guest_us=99327`, `checksum=0x67c146ec` |
+| RV64 JIT | BranchMark | JIT enabled | `guest_us=1037`, `avg_jit_entry_insns=20413.95`, `speedup=95.78x` |
+| x86 JIT | MicroBench | JIT enabled | `18246 Marks`, `2,123,334,697 instr/s` |
+| x86 JIT | MicroBench | `NEMU_DISABLE_JIT=1` | `336 Marks`, `31,123,524 instr/s` |
 
-Current RV32/RV64 CoreMark interpreter comparison, measured on 2026-05-17 with
-dummy SDL video/audio drivers:
+Current performance gates:
 
-| Branch / mode | Benchmark | Result |
-|---------------|-----------|--------|
-| `riscv32`, `CONFIG_RV32_ACCEL_NONE` | CoreMark | `586 Marks`, `4980 ms`, `62,912,314 instr/s` |
-| `riscv64`, interpreter | CoreMark | `1259 Marks`, `2319 ms`, `154,708,727 instr/s` |
+```bash
+scripts/check-rv32-jit-performance.sh
+scripts/check-rv64-jit-performance.sh
+scripts/check-x86-jit-smoke.sh
+scripts/check-x86-jit-helper-profile.sh
+scripts/check-x86-jit-paged-memory-fastpath.sh
+```
 
-This is the clean interpreter-to-interpreter comparison that the
-`NEMU_DISABLE_JIT=1` rows above do not fully express. In this CoreMark run, RV64
-is about `2.15x` the RV32 pure-interpreter Marks score and about `2.46x` the
-RV32 pure-interpreter guest-instruction throughput. RV64 still executes more
-guest instructions for this workload (`358,947,764` versus `313,363,093`), but
-the RV64 interpreter path finishes sooner on this host. This should be treated
-as a local CoreMark result, not a promise that every RV64 application is faster.
+Historical local reference data is kept only as fixed comparison points. Do not
+read these rows as current `master` measurements.
 
-Compared with the RV32 JIT rows, the RV64 interpreter rows are still much lower:
-roughly `1/18.5` of RV32 JIT MicroBench throughput and `1/26.2` of RV32
-JITBench throughput. That comparison is intentionally interpreter versus JIT.
-Use `scripts/check-rv64-jit-performance.sh` for current RV64 JIT measurements on
-your host.
+| Scope | Source / date | Benchmark | Mode | Result |
+|-------|---------------|-----------|------|--------|
+| RV32 JIT reference | `71c4588`, measured 2026-05-16 | MicroBench | JIT enabled | `27098 Marks`, `2,860,733,499 instr/s` |
+| RV32 JIT reference | `71c4588`, measured 2026-05-16 | JITBench | JIT enabled | `ALU 8.436 ms`, `Memory 3.528 ms`, `4,049,658,568 instr/s` |
+| RV32 JIT reference | `71c4588`, measured 2026-05-16 | MicroBench | `NEMU_DISABLE_JIT=1` | `3322 Marks`, `275,864,060 instr/s` |
+| RV32 JIT reference | `71c4588`, measured 2026-05-16 | JITBench | `NEMU_DISABLE_JIT=1` | `ALU 157.041 ms`, `Memory 77.442 ms`, `302,722,837 instr/s` |
+| RV32 non-strict export | `6d946ee`, measured 2026-05-16 | MicroBench | JIT enabled | `25041 Marks`, `2,480,000,000 instr/s` |
+| RV32 non-strict export | `6d946ee`, measured 2026-05-16 | JITBench | JIT enabled | `ALU 7.304 ms`, `Memory 4.352 ms`, `4,520,000,000 instr/s` |
+| RV32 non-JIT reference | `performance_improve`, measured 2026-05-16 | MicroBench | non-JIT | `3141 Marks`, `271,000,633 instr/s` |
+| RV32 baseline reference | `legacy/baseline-master`, measured 2026-05-16 | MicroBench | interpreter | `694 Marks`, `58,319,798 instr/s` |
+| RV32/RV64 interpreter reference | `c0d33ae`, measured 2026-05-17 | CoreMark | RV32 pure interpreter | `586 Marks`, `4980 ms`, `62,912,314 instr/s` |
+| RV32/RV64 interpreter reference | `c0d33ae`, measured 2026-05-17 | CoreMark | RV64 direct interpreter | `1259 Marks`, `2319 ms`, `154,708,727 instr/s` |
 
-The current strict JIT MicroBench score is about `8.16x` the same branch with
-JIT disabled, `8.63x` the non-JIT performance branch, and `39.05x` the original
-baseline by Marks. By guest instruction throughput, the current strict JIT is
-about `49.05x` the original baseline. Compared with the exported non-strict
-`6d946ee` numbers above, strict MicroBench is now slightly ahead in this local
-run, while JITBench overall throughput remains a little lower; the memory loop
-is faster than the non-strict comparison because guarded native memory and loop
-chaining avoid the old helper fallback cost.
+The speed-up calculation is simple division:
+
+```text
+speed-up = faster result / slower result
+```
+
+For example, the current local x86 MicroBench sample is:
+
+```text
+18246 / 336 = 54.30x by Marks
+```
 
 ### Current JIT Performance Improvements
 
@@ -676,18 +772,6 @@ git checkout legacy/baseline-master
 source scripts/setup-env.sh
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
   make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
-```
-
-The speed-up calculation is simple division:
-
-```text
-speed-up = faster instr/s / slower instr/s
-```
-
-Example:
-
-```text
-2,687,376,608 / 58,319,798 = 46.08x
 ```
 
 ## Nanos-lite GUI Flow

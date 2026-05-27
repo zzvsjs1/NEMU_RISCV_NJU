@@ -9,23 +9,25 @@ NEMU 是一个轻量级全系统模拟器框架。上游项目支持多种客户
 Monitor、寄存器和内存查看、表达式求值、监视点、快照、DiffTest、分页、
 中断、异常以及一组简化设备模型。
 
-本仓库主要面向 RV32IM system mode 和当前 RISC-V64 Nanos-lite bring-up，
-并加入了这个本地 RISC-V 项目需要的实际功能：
+本仓库主要面向 RV32IM/RV64IM system mode、x86 Nanos-lite 路径，以及
+RISC-V 和 IA-32 执行路径的本地性能实验，并加入了这个本地全系统模拟项目需要
+的实际功能：
 
-- `nemu`：模拟器核心、RISC-V32/RISC-V64 执行器、设备模型和可选 RISC-V JIT
-  加速。
+- `nemu`：模拟器核心、RISC-V32/RISC-V64 执行器、设备模型和可选
+  RISC-V/x86 JIT 加速。
 - `abstract-machine`：AM 运行时，以及 RISC-V NEMU 平台设备抽象。
-- `nanos-lite`：用于在 NEMU 上运行 Navy 应用的小型 OS，同时服务 RV32 和当前
-  RV64 bring-up 路径。
+- `nanos-lite`：用于在 NEMU 上运行 Navy 应用的小型 OS，同时服务 RV32、RV64 和
+  x86。
 - `navy-apps`：用户程序、运行库、文件系统镜像生成、PAL 游戏集成，以及
   Nanos-lite 应用集在 RV64 上构建所需的修正。
 - `am-kernels`：CPU 测试和 benchmark，包括 MicroBench 和 JITBench。
 - `fceux-am`：FCEUX NES 模拟器的 AM 移植，可用于 native 和 RISC-V32 NEMU
   运行。
+- `scripts` 和 `tools`：可重复检查脚本、环境初始化、清理 helper 和本地构建工具。
 
 当前 `master` 分支是 RISC-V32/RISC-V64 性能改进版本。旧分支会保留下来作为
 对比点，方便比较原始 baseline、磁盘/ONScripter 改动、非 JIT 性能改动、早期
-JIT 版本和 RV64 bring-up 工作之间的行为与性能差异。
+JIT 版本和 RV64 实现工作之间的行为与性能差异。
 
 ## RISC-V 执行设计
 
@@ -42,6 +44,11 @@ RV32 保留成熟的 direct interpreter、fast executor 和 x86-64 JIT。RV64 �
 ```text
 nemu/src/isa/riscv64/inst.c
 ```
+
+在当前树里，`nemu/src/isa/riscv64` 是指向共享
+`nemu/src/isa/riscv32` 实现的符号链接。这个结构来自
+`8dc8207 Share RISC-V interpreter and sync upstream files`：上面的路径仍然是
+构建系统看到的 RV64 入口，但实际实现已经和 RISC-V32 目录共享。
 
 这个文件每次取一条 32 位 base instruction，从原始 instruction word 中解码
 operand，并用直接 `INSTPAT` pattern 分发。pattern 周围的 helper 有明确的架构
@@ -86,6 +93,56 @@ RV64 JIT 的三个关键安全机制是：
   instruction-fetch generation 时，才能跳到另一个 native block。Guard miss 会
   回到 C dispatcher，由它做完整验证。
 
+## x86 JIT 设计
+
+x86 路径是独立的 IA-32 guest 路径。解释器位于
+`nemu/src/isa/x86/inst.c`，可选 x86-64 native JIT 位于：
+
+```text
+nemu/src/isa/x86/jit.c
+```
+
+x86 JIT 由 `f7769c2 Add x86 JIT` 引入，之后在一系列
+`Improve X86 JIT performance` 提交中扩展，在
+`3473e79 Harden x86 paged JIT fast paths` 中强化 paged fast path，又在
+`a77584f Refactor X86 JIT` 中重构。当前 `440c0d0 Reformatting codes` 主要是
+格式化提交，不应把它当成 JIT 设计来源。
+
+它的设计是保守的。解释器仍然是架构参考；JIT 只把一部分常用 IA-32 instruction
+解码成局部 IR，只在容易证明安全的场景生成 host x86-64 字节，并且在 unsupported
+或 fault-sensitive instruction 发生部分提交前退回解释器或 helper。Native block
+运行在通用 `cpu_exec()` 的 instruction budget 内，返回已退休 guest instruction
+数，并把设备轮询和 interrupt 检查交还给通用 CPU loop。
+
+x86 JIT 的主要组成如下：
+
+- 构建和运行 gate：只在 x86-64 native ELF interpreter 构建中启用，并且必须关闭
+  tracing、DiffTest、watchpoint、memory trace 和 function trace。
+- 有界 decode/compile pipeline：cache lookup、block decode、可选 trace
+  compilation、native byte emission、source byte 记录，以及 cache 发布。
+- Helper 语义：已解码但不适合直接 lower 的操作会调用 helper，覆盖 8/16/32-bit
+  ALU、stack、branch、multiply/divide、shift、SETcc、MOVZX/MOVSX 和 PIO 行为。
+- Source invalidation：已翻译 block 记录物理 source page 和 source byte。PMEM
+  写入通过 reverse index 丢弃 stale block；固定 index 溢出时会退回更保守扫描。
+- Paged fast path：普通 non-PAE 4 KiB paging 可以在 guard 后使用私有
+  direct-mapped DTLB。DTLB miss、MMIO、large page、PAE、不确定权限、跨页访问和
+  self-modifying write 都会离开 native code 或回到普通 MMU/memory path。
+- Chaining 和 trace：direct exit 可以 patch 到已经编译的 successor；运行时 flag
+  允许时，hot straight-line path 可以编译为 trace。
+
+x86 JIT 当前设计缺陷和限制：
+
+- 它只支持 IA-32，不支持 IA-32e、PAE、NX、x87、SSE、MMX、string instruction、
+  非 flat segmentation，也没有在 generated code 内完整实现 exception delivery。
+- Opcode 覆盖是 workload-driven。缺少 opcode 本身不是 bug，只要能安全 fallback；
+  已经 decode/emit 的 opcode 语义错误才是正确性 bug。
+- 私有 DTLB 只是 optimisation，不是权威地址翻译缓存。正确性依赖 generation
+  counter、flush、guard 和 fallback path。
+- 运行时 feature flag 只读取一次，因为 generated code 可能把 ABI 和 guard layout
+  决策烘进 native code。NEMU 启动后再改环境变量不会生效。
+- 一些性能功能仍是 opt-in，因为正确性/性能取舍还在验证中。特别是
+  `NEMU_X86_JIT_NATIVE_IDIV` 不是默认开启路径。
+
 ## 分支角色
 
 | 分支 | 作用 |
@@ -94,7 +151,10 @@ RV64 JIT 的三个关键安全机制是：
 | `legacy/baseline-master` | 原始 baseline，早于磁盘、ONScripter、性能和 JIT 改动 |
 | `legacy/onscripter-disk` | 旧的 Navy/ONScripter 磁盘支持分支 |
 | `performance_improve` | 非 JIT 性能 baseline |
-| `performance_improve_jit` | 当前 JIT 工作迁移到 `master` 前的旧名字 |
+
+旧本地历史或讨论里可能会提到 `performance_improve_jit`，但当前本地和远端分支
+列表里没有这个分支。除非你手里有仍保留该名字的旧 checkout，否则当前 JIT 工作
+请看 `master`。
 
 ## 环境变量
 
@@ -159,9 +219,17 @@ RISC-V NEMU 设备通过 NEMU 的 MMIO 区域暴露给客户机。AM 平台头�
 
 ### Timer 和 RTC
 
-RTC 设备把 64 位微秒计数器拆成两个 32 位寄存器。AM 在启动时记录初始值，
-之后用差值实现 `AM_TIMER_UPTIME`。NEMU 平台路径里的 `AM_TIMER_RTC` 返回固定
-日期，因为本项目主要需要单调时间来支持调度、SDL timer 和 benchmark 计时。
+RTC 设备保留已有的高性能 64 位微秒 uptime counter，并把它拆成两个 32 位
+寄存器。AM 在启动时记录初始 counter 值，之后用差值实现 `AM_TIMER_UPTIME`，
+因此调度、SDL timer 和 benchmark 计时仍然走单调时间 fast path。
+
+同一个 RTC MMIO block 还暴露 64 位 UTC Unix epoch seconds 和 64 位 UTC Unix
+epoch microseconds。AM 使用这些 realtime register 实现 `AM_TIMER_RTC`，提供
+year、month、day、hour、minute 和 second 字段。Nanos-lite 使用 epoch
+microsecond 值实现 `gettimeofday()`、`time()` 和
+`clock_gettime(CLOCK_REALTIME)` 这类 POSIX time syscall；
+`clock_gettime(CLOCK_MONOTONIC)` 仍然使用 uptime。客户机 timezone 只按 UTC
+处理。
 
 NEMU system mode 会安装 alarm callback 来产生设备中断。CPU 执行循环会为了
 性能批量检查设备更新，但批量大小是有上限的，避免 timer 和输入处理长期得不
@@ -300,12 +368,13 @@ make -B -C nemu ISA=riscv32
 
 常用依赖包括能用 `-march=rv32im_zicsr -mabi=ilp32` 生成 RV32IM+Zicsr 代码，
 并能用 `-march=rv64im_zicsr_zifencei -mabi=lp64` 生成 RV64IM+Zicsr+Zifencei
-代码的 RISC-V 工具链，以及 readline、ncurses、flex、bison。LLVM 只在打开
-指令 trace/disassembly 相关构建时需要；本树会在 `CONFIG_ITRACE` 打开时使用
-`llvm-config`，而 `nemu/llvm.sh` 当前默认安装 LLVM 18，也支持显式指定脚本中
-列出的其他版本。
+代码的 RISC-V 工具链，以及 readline、ncurses、flex、bison。Instruction trace
+和 instruction-queue disassembly 现在使用 `nemu/tools/capstone` 下的 Capstone
+路径；旧 LLVM disassembler 路径已在
+`8dc8207 Share RISC-V interpreter and sync upstream files` 中移除，当时
+`nemu/src/utils/disasm.cc` 被替换为当前的 C 实现。
 
-### RISC-V64 Nanos-lite Bring-up
+### RISC-V64 Nanos-lite
 
 RV64 路径当前目标是 `RV64IM_Zicsr_Zifencei`，ABI 是 `lp64`，用户态库使用
 soft-float。RV64 构建会带上 `compiler-rt`，因为即使没有使用硬件浮点 ABI，
@@ -325,16 +394,21 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
 
 当前 Nanos-lite RV64 的进程顺序会先启动 ONScripter，然后是 FCEUX，最后是 PAL。
 这个顺序能让 framebuffer、disk、audio 和大型应用 loader 问题更早暴露，方便
-bring-up 调试。常规 RV64 bring-up 配置使用 direct interpreter；需要单独测试
-native acceleration 时，使用下面的 RV64 JIT defconfig。
+调试。常规 RV64 配置使用 direct interpreter；需要单独测试 native acceleration
+时，使用下面的 RV64 JIT defconfig。
 
 ## JIT 配置
 
-RV32 和 RV64 JIT 菜单位于 `nemu/menuconfig`。这些菜单只在受支持的 x86-64 host
-上的 native ELF interpreter 构建中可见，并且需要关闭 trace、watchpoint、
-memory/function trace 和 DiffTest，因为这些功能依赖解释器的逐条指令 hook。
+x86、RV32 和 RV64 JIT 菜单位于 `nemu/menuconfig`。这些菜单只在受支持的
+x86-64 host 上的 native ELF interpreter 构建中可见，并且需要关闭 trace、
+watchpoint、memory/function trace 和 DiffTest，因为这些功能依赖解释器的逐条
+指令 hook。
 
 ```text
+x86 JIT acceleration
+  [*] Enable x86 x86-64 JIT
+  [ ] Collect x86 JIT statistics
+
 RISC-V32 JIT
   [*] Enable RISC-V32 x86-64 JIT
   [ ] Collect RISC-V32 JIT statistics
@@ -347,9 +421,12 @@ RISC-V64 execution acceleration
 正常性能测试建议打开 JIT、关闭 JIT statistics。统计信息适合诊断，但额外计数
 会带来开销。
 
-RV64 常用 defconfig 如下：
+常用 defconfig 如下：
 
 ```bash
+# IA-32 guest，x86 JIT 和统计计数器由 defconfig 打开。
+make -C nemu x86-am-jit_defconfig
+
 # RV64 headless direct interpreter。
 make -C nemu riscv64-am-headless_defconfig
 
@@ -363,7 +440,7 @@ make -C nemu riscv64-am-headless-jit-stats_defconfig
 运行时控制：
 
 ```bash
-# 强制使用解释器 / 非 JIT 路径做对比。
+# 强制 RV32 使用解释器 / 非 JIT 路径做对比。
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
   make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
 
@@ -371,24 +448,49 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
   make -C am-kernels/benchmarks/coremark ARCH=riscv64-nemu run
 
+# 同一个全局开关也会关闭 x86 JIT。x86 还接受 NEMU_X86_JIT=0，只关闭 x86 JIT
+# runtime gate。
+NEMU_DISABLE_JIT=1 make -C am-kernels/tests/cpu-tests ARCH=x86-nemu run
+NEMU_X86_JIT=0 make -C am-kernels/tests/cpu-tests ARCH=x86-nemu run
+
 # 保留 RV64 JIT，但关闭跨 block direct link。
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
   NEMU_DISABLE_RV64_JIT_DIRECT_LINK=1 \
   make -C am-kernels/benchmarks/coremark ARCH=riscv64-nemu run
 
-# 在 CONFIG_RV32_JIT_STATS 或 CONFIG_RV64_JIT_STATS 打开时打印 JIT 统计。
+# 在对应 CONFIG_*_JIT_STATS 打开时打印 JIT 统计。
+NEMU_JIT_STATS=1 make -C am-kernels/tests/cpu-tests ARCH=x86-nemu run
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_JIT_STATS=1 \
   make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_JIT_STATS=1 \
   make -C am-kernels/benchmarks/coremark ARCH=riscv64-nemu run
 ```
 
-`NEMU_DISABLE_JIT=1` 只会在 `CONFIG_RV32_JIT` 或 `CONFIG_RV64_JIT` 构建中关闭
-JIT。它不是通用的“纯解释器”开关。如果 RV32 二进制是用
-`CONFIG_RV32_FAST_EXEC` 构建的，CPU loop 仍然可以走 fast executor。要保证 RV32
-纯解释器运行，需要重新构建 NEMU，并把 acceleration mode 设为
+`NEMU_DISABLE_JIT=1` 只会在 `CONFIG_X86_JIT`、`CONFIG_RV32_JIT` 或
+`CONFIG_RV64_JIT` 构建中关闭 JIT。它不是通用的“纯解释器”开关。如果 RV32
+二进制是用 `CONFIG_RV32_FAST_EXEC` 构建的，CPU loop 仍然可以走 fast executor。
+要保证 RV32 纯解释器运行，需要重新构建 NEMU，并把 acceleration mode 设为
 `CONFIG_RV32_ACCEL_NONE`。RV64 纯解释器运行可以使用
 `riscv64-am-headless_defconfig`，或者关闭 `CONFIG_RV64_JIT`。
+
+x86 专用 runtime switch 适合 bisect JIT 行为：
+
+```text
+NEMU_X86_JIT=0                    构建后关闭 x86 JIT
+NEMU_X86_JIT_HELPERS=0            只保留很小的 native-only subset
+NEMU_X86_JIT_VERIFY_SOURCE=1      重新检查保存的 source byte
+NEMU_X86_JIT_TRACE=1              打开 hot trace compilation
+NEMU_X86_JIT_REGCACHE=1           打开可选 register cache 路径
+NEMU_X86_JIT_PAGED_AGGRESSIVE=1   打开一组 paged experimental path
+NEMU_X86_JIT_NATIVE_IDIV=1        打开 native IDIV emission
+NEMU_X86_JIT_BLOCK_LIMIT=<n>      限制 translated block 长度
+NEMU_X86_JIT_TRACE_THRESHOLD=<n>  设置 hot-trace threshold
+```
+
+多数默认开启的 x86 knob 可以用显式 `=0` 关闭，例如
+`NEMU_X86_JIT_BATCH=0`、`NEMU_X86_JIT_CHAIN=0`、
+`NEMU_X86_JIT_FAST_CHAIN=0`、`NEMU_X86_JIT_L0_CACHE=0`、
+`NEMU_X86_JIT_PAGED_BATCH=0` 或 `NEMU_X86_JIT_HIGH_BYTE_TEST=0`。
 
 常用正确性检查：
 
@@ -396,6 +498,10 @@ JIT。它不是通用的“纯解释器”开关。如果 RV32 二进制是用
 scripts/check-nemu-arch-config-selection.sh
 scripts/check-nemu-upstream-isa-selection.sh
 scripts/check-riscv-difftest-state.sh
+scripts/check-x86-jit-smoke.sh
+scripts/check-x86-jit-runtime-defaults.sh
+scripts/check-x86-jit-paged-memory-fastpath.sh
+scripts/check-x86-jit-paged-generation-revalidation.sh
 scripts/check-rv64-new-interpreter.sh
 scripts/check-rv64-jit-correctness.sh
 scripts/check-rv64-jit-io.sh
@@ -406,7 +512,7 @@ scripts/check-rv64-jit-performance.sh
 
 ## RISC-V 异常模型和限制
 
-旧的教学版 NEMU + Nanos-lite 路径经常把 trap 当成模拟器或 AM 的约定处理。
+旧的 NEMU + Nanos-lite 路径经常把 trap 当成模拟器或 AM 的约定处理。
 这样 `ecall`、`yield()`、syscall dispatch 和私有 `nemu_trap` stop instruction
 看起来像 emulator、Abstract Machine、Nanos-lite 之间的直接跳转。这个模型适合
 小项目，但边界和真实 RISC-V 硬件不同：软件不一定能按架构观察到 `mepc`、
@@ -445,47 +551,57 @@ illegal instruction、breakpoint 或 misaligned address。
 
 ## 性能测量
 
-第一个表格是当前 RV32 JIT 分支的本地参考数据，测于 2026-05-16，并使用 dummy
-SDL video/audio driver。它们适合看趋势，但你应该在自己的 CPU 上重新测量，
-因为 host 频率调节、系统负载、温度限制，以及大小核调度都会影响结果。
+当前性能矩阵以脚本为准。下面的数字是 2026-05-27 在当前 checkout 上使用 dummy
+SDL video/audio driver 跑出的本地样本。它们适合看趋势，但你应该在自己的 CPU 上
+重新测量，因为 host 频率调节、系统负载、温度限制，以及大小核调度都会影响结果。
 
-| 分支 / 模式 | Benchmark | 结果 |
-|-------------|-----------|------|
-| `master`，strict exceptions，JIT 开启 | MicroBench | `27098 Marks`, `2,860,733,499 instr/s` |
-| `master`，strict exceptions，JIT 开启 | JITBench | `ALU 8.436 ms`, `Memory 3.528 ms`, `4,049,658,568 instr/s` |
-| `master`，strict exceptions，`NEMU_DISABLE_JIT=1` | MicroBench | `3322 Marks`, `275,864,060 instr/s` |
-| `master`，strict exceptions，`NEMU_DISABLE_JIT=1` | JITBench | `ALU 157.041 ms`, `Memory 77.442 ms`, `302,722,837 instr/s` |
-| exported non-strict `6d946ee`，JIT 开启 | MicroBench | `25041 Marks`, `2,480,000,000 instr/s` |
-| exported non-strict `6d946ee`，JIT 开启 | JITBench | `ALU 7.304 ms`, `Memory 4.352 ms`, `4,520,000,000 instr/s` |
-| `performance_improve` | MicroBench | `3141 Marks`, `271,000,633 instr/s` |
-| `legacy/baseline-master` | MicroBench | `694 Marks`, `58,319,798 instr/s` |
+| 范围 | Benchmark | 模式 | 结果 |
+|------|-----------|------|------|
+| RV32 JIT | MicroBench | JIT 开启 | `25374 Marks`, `2,615,873,637 instr/s` |
+| RV32 JIT | MicroBench | `NEMU_DISABLE_JIT=1` | `1531 Marks`, `130,571,528 instr/s` |
+| RV32 JIT | JITBench | JIT 开启 | `ALU 7.052 ms`, `Memory 3.559 ms` |
+| RV32 JIT | JITBench | `NEMU_DISABLE_JIT=1` | `ALU 367.962 ms`, `Memory 164.339 ms` |
+| RV64 JIT | BranchMark | interpreter | `guest_us=99327`, `checksum=0x67c146ec` |
+| RV64 JIT | BranchMark | JIT 开启 | `guest_us=1037`, `avg_jit_entry_insns=20413.95`, `speedup=95.78x` |
+| x86 JIT | MicroBench | JIT 开启 | `18246 Marks`, `2,123,334,697 instr/s` |
+| x86 JIT | MicroBench | `NEMU_DISABLE_JIT=1` | `336 Marks`, `31,123,524 instr/s` |
 
-下面是当前 RV32/RV64 CoreMark 解释器对比数据，测于 2026-05-17，并使用 dummy
-SDL video/audio driver：
+当前性能 gate：
 
-| 分支 / 模式 | Benchmark | 结果 |
-|-------------|-----------|------|
-| `riscv32`，`CONFIG_RV32_ACCEL_NONE` | CoreMark | `586 Marks`, `4980 ms`, `62,912,314 instr/s` |
-| `riscv64`，解释器 | CoreMark | `1259 Marks`, `2319 ms`, `154,708,727 instr/s` |
+```bash
+scripts/check-rv32-jit-performance.sh
+scripts/check-rv64-jit-performance.sh
+scripts/check-x86-jit-smoke.sh
+scripts/check-x86-jit-helper-profile.sh
+scripts/check-x86-jit-paged-memory-fastpath.sh
+```
 
-这是干净的解释器对解释器比较，上面的 `NEMU_DISABLE_JIT=1` 行不能完整表达这一
-点。在这次 CoreMark 运行中，RV64 的 Marks 大约是 RV32 纯解释器的 `2.15x`，
-guest instruction throughput 大约是 RV32 纯解释器的 `2.46x`。RV64 在这个
-workload 中执行的 guest instruction 仍然更多（`358,947,764` 对
-`313,363,093`），但在这台 host 上 RV64 解释器路径更早完成。这个结论应理解为
-本地 CoreMark 结果，不代表每个 RV64 应用都会更快。
+历史本地参考数据只作为固定对比点保留。不要把这些行理解成当前 `master` 的测量。
 
-如果和 RV32 JIT 行比较，RV64 解释器仍然慢很多：大约是 RV32 JIT MicroBench
-throughput 的 `1/18.5`，也是 RV32 JITBench throughput 的 `1/26.2`。这个比较
-有意是 interpreter versus JIT。当前 RV64 JIT 性能请在自己的 host 上运行
-`scripts/check-rv64-jit-performance.sh` 获取。
+| 范围 | 来源 / 日期 | Benchmark | 模式 | 结果 |
+|------|-------------|-----------|------|------|
+| RV32 JIT reference | `71c4588`，测于 2026-05-16 | MicroBench | JIT 开启 | `27098 Marks`, `2,860,733,499 instr/s` |
+| RV32 JIT reference | `71c4588`，测于 2026-05-16 | JITBench | JIT 开启 | `ALU 8.436 ms`, `Memory 3.528 ms`, `4,049,658,568 instr/s` |
+| RV32 JIT reference | `71c4588`，测于 2026-05-16 | MicroBench | `NEMU_DISABLE_JIT=1` | `3322 Marks`, `275,864,060 instr/s` |
+| RV32 JIT reference | `71c4588`，测于 2026-05-16 | JITBench | `NEMU_DISABLE_JIT=1` | `ALU 157.041 ms`, `Memory 77.442 ms`, `302,722,837 instr/s` |
+| RV32 non-strict export | `6d946ee`，测于 2026-05-16 | MicroBench | JIT 开启 | `25041 Marks`, `2,480,000,000 instr/s` |
+| RV32 non-strict export | `6d946ee`，测于 2026-05-16 | JITBench | JIT 开启 | `ALU 7.304 ms`, `Memory 4.352 ms`, `4,520,000,000 instr/s` |
+| RV32 non-JIT reference | `performance_improve`，测于 2026-05-16 | MicroBench | non-JIT | `3141 Marks`, `271,000,633 instr/s` |
+| RV32 baseline reference | `legacy/baseline-master`，测于 2026-05-16 | MicroBench | interpreter | `694 Marks`, `58,319,798 instr/s` |
+| RV32/RV64 interpreter reference | `c0d33ae`，测于 2026-05-17 | CoreMark | RV32 pure interpreter | `586 Marks`, `4980 ms`, `62,912,314 instr/s` |
+| RV32/RV64 interpreter reference | `c0d33ae`，测于 2026-05-17 | CoreMark | RV64 direct interpreter | `1259 Marks`, `2319 ms`, `154,708,727 instr/s` |
 
-按 Marks 计算，当前 strict JIT MicroBench 分数约为同分支关闭 JIT 的 `8.16x`、
-非 JIT 性能分支的 `8.63x`、原始 baseline 的 `39.05x`。按 guest instruction
-throughput 计算，当前 strict JIT 约为原始 baseline 的 `49.05x`。与上表中的
-exported non-strict `6d946ee` 数据相比，本地 strict MicroBench 略高；JITBench
-整体 throughput 略低，但 memory loop 更快，因为 guarded native memory 和 loop
-chaining 避免了旧 helper fallback 的成本。
+性能提升用简单除法计算：
+
+```text
+speed-up = 更快结果 / 更慢结果
+```
+
+例如当前本地 x86 MicroBench 样本：
+
+```text
+18246 / 336 = 54.30x，按 Marks 计算
+```
 
 ### 当前 JIT 性能改进
 
@@ -544,18 +660,6 @@ git checkout legacy/baseline-master
 source scripts/setup-env.sh
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
   make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
-```
-
-性能提升用简单除法计算：
-
-```text
-speed-up = 更快版本 instr/s / 更慢版本 instr/s
-```
-
-例如：
-
-```text
-2,687,376,608 / 58,319,798 = 46.08x
 ```
 
 ## Nanos-lite GUI 流程
