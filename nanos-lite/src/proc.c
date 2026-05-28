@@ -136,65 +136,21 @@ void init_proc()
 
     static char *const envp_empty[] = {NULL};
 
-#if defined(NANOS_INIT_DUMMY)
-    static char *const argv_dummy[] = {"/bin/dummy", NULL};
-    context_uload(&pcb[0], "/bin/dummy", argv_dummy, envp_empty);
-    fg_pcb = &pcb[0];
-#elif defined(NANOS_INIT_HELLO)
-    static char *const argv_hello[] = {"/bin/hello", NULL};
-    context_uload(&pcb[0], "/bin/hello", argv_hello, envp_empty);
-    fg_pcb = &pcb[0];
-#elif defined(NANOS_INIT_PREEMPT)
-    static char *const argv_hello[] = {"/bin/hello", NULL};
-    static char *const argv_dummy[] = {"/bin/dummy", NULL};
-    context_uload(&pcb[0], "/bin/hello", argv_hello, envp_empty);
-    context_uload(&pcb[HELLO_PROC], "/bin/dummy", argv_dummy, envp_empty);
-    fg_pcb = &pcb[0];
-#elif defined(NANOS_INIT_HELLO_KTHREAD)
-    static char *const argv_hello[] = {"/bin/hello", NULL};
-    context_uload(&pcb[0], "/bin/hello", argv_hello, envp_empty);
-    context_kload(&pcb[HELLO_PROC], hello_fun, "hello-kthread");
-    fg_pcb = &pcb[0];
-#elif defined(NANOS_INIT_PAL_KTHREAD)
-    static char *const argv_pal[] = {"/bin/pal", NULL};
-    context_uload(&pcb[0], "/bin/pal", argv_pal, envp_empty);
-    context_kload(&pcb[HELLO_PROC], hello_fun, "pal-kthread");
-    fg_pcb = &pcb[0];
-#elif defined(NANOS_INIT_NTERM_HELLO)
-    static char *const argv_nterm[] = {"/bin/nterm", NULL};
-    static char *const argv_hello[] = {"/bin/hello", NULL};
-    context_uload(&pcb[0], "/bin/nterm", argv_nterm, envp_empty);
-    context_uload(&pcb[HELLO_PROC], "/bin/hello", argv_hello, envp_empty);
-    fg_pcb = &pcb[0];
-#elif defined(NANOS_INIT_NTERM_SELFTEST)
-    static char *const argv_nterm[] = {"/bin/nterm", "--selftest", NULL};
-    context_uload(&pcb[0], "/bin/nterm", argv_nterm, envp_empty);
-    fg_pcb = &pcb[0];
-#elif defined(NANOS_INIT_SINGLE)
-    static char init_path[] = NANOS_INIT_PATH;
-    static char *const argv_single[] = {init_path, NULL};
-    static char *const argv_onscripter[] = {"/bin/onscripter", "-r", "/share/games/ons", NULL};
-    char *const *argv = (strcmp(init_path, "/bin/onscripter") == 0) ? argv_onscripter : argv_single;
-    context_uload(&pcb[0], init_path, argv, envp_empty);
-    fg_pcb = &pcb[0];
-#elif defined(NANOS_INIT_GAMES)
-    static char *const argv_pal[] = {"/bin/pal", NULL};
+    static char *argv_doom[] = {
+        "/bin/doom",
+        "-iwad",
+        "/share/games/doom/DOOM.WAD",
+        "-nogui",
+        NULL,
+    };
     static char *const argv_fceux_am[] = {"/bin/fceux", "/share/games/nes/c.nes", NULL};
     static char *const argv_onscripter[] = {"/bin/onscripter", "-r", "/share/games/ons", NULL};
-    context_uload(&pcb[0], "/bin/fceux", argv_fceux_am, envp_empty);
+    context_uload(&pcb[2], "/bin/fceux", argv_fceux_am, envp_empty);
     context_uload(&pcb[1], "/bin/onscripter", argv_onscripter, envp_empty);
-    context_uload(&pcb[2], "/bin/pal", argv_pal, envp_empty);
-    fg_pcb = &pcb[0];
-#else
-    static char *const argv_pal[] = {"/bin/pal", NULL};
-    static char *const argv_fceux_am[] = {"/bin/fceux", "/share/games/nes/c.nes", NULL};
-    static char *const argv_onscripter[] = {"/bin/onscripter", "-r", "/share/games/ons", NULL};
-    context_uload(&pcb[0], "/bin/fceux", argv_fceux_am, envp_empty);
-    context_uload(&pcb[1], "/bin/onscripter", argv_onscripter, envp_empty);
-    context_uload(&pcb[2], "/bin/pal", argv_pal, envp_empty);
+    context_uload(&pcb[0], "/bin/doom", argv_doom, envp_empty);
 
     fg_pcb = &pcb[0];
-#endif
+
     foreground_budget = FOREGROUND_QUANTA;
 
     // Initialize current to the boot PCB,

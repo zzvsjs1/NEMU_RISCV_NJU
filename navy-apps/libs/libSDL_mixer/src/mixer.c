@@ -34,6 +34,14 @@ typedef struct
     int paused;
     int loops_left;
     int volume;
+    /*
+     * SDL_mixer applies panning as a per-channel effect after the normal channel
+     * volume and chunk volume have been combined.  Store the 0..255 left/right
+     * gains on the channel so Mix_SetPanning() can change the effect without
+     * rewriting sample data or changing the global mixer format.
+     */
+    uint8_t panning_left;
+    uint8_t panning_right;
     uint32_t frame_pos;
     uint32_t rate_accum;
 } MixerChannel;
@@ -51,6 +59,15 @@ static int music_volume = MIX_MAX_VOLUME;
 static void (*music_finished_hook)(void) = NULL;
 
 static char mixer_error[128] = "";
+
+/*
+ * Expose a modern-enough SDL_mixer 1.2 version to callers that gate old bug
+ * workarounds on Mix_Linked_Version().  This is not claiming ABI parity with the
+ * host library; it only describes the compatibility level of Navy's small mixer
+ * surface.  Doom uses this to decide whether a historical panning workaround is
+ * necessary, and the answer should be "no" for this implementation.
+ */
+static const SDL_version linked_version = {1, 2, 15};
 
 static void set_error(const char *message)
 {
@@ -78,6 +95,50 @@ static int bytes_per_sample(uint16_t format)
     if (format == AUDIO_S16SYS)
         return 2;
     return 0;
+}
+
+static int chunk_metadata_valid(const Mix_Chunk *chunk)
+{
+    /*
+     * Navy's Mix_Chunk extends the SDL_mixer 1.2 structure with source audio
+     * metadata, because the mixer can decode OGG/WAV chunks and resample them in
+     * the callback.  Older callers may allocate Mix_Chunk themselves and leave
+     * those fields zero, so validate every piece before trusting the metadata.
+     */
+    if (chunk == NULL)
+        return 0;
+
+    int bytes = bytes_per_sample(chunk->format);
+    if (bytes == 0)
+        return 0;
+
+    if (chunk->channels < 1 || chunk->channels > MAX_OUTPUT_CHANNELS)
+        return 0;
+
+    if (chunk->frequency <= 0)
+        return 0;
+
+    int frame_bytes = bytes * chunk->channels;
+    return frame_bytes > 0 && chunk->alen % (uint32_t)frame_bytes == 0;
+}
+
+static void normalise_legacy_chunk(Mix_Chunk *chunk)
+{
+    if (chunk_metadata_valid(chunk))
+        return;
+
+    /*
+     * SDL_mixer 1.2's public Mix_Chunk did not carry source format metadata.
+     * Ports that already convert samples to the opened mixer format, such as
+     * Doom's SDL sound backend, can leave Navy's extension fields unset.
+     *
+     * Treat such chunks as already matching the currently opened output device.
+     * That preserves the old SDL_mixer contract without modifying Doom's source
+     * or copying the sample buffer into a Navy-specific wrapper object.
+     */
+    chunk->frequency = device.freq;
+    chunk->format = device.format;
+    chunk->channels = device.channels;
 }
 
 static uint16_t read_u16le(const uint8_t *p)
@@ -187,6 +248,23 @@ static int16_t chunk_output_sample(const Mix_Chunk *chunk, uint32_t frame, int o
     }
 
     return chunk_source_sample(chunk, frame, out_channel < chunk->channels ? out_channel : 0);
+}
+
+static int channel_pan(const MixerChannel *slot, int out_channel)
+{
+    /*
+     * SDL_mixer's panning API uses 0..255 for left/right gains.  The main channel
+     * volume remains in the normal 0..128 range; panning scales that per output
+     * channel just before mixing.
+     */
+    if (device.channels <= 1)
+    {
+        return ((int)slot->panning_left + (int)slot->panning_right) / 2;
+    }
+
+    if (out_channel == 0)
+        return slot->panning_left;
+    return slot->panning_right;
 }
 
 static int advance_source_frame(uint32_t *accum, int source_freq)
@@ -380,9 +458,10 @@ static void mix_channel_frame(int channel, uint8_t *frame)
         samples[c] = chunk_output_sample(chunk, slot->frame_pos, c);
     }
 
-    int effective_volume = (slot->volume * chunk->volume) / MIX_MAX_VOLUME;
     for (int c = 0; c < device.channels; c++)
     {
+        int effective_volume = (slot->volume * chunk->volume) / MIX_MAX_VOLUME;
+        effective_volume = (effective_volume * channel_pan(slot, c)) / 255;
         mix_sample(frame, c, samples[c], effective_volume);
     }
 
@@ -460,6 +539,8 @@ static int allocate_channels_locked(int numchans)
     for (int i = copy; i < numchans; i++)
     {
         next[i].volume = MIX_MAX_VOLUME;
+        next[i].panning_left = 255;
+        next[i].panning_right = 255;
     }
 
     for (int i = numchans; i < mix_channel_count; i++)
@@ -974,6 +1055,11 @@ int Mix_QuerySpec(int *frequency, uint16_t *format, int *channels)
     return 1;
 }
 
+const SDL_version *Mix_Linked_Version(void)
+{
+    return &linked_version;
+}
+
 // Samples
 
 Mix_Chunk *Mix_LoadWAV_RW(SDL_RWops *src, int freesrc)
@@ -1086,6 +1172,126 @@ int Mix_Volume(int channel, int volume)
     return previous;
 }
 
+int Mix_Playing(int channel)
+{
+    /*
+     * SDL_mixer reports active, unpaused channels.  The -1 query is a count across
+     * all channels, while a concrete channel returns a boolean-like 0/1 value.
+     * Keep the check under the audio lock so a cooperative audio pump cannot finish
+     * a channel while the caller is inspecting mixer state.
+     */
+    SDL_LockAudio();
+
+    if (channel == -1)
+    {
+        int playing = 0;
+        for (int i = 0; i < mix_channel_count; i++)
+        {
+            if (mix_channels[i].playing && !mix_channels[i].paused)
+                playing++;
+        }
+
+        SDL_UnlockAudio();
+        return playing;
+    }
+
+    if (channel < 0 || channel >= mix_channel_count)
+    {
+        SDL_UnlockAudio();
+        return 0;
+    }
+
+    int playing = mix_channels[channel].playing && !mix_channels[channel].paused;
+    SDL_UnlockAudio();
+    return playing;
+}
+
+int Mix_HaltChannel(int channel)
+{
+    /*
+     * Halting is a state transition, not a pause: the chunk is detached, playback
+     * position is reset, and the channel-finished callback is fired.  Doom depends
+     * on that callback path to release cached sound-effect ownership.
+     */
+    SDL_LockAudio();
+
+    if (channel == -1)
+    {
+        for (int i = 0; i < mix_channel_count; i++)
+        {
+            finish_channel(i, 1);
+        }
+
+        SDL_UnlockAudio();
+        return 0;
+    }
+
+    if (channel < 0 || channel >= mix_channel_count)
+    {
+        SDL_UnlockAudio();
+        return -1;
+    }
+
+    finish_channel(channel, 1);
+    SDL_UnlockAudio();
+    return 0;
+}
+
+int Mix_SetPanning(int channel, uint8_t left, uint8_t right)
+{
+    /*
+     * The panning API is specified as an effect, but Navy implements it directly in
+     * the mixer channel state.  This is cheaper than an effect-chain abstraction
+     * and is enough for Doom's separation values, which are only left/right gains.
+     */
+    SDL_LockAudio();
+
+    if (channel == -1)
+    {
+        for (int i = 0; i < mix_channel_count; i++)
+        {
+            mix_channels[i].panning_left = left;
+            mix_channels[i].panning_right = right;
+        }
+
+        SDL_UnlockAudio();
+        return 1;
+    }
+
+    if (channel < 0 || channel >= mix_channel_count)
+    {
+        SDL_UnlockAudio();
+        return 0;
+    }
+
+    mix_channels[channel].panning_left = left;
+    mix_channels[channel].panning_right = right;
+    SDL_UnlockAudio();
+    return 1;
+}
+
+int Mix_UnregisterAllEffects(int channel)
+{
+    /*
+     * Navy only implements SDL_mixer's panning effect.  Unregistering all effects
+     * therefore means restoring neutral panning; the channel volume is unchanged.
+     * Returning Mix_SetPanning()'s success value keeps invalid channel handling
+     * aligned between the public effect and panning entry points.
+     */
+    return Mix_SetPanning(channel, 255, 255);
+}
+
+int Mix_PlayChannelTimed(int channel, Mix_Chunk *chunk, int loops, int ticks)
+{
+    /*
+     * Timed channel expiry is not needed by the current Navy users.  Doom passes
+     * -1, so this wrapper keeps SDL_mixer 1.2 source compatibility while sharing
+     * the existing untimed playback path.
+     */
+    (void)ticks;
+    return Mix_PlayChannel(channel, chunk, loops);
+}
+
 int Mix_PlayChannel(int channel, Mix_Chunk *chunk, int loops)
 {
     if (chunk == NULL)
@@ -1100,6 +1306,12 @@ int Mix_PlayChannel(int channel, Mix_Chunk *chunk, int loops)
     }
 
     SDL_LockAudio();
+    /*
+     * Do this inside the lock because the audio callback may read the chunk format
+     * immediately after the channel starts.  Normalising before publication avoids
+     * exposing a half-initialised legacy chunk to the callback.
+     */
+    normalise_legacy_chunk(chunk);
 
     int chosen = channel;
 

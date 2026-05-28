@@ -22,6 +22,30 @@ typedef struct
     void *userdata;
 } SDL_AudioSpec;
 
+typedef struct
+{
+    /*
+     * Navy does not implement SDL_BuildAudioCVT()/SDL_ConvertAudio(), but some
+     * SDL 1.2 code keeps this type in local variables while using its own
+     * conversion path.  Keep the common fields available for source compatibility.
+     *
+     * The fields mirror the names callers normally touch when they do use SDL's
+     * converter.  They are deliberately inert in miniSDL: declaring the structure
+     * does not promise that automatic format conversion exists, it only lets code
+     * that has already chosen another conversion path, such as Doom's sound effect
+     * resampler, build against Navy's small SDL surface.
+     */
+    int needed;
+    uint16_t src_format;
+    uint16_t dst_format;
+    double rate_incr;
+    uint8_t *buf;
+    int len;
+    int len_cvt;
+    int len_mult;
+    double len_ratio;
+} SDL_AudioCVT;
+
 #define AUDIO_U8 8
 #define AUDIO_S16 16
 #define AUDIO_S16LSB AUDIO_S16

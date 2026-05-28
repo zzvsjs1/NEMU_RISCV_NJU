@@ -44,6 +44,28 @@ static void channel_finished(int channel)
     channel_finished_index = channel;
 }
 
+static void check_sdl12_compatibility_surface(void)
+{
+    /*
+     * Some SDL 1.2 ports, including Doom's SDL sound backend, compile against
+     * these compatibility names.  The test keeps them exercised here so Navy's
+     * small SDL layer can remain intentionally narrow without silently dropping
+     * source-level compatibility.
+     */
+    SDL_AudioCVT cvt = {0};
+    (void)cvt;
+
+    const SDL_version *linked = Mix_Linked_Version();
+    CHECK(linked != NULL);
+    /*
+     * Doom disables a panning workaround for mixer versions newer than 1.2.8.
+     * Lock this expectation down so a future compatibility edit does not make Doom
+     * take the legacy workaround path unnecessarily.
+     */
+    CHECK(SDL_VERSIONNUM(linked->major, linked->minor, linked->patch) >=
+          SDL_VERSIONNUM(1, 2, 9));
+}
+
 static int64_t memory_size(SDL_RWops *rw)
 {
     MemoryRW *ctx = (MemoryRW *)rw;
@@ -214,6 +236,7 @@ int main(void)
     SDL_Init(0);
 
     CHECK(Mix_OpenAudio(22050, MIX_DEFAULT_FORMAT, 2, 512) == 0);
+    check_sdl12_compatibility_surface();
 
     /*
      * The query immediately after opening locks down the audio format that the
@@ -296,7 +319,22 @@ int main(void)
     free(wav);
 
     CHECK(Mix_Volume(-1, 32) >= 0);
-    int played_channel = Mix_PlayChannel(-1, chunk, 0);
+    int played_channel = Mix_PlayChannelTimed(-1, chunk, 0, -1);
+    CHECK(played_channel >= 0);
+    CHECK(Mix_Playing(played_channel) == 1);
+    /*
+     * Exercise the SDL_mixer 1.2 channel APIs used by Doom without relying on a
+     * long-running native audio loop.  The timed call uses -1 because Doom does
+     * the same, and HaltChannel should still trigger the completion callback.
+     */
+    CHECK(Mix_SetPanning(played_channel, 255, 64) == 1);
+    CHECK(Mix_UnregisterAllEffects(played_channel) == 1);
+    CHECK(Mix_HaltChannel(played_channel) == 0);
+    CHECK(Mix_Playing(played_channel) == 0);
+    CHECK(channel_finished_index == played_channel);
+
+    channel_finished_index = -1;
+    played_channel = Mix_PlayChannel(-1, chunk, 0);
     CHECK(played_channel >= 0);
 
     for (int i = 0; i < 100 && channel_finished_index < 0; i++)
@@ -310,6 +348,7 @@ int main(void)
 
     Mix_HaltMusic();
     Mix_CloseAudio();
+    SDL_QuitSubSystem(SDL_INIT_AUDIO);
     SDL_Quit();
 
     printf("ons-mixer-test PASS\n");

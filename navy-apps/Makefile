@@ -198,7 +198,7 @@ $(CLEAN_ALL):
 .PHONY: clean-all $(CLEAN_ALL)
 
 ### Build fsimg and ramdisk for Nanos-lite
-APPS = pal onscripter fceux
+APPS = doom onscripter fceux
 TESTS =
 FSIMG_GENERATED_DIRS = $(NAVY_HOME)/fsimg/bin $(NAVY_HOME)/fsimg/share/games $(NAVY_HOME)/fsimg/share/slides
 
@@ -206,6 +206,9 @@ ONS_GAME_SRC = $(NAVY_HOME)/apps/onscripter/game
 ONS_GAME_DST = $(NAVY_HOME)/fsimg/share/games/ons
 ONS_SCRIPT_FILES = 0.txt 00.txt nscript.dat nscript.___
 NSLIDER_SLIDES_DIR = $(NAVY_HOME)/apps/nslider/slides
+
+DOOM_GAME_SRC = $(NAVY_HOME)/apps/doom/game
+DOOM_GAME_DST = $(NAVY_HOME)/fsimg/share/games/doom
 
 # ONScripter receives "-r /share/games/ons" from Nanos-lite, so at least one
 # NScripter script file must appear directly under that directory in the
@@ -251,6 +254,12 @@ nslider-slides-data:
 	fi
 	@cd "$(NSLIDER_SLIDES_DIR)" && NAVY_HOME="$(NAVY_HOME)" bash ./convert.sh
 
+doom-game-data:
+	@echo + DOOMDATA "->" /share/games/doom
+	@mkdir -p "$(dir $(DOOM_GAME_DST))"
+	@rm -rf "$(DOOM_GAME_DST)"
+	@ln -sfn -T "$(DOOM_GAME_SRC)" "$(DOOM_GAME_DST)"
+
 fsimg: $(addprefix apps/, $(APPS)) $(addprefix tests/, $(TESTS))
 	@rm -rf $(FSIMG_GENERATED_DIRS)
 	@mkdir -p $(FSIMG_GENERATED_DIRS)
@@ -260,6 +269,9 @@ ifneq ($(filter nslider,$(APPS)),)
 endif
 ifneq ($(filter onscripter,$(APPS)),)
 	@$(MAKE) -s -C $(NAVY_HOME) ons-game-data
+endif
+ifneq ($(filter doom,$(APPS)),)
+	@$(MAKE) -s -C $(NAVY_HOME) doom-game-data
 endif
 
 RAMDISK = build/ramdisk.img
@@ -304,4 +316,4 @@ endif
 
 ramdisk: $(RAMDISK)
 
-.PHONY: fsimg ramdisk ons-game-data
+.PHONY: fsimg ramdisk ons-game-data doom-game-data nslider-slides-data

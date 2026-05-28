@@ -38,6 +38,17 @@ extern "C"
     int Mix_AllocateChannels(int numchans);
     void Mix_ChannelFinished(void (*channel_finished)(int channel));
     void Mix_Pause(int channel);
+    /*
+     * Compatibility subset from SDL_mixer 1.2.  Navy's mixer still has a small
+     * implementation, but these calls are part of the source-level contract used by
+     * ports such as Doom's SDL sound backend.
+     */
+    int Mix_Playing(int channel);
+    int Mix_HaltChannel(int channel);
+    int Mix_PlayChannelTimed(int channel, Mix_Chunk *chunk, int loops, int ticks);
+    int Mix_SetPanning(int channel, uint8_t left, uint8_t right);
+    int Mix_UnregisterAllEffects(int channel);
+    const SDL_version *Mix_Linked_Version(void);
     int Mix_SetMusicPosition(double position);
     Mix_Music *Mix_LoadMUS(const char *file);
     void Mix_FreeChunk(Mix_Chunk *chunk);

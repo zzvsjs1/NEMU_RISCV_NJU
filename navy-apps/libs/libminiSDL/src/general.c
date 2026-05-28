@@ -15,6 +15,21 @@ void SDL_Quit()
     NDL_Quit();
 }
 
+void SDL_QuitSubSystem(uint32_t flags)
+{
+    /*
+     * miniSDL has a process-wide NDL initialisation model rather than independent
+     * SDL subsystems.  Keep this SDL 1.2 entry point as a source-compatible no-op;
+     * concrete resources such as audio devices are closed by their own APIs.
+     *
+     * This matters for old SDL ports that call SDL_QuitSubSystem(SDL_INIT_AUDIO)
+     * after Mix_CloseAudio().  Returning here preserves their shutdown sequence
+     * without tearing down framebuffer or event state that may still be owned by
+     * the rest of the Navy process.
+     */
+    (void)flags;
+}
+
 char *SDL_GetError()
 {
     return sdl_error_message;
