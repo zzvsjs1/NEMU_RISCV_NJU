@@ -14,8 +14,9 @@ enum
 #endif
 
 /*
- * Open a special device file or a regular backend file.  pathname is always an
- * absolute Navy path for regular files; flags currently matter mainly for
+ * Open a special device file or a regular backend file.  User paths may be
+ * absolute or app-relative; the filesystem layer normalises regular backend
+ * paths to absolute Navy names.  Flags currently matter mainly for
  * truncate-on-open save-file handling.
  */
 int fs_open(const char *pathname, int flags, int mode);

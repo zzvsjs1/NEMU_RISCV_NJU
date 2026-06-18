@@ -13,3 +13,4 @@ __pycache__/
 /compile_commands.json
 /.compile-commands/
 /qemu
+AGENT.md

@@ -273,13 +273,13 @@ uint32_t rv64_jit_ifetch_state(void)
 }
 
 /* Return the satp mode field used by RV64 address translation. */
-static word_t jit_data_satp_mode(word_t satp)
+static word_t jit_sv39_satp_mode(word_t satp)
 {
     return satp >> RV64_JIT_SATP_MODE_SHIFT;
 }
 
 /* Return whether an Sv39 virtual address is canonical. */
-static bool jit_data_sv39_canonical(vaddr_t vaddr)
+static bool jit_sv39_canonical(vaddr_t vaddr)
 {
     const uint64_t sign = ((uint64_t)vaddr >> 38) & 1u;
     const uint64_t high = (uint64_t)vaddr >> 39;
@@ -287,15 +287,15 @@ static bool jit_data_sv39_canonical(vaddr_t vaddr)
     return sign ? high == ((1ull << 25) - 1ull) : high == 0;
 }
 
-/* Return whether a data access stays within one 4 KiB translated page. */
-static bool jit_data_cross_page(vaddr_t addr, uint32_t len)
+/* Return whether an access is zero-length or crosses a 4 KiB translated page. */
+static bool jit_sv39_cross_page(vaddr_t addr, uint32_t len)
 {
     const word_t off = (word_t)(addr & PAGE_MASK);
     return len == 0 || off + (word_t)len > PAGE_SIZE;
 }
 
 /* Validate the Sv39 PTE bits that are illegal before leaf/non-leaf selection. */
-static bool jit_data_pte_valid(word_t pte)
+static bool jit_sv39_pte_valid(word_t pte)
 {
     return (pte & RV64_JIT_PTE_V) != 0 &&
            (pte & (RV64_JIT_PTE_R | RV64_JIT_PTE_W)) != RV64_JIT_PTE_W &&
@@ -303,19 +303,19 @@ static bool jit_data_pte_valid(word_t pte)
 }
 
 /* Return whether an Sv39 PTE is a leaf rather than the next-level pointer. */
-static bool jit_data_pte_leaf(word_t pte)
+static bool jit_sv39_pte_leaf(word_t pte)
 {
     return (pte & RV64_JIT_PTE_RWX) != 0;
 }
 
 /* Extract the physical page number encoded in an Sv39 PTE. */
-static word_t jit_data_pte_ppn(word_t pte)
+static word_t jit_sv39_pte_ppn(word_t pte)
 {
     return (pte >> RV64_JIT_PTE_PPN_SHIFT) & RV64_JIT_PTE_PPN_MASK;
 }
 
 /* Check the low PPN fields that must be zero for legal Sv39 superpages. */
-static bool jit_data_superpage_aligned(word_t ppn, int level)
+static bool jit_sv39_superpage_aligned(word_t ppn, int level)
 {
     if (level == 2)
     {
@@ -376,7 +376,7 @@ static uint32_t jit_data_leaf_access(word_t pte, word_t priv)
 }
 
 /* Combine a leaf PPN with lower VPN fields for 1 GiB/2 MiB Sv39 leaves. */
-static paddr_t jit_data_leaf_page_base(word_t ppn, const word_t vpn[3], int level)
+static paddr_t jit_sv39_leaf_page_base(word_t ppn, const word_t vpn[3], int level)
 {
     word_t pa_ppn = ppn;
 
@@ -424,7 +424,7 @@ static uint32_t jit_data_tlb_index(uint64_t vpn, word_t satp, uint32_t state)
 static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *paddr)
 {
     const word_t satp = cpu.csr.satp;
-    const word_t mode = jit_data_satp_mode(satp);
+    const word_t mode = jit_sv39_satp_mode(satp);
     const word_t priv = jit_data_effective_priv(type);
 
     if (mode == 0)
@@ -456,7 +456,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
         return true;
     }
 
-    if (!jit_data_sv39_canonical(addr) || jit_data_cross_page(addr, len))
+    if (!jit_sv39_canonical(addr) || jit_sv39_cross_page(addr, len))
     {
         return false;
     }
@@ -515,16 +515,16 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
         pt_pages[pt_page_count++] = pt_base;
         const word_t pte = (word_t)paddr_read(pte_addr, 8);
 
-        if (!jit_data_pte_valid(pte))
+        if (!jit_sv39_pte_valid(pte))
         {
             return false;
         }
 
-        const word_t ppn = jit_data_pte_ppn(pte);
+        const word_t ppn = jit_sv39_pte_ppn(pte);
 
-        if (jit_data_pte_leaf(pte))
+        if (jit_sv39_pte_leaf(pte))
         {
-            if (!jit_data_superpage_aligned(ppn, level))
+            if (!jit_sv39_superpage_aligned(ppn, level))
             {
                 return false;
             }
@@ -536,7 +536,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
                 return false;
             }
 
-            const paddr_t pg_paddr = jit_data_leaf_page_base(ppn, vpn, level);
+            const paddr_t pg_paddr = jit_sv39_leaf_page_base(ppn, vpn, level);
             const paddr_t translated = pg_paddr | (paddr_t)(addr & PAGE_MASK);
 
             if (!jit_data_pmem_range(translated, len))
@@ -654,11 +654,11 @@ static uint32_t jit_store_pmem_direct_continue(paddr_t addr, uint32_t len,
         rv64_jit_write_may_touch_ifetch_page_table(addr, (int)len);
 
     /*
-     * Ordinary data stores do not need paddr_write()'s global invalidation hook.
-     * The JIT has already proved that this is PMEM, and tracing is not enabled
-     * for native JIT builds.  Sensitive writes still go through the exact
-     * invalidation path after the new bytes are visible, matching paddr_write()
-     * ordering for self-modifying code and page-table edits.
+     * Ordinary data stores do not need the full write helper. The JIT has
+     * already proved that this is PMEM, and tracing is not enabled for native
+     * JIT builds. Sensitive writes still run the exact invalidation path after
+     * the new bytes are visible, preserving the write-side ordering needed by
+     * self-modifying code and page-table edits.
      */
     host_write(guest_to_host(addr), (int)len, (word_t)data);
 
@@ -674,10 +674,10 @@ static uint32_t jit_store_pmem_direct_continue(paddr_t addr, uint32_t len,
 void rv64_jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data)
 {
     /*
-     * A data-TLB hit skips the repeated page walk but still commits through
-     * paddr_write().  That keeps device boundaries, source invalidation, and
-     * page-table dependency flushing under the same write-side hook used by the
-     * interpreter.  Anything not proven ordinary PMEM uses vaddr_write().
+     * A data-TLB hit skips the repeated page walk and commits through the
+     * direct PMEM helper above. That helper invalidates only when the physical
+     * bytes are tracked as source or page-table state. Anything not proven
+     * ordinary PMEM uses vaddr_write().
      */
     paddr_t paddr = 0;
 
@@ -697,11 +697,10 @@ void rv64_jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data)
 uint32_t rv64_jit_store_pmem_continue(paddr_t addr, uint32_t len, uint64_t data)
 {
     /*
-     * Source writes must leave the native block after paddr_write() because the
-     * write can invalidate the block currently running.  Ordinary data writes
-     * can continue: paddr_write() still owns tracing/MMIO boundaries and exact
-     * invalidation, while the source-chunk pre-check decides whether continuing
-     * would risk executing stale native bytes.
+     * Source writes must leave the native block after the direct PMEM helper,
+     * because the write can invalidate the block currently running. Ordinary
+     * data writes can continue: the pre-check decided that no source bytes or
+     * cached page-table dependencies are touched.
      */
     JIT_STAT_INC(helper_store_count);
 
@@ -1311,8 +1310,8 @@ bool rv64_jit_translate_ifetch_collect(vaddr_t pc, paddr_t *paddr,
 
     if (mmu == MMU_TRANSLATE)
     {
-        if (!jit_data_sv39_canonical(pc) ||
-            jit_data_cross_page(pc, RV64_INSN_SIZE))
+        if (!jit_sv39_canonical(pc) ||
+            jit_sv39_cross_page(pc, RV64_INSN_SIZE))
         {
             return false;
         }
@@ -1339,22 +1338,22 @@ bool rv64_jit_translate_ifetch_collect(vaddr_t pc, paddr_t *paddr,
 
             const word_t pte = (word_t)paddr_read(pte_addr, 8);
 
-            if (!jit_data_pte_valid(pte))
+            if (!jit_sv39_pte_valid(pte))
             {
                 return false;
             }
 
-            const word_t ppn = jit_data_pte_ppn(pte);
+            const word_t ppn = jit_sv39_pte_ppn(pte);
 
-            if (jit_data_pte_leaf(pte))
+            if (jit_sv39_pte_leaf(pte))
             {
-                if (!jit_data_superpage_aligned(ppn, level) ||
+                if (!jit_sv39_superpage_aligned(ppn, level) ||
                     !jit_ifetch_leaf_allows(pte))
                 {
                     return false;
                 }
 
-                *paddr = jit_data_leaf_page_base(ppn, vpn, level) |
+                *paddr = jit_sv39_leaf_page_base(ppn, vpn, level) |
                          (paddr_t)(pc & PAGE_MASK);
                 *translated = true;
                 return true;

@@ -23,6 +23,21 @@
  * exit, dirty cached guest registers must be flushed so the C code observes a
  * complete architectural state.
  */
+
+/* x86-64 host opcode suffixes used by the RV64 guest-code emitter. */
+enum
+{
+    HOST_JCC_B = 0x82,
+    HOST_JCC_AE = 0x83,
+    HOST_JCC_E = 0x84,
+    HOST_JCC_NE = 0x85,
+    HOST_JCC_A = 0x87,
+    HOST_JCC_L = 0x8c,
+    HOST_JCC_GE = 0x8d,
+    HOST_SETCC_B = 0x92,
+    HOST_SETCC_L = 0x9c,
+};
+
 /* Emit one byte into the current native block. */
 static bool emit_u8(rv64_jit_writer_t *w, uint8_t value)
 {
@@ -173,6 +188,17 @@ static bool emit_load_cpu_base(rv64_jit_writer_t *w)
            emit_u64(w, (uint64_t)(uintptr_t)&cpu);
 }
 
+/*
+ * Load the fixed host-side base registers used by generated RV64 code. Helper
+ * calls may clobber R10/R11, so the same helper is used for prologue setup and
+ * post-helper reloads.
+ */
+static bool emit_load_jit_bases(rv64_jit_writer_t *w)
+{
+    return emit_load_cpu_base(w) &&
+           emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE));
+}
+
 /* Emit the common native-block prologue and load long-lived base registers. */
 bool rv64_jit_emit_prologue(rv64_jit_writer_t *w)
 {
@@ -184,8 +210,7 @@ bool rv64_jit_emit_prologue(rv64_jit_writer_t *w)
      * register cache and also provide 16-byte stack alignment for helper calls.
      */
     return emit_push_saved_hregs(w) &&
-           emit_load_cpu_base(w) &&
-           emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE));
+           emit_load_jit_bases(w);
 }
 
 /* Restore saved host registers and return to the C dispatcher. */
@@ -1328,15 +1353,15 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
     if (!jit_reg_emit_flush_all_dirty(w, regs) ||
         !emit_movabs_rdx(w, (uint64_t)(uintptr_t)target) ||
         !emit_cmp_rdxb_field_imm8(w, valid_off, 1) ||
-        !emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count) ||
+        !emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count) ||
         !emit_movabs_rax(w, target_pc) ||
         !emit_cmp_rdxq_field_rax(w, pc_off) ||
-        !emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count) ||
+        !emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count) ||
         !emit_movabs_rax(w, satp) ||
         !emit_cmp_rdxq_field_rax(w, satp_off) ||
-        !emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count) ||
+        !emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count) ||
         !emit_cmp_rdxd_field_imm32(w, ifetch_state_off, ifetch_state) ||
-        !emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count) ||
+        !emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count) ||
         !emit_cmp_rdxb_field_imm8(w, uses_data_state_off, 0))
     {
         return false;
@@ -1344,32 +1369,32 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
 
     if (source_uses_data_state)
     {
-        if (!emit_jcc_rel32_placeholder(w, 0x84, &data_state_ok_disp) ||
+        if (!emit_jcc_rel32_placeholder(w, HOST_JCC_E, &data_state_ok_disp) ||
             !emit_cmp_rdxd_field_imm32(w, data_state_off, data_state) ||
-            !emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count))
+            !emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count))
         {
             return false;
         }
         patch_rel32(data_state_ok_disp, w->cur);
     }
-    else if (!emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count))
+    else if (!emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count))
     {
         return false;
     }
 
     if (!emit_cmp_rdxb_field_imm8(w, translated_off, 0) ||
-        !emit_jcc_rel32_placeholder(w, 0x84, &ifetch_generation_ok_disp) ||
+        !emit_jcc_rel32_placeholder(w, HOST_JCC_E, &ifetch_generation_ok_disp) ||
         !emit_movabs_rax(w, (uint64_t)(uintptr_t)&rv64_jit_ifetch_generation) ||
         !emit_mov_rax_m64_rax(w) ||
         !emit_cmp_rdxq_field_rax(w, ifetch_generation_off) ||
-        !emit_direct_link_miss_jcc(w, 0x85, miss_disps, &miss_count))
+        !emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count))
     {
         return false;
     }
     patch_rel32(ifetch_generation_ok_disp, w->cur);
 
     if (!emit_cmp_rdxq_field_imm8(w, body_entry_off, 0) ||
-        !emit_direct_link_miss_jcc(w, 0x84, miss_disps, &miss_count) ||
+        !emit_direct_link_miss_jcc(w, HOST_JCC_E, miss_disps, &miss_count) ||
         !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
         !emit_mov_eax_m32_rdx(w) ||
         !emit_add_eax_imm32(w, completed_count) ||
@@ -1378,7 +1403,7 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
         !emit_add_ecx_rdxd_field(w, insn_count_off) ||
         !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&rv64_jit_entry_budget) ||
         !emit_cmp_ecx_m32_rdx(w) ||
-        !emit_direct_link_miss_jcc(w, 0x87, miss_disps, &miss_count) ||
+        !emit_direct_link_miss_jcc(w, HOST_JCC_A, miss_disps, &miss_count) ||
         !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
         !emit_mov_m32_rdx_eax(w))
     {
@@ -1391,9 +1416,9 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
 
     if (!emit_movabs_rdx(w, (uint64_t)(uintptr_t)target) ||
         !emit_cmp_rdxb_field_imm8(w, translated_off, 0) ||
-        !emit_jcc_rel32_placeholder(w, 0x85, &guarded_taken_disp) ||
+        !emit_jcc_rel32_placeholder(w, HOST_JCC_NE, &guarded_taken_disp) ||
         !emit_cmp_rdxb_field_imm8(w, uses_data_state_off, 0) ||
-        !emit_jcc_rel32_placeholder(w, 0x84, &guarded_done_disp))
+        !emit_jcc_rel32_placeholder(w, HOST_JCC_E, &guarded_done_disp))
     {
         return false;
     }
@@ -1523,8 +1548,8 @@ static bool emit_paged_tlb_common_offset_rdx(rv64_jit_writer_t *w, uint32_t len,
      * value, so the guard uses RAX/RDX/R8 only.  Any failed guard branches to
      * the old helper path, which still owns faults, MMIO, and fresh TLB fills.
      *
-     * x86 condition opcodes below are the near-Jcc low bytes: 0x84 is JE/JZ,
-     * 0x85 is JNE/JNZ, and 0x87 is JA for unsigned page-offset overflow.
+     * The host Jcc constants are near-Jcc low bytes. HOST_JCC_A is an unsigned
+     * range check for page-offset overflow.
      */
     if (!emit_mov_rdx_rax(w) ||
         !emit_shr_rdx_imm(w, PAGE_SHIFT) ||
@@ -1538,21 +1563,21 @@ static bool emit_paged_tlb_common_offset_rdx(rv64_jit_writer_t *w, uint32_t len,
         !emit_movabs_rdx(w, (uint64_t)(uintptr_t)rv64_jit_data_tlb) ||
         !emit_add_r8_rdx(w) ||
         !emit_cmp_r8b_field_imm8(w, valid_off, 0) ||
-        !emit_tlb_guard_slow_jcc(w, patch, 0x84) ||
+        !emit_tlb_guard_slow_jcc(w, patch, HOST_JCC_E) ||
         !emit_movabs_rdx(w, satp) ||
         !emit_cmp_r8q_field_rdx(w, satp_off) ||
-        !emit_tlb_guard_slow_jcc(w, patch, 0x85) ||
+        !emit_tlb_guard_slow_jcc(w, patch, HOST_JCC_NE) ||
         !emit_mov_rdx_rax(w) ||
         !emit_shr_rdx_imm(w, PAGE_SHIFT) ||
         !emit_cmp_r8q_field_rdx(w, vpn_off) ||
-        !emit_tlb_guard_slow_jcc(w, patch, 0x85) ||
+        !emit_tlb_guard_slow_jcc(w, patch, HOST_JCC_NE) ||
         !emit_cmp_r8d_field_imm32(w, state_off, state) ||
-        !emit_tlb_guard_slow_jcc(w, patch, 0x85) ||
+        !emit_tlb_guard_slow_jcc(w, patch, HOST_JCC_NE) ||
         !emit_test_r8d_field_imm32(w, access_off, need_access) ||
-        !emit_tlb_guard_slow_jcc(w, patch, 0x84) ||
+        !emit_tlb_guard_slow_jcc(w, patch, HOST_JCC_E) ||
         !emit_and_rax_imm32(w, PAGE_MASK) ||
         !emit_cmp_rax_imm32(w, PAGE_SIZE - len) ||
-        !emit_tlb_guard_slow_jcc(w, patch, 0x87) ||
+        !emit_tlb_guard_slow_jcc(w, patch, HOST_JCC_A) ||
         !emit_mov_rdx_r8q_field(w, pg_paddr_off) ||
         !emit_or_rdx_rax(w) ||
         !emit_movabs_rax(w, (uint64_t)CONFIG_MBASE) ||
@@ -1623,12 +1648,12 @@ static bool emit_store_source_chunk_guard(rv64_jit_writer_t *w, uint32_t len,
     return emit_mov_r8d_edx(w) &&
            emit_and_r8d_imm(w, RV64_JIT_SOURCE_CHUNK_MASK) &&
            emit_cmp_r8d_imm(w, RV64_JIT_SOURCE_CHUNK_SIZE - len) &&
-           emit_jcc_rel32_placeholder(w, 0x87, cross_chunk_disp) &&
+           emit_jcc_rel32_placeholder(w, HOST_JCC_A, cross_chunk_disp) &&
            emit_mov_r8d_edx(w) &&
            emit_shr_r8d_imm(w, RV64_JIT_SOURCE_CHUNK_SHIFT) &&
            emit_movabs_rax(w, (uint64_t)(uintptr_t)rv64_jit_source_chunk_refs) &&
            emit_cmp_ref_word_zero_rax_r8(w) &&
-           emit_jcc_rel32_placeholder(w, 0x85, source_chunk_disp);
+           emit_jcc_rel32_placeholder(w, HOST_JCC_NE, source_chunk_disp);
 }
 
 /* Emit a guard that keeps inline stores away from cached page-table pages. */
@@ -1645,10 +1670,10 @@ static bool emit_store_page_table_guard(rv64_jit_writer_t *w,
            emit_shr_r8d_imm(w, PAGE_SHIFT) &&
            emit_movabs_rax(w, (uint64_t)(uintptr_t)rv64_jit_data_tlb_pt_page_refs) &&
            emit_cmp_ref_word_zero_rax_r8(w) &&
-           emit_jcc_rel32_placeholder(w, 0x85, data_page_table_disp) &&
+           emit_jcc_rel32_placeholder(w, HOST_JCC_NE, data_page_table_disp) &&
            emit_movabs_rax(w, (uint64_t)(uintptr_t)rv64_jit_ifetch_pt_page_refs) &&
            emit_cmp_ref_word_zero_rax_r8(w) &&
-           emit_jcc_rel32_placeholder(w, 0x85, ifetch_page_table_disp);
+           emit_jcc_rel32_placeholder(w, HOST_JCC_NE, ifetch_page_table_disp);
 }
 
 /* Emit an inline translated-PMEM store address proof through the RV64 data TLB. */
@@ -1689,8 +1714,7 @@ static bool emit_paged_load_instr(rv64_jit_writer_t *w,
 
     if (len > 1 &&
         (!emit_test_al_imm8(w, (uint8_t)(len - 1u)) ||
-         /* 0x85 is x86 JNE/JNZ rel32: misaligned address falls back. */
-         !emit_jcc_rel32_placeholder(w, 0x85, &align_slow_disp)))
+         !emit_jcc_rel32_placeholder(w, HOST_JCC_NE, &align_slow_disp)))
     {
         return false;
     }
@@ -1720,8 +1744,7 @@ static bool emit_paged_load_instr(rv64_jit_writer_t *w,
         !emit_mov_rdi_rax(w) ||
         !emit_store_pc_imm(w, pc) ||
         !emit_call_abs(w, helper) ||
-        !emit_load_cpu_base(w) ||
-        !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)))
+        !emit_load_jit_bases(w))
     {
         return false;
     }
@@ -1835,7 +1858,7 @@ bool rv64_jit_emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
 
     if (len > 1 &&
         (!emit_test_al_imm8(w, (uint8_t)(len - 1u)) ||
-         !emit_jcc_rel32_placeholder(w, 0x85, &align_slow_disp)))
+         !emit_jcc_rel32_placeholder(w, HOST_JCC_NE, &align_slow_disp)))
     {
         return false;
     }
@@ -1851,7 +1874,7 @@ bool rv64_jit_emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         !emit_sub_rdx_rcx(w) ||
         !emit_movabs_rcx(w, (uint64_t)CONFIG_MSIZE - len) ||
         !emit_cmp_rdx_rcx(w) ||
-        !emit_jcc_rel32_placeholder(w, 0x87, &range_slow_disp) ||
+        !emit_jcc_rel32_placeholder(w, HOST_JCC_A, &range_slow_disp) ||
         !emit_direct_pmem_load_rax(w, funct3) ||
         !jit_reg_write_rax(w, regs, rd) ||
         !emit_jmp_rel32_placeholder(w, &done_disp))
@@ -1870,8 +1893,7 @@ bool rv64_jit_emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         !emit_mov_rdi_rax(w) ||
         !emit_store_pc_imm(w, pc) ||
         !emit_call_abs(w, helper) ||
-        !emit_load_cpu_base(w) ||
-        !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
+        !emit_load_jit_bases(w) ||
         !jit_reg_write_rax(w, regs, rd) ||
         !emit_jmp_rel32_placeholder(w, &helper_done_disp))
     {
@@ -1924,8 +1946,7 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
 
     if (len > 1 &&
         (!emit_test_al_imm8(w, (uint8_t)(len - 1u)) ||
-         /* 0x85 is x86 JNE/JNZ rel32: misaligned address falls back. */
-         !emit_jcc_rel32_placeholder(w, 0x85, &align_slow_disp)))
+         !emit_jcc_rel32_placeholder(w, HOST_JCC_NE, &align_slow_disp)))
     {
         return false;
     }
@@ -1963,8 +1984,7 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
         !emit_mov_esi_imm32(w, len) ||
         !emit_store_pc_imm(w, pc) ||
         !emit_call_abs(w, (uintptr_t)rv64_jit_store_vaddr) ||
-        !emit_load_cpu_base(w) ||
-        !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
+        !emit_load_jit_bases(w) ||
         !emit_store_pc_imm(w, next_pc) ||
         !emit_inc_jit_stat_counter(w,
                                    &rv64_jit_stats.side_exit_by_reason[RV64_JIT_SIDE_EXIT_PAGED_STORE_HELPER]) ||
@@ -2061,7 +2081,7 @@ bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
 
     if (len > 1 &&
         (!emit_test_al_imm8(w, (uint8_t)(len - 1u)) ||
-         !emit_jcc_rel32_placeholder(w, 0x85, &align_slow_disp)))
+         !emit_jcc_rel32_placeholder(w, HOST_JCC_NE, &align_slow_disp)))
     {
         return false;
     }
@@ -2071,7 +2091,7 @@ bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         !emit_sub_rdx_rcx(w) ||
         !emit_movabs_rcx(w, (uint64_t)CONFIG_MSIZE - len) ||
         !emit_cmp_rdx_rcx(w) ||
-        !emit_jcc_rel32_placeholder(w, 0x87, &range_slow_disp))
+        !emit_jcc_rel32_placeholder(w, HOST_JCC_A, &range_slow_disp))
     {
         return false;
     }
@@ -2107,11 +2127,9 @@ bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         !emit_mov_esi_imm32(w, len) ||
         !emit_store_pc_imm(w, pc) ||
         !emit_call_abs(w, (uintptr_t)rv64_jit_store_pmem_continue) ||
-        !emit_load_cpu_base(w) ||
-        !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
+        !emit_load_jit_bases(w) ||
         !emit_test_eax_eax(w) ||
-        /* 0x84 is x86 JE/JZ rel32: helper returned zero, so exit. */
-        !emit_jcc_rel32_placeholder(w, 0x84, &exit_disp) ||
+        !emit_jcc_rel32_placeholder(w, HOST_JCC_E, &exit_disp) ||
         !emit_jmp_rel32_placeholder(w, &continue_disp))
     {
         return false;
@@ -2166,8 +2184,7 @@ static bool emit_m_helper(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         !emit_mov_rsi_rdx(w) ||
         !emit_mov_edx_imm32(w, instr) ||
         !emit_call_abs(w, (uintptr_t)rv64_jit_m_result) ||
-        !emit_load_cpu_base(w) ||
-        !emit_movabs_r10(w, (uint64_t)(uintptr_t)guest_to_host(CONFIG_MBASE)) ||
+        !emit_load_jit_bases(w) ||
         !jit_reg_write_rax(w, regs, rd))
     {
         return false;
@@ -2397,18 +2414,22 @@ static bool emit_op_imm(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     {
     case 0x0: /* ADDI */
         return emit_op_imm_hreg(w, regs, rd, rs1, 0x0, imm);
-    case 0x2: /* SLTI, signed compare; SETL is opcode 0x9c. */
+    case 0x2: /* SLTI, signed compare. */
         if (!jit_reg_read_rax(w, regs, rs1))
         {
             return false;
         }
-        return emit_cmp_rax_imm32(w, imm) && emit_setcc_rax(w, 0x9c) && jit_reg_write_rax(w, regs, rd);
-    case 0x3: /* SLTIU, unsigned compare; SETB is opcode 0x92. */
+        return emit_cmp_rax_imm32(w, imm) &&
+               emit_setcc_rax(w, HOST_SETCC_L) &&
+               jit_reg_write_rax(w, regs, rd);
+    case 0x3: /* SLTIU, unsigned compare. */
         if (!jit_reg_read_rax(w, regs, rs1))
         {
             return false;
         }
-        return emit_cmp_rax_imm32(w, imm) && emit_setcc_rax(w, 0x92) && jit_reg_write_rax(w, regs, rd);
+        return emit_cmp_rax_imm32(w, imm) &&
+               emit_setcc_rax(w, HOST_SETCC_B) &&
+               jit_reg_write_rax(w, regs, rd);
     case 0x4: /* XORI */
         return emit_op_imm_hreg(w, regs, rd, rs1, 0x6, imm);
     case 0x6: /* ORI */
@@ -2525,10 +2546,14 @@ static bool emit_op(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         return emit_rax_rcx_alu64(w, 0x29) && jit_reg_write_rax(w, regs, rd);
     case 0x001: /* SLL */
         return emit_shift_rax_cl(w, 0xe0) && jit_reg_write_rax(w, regs, rd);
-    case 0x002: /* SLT, signed compare; SETL is opcode 0x9c. */
-        return emit_cmp_rax_rcx(w) && emit_setcc_rax(w, 0x9c) && jit_reg_write_rax(w, regs, rd);
-    case 0x003: /* SLTU, unsigned compare; SETB is opcode 0x92. */
-        return emit_cmp_rax_rcx(w) && emit_setcc_rax(w, 0x92) && jit_reg_write_rax(w, regs, rd);
+    case 0x002: /* SLT, signed compare. */
+        return emit_cmp_rax_rcx(w) &&
+               emit_setcc_rax(w, HOST_SETCC_L) &&
+               jit_reg_write_rax(w, regs, rd);
+    case 0x003: /* SLTU, unsigned compare. */
+        return emit_cmp_rax_rcx(w) &&
+               emit_setcc_rax(w, HOST_SETCC_B) &&
+               jit_reg_write_rax(w, regs, rd);
     case 0x004: /* XOR */
         return emit_rax_rcx_alu64(w, 0x31) && jit_reg_write_rax(w, regs, rd);
     case 0x005: /* SRL */
@@ -2652,7 +2677,7 @@ static bool emit_branch_chain_backedge(rv64_jit_writer_t *w,
         !emit_add_ecx_imm32(w, exit_count) ||
         !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&rv64_jit_entry_budget) ||
         !emit_cmp_ecx_m32_rdx(w) ||
-        !emit_jcc_rel32_placeholder(w, 0x87, &over_budget_disp) || /* JA: unsigned proposed count > budget. */
+        !emit_jcc_rel32_placeholder(w, HOST_JCC_A, &over_budget_disp) ||
         !jit_reg_emit_flush_all_dirty(w, regs) ||
         !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
         !emit_mov_m32_rdx_eax(w) ||
@@ -2699,22 +2724,22 @@ bool rv64_jit_emit_branch(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     switch (funct3)
     {
     case 0x0: /* BEQ: inverse JNE falls through when not equal. */
-        inverse_jcc = 0x85;
+        inverse_jcc = HOST_JCC_NE;
         break;
     case 0x1: /* BNE: inverse JE falls through when equal. */
-        inverse_jcc = 0x84;
+        inverse_jcc = HOST_JCC_E;
         break;
     case 0x4: /* BLT: inverse JGE falls through for signed greater/equal. */
-        inverse_jcc = 0x8d;
+        inverse_jcc = HOST_JCC_GE;
         break;
     case 0x5: /* BGE: inverse JL falls through for signed less-than. */
-        inverse_jcc = 0x8c;
+        inverse_jcc = HOST_JCC_L;
         break;
     case 0x6: /* BLTU: inverse JAE falls through for unsigned above/equal. */
-        inverse_jcc = 0x83;
+        inverse_jcc = HOST_JCC_AE;
         break;
     case 0x7: /* BGEU: inverse JB falls through for unsigned below. */
-        inverse_jcc = 0x82;
+        inverse_jcc = HOST_JCC_B;
         break;
     default:
         return false;
@@ -2798,8 +2823,7 @@ bool rv64_jit_emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         !emit_add_rax_imm32(w, (int32_t)imm_i(instr)) ||
         !emit_and_rax_imm32(w, -2) ||
         !emit_test_al_imm8(w, RV64_BRANCH_ALIGN_MASK) ||
-        /* 0x85 is x86 JNE/JNZ rel32: target misalignment falls back. */
-        !emit_jcc_rel32_placeholder(w, 0x85, &misaligned_disp))
+        !emit_jcc_rel32_placeholder(w, HOST_JCC_NE, &misaligned_disp))
     {
         return false;
     }

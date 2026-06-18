@@ -82,9 +82,9 @@
     (((size_t)CONFIG_MSIZE + (size_t)RV64_JIT_SOURCE_CHUNK_SIZE - 1u) / \
      (size_t)RV64_JIT_SOURCE_CHUNK_SIZE)
 /*
- * A 64-instruction 32-bit block covers at most 256 bytes, so it can cross at
- * most one 4 KiB virtual page boundary.  Keep the formula explicit rather than
- * hard-coding two segments.
+ * A trace-length region covers RV64_JIT_TRACE_MAX_INSNS fixed-width
+ * instructions.  Keep the formula explicit so the source metadata grows with
+ * the trace limit instead of relying on an old basic-block constant.
  */
 #define RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS \
     (((RV64_JIT_TRACE_MAX_INSNS * RV64_INSN_SIZE) + PAGE_SIZE - 1u) / \

@@ -1,6 +1,7 @@
 CC ?= gcc
 CFLAGS := -std=c11 -Wall -Wextra -Werror -g -I../../src
 
+FS_PATH_SRCS := test_fs_path.c ../../src/fs_path.c
 LFN_SRCS := test_fat32_lfn.c ../../src/fs/fat32_lfn.c
 BPB_SRCS := test_fat32_bpb.c ../../src/fs/fat32_bpb.c
 READ_SRCS := test_fat32_read.c \
@@ -42,7 +43,8 @@ TIME_ABI_CFLAGS := -std=c11 -Wall -Wextra -Werror -march=rv32im_zicsr -mabi=ilp3
 
 .PHONY: all test clean
 
-all: test_fat32_lfn \
+all: test_fs_path \
+	test_fat32_lfn \
 	test_fat32_bpb \
 	test_fat32_read \
 	test_fat32_lookup \
@@ -55,6 +57,7 @@ all: test_fat32_lfn \
 	test_nanos_time_abi.o
 
 test: all
+	./test_fs_path
 	./test_fat32_lfn
 	./test_fat32_bpb
 	./test_fat32_read
@@ -65,6 +68,9 @@ test: all
 	./test_nanos_pagewalk_sv39
 	./test_nanos_pagewalk_sv32
 	./test_nanos_pagewalk_x86
+
+test_fs_path: $(FS_PATH_SRCS) ../../src/fs_path.h
+	$(CC) $(CFLAGS) -o $@ $(FS_PATH_SRCS)
 
 test_fat32_lfn: $(LFN_SRCS) ../../src/fs/fat32.h
 	$(CC) $(CFLAGS) -DFAT32_HOST_TEST -o $@ $(LFN_SRCS)
@@ -101,6 +107,7 @@ test_nanos_time_abi.o: test_nanos_time_abi.c ../../include/common.h
 
 clean:
 	rm -rf \
+		test_fs_path \
 		test_fat32_lfn \
 		test_fat32_bpb \
 		test_fat32_read \

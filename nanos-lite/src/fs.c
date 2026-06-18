@@ -1,4 +1,5 @@
 #include <fs.h>
+#include "fs_path.h"
 #include "fs/backend.h"
 
 #include <stddef.h>
@@ -251,6 +252,8 @@ int fs_open(const char *pathname, int flags, int mode)
     int readable;
     int writable;
     int fd;
+    char path_buf[FS_NORMALISED_PATH_MAX];
+    const char *path;
 
     (void)mode;
 
@@ -259,8 +262,35 @@ int fs_open(const char *pathname, int flags, int mode)
         return -1;
     }
 
+    /*
+     * Check the raw name first for legacy descriptor aliases such as "stdout"
+     * and "stderr".  Those names are intentionally not absolute paths, so
+     * normalising them to "/stdout" would hide the special-file table entry.
+     */
     fd = find_special_file(pathname);
 
+    if (fd >= 0)
+    {
+        if ((flags & FS_O_DIRECTORY) != 0)
+        {
+            return -1;
+        }
+        special_offsets[fd] = 0;
+        return fd;
+    }
+
+    path = fs_normalise_path(pathname, path_buf, sizeof(path_buf));
+    if (path == 0)
+    {
+        return -1;
+    }
+
+    /*
+     * Check again after normalisation so app-relative device paths also work.
+     * For example, "dev/events" roots to "/dev/events" and should open the
+     * synthetic event stream rather than fall through to the FAT32 backend.
+     */
+    fd = find_special_file(path);
     if (fd >= 0)
     {
         if ((flags & FS_O_DIRECTORY) != 0)
@@ -278,7 +308,7 @@ int fs_open(const char *pathname, int flags, int mode)
         FsDir dir;
         int new_fd;
 
-        if (regular_fs_backend.opendir(pathname, &dir) != 0)
+        if (regular_fs_backend.opendir(path, &dir) != 0)
         {
             return -1;
         }
@@ -290,7 +320,7 @@ int fs_open(const char *pathname, int flags, int mode)
         }
         open_files[new_fd - FIRST_REGULAR_FD].dir = dir;
 
-        if (regular_fs_backend.lookup(pathname, &open_files[new_fd - FIRST_REGULAR_FD].metadata) != 0)
+        if (regular_fs_backend.lookup(path, &open_files[new_fd - FIRST_REGULAR_FD].metadata) != 0)
         {
             open_files[new_fd - FIRST_REGULAR_FD].metadata.is_dir = 1;
             open_files[new_fd - FIRST_REGULAR_FD].metadata.size = 0;
@@ -301,7 +331,7 @@ int fs_open(const char *pathname, int flags, int mode)
 
     FsFile file;
 
-    if (regular_fs_backend.open(pathname, &file) == 0)
+    if (regular_fs_backend.open(path, &file) == 0)
     {
         int new_fd;
 
@@ -341,7 +371,7 @@ int fs_open(const char *pathname, int flags, int mode)
     {
         int new_fd;
 
-        if (regular_fs_backend.create(pathname, &file) != 0)
+        if (regular_fs_backend.create(path, &file) != 0)
         {
             return -1;
         }
@@ -520,12 +550,18 @@ int fs_stat(const char *pathname, NanosStat *buf)
 {
     int fd;
     FsMetadata metadata;
+    char path_buf[FS_NORMALISED_PATH_MAX];
+    const char *path;
 
     if (pathname == 0 || buf == 0)
     {
         return -1;
     }
 
+    /*
+     * Preserve support for legacy non-absolute special names before applying
+     * root-based normalisation to regular filesystem paths.
+     */
     fd = find_special_file(pathname);
 
     if (fd >= 0)
@@ -534,7 +570,24 @@ int fs_stat(const char *pathname, NanosStat *buf)
         return 0;
     }
 
-    if (regular_fs_backend.lookup(pathname, &metadata) != 0)
+    path = fs_normalise_path(pathname, path_buf, sizeof(path_buf));
+    if (path == 0)
+    {
+        return -1;
+    }
+
+    /*
+     * Also accept app-relative special paths such as "proc/dispinfo" by
+     * matching the rooted form against the special-file table.
+     */
+    fd = find_special_file(path);
+    if (fd >= 0)
+    {
+        fill_stat_from_special(buf, fd);
+        return 0;
+    }
+
+    if (regular_fs_backend.lookup(path, &metadata) != 0)
     {
         return -1;
     }
@@ -683,8 +736,15 @@ int fs_truncate(const char *pathname, size_t size)
 {
     FsFile file;
     int ret;
+    char path_buf[FS_NORMALISED_PATH_MAX];
+    const char *path;
 
-    if (pathname == 0 || regular_fs_backend.open(pathname, &file) != 0)
+    /*
+     * Path-based operations all normalise at the VFS boundary.  Backends keep
+     * their simpler contract: they only ever receive absolute Navy paths.
+     */
+    path = fs_normalise_path(pathname, path_buf, sizeof(path_buf));
+    if (path == 0 || regular_fs_backend.open(path, &file) != 0)
     {
         return -1;
     }
@@ -699,12 +759,15 @@ int fs_truncate(const char *pathname, size_t size)
  */
 int fs_unlink(const char *pathname)
 {
-    if (pathname == 0)
+    char path_buf[FS_NORMALISED_PATH_MAX];
+    const char *path = fs_normalise_path(pathname, path_buf, sizeof(path_buf));
+
+    if (path == 0)
     {
         return -1;
     }
 
-    return regular_fs_backend.unlink(pathname);
+    return regular_fs_backend.unlink(path);
 }
 
 /*
@@ -713,14 +776,18 @@ int fs_unlink(const char *pathname)
  */
 int fs_mkdir(const char *pathname, int mode)
 {
+    char path_buf[FS_NORMALISED_PATH_MAX];
+    const char *path;
+
     (void)mode;
 
-    if (pathname == 0)
+    path = fs_normalise_path(pathname, path_buf, sizeof(path_buf));
+    if (path == 0)
     {
         return -1;
     }
 
-    return regular_fs_backend.mkdir(pathname);
+    return regular_fs_backend.mkdir(path);
 }
 
 /*
@@ -728,12 +795,15 @@ int fs_mkdir(const char *pathname, int mode)
  */
 int fs_rmdir(const char *pathname)
 {
-    if (pathname == 0)
+    char path_buf[FS_NORMALISED_PATH_MAX];
+    const char *path = fs_normalise_path(pathname, path_buf, sizeof(path_buf));
+
+    if (path == 0)
     {
         return -1;
     }
 
-    return regular_fs_backend.rmdir(pathname);
+    return regular_fs_backend.rmdir(path);
 }
 
 /*
@@ -741,10 +811,21 @@ int fs_rmdir(const char *pathname)
  */
 int fs_rename(const char *old_path, const char *new_path)
 {
-    if (old_path == 0 || new_path == 0)
+    char old_buf[FS_NORMALISED_PATH_MAX];
+    char new_buf[FS_NORMALISED_PATH_MAX];
+
+    /*
+     * Each side of rename may be relative.  Use two buffers because
+     * fs_normalise_path() returns the caller-provided buffer for relative input;
+     * sharing one buffer would let the second path overwrite the first.
+     */
+    const char *normalised_old = fs_normalise_path(old_path, old_buf, sizeof(old_buf));
+    const char *normalised_new = fs_normalise_path(new_path, new_buf, sizeof(new_buf));
+
+    if (normalised_old == 0 || normalised_new == 0)
     {
         return -1;
     }
 
-    return regular_fs_backend.rename(old_path, new_path);
+    return regular_fs_backend.rename(normalised_old, normalised_new);
 }

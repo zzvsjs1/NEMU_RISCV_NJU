@@ -82,8 +82,11 @@ functions around the patterns are deliberately small and architectural:
 RV64 also has an optional x86-64 JIT:
 
 ```text
-nemu/src/isa/riscv64/jit.c
+nemu/src/isa/riscv64/jit-rv64-*.c
 ```
+
+`nemu/src/isa/riscv64` is a symlink to the shared RISC-V source directory; the
+files are named `jit-rv64-*` because this is the RV64 guest JIT path.
 
 The RV64 JIT is conservative by design. It is available only for supported
 x86-64 native ELF builds with tracing, watchpoints, memory/function tracing and
@@ -535,7 +538,7 @@ example `NEMU_X86_JIT_BATCH=0`, `NEMU_X86_JIT_CHAIN=0`,
 
 ## RISC-V Exception Model
 
-Older teaching-style NEMU + Nanos-lite paths often treated traps as an emulator
+Older NEMU + Nanos-lite paths often treated traps as an emulator
 or AM convention. In that model, `ecall`, `yield()`, syscall dispatch, and the
 private `nemu_trap` stop instruction could look like direct control transfers
 between the emulator, Abstract Machine, and Nanos-lite. That is practical for a
