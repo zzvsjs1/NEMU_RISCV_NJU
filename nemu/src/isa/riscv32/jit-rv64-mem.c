@@ -245,18 +245,20 @@ uint32_t rv64_jit_data_tlb_state(int type)
     /*
      * MPRV is folded into the effective privilege.  SUM and MXR stay explicit
      * because they change whether S-mode may access U pages and whether reads
-     * may use execute-only PTEs.
+     * may use execute-only PTEs. The low state bits store effective privilege;
+     * the named high bits record the relevant mstatus controls.
      */
-    uint32_t state = (uint32_t)jit_data_effective_priv(type);
+    uint32_t state =
+        (uint32_t)jit_data_effective_priv(type) & RV64_JIT_DATA_TLB_STATE_PRIV_MASK;
 
     if ((cpu.csr.mstatus & RV64_JIT_MSTATUS_SUM) != 0)
     {
-        state |= 1u << 2;
+        state |= RV64_JIT_DATA_TLB_STATE_SUM;
     }
 
     if ((cpu.csr.mstatus & RV64_JIT_MSTATUS_MXR) != 0)
     {
-        state |= 1u << 3;
+        state |= RV64_JIT_DATA_TLB_STATE_MXR;
     }
 
     return state;
@@ -281,10 +283,14 @@ static word_t jit_sv39_satp_mode(word_t satp)
 /* Return whether an Sv39 virtual address is canonical. */
 static bool jit_sv39_canonical(vaddr_t vaddr)
 {
-    const uint64_t sign = ((uint64_t)vaddr >> 38) & 1u;
-    const uint64_t high = (uint64_t)vaddr >> 39;
+    const uint64_t sign =
+        ((uint64_t)vaddr >> RV64_JIT_SV39_CANONICAL_SIGN_BIT) & 1u;
+    const uint64_t high =
+        (uint64_t)vaddr >> RV64_JIT_SV39_CANONICAL_HIGH_SHIFT;
 
-    return sign ? high == ((1ull << 25) - 1ull) : high == 0;
+    return sign
+               ? high == ((1ull << RV64_JIT_SV39_CANONICAL_HIGH_BITS) - 1ull)
+               : high == 0;
 }
 
 /* Return whether an access is zero-length or crosses a 4 KiB translated page. */
@@ -319,12 +325,12 @@ static bool jit_sv39_superpage_aligned(word_t ppn, int level)
 {
     if (level == 2)
     {
-        return (ppn & 0x3ffffu) == 0;
+        return (ppn & RV64_JIT_SV39_LEVEL2_LOW_PPN_MASK) == 0;
     }
 
     if (level == 1)
     {
-        return (ppn & 0x1ffu) == 0;
+        return (ppn & RV64_JIT_SV39_LEVEL1_LOW_PPN_MASK) == 0;
     }
 
     return true;
@@ -376,18 +382,21 @@ static uint32_t jit_data_leaf_access(word_t pte, word_t priv)
 }
 
 /* Combine a leaf PPN with lower VPN fields for 1 GiB/2 MiB Sv39 leaves. */
-static paddr_t jit_sv39_leaf_page_base(word_t ppn, const word_t vpn[3], int level)
+static paddr_t jit_sv39_leaf_page_base(word_t ppn,
+                                       const word_t vpn[RV64_JIT_SV39_LEVELS],
+                                       int level)
 {
     word_t pa_ppn = ppn;
 
     if (level >= 1)
     {
-        pa_ppn = (pa_ppn & ~0x1ffu) | vpn[0];
+        pa_ppn = (pa_ppn & ~RV64_JIT_SV39_LEVEL1_LOW_PPN_MASK) | vpn[0];
     }
 
     if (level >= 2)
     {
-        pa_ppn = (pa_ppn & ~0x3ffffu) | (vpn[1] << 9) | vpn[0];
+        pa_ppn = (pa_ppn & ~RV64_JIT_SV39_LEVEL2_LOW_PPN_MASK) |
+                 (vpn[1] << RV64_JIT_SV39_VPN_BITS) | vpn[0];
     }
 
     return (paddr_t)(pa_ppn << PAGE_SHIFT);
@@ -416,7 +425,9 @@ static uint32_t jit_data_tlb_index(uint64_t vpn, word_t satp, uint32_t state)
      * The low VPN bits give locality, while shifted VPN/satp bits reduce simple
      * collisions between neighbouring pages and reused address spaces.
      */
-    return (uint32_t)((vpn ^ (vpn >> 9) ^ satp ^ (satp >> 12) ^ state) &
+    return (uint32_t)((vpn ^ (vpn >> RV64_JIT_DATA_TLB_VPN_MIX_SHIFT) ^
+                       satp ^ (satp >> RV64_JIT_DATA_TLB_SATP_MIX_SHIFT) ^
+                       state) &
                       (RV64_JIT_DATA_TLB_SIZE - 1u));
 }
 
@@ -494,26 +505,30 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
 
     JIT_STAT_INC(data_tlb_misses);
 
-    const word_t vpn[3] = {
-        ((word_t)addr >> 12) & 0x1ffu,
-        ((word_t)addr >> 21) & 0x1ffu,
-        ((word_t)addr >> 30) & 0x1ffu,
+    const word_t vpn[RV64_JIT_SV39_LEVELS] = {
+        ((word_t)addr >> RV64_JIT_SV39_VPN_SHIFT(0)) &
+            RV64_JIT_SV39_VPN_MASK,
+        ((word_t)addr >> RV64_JIT_SV39_VPN_SHIFT(1)) &
+            RV64_JIT_SV39_VPN_MASK,
+        ((word_t)addr >> RV64_JIT_SV39_VPN_SHIFT(2)) &
+            RV64_JIT_SV39_VPN_MASK,
     };
     paddr_t pt_base = (paddr_t)((satp & RV64_JIT_SATP_PPN_MASK) << PAGE_SHIFT);
-    paddr_t pt_pages[3] = {0};
+    paddr_t pt_pages[RV64_JIT_SV39_LEVELS] = {0};
     uint8_t pt_page_count = 0;
 
-    for (int level = 2; level >= 0; --level)
+    for (int level = (int)RV64_JIT_SV39_LEVELS - 1; level >= 0; --level)
     {
-        const paddr_t pte_addr = pt_base + (paddr_t)(vpn[level] * sizeof(uint64_t));
+        const paddr_t pte_addr =
+            pt_base + (paddr_t)(vpn[level] * RV64_JIT_PTE_SIZE);
 
-        if (!jit_data_pmem_range(pte_addr, sizeof(uint64_t)))
+        if (!jit_data_pmem_range(pte_addr, RV64_JIT_PTE_SIZE))
         {
             return false;
         }
 
         pt_pages[pt_page_count++] = pt_base;
-        const word_t pte = (word_t)paddr_read(pte_addr, 8);
+        const word_t pte = (word_t)paddr_read(pte_addr, RV64_JIT_PTE_SIZE);
 
         if (!jit_sv39_pte_valid(pte))
         {
@@ -718,19 +733,19 @@ uint64_t rv64_jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr)
 {
     const uint32_t opcode = instr & RV64_OPCODE_MASK;
     const uint32_t funct3 = bits(instr, 14, 12);
-    const uint32_t key = (bits(instr, 31, 25) << 3) | funct3;
+    const uint32_t key = RV64_OP_KEY(bits(instr, 31, 25), funct3);
 
     if (opcode == RV64_OPCODE_OP)
     {
         switch (key)
         {
-        case 0x009: /* MULH */
+        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_SLL): /* MULH */
             return (uint64_t)(((__int128)(int64_t)lhs * (__int128)(int64_t)rhs) >> 64);
-        case 0x00a: /* MULHSU */
+        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_SLT): /* MULHSU */
             return (uint64_t)(((__int128)(int64_t)lhs * (__int128)(uint64_t)rhs) >> 64);
-        case 0x00b: /* MULHU */
+        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_SLTU): /* MULHU */
             return (uint64_t)(((__uint128_t)lhs * (__uint128_t)rhs) >> 64);
-        case 0x00c: /* DIV */
+        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_XOR): /* DIV */
             if (rhs == 0)
             {
                 return UINT64_MAX;
@@ -740,9 +755,9 @@ uint64_t rv64_jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr)
                 return lhs;
             }
             return (uint64_t)((int64_t)lhs / (int64_t)rhs);
-        case 0x00d: /* DIVU */
+        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_SRL_SRA): /* DIVU */
             return rhs == 0 ? UINT64_MAX : lhs / rhs;
-        case 0x00e: /* REM */
+        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_OR): /* REM */
             if (rhs == 0)
             {
                 return lhs;
@@ -752,7 +767,7 @@ uint64_t rv64_jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr)
                 return 0;
             }
             return (uint64_t)((int64_t)lhs % (int64_t)rhs);
-        case 0x00f: /* REMU */
+        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_AND): /* REMU */
             return rhs == 0 ? lhs : lhs % rhs;
         default:
             return 0;
@@ -768,7 +783,7 @@ uint64_t rv64_jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr)
 
         switch (key)
         {
-        case 0x00c: /* DIVW */
+        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_XOR): /* DIVW */
             if (rhs_s == 0)
             {
                 return UINT64_MAX;
@@ -778,9 +793,9 @@ uint64_t rv64_jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr)
                 return jit_sext32((uint32_t)lhs_s);
             }
             return jit_sext32((uint32_t)(lhs_s / rhs_s));
-        case 0x00d: /* DIVUW */
+        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_SRL_SRA): /* DIVUW */
             return rhs_u == 0 ? UINT64_MAX : jit_sext32(lhs_u / rhs_u);
-        case 0x00e: /* REMW */
+        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_OR): /* REMW */
             if (rhs_s == 0)
             {
                 return jit_sext32((uint32_t)lhs_s);
@@ -790,7 +805,7 @@ uint64_t rv64_jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr)
                 return 0;
             }
             return jit_sext32((uint32_t)(lhs_s % rhs_s));
-        case 0x00f: /* REMUW */
+        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_AND): /* REMUW */
             return rhs_u == 0 ? jit_sext32(lhs_u) : jit_sext32(lhs_u % rhs_u);
         default:
             return 0;
@@ -1316,27 +1331,30 @@ bool rv64_jit_translate_ifetch_collect(vaddr_t pc, paddr_t *paddr,
             return false;
         }
 
-        const word_t vpn[3] = {
-            ((word_t)pc >> 12) & 0x1ffu,
-            ((word_t)pc >> 21) & 0x1ffu,
-            ((word_t)pc >> 30) & 0x1ffu,
+        const word_t vpn[RV64_JIT_SV39_LEVELS] = {
+            ((word_t)pc >> RV64_JIT_SV39_VPN_SHIFT(0)) &
+                RV64_JIT_SV39_VPN_MASK,
+            ((word_t)pc >> RV64_JIT_SV39_VPN_SHIFT(1)) &
+                RV64_JIT_SV39_VPN_MASK,
+            ((word_t)pc >> RV64_JIT_SV39_VPN_SHIFT(2)) &
+                RV64_JIT_SV39_VPN_MASK,
         };
         paddr_t pt_base =
             (paddr_t)((cpu.csr.satp & RV64_JIT_SATP_PPN_MASK) << PAGE_SHIFT);
 
-        for (int level = 2; level >= 0; --level)
+        for (int level = (int)RV64_JIT_SV39_LEVELS - 1; level >= 0; --level)
         {
             const paddr_t pte_addr =
-                pt_base + (paddr_t)(vpn[level] * sizeof(uint64_t));
+                pt_base + (paddr_t)(vpn[level] * RV64_JIT_PTE_SIZE);
 
-            if (!jit_data_pmem_range(pte_addr, sizeof(uint64_t)) ||
+            if (!jit_data_pmem_range(pte_addr, RV64_JIT_PTE_SIZE) ||
                 (refs != NULL &&
                  !jit_ifetch_ref_builder_append(refs, pt_base)))
             {
                 return false;
             }
 
-            const word_t pte = (word_t)paddr_read(pte_addr, 8);
+            const word_t pte = (word_t)paddr_read(pte_addr, RV64_JIT_PTE_SIZE);
 
             if (!jit_sv39_pte_valid(pte))
             {

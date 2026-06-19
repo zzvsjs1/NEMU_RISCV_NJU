@@ -253,6 +253,11 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
 
             while (node != RV64_JIT_SOURCE_LINK_NULL)
             {
+                /*
+                 * Discarding a block removes its reverse-map links, including
+                 * the current node.  Save `next` before the discard so this
+                 * traversal can continue safely.
+                 */
                 const uint32_t next = rv64_jit_source_links[node].next;
                 rv64_jit_block_t *block = &rv64_jit_cache[rv64_jit_source_links[node].block_index];
 

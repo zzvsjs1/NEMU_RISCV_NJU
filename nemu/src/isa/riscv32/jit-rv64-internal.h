@@ -53,6 +53,41 @@
 #define RV64_OPCODE_JALR 0x67u
 #define RV64_OPCODE_JAL 0x6fu
 
+/* RISC-V funct3 values used by load, store, branch and integer emitters. */
+#define RV64_FUNCT3_LB 0x0u
+#define RV64_FUNCT3_LH 0x1u
+#define RV64_FUNCT3_LW 0x2u
+#define RV64_FUNCT3_LD 0x3u
+#define RV64_FUNCT3_LBU 0x4u
+#define RV64_FUNCT3_LHU 0x5u
+#define RV64_FUNCT3_LWU 0x6u
+#define RV64_FUNCT3_SB 0x0u
+#define RV64_FUNCT3_SH 0x1u
+#define RV64_FUNCT3_SW 0x2u
+#define RV64_FUNCT3_SD 0x3u
+#define RV64_FUNCT3_BEQ 0x0u
+#define RV64_FUNCT3_BNE 0x1u
+#define RV64_FUNCT3_BLT 0x4u
+#define RV64_FUNCT3_BGE 0x5u
+#define RV64_FUNCT3_BLTU 0x6u
+#define RV64_FUNCT3_BGEU 0x7u
+#define RV64_FUNCT3_ADD_SUB 0x0u
+#define RV64_FUNCT3_SLL 0x1u
+#define RV64_FUNCT3_SLT 0x2u
+#define RV64_FUNCT3_SLTU 0x3u
+#define RV64_FUNCT3_XOR 0x4u
+#define RV64_FUNCT3_SRL_SRA 0x5u
+#define RV64_FUNCT3_OR 0x6u
+#define RV64_FUNCT3_AND 0x7u
+
+/* RISC-V funct6/funct7 values used to distinguish shift and OP variants. */
+#define RV64_FUNCT6_SHIFT_LOGICAL 0x00u
+#define RV64_FUNCT6_SHIFT_ARITH 0x10u
+#define RV64_FUNCT7_BASE 0x00u
+#define RV64_FUNCT7_MULDIV 0x01u
+#define RV64_FUNCT7_SUB_SRA 0x20u
+#define RV64_OP_KEY(funct7, funct3) (((funct7) << 3) | (funct3))
+
 /* Keep 64 as the old basic-block threshold; longer native regions are traces. */
 #define RV64_JIT_BLOCK_MAX_INSNS 64u
 /* First trace stage: one fall-through superblock with side exits. */
@@ -90,8 +125,9 @@
     (((RV64_JIT_TRACE_MAX_INSNS * RV64_INSN_SIZE) + PAGE_SIZE - 1u) / \
          PAGE_SIZE + \
      1u)
+#define RV64_JIT_SV39_LEVELS 3u
 #define RV64_JIT_BLOCK_MAX_IFETCH_PT_PAGES \
-    (RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS * 3u)
+    (RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS * RV64_JIT_SV39_LEVELS)
 #define RV64_JIT_BLOCK_MAX_SOURCE_CHUNKS \
     (((RV64_JIT_TRACE_MAX_INSNS * RV64_INSN_SIZE) + \
       RV64_JIT_SOURCE_CHUNK_SIZE - 1u) / \
@@ -118,6 +154,17 @@
 #define RV64_JIT_SATP_MODE_SHIFT 60u
 #define RV64_JIT_SATP_MODE_SV39 8u
 #define RV64_JIT_SATP_PPN_MASK (((word_t)1u << 44) - 1u)
+#define RV64_JIT_SV39_VPN_BITS 9u
+#define RV64_JIT_SV39_VPN_MASK \
+    ((word_t)((1u << RV64_JIT_SV39_VPN_BITS) - 1u))
+#define RV64_JIT_SV39_VPN_SHIFT(level) \
+    (PAGE_SHIFT + (level) * RV64_JIT_SV39_VPN_BITS)
+#define RV64_JIT_SV39_CANONICAL_SIGN_BIT 38u
+#define RV64_JIT_SV39_CANONICAL_HIGH_SHIFT 39u
+#define RV64_JIT_SV39_CANONICAL_HIGH_BITS 25u
+#define RV64_JIT_SV39_LEVEL1_LOW_PPN_MASK 0x1ffu
+#define RV64_JIT_SV39_LEVEL2_LOW_PPN_MASK 0x3ffffu
+#define RV64_JIT_PTE_SIZE (sizeof(uint64_t))
 #define RV64_JIT_PTE_V ((word_t)1u << 0)
 #define RV64_JIT_PTE_R ((word_t)1u << 1)
 #define RV64_JIT_PTE_W ((word_t)1u << 2)
@@ -142,6 +189,12 @@
 #define RV64_JIT_MSTATUS_MPP_MASK ((word_t)0x3u << RV64_JIT_MSTATUS_MPP_SHIFT)
 #define RV64_JIT_DATA_TLB_READ 0x1u
 #define RV64_JIT_DATA_TLB_WRITE 0x2u
+#define RV64_JIT_DATA_TLB_ENTRY_SHIFT 6u
+#define RV64_JIT_DATA_TLB_VPN_MIX_SHIFT 9u
+#define RV64_JIT_DATA_TLB_SATP_MIX_SHIFT 12u
+#define RV64_JIT_DATA_TLB_STATE_PRIV_MASK 0x3u
+#define RV64_JIT_DATA_TLB_STATE_SUM (1u << 2)
+#define RV64_JIT_DATA_TLB_STATE_MXR (1u << 3)
 
 /*
  * Native block data model.
@@ -207,7 +260,7 @@ typedef struct
     uint32_t state;
     uint32_t access;
     uint64_t pg_paddr;
-    uint64_t pt_pages[3];
+    uint64_t pt_pages[RV64_JIT_SV39_LEVELS];
     uint8_t pt_page_count;
     bool valid;
 } rv64_jit_data_tlb_entry_t;
@@ -343,7 +396,7 @@ typedef struct
 
 typedef struct
 {
-    uint8_t *slow_disps[10];
+    uint8_t *slow_disps[RV64_JIT_DIRECT_LINK_MISS_PATCHES];
     uint32_t count;
 } rv64_jit_tlb_guard_patch_t;
 
