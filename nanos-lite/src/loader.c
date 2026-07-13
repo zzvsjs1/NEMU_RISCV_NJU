@@ -2,6 +2,7 @@
 #include <elf.h>
 #include "debug.h"
 #include "fs.h"
+#include "loader_checks.h"
 #include "pagewalk.h"
 
 #ifdef __LP64__
@@ -15,7 +16,7 @@
 #if defined(__ISA_X86__)
 #define EXPECT_TYPE EM_386
 #elif defined(__ISA_MIPS32__)
-#define EXPECT_TYPE EF_MIPS_ARCH_32
+#define EXPECT_TYPE EM_MIPS
 #elif defined(__ISA_RISCV32__) || defined(__ISA_RISCV32E__) || defined(__ISA_RISCV64__)
 #define EXPECT_TYPE EM_RISCV
 #else
@@ -28,7 +29,8 @@ extern Area heap;
 
 enum
 {
-    USTACK_PAGES = 8
+    USTACK_PAGES = 8,
+    USTACK_VECTOR_SLOTS = 64,
 };
 
 static uintptr_t align_down(uintptr_t x, uintptr_t a)
@@ -38,7 +40,89 @@ static uintptr_t align_down(uintptr_t x, uintptr_t a)
 
 static uintptr_t align_up(uintptr_t x, uintptr_t a)
 {
+    assert(a != 0 && (a & (a - 1)) == 0);
+    assert(x <= UINTPTR_MAX - (a - 1));
     return (x + a - 1) & ~(a - 1);
+}
+
+/*
+ * Keep the stack reservation in one place.  The ELF loader and the stack
+ * mapper must agree on this boundary or a PT_LOAD page could be mistaken for
+ * an already allocated stack or kernel mapping.
+ */
+static uintptr_t user_stack_base(const AddrSpace *as)
+{
+    const uintptr_t user_start = (uintptr_t)as->area.start;
+    const uintptr_t user_end = (uintptr_t)as->area.end;
+    const uintptr_t stack_bytes = (uintptr_t)USTACK_PAGES * PGSIZE;
+
+    assert(user_end >= user_start);
+    assert(stack_bytes <= user_end - user_start);
+    assert((user_start & (PGSIZE - 1)) == 0);
+    assert((user_end & (PGSIZE - 1)) == 0);
+
+    return user_end - stack_bytes;
+}
+
+static int stack_vector_count(char *const vector[])
+{
+    int count = 0;
+
+    if (vector == NULL)
+    {
+        return 0;
+    }
+
+    while (vector[count] != NULL)
+    {
+        /* The final array slot is reserved for the vector terminator. */
+        assert(count < USTACK_VECTOR_SLOTS - 1);
+        count++;
+    }
+
+    return count;
+}
+
+static size_t stack_string_bytes(char *const vector[], int count)
+{
+    size_t total = 0;
+
+    for (int i = 0; i < count; i++)
+    {
+        size_t length = strlen(vector[i]);
+
+        assert(length < (size_t)-1);
+        length++;
+        assert(length <= (size_t)-1 - total);
+        total += length;
+    }
+
+    return total;
+}
+
+static size_t checked_add_size(size_t left, size_t right)
+{
+    assert(right <= (size_t)-1 - left);
+    return left + right;
+}
+
+/*
+ * The preflight check catches oversized argument vectors, while this helper
+ * makes each later subtraction safe if the stack layout changes in future.
+ */
+static void reserve_stack_bytes(uintptr_t *sp_va, uintptr_t va_base,
+                                uintptr_t *sp_pa, uintptr_t pa_base,
+                                size_t bytes)
+{
+    const uintptr_t amount = (uintptr_t)bytes;
+
+    assert((size_t)amount == bytes);
+    assert(*sp_va >= va_base && *sp_pa >= pa_base);
+    assert(amount <= *sp_va - va_base);
+    assert(amount <= *sp_pa - pa_base);
+
+    *sp_va -= amount;
+    *sp_pa -= amount;
 }
 
 static int elf_load_prot(uint32_t flags)
@@ -60,14 +144,41 @@ static void load_direct(int fd, const Elf_Phdr *phdr)
     }
 }
 
-static uintptr_t load_mapped(PCB *pcb, int fd, const Elf_Phdr *phdr, uintptr_t max_end)
+static uintptr_t load_mapped(PCB *pcb, int fd, const Elf_Phdr *phdr,
+                             uintptr_t max_end, uintptr_t stack_va_base,
+                             uintptr_t entry, bool *entry_mapped)
 {
-    uintptr_t seg_va = (uintptr_t)phdr->p_vaddr;
-    uintptr_t file_va_end = seg_va + phdr->p_filesz;
-    uintptr_t mem_va_end = seg_va + phdr->p_memsz;
-    int prot = elf_load_prot(phdr->p_flags);
+    const uintptr_t user_va_base = (uintptr_t)pcb->as.area.start;
+    const uintptr_t seg_va = (uintptr_t)phdr->p_vaddr;
+    uintptr_t file_va_end;
+    uintptr_t mem_va_end;
+    const int prot = elf_load_prot(phdr->p_flags);
 
     assert(phdr->p_filesz <= phdr->p_memsz);
+
+    /* A zero-sized load segment has no image bytes or address-space effect. */
+    if (phdr->p_memsz == 0)
+    {
+        return max_end;
+    }
+
+    /*
+     * protect() copies kernel mappings into pcb->as.  Validate this range
+     * before page-table lookup so an ELF header can never make the loader
+     * reuse and overwrite one of those inherited kernel pages.
+     */
+    assert(nanos_loader_load_range_fits(user_va_base, (uintptr_t)pcb->as.area.end,
+                                        (size_t)USTACK_PAGES * PGSIZE, seg_va,
+                                        (uintptr_t)phdr->p_memsz, &mem_va_end));
+    assert(mem_va_end <= stack_va_base);
+    assert(nanos_loader_checked_add_uintptr(seg_va, (uintptr_t)phdr->p_filesz,
+                                            &file_va_end));
+
+    assert(entry_mapped != NULL);
+    if ((phdr->p_flags & PF_X) != 0 && entry >= seg_va && entry < mem_va_end)
+    {
+        *entry_mapped = true;
+    }
 
     // Track the maximum end address of all loadable segments.
     if (mem_va_end > max_end)
@@ -77,6 +188,9 @@ static uintptr_t load_mapped(PCB *pcb, int fd, const Elf_Phdr *phdr, uintptr_t m
 
     uintptr_t page_va_begin = align_down(seg_va, PGSIZE);
     uintptr_t page_va_end = align_up(mem_va_end, PGSIZE);
+
+    assert(page_va_begin >= user_va_base);
+    assert(page_va_end <= stack_va_base);
 
     for (uintptr_t page_va = page_va_begin; page_va < page_va_end; page_va += PGSIZE)
     {
@@ -147,6 +261,17 @@ static uintptr_t loader(PCB *pcb, const char *filename)
     assert(elfH.e_phnum != 0);
 
     uintptr_t max_end = 0;
+    uintptr_t stack_va_base = 0;
+    bool entry_mapped = false;
+
+    if (pcb != NULL)
+    {
+        const uintptr_t entry = (uintptr_t)elfH.e_entry;
+        const uintptr_t user_va_base = (uintptr_t)pcb->as.area.start;
+
+        stack_va_base = user_stack_base(&pcb->as);
+        assert(entry >= user_va_base && entry < stack_va_base);
+    }
 
     for (int i = 0; i < (int)elfH.e_phnum; i++)
     {
@@ -167,7 +292,8 @@ static uintptr_t loader(PCB *pcb, const char *filename)
         }
         else
         {
-            max_end = load_mapped(pcb, fd, &phdr, max_end);
+            max_end = load_mapped(pcb, fd, &phdr, max_end, stack_va_base,
+                                  (uintptr_t)elfH.e_entry, &entry_mapped);
         }
     }
 
@@ -176,6 +302,9 @@ static uintptr_t loader(PCB *pcb, const char *filename)
 
     if (pcb != NULL)
     {
+        assert(entry_mapped);
+        assert(max_end <= stack_va_base);
+
         // Initialise max_brk to the end of loaded image, with a lower bound of user space start.
         uintptr_t us = (uintptr_t)pcb->as.area.start;
         pcb->max_brk = (max_end > us) ? max_end : us;
@@ -185,27 +314,33 @@ static uintptr_t loader(PCB *pcb, const char *filename)
     return elfH.e_entry;
 }
 
-uintptr_t build_user_stack(uintptr_t ustack_va_end, uintptr_t ustack_pa_end, char *const argv[], char *const envp[])
+static uintptr_t build_user_stack(uintptr_t ustack_va_base, uintptr_t ustack_va_end,
+                                  uintptr_t ustack_pa_base, uintptr_t ustack_pa_end,
+                                  char *const argv[], char *const envp[])
 {
-    int argc = 0;
-    int envc = 0;
+    char *argv_ptrs[USTACK_VECTOR_SLOTS];
+    char *envp_ptrs[USTACK_VECTOR_SLOTS];
+    const int argc = stack_vector_count(argv);
+    const int envc = stack_vector_count(envp);
+    const size_t argv_bytes = stack_string_bytes(argv, argc);
+    const size_t envp_bytes = stack_string_bytes(envp, envc);
+    const size_t string_bytes = checked_add_size(argv_bytes, envp_bytes);
+    const size_t pointer_words = checked_add_size(
+        checked_add_size((size_t)argc, (size_t)envc), 3u);
+    uintptr_t expected_sp_va;
+    uintptr_t expected_sp_pa;
 
-    if (argv != NULL)
-    {
-        while (argv[argc] != NULL)
-            argc++;
-    }
-
-    if (envp != NULL)
-    {
-        while (envp[envc] != NULL)
-            envc++;
-    }
-
-    // Keep small fixed limits for simplicity in this program.
-    char *argv_ptrs[64];
-    char *envp_ptrs[64];
-    assert(argc < 64 && envc < 64);
+    /*
+     * Account for both NULL terminators and argc in pointer_words.  This must
+     * happen before copying strings: the physical stack sits after earlier
+     * bump allocations, so writing below its base would corrupt them.
+     */
+    assert(nanos_loader_stack_layout_fits(ustack_va_base, ustack_va_end,
+                                          string_bytes, pointer_words,
+                                          &expected_sp_va));
+    assert(nanos_loader_stack_layout_fits(ustack_pa_base, ustack_pa_end,
+                                          string_bytes, pointer_words,
+                                          &expected_sp_pa));
 
     uintptr_t sp_va = ustack_va_end;
     uintptr_t sp_pa = ustack_pa_end;
@@ -217,18 +352,22 @@ uintptr_t build_user_stack(uintptr_t ustack_va_end, uintptr_t ustack_pa_end, cha
     // process address space.
     for (int i = 0; i < argc; i++)
     {
-        const size_t len = strlen(argv[i]) + 1;
-        sp_va -= len;
-        sp_pa -= len;
+        size_t len = strlen(argv[i]);
+
+        assert(len < (size_t)-1);
+        len++;
+        reserve_stack_bytes(&sp_va, ustack_va_base, &sp_pa, ustack_pa_base, len);
         memcpy((void *)sp_pa, argv[i], len);
         argv_ptrs[i] = (char *)sp_va;
     }
 
     for (int i = 0; i < envc; i++)
     {
-        const size_t len = strlen(envp[i]) + 1;
-        sp_va -= len;
-        sp_pa -= len;
+        size_t len = strlen(envp[i]);
+
+        assert(len < (size_t)-1);
+        len++;
+        reserve_stack_bytes(&sp_va, ustack_va_base, &sp_pa, ustack_pa_base, len);
         memcpy((void *)sp_pa, envp[i], len);
         envp_ptrs[i] = (char *)sp_va;
     }
@@ -236,12 +375,12 @@ uintptr_t build_user_stack(uintptr_t ustack_va_end, uintptr_t ustack_pa_end, cha
     // Align for pushing uintptr_t values.
     sp_va = align_down(sp_va, sizeof(uintptr_t));
     sp_pa = align_down(sp_pa, sizeof(uintptr_t));
+    assert(sp_va >= ustack_va_base && sp_pa >= ustack_pa_base);
 
 #define PUSH_U(v) \
     do \
     { \
-        sp_va -= sizeof(uintptr_t); \
-        sp_pa -= sizeof(uintptr_t); \
+        reserve_stack_bytes(&sp_va, ustack_va_base, &sp_pa, ustack_pa_base, sizeof(uintptr_t)); \
         *(uintptr_t *)sp_pa = (uintptr_t)(v); \
     } while (0)
 
@@ -259,6 +398,8 @@ uintptr_t build_user_stack(uintptr_t ustack_va_end, uintptr_t ustack_pa_end, cha
     PUSH_U((uintptr_t)argc);
 
 #undef PUSH_U
+
+    assert(sp_va == expected_sp_va && sp_pa == expected_sp_pa);
 
     // Return the user virtual address of argc, this is the initial user SP as well.
     return sp_va;
@@ -282,7 +423,7 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
 
     // 3) Allocate and map user stack, 32KB = 8 pages.
     uintptr_t ustack_va_end = (uintptr_t)pcb->as.area.end;
-    uintptr_t ustack_va_base = ustack_va_end - (uintptr_t)USTACK_PAGES * PGSIZE;
+    uintptr_t ustack_va_base = user_stack_base(&pcb->as);
 
     void *ustack_pa_base = new_page(USTACK_PAGES);
     assert(ustack_pa_base != NULL);
@@ -299,7 +440,9 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
 
     // 4) Build argc/argv/envp on the stack.
     uintptr_t ustack_pa_end = (uintptr_t)ustack_pa_base + (uintptr_t)USTACK_PAGES * PGSIZE;
-    uintptr_t args_va = build_user_stack(ustack_va_end, ustack_pa_end, argv, envp);
+    uintptr_t args_va = build_user_stack(ustack_va_base, ustack_va_end,
+                                         (uintptr_t)ustack_pa_base, ustack_pa_end,
+                                         argv, envp);
 
     // 5) Create user context on kernel stack.
     // The Context itself must live on the PCB kernel stack, not on the user
