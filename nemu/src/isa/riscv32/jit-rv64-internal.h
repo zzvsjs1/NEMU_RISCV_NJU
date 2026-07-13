@@ -37,8 +37,13 @@
 #define RV64_INSN_SIZE 4u
 /* Seven low bits select the base RISC-V opcode. */
 #define RV64_OPCODE_MASK 0x7fu
-/* Branch targets must be 4-byte aligned while the JIT has no compressed path. */
-#define RV64_BRANCH_ALIGN_MASK 0x3u
+/*
+ * This NEMU RV64 configuration does not implement the compressed C extension,
+ * so the guest architecture has IALIGN=32.  JAL, JALR, and a taken conditional
+ * branch therefore require the target address bits selected by this mask to be
+ * zero.
+ */
+#define RV64_IALIGN_MASK 0x3u
 
 /* RISC-V opcodes used by this first native subset. */
 #define RV64_OPCODE_LOAD 0x03u
@@ -178,8 +183,10 @@
 #define RV64_JIT_PTE_PPN_SHIFT 10u
 #define RV64_JIT_PTE_PPN_MASK (((word_t)1u << 44) - 1u)
 /*
- * The RV64 JIT has no Svnapot/Svpbmt support.  Sv39 PTE bits [63:54] therefore
- * remain reserved and must fault rather than produce a cached translation.
+ * The RV64 JIT has no Svnapot, Svpbmt, or Svrsw60t59b support.  Sv39 PTE bits
+ * [63:54] therefore remain reserved and must fault rather than produce a cached
+ * translation.  Add the relevant state to the JIT guards before enabling any of
+ * those extensions in NEMU's architectural walker.
  */
 #define RV64_JIT_PTE_RESERVED_63_54_MASK (((word_t)0x3ffu) << 54)
 #define RV64_JIT_MSTATUS_MPRV ((word_t)1u << 17)
@@ -211,11 +218,13 @@
  * a block may be fetched physically but still contain translated data accesses
  * when MPRV or lower privilege is active.
  *
- * Source segments record the physical bytes behind the guest PCs.  They are
- * used both to compare current bytes against the compiled copy and to link the
- * block into the reverse invalidation map.  Page-table references are stored as
- * PMEM page numbers, because any store into one of those pages can change a
- * translation even when the instruction bytes themselves are untouched.
+ * Source segments map guest PCs to the physical bytes used at compilation and
+ * link the block into the reverse invalidation map.  The JIT does not keep a
+ * second byte-for-byte snapshot.  Its safety therefore relies on the global
+ * NEMU rule that every CPU, helper, DMA, and device write to PMEM calls
+ * isa_jit_invalidate_paddr() before stale native code can execute.  Page-table
+ * references are stored as PMEM page numbers because a write to any byte in one
+ * of those pages can change a translation without changing instruction bytes.
  */
 typedef uint32_t (*rv64_jit_entry_t)(void);
 
@@ -224,6 +233,8 @@ typedef struct
     uint8_t *start;
     uint8_t *cur;
     uint8_t *end;
+    /* Distinguish arena exhaustion from an unsupported guest encoding. */
+    bool overflowed;
 } rv64_jit_writer_t;
 
 typedef enum
@@ -287,8 +298,17 @@ typedef struct
     uint32_t count;
 } rv64_jit_ifetch_ref_builder_t;
 
-typedef char rv64_jit_data_tlb_entry_size_must_be_64[sizeof(rv64_jit_data_tlb_entry_t) == 64 ? 1 : -1];
-typedef char rv64_jit_pmem_mapping_must_be_page_aligned[((CONFIG_MBASE | CONFIG_MSIZE) & PAGE_MASK) == 0 ? 1 : -1];
+_Static_assert(sizeof(rv64_jit_data_tlb_entry_t) ==
+                   (1u << RV64_JIT_DATA_TLB_ENTRY_SHIFT),
+               "RV64 JIT data-TLB entry size must match the emitted index shift");
+_Static_assert(((CONFIG_MBASE | CONFIG_MSIZE) & PAGE_MASK) == 0,
+               "RV64 JIT PMEM must be page aligned");
+_Static_assert((uint64_t)CONFIG_MSIZE <= (uint64_t)UINT32_MAX + 1u,
+               "RV64 JIT inline PMEM offsets must fit in 32 bits");
+_Static_assert(RV64_JIT_PMEM_CHUNK_COUNT <= UINT32_MAX,
+               "RV64 JIT source chunk indexes must fit in 32 bits");
+_Static_assert(RV64_JIT_DATA_TLB_SIZE * RV64_JIT_SV39_LEVELS < UINT16_MAX,
+               "RV64 JIT data-TLB dependency refs must fit in 16 bits");
 
 typedef struct
 {
@@ -335,29 +355,48 @@ typedef enum
 
 typedef struct
 {
+    /* Dispatcher and native-entry activity measured while the guest runs. */
     uint64_t exec_requests;
     uint64_t cache_hits;
     uint64_t cache_misses;
     uint64_t unsupported_hits;
+    uint64_t blocks_executed;
+    uint64_t executed_insns;
+    uint64_t zero_side_exits;
+
+    /*
+     * Compilation and negative-cache outcomes.  These count published native
+     * regions, cached unsupported entries, and their guest source rather than
+     * later executions of generated code.
+     */
     uint64_t blocks_compiled;
     uint64_t blocks_unsupported;
-    uint64_t blocks_executed;
     uint64_t compiled_insns;
-    uint64_t executed_insns;
-    uint64_t native_loads;
-    uint64_t native_stores;
-    uint64_t native_jumps;
-    uint64_t native_m_ops;
     uint64_t translated_blocks;
     uint64_t translated_cross_page_blocks;
     uint64_t segmented_source_blocks;
     uint64_t trace_blocks;
     uint64_t trace_insns;
+    uint64_t unsupported_by_opcode[RV64_OPCODE_MASK + 1u];
+    uint64_t block_end_by_reason[RV64_JIT_BLOCK_END_COUNT];
+
+    /*
+     * Native sites emitted while compiling blocks.  One site may execute many
+     * times, so none of these values is a run-time instruction count.
+     */
+    uint64_t native_loads;
+    uint64_t native_stores;
+    uint64_t native_jumps;
+    uint64_t native_m_ops;
     uint64_t reg_cache_spills;
     uint64_t native_store_continuations;
     uint64_t native_paged_loads;
     uint64_t native_paged_stores;
-    uint64_t zero_side_exits;
+    uint64_t inline_paged_loads;
+    uint64_t inline_paged_stores;
+
+    /* Run-time side exits, helper calls, and Sv39 data-TLB activity. */
+    uint64_t side_exit_by_reason[RV64_JIT_SIDE_EXIT_COUNT];
     uint64_t data_tlb_hits;
     uint64_t data_tlb_misses;
     uint64_t data_tlb_fills;
@@ -365,19 +404,18 @@ typedef struct
     uint64_t data_tlb_page_table_flushes;
     uint64_t data_tlb_direct_loads;
     uint64_t data_tlb_direct_stores;
-    uint64_t inline_paged_loads;
-    uint64_t inline_paged_stores;
     uint64_t inline_paged_load_hits;
     uint64_t inline_paged_store_hits;
-    uint64_t unsupported_by_opcode[RV64_OPCODE_MASK + 1u];
-    uint64_t block_end_by_reason[RV64_JIT_BLOCK_END_COUNT];
-    uint64_t side_exit_by_reason[RV64_JIT_SIDE_EXIT_COUNT];
     uint64_t helper_load_count;
     uint64_t helper_store_count;
+
+    /* Direct-link outcomes are incremented by the running generated code. */
     uint64_t direct_link_taken_count;
     uint64_t direct_link_miss_count;
     uint64_t direct_branch_link_taken_count;
     uint64_t direct_guarded_link_taken_count;
+
+    /* Validation and invalidation maintenance performed while NEMU runs. */
     uint64_t ifetch_generation_fast_hits;
     uint64_t ifetch_generation_revalidations;
     uint64_t ifetch_generation_bumps;
@@ -405,22 +443,27 @@ typedef struct
 static inline uint32_t bits(uint32_t value, int hi, int lo)
 {
     /*
-     * All current callers pass 0 <= lo <= hi < 32. The `(1u << width) - 1`
-     * mask is therefore well-defined and keeps only the requested field.
+     * All callers pass 0 <= lo <= hi < 32.  Forming the mask by shifting
+     * UINT32_MAX also keeps a future full-width [31:0] request well-defined;
+     * `(1u << 32) - 1` would not be valid C.
      */
-    return (value >> lo) & ((1u << (hi - lo + 1)) - 1u);
+    const unsigned width = (unsigned)(hi - lo + 1);
+    const uint32_t mask = UINT32_MAX >> (32u - width);
+    return (value >> lo) & mask;
 }
 
 /* Sign-extend an instruction field whose sign bit is at width - 1. */
 static inline int64_t sext(uint32_t value, unsigned width)
 {
     /*
-     * RV64 immediates in this file are at most 32 bits before extension. Shift
-     * left until the field sign reaches bit 31, then rely on signed arithmetic
-     * right shift to fill the high bits.
+     * RV64 immediates in this file are at most 32 bits before extension.  The
+     * xor-and-subtract form is independent of the implementation's signed
+     * right-shift behaviour: values below the sign bit stay positive and values
+     * at or above it subtract twice the sign-bit weight.
      */
-    const uint32_t shift = 32u - width;
-    return (int64_t)((int32_t)(value << shift) >> shift);
+    const uint32_t mask = UINT32_MAX >> (32u - width);
+    const uint32_t sign = 1u << (width - 1u);
+    return (int64_t)(((value & mask) ^ sign)) - (int64_t)sign;
 }
 
 /* Decode the I-format immediate as a signed XLEN value. */
@@ -487,8 +530,8 @@ static inline uint32_t jit_pc_offset(void)
 extern rv64_jit_block_t rv64_jit_cache[RV64_JIT_CACHE_SIZE];
 extern rv64_jit_data_tlb_entry_t rv64_jit_data_tlb[RV64_JIT_DATA_TLB_SIZE];
 extern uint16_t rv64_jit_data_tlb_pt_page_refs[RV64_JIT_PMEM_PAGE_COUNT];
-extern uint16_t rv64_jit_ifetch_pt_page_refs[RV64_JIT_PMEM_PAGE_COUNT];
-extern uint16_t rv64_jit_source_chunk_refs[RV64_JIT_PMEM_CHUNK_COUNT];
+extern uint32_t rv64_jit_ifetch_pt_page_refs[RV64_JIT_PMEM_PAGE_COUNT];
+extern uint32_t rv64_jit_source_chunk_refs[RV64_JIT_PMEM_CHUNK_COUNT];
 extern uint32_t rv64_jit_source_chunk_heads[RV64_JIT_PMEM_CHUNK_COUNT];
 extern rv64_jit_source_link_t rv64_jit_source_links[RV64_JIT_SOURCE_LINK_COUNT];
 extern uint32_t rv64_jit_source_link_free_head;
@@ -525,6 +568,7 @@ extern volatile uint32_t rv64_jit_loop_extra;
 
 void rv64_jit_stat_unsupported_opcode(uint32_t instr);
 void rv64_jit_stat_block_end(rv64_jit_block_end_reason_t reason);
+void rv64_jit_dump_stats_report(void);
 bool rv64_jit_direct_link_enabled(void);
 void rv64_jit_ifetch_generation_bump(void);
 void rv64_jit_data_tlb_flush(void);
@@ -585,28 +629,25 @@ bool rv64_jit_emit_jump_instr(rv64_jit_writer_t *w,
                               rv64_jit_reg_cache_t *regs,
                               uint32_t instr, vaddr_t pc,
                               uint32_t completed_count,
-                              bool loop_count_needed,
                               bool source_uses_data_state);
 bool rv64_jit_emit_load_instr(rv64_jit_writer_t *w,
                               rv64_jit_reg_cache_t *regs,
                               uint32_t instr, vaddr_t pc,
-                              uint32_t completed_count,
-                              bool loop_count_needed);
+                              uint32_t completed_count);
 bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w,
                                rv64_jit_reg_cache_t *regs,
                                uint32_t instr, vaddr_t pc,
                                vaddr_t next_pc,
-                               uint32_t completed_count,
-                               bool loop_count_needed);
+                               uint32_t completed_count);
 bool rv64_jit_emit_branch(rv64_jit_writer_t *w,
                           rv64_jit_reg_cache_t *regs,
                           uint32_t instr, vaddr_t pc,
                           vaddr_t block_start_pc,
-                          const uint8_t *block_start_native,
-                          bool chain_safe,
-                          bool *branch_chained,
-                          uint32_t exit_count,
-                          bool source_uses_data_state);
+                          const uint8_t *native_body_entry,
+                          bool can_chain_self_backedge,
+                          bool *emitted_native_backedge,
+                          uint32_t retired_including_current,
+                          bool current_block_uses_data_translation_state);
 bool rv64_jit_emit_instr(rv64_jit_writer_t *w,
                          rv64_jit_reg_cache_t *regs,
                          uint32_t instr, vaddr_t pc,

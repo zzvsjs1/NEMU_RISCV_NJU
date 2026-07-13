@@ -75,7 +75,7 @@ static void jit_ifetch_ref_page(paddr_t page)
 
     if (jit_data_pmem_page_index(page, &idx))
     {
-        Assert(rv64_jit_ifetch_pt_page_refs[idx] != UINT16_MAX,
+        Assert(rv64_jit_ifetch_pt_page_refs[idx] != UINT32_MAX,
                "jit: RV64 ifetch page-table refcount overflow");
         rv64_jit_ifetch_pt_page_refs[idx]++;
     }
@@ -354,7 +354,16 @@ static bool jit_data_pte_allows_priv(word_t pte, word_t priv)
     return false;
 }
 
-/* Compute which data access kinds are legal for this leaf and CPU state. */
+/*
+ * Compute which data access kinds are legal for this leaf and CPU state.
+ *
+ * The privileged architecture permits either faulting on clear A/D bits
+ * (Svade behaviour) or updating them when the relevant extension is absent.
+ * NEMU's current architectural walker faults when A is clear, or when D is
+ * clear for a store.  The JIT deliberately mirrors that reference behaviour;
+ * it must be changed together with system/mmu.c if NEMU later implements
+ * hardware-style A/D updates.
+ */
 static uint32_t jit_data_leaf_access(word_t pte, word_t priv)
 {
     if (!jit_data_pte_allows_priv(pte, priv) ||
@@ -818,13 +827,17 @@ uint64_t rv64_jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr)
 /*
  * Source invalidation model.
  *
- * A native block is valid only while every physical source byte still matches
- * the bytes seen during compilation and every referenced ifetch page-table page
- * is unchanged.  Source bytes are grouped into 128-byte PMEM chunks.  Each
- * block publishes reverse links from those chunks to its cache slot, allowing a
- * normal store or DMA write to discard affected blocks without scanning the
- * whole cache in the common case.  The full scan fallback is still kept for
- * oversized ranges and defensive overflow handling.
+ * A native block is valid only while no physical source byte or referenced
+ * ifetch page-table page has been modified since compilation.  The JIT does not
+ * keep a second byte snapshot.  Instead, every CPU, helper, DMA, and device PMEM
+ * writer must call isa_jit_invalidate_paddr(); that global write-side invariant
+ * is what prevents stale native instructions from running.
+ *
+ * Source bytes are grouped into 128-byte PMEM chunks.  Each block publishes
+ * reverse links from those chunks to its cache slot, allowing a normal store or
+ * DMA write to discard affected blocks without scanning the whole cache in the
+ * common case.  The full scan fallback is retained for oversized ranges and
+ * defensive overflow handling.
  */
 /* Round a code offset up to the next power-of-two alignment boundary. */
 size_t rv64_jit_align_up(size_t value, size_t align)
@@ -838,6 +851,14 @@ static bool jit_ranges_overlap(paddr_t a, uint32_t a_len, paddr_t b, int b_len)
     if (a_len == 0 || b_len <= 0)
     {
         return false;
+    }
+
+    const paddr_t max_address = (paddr_t)-1;
+    if (a > max_address - (paddr_t)a_len ||
+        b > max_address - (paddr_t)b_len)
+    {
+        /* A wrapped caller range is malformed; conservatively report overlap. */
+        return true;
     }
 
     const paddr_t a_end = a + (paddr_t)a_len;
@@ -1180,7 +1201,7 @@ void rv64_jit_source_chunks_ref(const rv64_jit_block_t *block)
                 continue;
             }
 
-            Assert(rv64_jit_source_chunk_refs[i] != UINT16_MAX,
+            Assert(rv64_jit_source_chunk_refs[i] != UINT32_MAX,
                    "jit: RV64 source chunk refcount overflow at %zu", i);
             rv64_jit_source_chunk_refs[i]++;
         }
@@ -1273,12 +1294,12 @@ void rv64_jit_block_discard(rv64_jit_block_t *block)
 /*
  * Block validation and cache matching.
  *
- * Cache lookup is deliberately only a hint.  A slot match must re-check the
- * guest PC, `satp`, ifetch privilege, translation generation, source byte
- * segments and page-table dependencies before native code runs.  This is the
- * main safety net for self-modifying code, disk/DMA writes into PMEM and guest
- * page-table edits.  Unsupported cached slots are kept as negative entries so
- * the dispatcher does not repeatedly compile the same unsupported instruction.
+ * Cache lookup is deliberately only a hint.  A slot match re-checks the guest
+ * PC, `satp`, ifetch privilege, translation generation, physical source mapping,
+ * and page-table dependencies before native code runs.  Actual source-byte
+ * changes are handled earlier by the mandatory write-side invalidation hook
+ * described above.  Unsupported slots are negative cache entries, preventing
+ * repeated compilation attempts for the same fallback instruction.
  */
 /* Return whether this leaf PTE permits instruction fetch at the current priv. */
 static bool jit_ifetch_leaf_allows(word_t pte)
@@ -1425,8 +1446,9 @@ bool rv64_jit_block_matches(rv64_jit_block_t *block, vaddr_t pc)
         /*
          * Writes and SFENCE.VMA conservatively bump the global ifetch
          * generation.  Only after such a bump do we re-translate the virtual
-         * pages touched by this block and refresh its generation if the
-         * physical source bytes are still identical.
+         * pages touched by this block and refresh its generation if they still
+         * resolve to the same physical source addresses.  Byte changes do not
+         * reach this path because write-side invalidation discards the block.
          */
         uint32_t offset = 0;
         rv64_jit_ifetch_ref_builder_t refs = {0};

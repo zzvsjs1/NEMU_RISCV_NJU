@@ -8,8 +8,12 @@
  * RV64 JIT compile layer: RISC-V instruction scanning, block construction,
  * unsupported-instruction fallback and publication of compiled blocks.
  */
-/* Return true for opcodes that can appear inside a native chained loop body. */
-static bool jit_instr_can_chain_body(uint32_t instr)
+/*
+ * Return whether an opcode class is worth following during the cheap loop
+ * pre-scan.  This is only a hint: the real emitter still validates funct fields,
+ * reserved encodings, memory guards, and output space instruction by instruction.
+ */
+static bool jit_opcode_may_be_in_loop_prescan(uint32_t instr)
 {
     const uint32_t opcode = instr & RV64_OPCODE_MASK;
 
@@ -30,44 +34,125 @@ static bool jit_instr_can_chain_body(uint32_t instr)
     }
 }
 
-/* Cheaply pre-scan whether this block has a branch back to its own start. */
-static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
-                                             bool first_translated)
+/*
+ * Cheaply pre-scan for a conditional branch back to the block head.  Ordinary
+ * branches are followed along their fall-through path; only a self-backedge is
+ * a candidate for native loop chaining.
+ */
+static bool jit_prescan_finds_self_backedge(vaddr_t pc, uint32_t max_insns,
+                                            bool uses_translated_ifetch)
 {
-    vaddr_t cur_pc = pc;
-    uint32_t count = 0;
+    vaddr_t candidate_pc = pc;
+    uint32_t scanned_insn_count = 0;
 
-    while (count < max_insns && count < RV64_JIT_TRACE_MAX_INSNS)
+    while (scanned_insn_count < max_insns &&
+           scanned_insn_count < RV64_JIT_TRACE_MAX_INSNS)
     {
-        paddr_t cur_paddr = 0;
-        bool cur_translated = false;
+        paddr_t candidate_paddr = 0;
+        bool candidate_uses_translated_ifetch = false;
 
-        if (!rv64_jit_translate_ifetch_ex(cur_pc, &cur_paddr, &cur_translated) ||
-            !in_pmem(cur_paddr) ||
-            cur_translated != first_translated)
+        if (!rv64_jit_translate_ifetch_ex(
+                candidate_pc, &candidate_paddr,
+                &candidate_uses_translated_ifetch) ||
+            !in_pmem(candidate_paddr) ||
+            candidate_uses_translated_ifetch != uses_translated_ifetch)
         {
             return false;
         }
 
-        const uint32_t instr = (uint32_t)vaddr_ifetch(cur_pc, RV64_INSN_SIZE);
+        const uint32_t instr =
+            (uint32_t)vaddr_ifetch(candidate_pc, RV64_INSN_SIZE);
         const uint32_t opcode = instr & RV64_OPCODE_MASK;
 
-        if (!jit_instr_can_chain_body(instr))
+        if (!jit_opcode_may_be_in_loop_prescan(instr))
         {
             return false;
         }
 
-        if (opcode == RV64_OPCODE_BRANCH && cur_pc + imm_b(instr) == pc)
+        if (opcode == RV64_OPCODE_BRANCH &&
+            candidate_pc + imm_b(instr) == pc)
         {
             return true;
         }
 
-        cur_pc += RV64_INSN_SIZE;
-        count++;
+        candidate_pc += RV64_INSN_SIZE;
+        scanned_insn_count++;
     }
 
     return false;
 }
+
+/*
+ * Counters in this snapshot describe native sites emitted while compiling.
+ * They are transactional for the same reason as native bytes and register-cache
+ * metadata: bytes which are rolled back or never published must not appear in
+ * the final profile as usable emitted sites.
+ */
+#if RV64_JIT_STATS
+typedef struct
+{
+    uint64_t native_loads;
+    uint64_t native_stores;
+    uint64_t native_jumps;
+    uint64_t native_m_ops;
+    uint64_t reg_cache_spills;
+    uint64_t native_store_continuations;
+    uint64_t native_paged_loads;
+    uint64_t native_paged_stores;
+    uint64_t inline_paged_loads;
+    uint64_t inline_paged_stores;
+} rv64_jit_emitted_site_stats_t;
+
+static rv64_jit_emitted_site_stats_t jit_snapshot_emitted_site_stats(void)
+{
+    return (rv64_jit_emitted_site_stats_t){
+        .native_loads = rv64_jit_stats.native_loads,
+        .native_stores = rv64_jit_stats.native_stores,
+        .native_jumps = rv64_jit_stats.native_jumps,
+        .native_m_ops = rv64_jit_stats.native_m_ops,
+        .reg_cache_spills = rv64_jit_stats.reg_cache_spills,
+        .native_store_continuations =
+            rv64_jit_stats.native_store_continuations,
+        .native_paged_loads = rv64_jit_stats.native_paged_loads,
+        .native_paged_stores = rv64_jit_stats.native_paged_stores,
+        .inline_paged_loads = rv64_jit_stats.inline_paged_loads,
+        .inline_paged_stores = rv64_jit_stats.inline_paged_stores,
+    };
+}
+
+static void jit_restore_emitted_site_stats(
+    const rv64_jit_emitted_site_stats_t *snapshot)
+{
+    rv64_jit_stats.native_loads = snapshot->native_loads;
+    rv64_jit_stats.native_stores = snapshot->native_stores;
+    rv64_jit_stats.native_jumps = snapshot->native_jumps;
+    rv64_jit_stats.native_m_ops = snapshot->native_m_ops;
+    rv64_jit_stats.reg_cache_spills = snapshot->reg_cache_spills;
+    rv64_jit_stats.native_store_continuations =
+        snapshot->native_store_continuations;
+    rv64_jit_stats.native_paged_loads = snapshot->native_paged_loads;
+    rv64_jit_stats.native_paged_stores = snapshot->native_paged_stores;
+    rv64_jit_stats.inline_paged_loads = snapshot->inline_paged_loads;
+    rv64_jit_stats.inline_paged_stores = snapshot->inline_paged_stores;
+}
+#else
+/* Keep call sites uniform; the optimiser removes this one-byte no-op snapshot. */
+typedef struct
+{
+    uint8_t unused;
+} rv64_jit_emitted_site_stats_t;
+
+static rv64_jit_emitted_site_stats_t jit_snapshot_emitted_site_stats(void)
+{
+    return (rv64_jit_emitted_site_stats_t){0};
+}
+
+static void jit_restore_emitted_site_stats(
+    const rv64_jit_emitted_site_stats_t *snapshot)
+{
+    (void)snapshot;
+}
+#endif
 
 typedef struct
 {
@@ -75,7 +160,30 @@ typedef struct
     rv64_jit_reg_cache_t regs;
     rv64_jit_source_builder_t source;
     rv64_jit_ifetch_ref_builder_t ifetch_refs;
+    rv64_jit_emitted_site_stats_t emitted_site_stats;
 } rv64_jit_compile_snapshot_t;
+
+typedef enum
+{
+    /* Budget, fallback, and a chained branch still need a fall-through exit. */
+    RV64_JIT_COMPILE_NEEDS_FALLTHROUGH_EXIT,
+    /* JAL and JALR emit every possible return/link path themselves. */
+    RV64_JIT_COMPILE_HAS_TERMINAL_EXIT,
+} rv64_jit_compile_exit_state_t;
+
+/* Everything needed to publish one fully emitted native region. */
+typedef struct
+{
+    vaddr_t start_pc;
+    vaddr_t next_pc;
+    paddr_t first_paddr;
+    bool uses_translated_ifetch;
+    bool needs_data_translation_guard;
+    uint32_t compiled_insn_count;
+    const uint8_t *native_body_entry;
+    const rv64_jit_source_builder_t *source;
+    const rv64_jit_ifetch_ref_builder_t *ifetch_refs;
+} rv64_jit_publish_info_t;
 
 /*
  * An instruction contributes to the block only after its native bytes and
@@ -84,20 +192,110 @@ typedef struct
  * including the ifetch refs collected for it, and record why this block stopped.
  * A negative cache entry is published later only when no instruction was kept.
  */
-static void jit_reject_unsupported_instr(rv64_jit_writer_t *w,
-                                         rv64_jit_reg_cache_t *regs,
-                                         rv64_jit_source_builder_t *source,
-                                         rv64_jit_ifetch_ref_builder_t *ifetch_refs,
-                                         const rv64_jit_compile_snapshot_t *snapshot,
-                                         uint32_t instr,
-                                         rv64_jit_block_end_reason_t *block_end_reason)
+static bool jit_handle_emit_failure(rv64_jit_writer_t *w,
+                                    rv64_jit_reg_cache_t *regs,
+                                    rv64_jit_source_builder_t *source,
+                                    rv64_jit_ifetch_ref_builder_t *ifetch_refs,
+                                    const rv64_jit_compile_snapshot_t *snapshot,
+                                    uint32_t instr,
+                                    rv64_jit_block_end_reason_t *block_end_reason,
+                                    bool *arena_overflowed)
 {
     w->cur = snapshot->writer_cur;
     rv64_jit_reg_cache_restore(regs, &snapshot->regs);
     *source = snapshot->source;
     *ifetch_refs = snapshot->ifetch_refs;
+    jit_restore_emitted_site_stats(&snapshot->emitted_site_stats);
+
+    /*
+     * A full writer is a compiler resource failure, not an unsupported RISC-V
+     * instruction.  Abort this compilation without publishing a negative cache
+     * entry; a later arena reset may provide enough space for the same opcode.
+     */
+    if (w->overflowed)
+    {
+        *arena_overflowed = true;
+        w->overflowed = false;
+        return false;
+    }
+
     rv64_jit_stat_unsupported_opcode(instr);
     *block_end_reason = RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX;
+    return true;
+}
+
+/*
+ * Publish generated code only after all bytes and dependency metadata exist.
+ * The slot remains invalid while it is populated: synchronise the native
+ * instruction cache, discard the previous owner, copy metadata, install
+ * dependency references, and set `valid` last.  Finally advance arena usage so
+ * a later compilation cannot overwrite the new block.
+ */
+static rv64_jit_block_t *jit_publish_compiled_block(
+    rv64_jit_writer_t *w, const rv64_jit_publish_info_t *info)
+{
+    __builtin___clear_cache((char *)w->start, (char *)w->cur);
+
+    rv64_jit_block_t *block = rv64_jit_cache_slot(info->start_pc);
+    rv64_jit_block_discard(block);
+    *block = (rv64_jit_block_t){
+        .valid = false,
+        .translated = info->uses_translated_ifetch,
+        .uses_data_state = info->needs_data_translation_guard,
+        .pc = info->start_pc,
+        .satp = cpu.csr.satp,
+        .ifetch_state = rv64_jit_ifetch_state(),
+        .data_state = rv64_jit_data_tlb_state(MEM_TYPE_READ),
+        .ifetch_generation = rv64_jit_ifetch_generation,
+        .paddr_start = info->first_paddr,
+        .source_len = info->source->source_len,
+        .source_segment_count = info->source->segment_count,
+        .ifetch_pt_page_count = info->uses_translated_ifetch
+                                   ? info->ifetch_refs->count
+                                   : 0,
+        .insn_count = info->compiled_insn_count,
+        .entry = (rv64_jit_entry_t)w->start,
+        .body_entry = (rv64_jit_entry_t)info->native_body_entry,
+    };
+    memcpy(block->source_segments, info->source->segments,
+           sizeof(info->source->segments));
+    memcpy(block->ifetch_pt_pages, info->ifetch_refs->pages,
+           block->ifetch_pt_page_count * sizeof(block->ifetch_pt_pages[0]));
+    rv64_jit_ifetch_refs_ref(block);
+    rv64_jit_source_chunks_ref(block);
+    rv64_jit_source_reverse_map_add(block);
+    block->valid = true;
+
+    rv64_jit_code_used = (size_t)(w->cur - rv64_jit_code);
+    return block;
+}
+
+/* Record compile-time counters after publication has definitely succeeded. */
+static void jit_record_compilation_stats(const rv64_jit_publish_info_t *info,
+                                         rv64_jit_block_end_reason_t end_reason)
+{
+    JIT_STAT_INC(blocks_compiled);
+    rv64_jit_stat_block_end(end_reason);
+
+    if (info->uses_translated_ifetch)
+    {
+        JIT_STAT_INC(translated_blocks);
+        const vaddr_t last_pc = info->next_pc - RV64_INSN_SIZE;
+        if (((info->start_pc ^ last_pc) & ~(vaddr_t)PAGE_MASK) != 0)
+        {
+            JIT_STAT_INC(translated_cross_page_blocks);
+        }
+    }
+    if (info->source->segment_count > 1u)
+    {
+        JIT_STAT_INC(segmented_source_blocks);
+    }
+    if (info->compiled_insn_count > RV64_JIT_BLOCK_MAX_INSNS)
+    {
+        JIT_STAT_INC(trace_blocks);
+        JIT_STAT_ADD(trace_insns, info->compiled_insn_count);
+    }
+    JIT_STAT_ADD(compiled_insns, info->compiled_insn_count);
 }
 
 /*
@@ -112,16 +310,28 @@ static void jit_reject_unsupported_instr(rv64_jit_writer_t *w,
  *      refs before emitting bytes that can observe that instruction.
  *   5. Emit either a normal block exit, a guarded direct link, a side exit or a
  *      chained-loop backedge.
- *   6. Publish the block metadata only after code emission, source copying and
- *      reverse invalidation links are all complete.
+ *   6. Publish the block only after code emission, source/dependency metadata,
+ *      and reverse invalidation links are all complete.
  */
-/* Compile one bounded RV64 native region starting at the current guest PC. */
-rv64_jit_block_t *rv64_jit_compile_block(vaddr_t pc, uint32_t max_insns)
+/*
+ * Attempt to compile one bounded native region without retrying resource
+ * failures.  `arena_overflowed` distinguishes writer exhaustion from normal
+ * interpreter fallback so the public wrapper can perform one controlled arena
+ * reset without ever creating an unsupported-instruction cache entry.
+ */
+static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
+                                                 uint32_t max_insns,
+                                                 bool *arena_overflowed)
 {
+    *arena_overflowed = false;
+
     if (!rv64_jit_code_init() || max_insns == 0)
     {
         return NULL;
     }
+
+    const rv64_jit_emitted_site_stats_t attempt_site_stats =
+        jit_snapshot_emitted_site_stats();
 
     if (rv64_jit_code_used + RV64_JIT_BLOCK_CODE_HEADROOM > RV64_JIT_CODE_SIZE)
     {
@@ -131,8 +341,9 @@ rv64_jit_block_t *rv64_jit_compile_block(vaddr_t pc, uint32_t max_insns)
     rv64_jit_code_used = rv64_jit_align_up(rv64_jit_code_used, RV64_JIT_CODE_ALIGN);
 
     paddr_t first_paddr = 0;
-    bool first_translated = false;
-    if (!rv64_jit_translate_ifetch_ex(pc, &first_paddr, &first_translated) ||
+    bool uses_translated_ifetch = false;
+    if (!rv64_jit_translate_ifetch_ex(pc, &first_paddr,
+                                      &uses_translated_ifetch) ||
         !in_pmem(first_paddr))
     {
         return NULL;
@@ -148,52 +359,61 @@ rv64_jit_block_t *rv64_jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
     if (!rv64_jit_emit_prologue(&w))
     {
+        *arena_overflowed = w.overflowed;
+        jit_restore_emitted_site_stats(&attempt_site_stats);
         return NULL;
     }
 
-    const bool has_chainable_backedge =
-        jit_block_has_chainable_backedge(pc, max_insns, first_translated);
-    const bool loop_count_needed = true;
-    const uint8_t *block_start_native = w.cur;
-    vaddr_t cur_pc = pc;
-    uint32_t count = 0;
+    const bool prescan_found_self_backedge =
+        jit_prescan_finds_self_backedge(pc, max_insns,
+                                        uses_translated_ifetch);
+    const uint8_t *native_body_entry = w.cur;
+    vaddr_t guest_pc = pc;
+    uint32_t compiled_insn_count = 0;
     rv64_jit_source_builder_t source = {0};
     rv64_jit_ifetch_ref_builder_t ifetch_refs = {0};
-    bool block_uses_data_state = false;
+    bool needs_data_translation_guard = false;
+    rv64_jit_compile_exit_state_t exit_state =
+        RV64_JIT_COMPILE_NEEDS_FALLTHROUGH_EXIT;
     rv64_jit_block_end_reason_t block_end_reason = RV64_JIT_BLOCK_END_BUDGET;
 
-    while (count < max_insns && count < RV64_JIT_TRACE_MAX_INSNS)
+    while (compiled_insn_count < max_insns &&
+           compiled_insn_count < RV64_JIT_TRACE_MAX_INSNS)
     {
         /*
          * Re-translate every guest instruction, even inside one block. This keeps
          * the block metadata honest across page boundaries and avoids assuming that
          * adjacent virtual PCs are adjacent physical bytes.
          */
-        paddr_t cur_paddr = 0;
-        bool cur_translated = false;
+        paddr_t instruction_paddr = 0;
+        bool instruction_uses_translated_ifetch = false;
         rv64_jit_ifetch_ref_builder_t ifetch_refs_start = ifetch_refs;
 
-        if (!rv64_jit_translate_ifetch_collect(cur_pc, &cur_paddr,
-                                               &cur_translated, &ifetch_refs) ||
-            !in_pmem(cur_paddr) ||
-            cur_translated != first_translated)
+        if (!rv64_jit_translate_ifetch_collect(
+                guest_pc, &instruction_paddr,
+                &instruction_uses_translated_ifetch, &ifetch_refs) ||
+            !in_pmem(instruction_paddr) ||
+            instruction_uses_translated_ifetch != uses_translated_ifetch)
         {
             ifetch_refs = ifetch_refs_start;
             block_end_reason = RV64_JIT_BLOCK_END_SOURCE_BOUNDARY;
             break;
         }
 
-        const uint32_t instr = (uint32_t)vaddr_ifetch(cur_pc, RV64_INSN_SIZE);
+        const uint32_t instr =
+            (uint32_t)vaddr_ifetch(guest_pc, RV64_INSN_SIZE);
         const uint32_t opcode = instr & RV64_OPCODE_MASK;
         const rv64_jit_compile_snapshot_t instr_snapshot = {
             .writer_cur = w.cur,
             .regs = regs,
             .source = source,
             .ifetch_refs = ifetch_refs_start,
+            .emitted_site_stats = jit_snapshot_emitted_site_stats(),
         };
-        bool end_block = false;
+        bool stop_after_instruction = false;
 
-        if (!rv64_jit_source_builder_append(&source, cur_paddr, RV64_INSN_SIZE))
+        if (!rv64_jit_source_builder_append(&source, instruction_paddr,
+                                            RV64_INSN_SIZE))
         {
             ifetch_refs = ifetch_refs_start;
             block_end_reason = RV64_JIT_BLOCK_END_SOURCE_BOUNDARY;
@@ -203,16 +423,22 @@ rv64_jit_block_t *rv64_jit_compile_block(vaddr_t pc, uint32_t max_insns)
         if (opcode == RV64_OPCODE_JAL ||
             opcode == RV64_OPCODE_JALR)
         {
-            if (!rv64_jit_emit_jump_instr(&w, &regs, instr, cur_pc, count,
-                                          loop_count_needed, block_uses_data_state))
+            if (!rv64_jit_emit_jump_instr(
+                    &w, &regs, instr, guest_pc, compiled_insn_count,
+                    needs_data_translation_guard))
             {
-                jit_reject_unsupported_instr(&w, &regs, &source, &ifetch_refs,
-                                             &instr_snapshot, instr,
-                                             &block_end_reason);
+                if (!jit_handle_emit_failure(
+                        &w, &regs, &source, &ifetch_refs, &instr_snapshot,
+                        instr, &block_end_reason, arena_overflowed))
+                {
+                    jit_restore_emitted_site_stats(&attempt_site_stats);
+                    return NULL;
+                }
                 break;
             }
             block_end_reason = RV64_JIT_BLOCK_END_JUMP;
-            end_block = true;
+            exit_state = RV64_JIT_COMPILE_HAS_TERMINAL_EXIT;
+            stop_after_instruction = true;
         }
         else if (opcode == RV64_OPCODE_LOAD)
         {
@@ -222,17 +448,26 @@ rv64_jit_block_t *rv64_jit_compile_block(vaddr_t pc, uint32_t max_insns)
              * unsafe.  The dispatcher treats that as a miss-like fallback and
              * lets the interpreter execute the load.
              */
-            if (!rv64_jit_emit_load_instr(&w, &regs, instr, cur_pc, count,
-                                          loop_count_needed))
+            if (!rv64_jit_emit_load_instr(&w, &regs, instr, guest_pc,
+                                          compiled_insn_count))
             {
-                jit_reject_unsupported_instr(&w, &regs, &source, &ifetch_refs,
-                                             &instr_snapshot, instr,
-                                             &block_end_reason);
+                if (!jit_handle_emit_failure(
+                        &w, &regs, &source, &ifetch_refs, &instr_snapshot,
+                        instr, &block_end_reason, arena_overflowed))
+                {
+                    jit_restore_emitted_site_stats(&attempt_site_stats);
+                    return NULL;
+                }
                 break;
             }
             if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != 0)
             {
-                block_uses_data_state = true;
+                /*
+                 * MPRV, SUM, and MXR affect explicit data accesses, whereas
+                 * instruction fetch uses its own privilege state.  Direct links
+                 * must therefore guard this data-translation state separately.
+                 */
+                needs_data_translation_guard = true;
             }
         }
         else if (opcode == RV64_OPCODE_STORE)
@@ -243,128 +478,149 @@ rv64_jit_block_t *rv64_jit_compile_block(vaddr_t pc, uint32_t max_insns)
              * or immediately after the store so interpreter-visible ordering is
              * preserved.
              */
-            if (!rv64_jit_emit_store_instr(&w, &regs, instr, cur_pc,
-                                           cur_pc + RV64_INSN_SIZE, count,
-                                           loop_count_needed))
+            if (!rv64_jit_emit_store_instr(
+                    &w, &regs, instr, guest_pc,
+                    guest_pc + RV64_INSN_SIZE, compiled_insn_count))
             {
-                jit_reject_unsupported_instr(&w, &regs, &source, &ifetch_refs,
-                                             &instr_snapshot, instr,
-                                             &block_end_reason);
+                if (!jit_handle_emit_failure(
+                        &w, &regs, &source, &ifetch_refs, &instr_snapshot,
+                        instr, &block_end_reason, arena_overflowed))
+                {
+                    jit_restore_emitted_site_stats(&attempt_site_stats);
+                    return NULL;
+                }
                 break;
             }
             if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != 0)
             {
-                block_uses_data_state = true;
+                needs_data_translation_guard = true;
             }
         }
         else if (opcode == RV64_OPCODE_BRANCH)
         {
-            bool branch_chained = false;
+            bool emitted_native_backedge = false;
 
-            if (!rv64_jit_emit_branch(&w, &regs, instr, cur_pc, pc,
-                                      block_start_native, has_chainable_backedge,
-                                      &branch_chained, count + 1u,
-                                      block_uses_data_state))
+            if (!rv64_jit_emit_branch(
+                    &w, &regs, instr, guest_pc, pc, native_body_entry,
+                    prescan_found_self_backedge, &emitted_native_backedge,
+                    compiled_insn_count + 1u,
+                    needs_data_translation_guard))
             {
-                jit_reject_unsupported_instr(&w, &regs, &source, &ifetch_refs,
-                                             &instr_snapshot, instr,
-                                             &block_end_reason);
+                if (!jit_handle_emit_failure(
+                        &w, &regs, &source, &ifetch_refs, &instr_snapshot,
+                        instr, &block_end_reason, arena_overflowed))
+                {
+                    jit_restore_emitted_site_stats(&attempt_site_stats);
+                    return NULL;
+                }
                 break;
             }
 
-            if (branch_chained)
+            if (emitted_native_backedge)
             {
                 block_end_reason = RV64_JIT_BLOCK_END_CHAINED_LOOP;
-                end_block = true;
+                stop_after_instruction = true;
             }
         }
-        else if (!rv64_jit_emit_instr(&w, &regs, instr, cur_pc, count + 1u))
+        else if (!rv64_jit_emit_instr(&w, &regs, instr, guest_pc,
+                                      compiled_insn_count + 1u))
         {
-            jit_reject_unsupported_instr(&w, &regs, &source, &ifetch_refs,
-                                         &instr_snapshot, instr,
-                                         &block_end_reason);
+            if (!jit_handle_emit_failure(
+                    &w, &regs, &source, &ifetch_refs, &instr_snapshot,
+                    instr, &block_end_reason, arena_overflowed))
+            {
+                jit_restore_emitted_site_stats(&attempt_site_stats);
+                return NULL;
+            }
             break;
         }
 
-        cur_pc += RV64_INSN_SIZE;
-        count++;
+        guest_pc += RV64_INSN_SIZE;
+        compiled_insn_count++;
 
         /*
          * A chained back-edge is both a taken-loop fast path and the natural end
          * of this native block.  Its fall-through path returns below with
-         * `rv64_jit_loop_extra + count`, while taken laps jump back to
-         * `block_start_native` without re-running the prologue.
+         * `rv64_jit_loop_extra + compiled_insn_count`, while taken laps jump
+         * back to `native_body_entry` without re-running the prologue.
          */
-        if (end_block)
+        if (stop_after_instruction)
         {
             break;
         }
     }
 
-    if (count == 0)
+    if (compiled_insn_count == 0)
     {
-        rv64_jit_mark_unsupported(pc, first_paddr, first_translated);
-        return NULL;
-    }
-
-    if (!(rv64_jit_direct_link_enabled()
-              ? rv64_jit_emit_direct_link_exit(&w, &regs, cur_pc, count,
-                                               block_uses_data_state, NULL)
-              : rv64_jit_emit_plain_block_exit(&w, &regs, cur_pc, count)))
-    {
-        return NULL;
-    }
-
-    __builtin___clear_cache((char *)w.start, (char *)w.cur);
-
-    rv64_jit_block_t *block = rv64_jit_cache_slot(pc);
-    rv64_jit_block_discard(block);
-    *block = (rv64_jit_block_t){
-        .valid = true,
-        .translated = first_translated,
-        .uses_data_state = block_uses_data_state,
-        .pc = pc,
-        .satp = cpu.csr.satp,
-        .ifetch_state = rv64_jit_ifetch_state(),
-        .data_state = rv64_jit_data_tlb_state(MEM_TYPE_READ),
-        .ifetch_generation = rv64_jit_ifetch_generation,
-        .paddr_start = first_paddr,
-        .source_len = source.source_len,
-        .source_segment_count = source.segment_count,
-        .ifetch_pt_page_count = first_translated ? ifetch_refs.count : 0,
-        .insn_count = count,
-        .entry = (rv64_jit_entry_t)w.start,
-        .body_entry = (rv64_jit_entry_t)block_start_native,
-    };
-    memcpy(block->source_segments, source.segments, sizeof(source.segments));
-    memcpy(block->ifetch_pt_pages, ifetch_refs.pages,
-           block->ifetch_pt_page_count * sizeof(block->ifetch_pt_pages[0]));
-    rv64_jit_ifetch_refs_ref(block);
-    rv64_jit_source_chunks_ref(block);
-    rv64_jit_source_reverse_map_add(block);
-
-    rv64_jit_code_used = (size_t)(w.cur - rv64_jit_code);
-    JIT_STAT_INC(blocks_compiled);
-    rv64_jit_stat_block_end(block_end_reason);
-    if (first_translated)
-    {
-        JIT_STAT_INC(translated_blocks);
-        if (((pc ^ (cur_pc - RV64_INSN_SIZE)) & ~(vaddr_t)PAGE_MASK) != 0)
+        if (block_end_reason == RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX)
         {
-            JIT_STAT_INC(translated_cross_page_blocks);
+            rv64_jit_mark_unsupported(pc, first_paddr,
+                                      uses_translated_ifetch);
         }
+        jit_restore_emitted_site_stats(&attempt_site_stats);
+        return NULL;
     }
-    if (source.segment_count > 1u)
+
+    /*
+     * JAL/JALR emit terminal paths as part of the instruction.  All other stop
+     * conditions still need one fall-through exit.  Keeping this state explicit
+     * avoids unreachable duplicate exits and prevents dead-byte emission from
+     * rejecting an otherwise valid jump block.
+     */
+    if (exit_state == RV64_JIT_COMPILE_NEEDS_FALLTHROUGH_EXIT &&
+        !(rv64_jit_direct_link_enabled()
+              ? rv64_jit_emit_direct_link_exit(
+                    &w, &regs, guest_pc, compiled_insn_count,
+                    needs_data_translation_guard, NULL)
+              : rv64_jit_emit_plain_block_exit(
+                    &w, &regs, guest_pc, compiled_insn_count)))
     {
-        JIT_STAT_INC(segmented_source_blocks);
+        *arena_overflowed = w.overflowed;
+        jit_restore_emitted_site_stats(&attempt_site_stats);
+        return NULL;
     }
-    if (count > RV64_JIT_BLOCK_MAX_INSNS)
-    {
-        JIT_STAT_INC(trace_blocks);
-        JIT_STAT_ADD(trace_insns, count);
-    }
-    JIT_STAT_ADD(compiled_insns, count);
+
+    const rv64_jit_publish_info_t publish_info = {
+        .start_pc = pc,
+        .next_pc = guest_pc,
+        .first_paddr = first_paddr,
+        .uses_translated_ifetch = uses_translated_ifetch,
+        .needs_data_translation_guard = needs_data_translation_guard,
+        .compiled_insn_count = compiled_insn_count,
+        .native_body_entry = native_body_entry,
+        .source = &source,
+        .ifetch_refs = &ifetch_refs,
+    };
+
+    rv64_jit_block_t *block =
+        jit_publish_compiled_block(&w, &publish_info);
+    jit_record_compilation_stats(&publish_info, block_end_reason);
     return block;
+}
+
+/*
+ * Compile a block, recovering once if the current arena tail was too small.
+ *
+ * The conservative headroom check normally prevents writer exhaustion.  If an
+ * unusually large expansion still reaches the arena end, discard the old arena
+ * and retry from offset zero exactly once.  The bound is important: an emitter
+ * bug or a future block larger than the complete arena must fall back to the
+ * interpreter instead of entering an unbounded reset loop.
+ */
+rv64_jit_block_t *rv64_jit_compile_block(vaddr_t pc, uint32_t max_insns)
+{
+    bool arena_overflowed = false;
+    rv64_jit_block_t *block =
+        jit_compile_block_once(pc, max_insns, &arena_overflowed);
+
+    if (block != NULL || !arena_overflowed)
+    {
+        return block;
+    }
+
+    rv64_jit_arena_reset();
+    arena_overflowed = false;
+    return jit_compile_block_once(pc, max_insns, &arena_overflowed);
 }
 
 #endif /* CONFIG_RV64 */

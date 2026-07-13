@@ -25,8 +25,8 @@
 rv64_jit_block_t rv64_jit_cache[RV64_JIT_CACHE_SIZE];
 rv64_jit_data_tlb_entry_t rv64_jit_data_tlb[RV64_JIT_DATA_TLB_SIZE];
 uint16_t rv64_jit_data_tlb_pt_page_refs[RV64_JIT_PMEM_PAGE_COUNT];
-uint16_t rv64_jit_ifetch_pt_page_refs[RV64_JIT_PMEM_PAGE_COUNT];
-uint16_t rv64_jit_source_chunk_refs[RV64_JIT_PMEM_CHUNK_COUNT];
+uint32_t rv64_jit_ifetch_pt_page_refs[RV64_JIT_PMEM_PAGE_COUNT];
+uint32_t rv64_jit_source_chunk_refs[RV64_JIT_PMEM_CHUNK_COUNT];
 uint32_t rv64_jit_source_chunk_heads[RV64_JIT_PMEM_CHUNK_COUNT];
 rv64_jit_source_link_t rv64_jit_source_links[RV64_JIT_SOURCE_LINK_COUNT];
 uint32_t rv64_jit_source_link_free_head = RV64_JIT_SOURCE_LINK_NULL;
@@ -386,49 +386,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
     return total > 0;
 }
 
-#if RV64_JIT_STATS
-/* Compute a rounded fixed-point ratio with two decimal digits. */
-static uint64_t jit_ratio_x100(uint64_t numerator, uint64_t denominator)
-{
-    if (denominator == 0)
-    {
-        return 0;
-    }
-
-    return (numerator * 100u + denominator / 2u) / denominator;
-}
-
-/* Compute a rounded fixed-point percentage with two decimal digits. */
-static uint64_t jit_percent_x100(uint64_t numerator, uint64_t denominator)
-{
-    if (denominator == 0)
-    {
-        return 0;
-    }
-
-    return (numerator * 10000u + denominator / 2u) / denominator;
-}
-
-static const char *const jit_block_end_reason_names[RV64_JIT_BLOCK_END_COUNT] = {
-    "budget",
-    "jump",
-    "chained-loop",
-    "source-boundary",
-    "unsupported-after-prefix",
-};
-
-static const char *const jit_side_exit_reason_names[RV64_JIT_SIDE_EXIT_COUNT] = {
-    "load-guard",
-    "store-guard",
-    "store-source",
-    "paged-store-helper",
-    "branch-taken",
-    "chained-over-budget",
-    "jalr-misaligned",
-};
-#endif
-
-/* Print optional RV64 JIT counters at the end of execution. */
+/* Gate and print the optional RV64 JIT report at the end of execution. */
 void isa_jit_dump_stats(void)
 {
     rv64_jit_init_runtime_options();
@@ -445,151 +403,7 @@ void isa_jit_dump_stats(void)
         return;
     }
 
-    const uint64_t cache_total = rv64_jit_stats.cache_hits + rv64_jit_stats.cache_misses;
-    const uint64_t cache_hit_pct =
-        jit_percent_x100(rv64_jit_stats.cache_hits, cache_total);
-    const uint64_t avg_compile_len =
-        jit_ratio_x100(rv64_jit_stats.compiled_insns, rv64_jit_stats.blocks_compiled);
-    const uint64_t avg_exec_len =
-        jit_ratio_x100(rv64_jit_stats.executed_insns, rv64_jit_stats.blocks_executed);
-    uint64_t unsupported_opcode_total = 0;
-    uint64_t unsupported_opcode_distinct = 0;
-
-    for (uint32_t opcode = 0; opcode <= RV64_OPCODE_MASK; opcode++)
-    {
-        const uint64_t count = rv64_jit_stats.unsupported_by_opcode[opcode];
-        unsupported_opcode_total += count;
-        unsupported_opcode_distinct += count != 0 ? 1u : 0u;
-    }
-
-    Log("jit: exec requests = %" PRIu64
-        ", cache hits = %" PRIu64
-        ", misses = %" PRIu64
-        ", hit rate = %" PRIu64 ".%02" PRIu64 "%%",
-        rv64_jit_stats.exec_requests,
-        rv64_jit_stats.cache_hits,
-        rv64_jit_stats.cache_misses,
-        cache_hit_pct / 100u,
-        cache_hit_pct % 100u);
-    Log("jit: compiled blocks = %" PRIu64
-        ", unsupported blocks = %" PRIu64
-        ", avg compiled length = %" PRIu64 ".%02" PRIu64 " insn",
-        rv64_jit_stats.blocks_compiled,
-        rv64_jit_stats.blocks_unsupported,
-        avg_compile_len / 100u,
-        avg_compile_len % 100u);
-    Log("jit: executed blocks = %" PRIu64
-        ", JIT instructions = %" PRIu64
-        ", avg executed block = %" PRIu64 ".%02" PRIu64 " insn"
-        ", unsupported hits = %" PRIu64,
-        rv64_jit_stats.blocks_executed,
-        rv64_jit_stats.executed_insns,
-        avg_exec_len / 100u,
-        avg_exec_len % 100u,
-        rv64_jit_stats.unsupported_hits);
-    Log("jit: invalidation requests = %" PRIu64
-        ", invalidated blocks = %" PRIu64
-        ", arena resets = %" PRIu64,
-        rv64_jit_stats.invalidation_requests,
-        rv64_jit_stats.invalidated_blocks,
-        rv64_jit_stats.arena_resets);
-    Log("jit: native loads = %" PRIu64,
-        rv64_jit_stats.native_loads);
-    Log("jit: native stores = %" PRIu64,
-        rv64_jit_stats.native_stores);
-    Log("jit: native jumps = %" PRIu64,
-        rv64_jit_stats.native_jumps);
-    Log("jit: native M ops = %" PRIu64,
-        rv64_jit_stats.native_m_ops);
-    Log("jit: translated blocks = %" PRIu64,
-        rv64_jit_stats.translated_blocks);
-    Log("jit: translated cross-page blocks = %" PRIu64,
-        rv64_jit_stats.translated_cross_page_blocks);
-    Log("jit: segmented source blocks = %" PRIu64,
-        rv64_jit_stats.segmented_source_blocks);
-    Log("jit: trace blocks = %" PRIu64
-        ", trace instructions = %" PRIu64,
-        rv64_jit_stats.trace_blocks,
-        rv64_jit_stats.trace_insns);
-    Log("jit: reg cache spills = %" PRIu64,
-        rv64_jit_stats.reg_cache_spills);
-    Log("jit: native store continuations = %" PRIu64,
-        rv64_jit_stats.native_store_continuations);
-    Log("jit: native paged loads = %" PRIu64,
-        rv64_jit_stats.native_paged_loads);
-    Log("jit: native paged stores = %" PRIu64,
-        rv64_jit_stats.native_paged_stores);
-    Log("jit: data TLB hits = %" PRIu64
-        ", misses = %" PRIu64,
-        rv64_jit_stats.data_tlb_hits,
-        rv64_jit_stats.data_tlb_misses);
-    Log("jit: data TLB fills = %" PRIu64,
-        rv64_jit_stats.data_tlb_fills);
-    Log("jit: data TLB flushes = %" PRIu64,
-        rv64_jit_stats.data_tlb_flushes);
-    Log("jit: data TLB page-table flushes = %" PRIu64,
-        rv64_jit_stats.data_tlb_page_table_flushes);
-    Log("jit: data TLB direct loads = %" PRIu64
-        ", direct stores = %" PRIu64,
-        rv64_jit_stats.data_tlb_direct_loads,
-        rv64_jit_stats.data_tlb_direct_stores);
-    Log("jit: inline paged loads = %" PRIu64
-        ", inline paged stores = %" PRIu64,
-        rv64_jit_stats.inline_paged_loads,
-        rv64_jit_stats.inline_paged_stores);
-    Log("jit: inline paged load hits = %" PRIu64
-        ", inline paged store hits = %" PRIu64,
-        rv64_jit_stats.inline_paged_load_hits,
-        rv64_jit_stats.inline_paged_store_hits);
-    Log("jit: helper loads = %" PRIu64
-        ", helper stores = %" PRIu64,
-        rv64_jit_stats.helper_load_count,
-        rv64_jit_stats.helper_store_count);
-    Log("jit: direct links taken = %" PRIu64
-        ", misses = %" PRIu64,
-        rv64_jit_stats.direct_link_taken_count,
-        rv64_jit_stats.direct_link_miss_count);
-    Log("jit: direct branch links taken = %" PRIu64,
-        rv64_jit_stats.direct_branch_link_taken_count);
-    Log("jit: direct guarded links taken = %" PRIu64,
-        rv64_jit_stats.direct_guarded_link_taken_count);
-    Log("jit: ifetch generation fast hits = %" PRIu64
-        ", revalidations = %" PRIu64
-        ", bumps = %" PRIu64,
-        rv64_jit_stats.ifetch_generation_fast_hits,
-        rv64_jit_stats.ifetch_generation_revalidations,
-        rv64_jit_stats.ifetch_generation_bumps);
-    Log("jit: source reverse invalidations = %" PRIu64
-        ", full scans = %" PRIu64,
-        rv64_jit_stats.source_reverse_invalidations,
-        rv64_jit_stats.source_full_invalidation_scans);
-    Log("jit: unsupported opcodes total = %" PRIu64
-        ", distinct = %" PRIu64,
-        unsupported_opcode_total,
-        unsupported_opcode_distinct);
-    for (uint32_t opcode = 0; opcode <= RV64_OPCODE_MASK; opcode++)
-    {
-        if (rv64_jit_stats.unsupported_by_opcode[opcode] != 0)
-        {
-            Log("jit: unsupported opcode 0x%02x = %" PRIu64,
-                opcode,
-                rv64_jit_stats.unsupported_by_opcode[opcode]);
-        }
-    }
-    for (uint32_t reason = 0; reason < RV64_JIT_BLOCK_END_COUNT; reason++)
-    {
-        Log("jit: block end %s = %" PRIu64,
-            jit_block_end_reason_names[reason],
-            rv64_jit_stats.block_end_by_reason[reason]);
-    }
-    for (uint32_t reason = 0; reason < RV64_JIT_SIDE_EXIT_COUNT; reason++)
-    {
-        Log("jit: side exit %s = %" PRIu64,
-            jit_side_exit_reason_names[reason],
-            rv64_jit_stats.side_exit_by_reason[reason]);
-    }
-    Log("jit: zero side exits = %" PRIu64,
-        rv64_jit_stats.zero_side_exits);
+    rv64_jit_dump_stats_report();
 #else
     if (rv64_jit_stats_enabled)
     {

@@ -224,21 +224,37 @@ static inline void fetch_decode_exec_updatepc(Decode *s)
  * across cpu_exec() calls, so repeated `si' commands still contribute to the
  * final simulated instruction frequency.
  */
-static void statistic()
+static void statistic(void)
 {
     IFNDEF(CONFIG_TARGET_AM, setlocale(LC_NUMERIC, ""));
-#define NUMBERIC_FMT MUXDEF(CONFIG_TARGET_AM, "%ld", "%'ld")
-    Log("host time spent = " NUMBERIC_FMT " us", g_timer);
-    Log("total guest instructions = " NUMBERIC_FMT, g_nr_guest_instr);
+#define NUMERIC_FMT MUXDEF(CONFIG_TARGET_AM, "%" PRIu64, "%'" PRIu64)
+    /*
+     * Twenty-four characters is exactly the width of the longest label below.
+     * This keeps the equals signs aligned while retaining the historical
+     * `total guest instructions = ...` substring used by external log parsers.
+     */
+#define STATISTIC_LABEL_FMT "  %-24s = "
+    Log("execution statistics:");
+    Log(STATISTIC_LABEL_FMT NUMERIC_FMT " us", "host time", g_timer);
+    Log(STATISTIC_LABEL_FMT NUMERIC_FMT, "total guest instructions",
+        g_nr_guest_instr);
 
     if (g_timer > 0)
     {
-        Log("simulation frequency = " NUMBERIC_FMT " instr/s", g_nr_guest_instr * 1000000 / g_timer);
+        /* Multiply in 128 bits so a long run cannot overflow before division. */
+        const uint64_t simulation_frequency =
+            (uint64_t)(((unsigned __int128)g_nr_guest_instr * 1000000u) /
+                       g_timer);
+        Log(STATISTIC_LABEL_FMT NUMERIC_FMT " instr/s",
+            "simulation frequency", simulation_frequency);
     }
     else
     {
-        Log("Finish running in less than 1 us and can not calculate the simulation frequency");
+        Log(STATISTIC_LABEL_FMT "n/a (run completed in less than 1 us)",
+            "simulation frequency");
     }
+#undef STATISTIC_LABEL_FMT
+#undef NUMERIC_FMT
 
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
     isa_jit_dump_stats();

@@ -138,6 +138,7 @@ static void exprTest()
     }
 
     word_t a = 0;
+    size_t count = 0;
     char *str = (char *)malloc(INPUT_BUFFER_SIZE * sizeof(char));
     char *otherBuffer = (char *)malloc(EXPR_BUFFER_SIZE * sizeof(char));
 
@@ -146,7 +147,6 @@ static void exprTest()
         goto error;
     }
 
-    size_t count = 0;
     while (fgets(str, INPUT_BUFFER_SIZE, f))
     {
         if (sscanf(str, FMT_WORD_SCAN " %[^\n]\n", &a, otherBuffer) != 2)
