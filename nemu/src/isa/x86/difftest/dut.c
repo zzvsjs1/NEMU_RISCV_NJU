@@ -18,10 +18,10 @@
 #include "../local-include/reg.h"
 
 /*
- * Arithmetic flags are deliberately not compared here: many x86 instructions
- * leave a subset of them undefined, and PA2 notes already allow simplified
- * EFLAGS modelling.  Keep checking the architectural always-on bit plus IF/DF,
- * which are stable control state for PA3 interrupts and string instructions.
+ * Arithmetic flags are deliberately not compared here because many x86
+ * instructions leave a subset of them undefined. Keep checking the
+ * architectural always-on bit plus IF/DF, whose values are deterministic for
+ * interrupt control and string instructions.
  */
 #define X86_DIFFTEST_EFLAGS_MASK ((uint32_t)((1u << 1) | (1u << 9) | (1u << 10)))
 

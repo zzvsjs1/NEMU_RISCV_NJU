@@ -250,10 +250,17 @@ void do_syscall(Context *c)
 
     case SYS_yield:
     {
-        // yield();
-
+#if defined(__ISA_MIPS32__)
+        /* An image entered directly through naive_uload() has no scheduler-owned PCB. */
+        if (current != NULL)
+        {
+            need_resched = 1;
+        }
+#else
         // Do not trigger another trap here, just request rescheduling.
         need_resched = 1;
+#endif
+
         c->GPRx = 0;
         break;
     }

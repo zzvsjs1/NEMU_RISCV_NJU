@@ -2,6 +2,20 @@ HAS_NAVY = 1
 RAMDISK_FILE = build/ramdisk.img
 NANOS_INIT ?= games
 
+# The multiprogram games workload is specific to MIPS32. Other architectures
+# keep their existing game image and process layout unchanged.
+ifeq ($(ARCH),mips32-nemu)
+ifeq ($(NANOS_INIT),games)
+CFLAGS += -DNANOS_INIT_MIPS32_PA4 -DMULTIPROGRAM -DTIME_SHARING
+NAVY_APPS := menu nterm pal bird nslider
+NAVY_TESTS := hello
+NAVY_UPDATE_APP_ARGS += VME=1 APPS="$(NAVY_APPS)" TESTS="$(NAVY_TESTS)"
+endif
+ifeq ($(STRACE),1)
+CFLAGS += -DSTRACE
+endif
+endif
+
 NAME = nanos-lite
 SRCS = $(shell find -L ./src/ -name "*.c" -o -name "*.cpp" -o -name "*.S")
 SRCS := $(filter-out ./src/fs/%.c,$(SRCS))

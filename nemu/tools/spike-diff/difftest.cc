@@ -25,7 +25,11 @@
 
 #ifdef CONFIG_ISA_riscv64
 #undef DEFAULT_ISA
+#ifdef CONFIG_RV64_FPU
+#define DEFAULT_ISA "RV64IMFD_Zicsr_Zifencei"
+#else
 #define DEFAULT_ISA "RV64IM_Zicsr_Zifencei"
+#endif
 #endif
 
 static std::vector<std::pair<reg_t, abstract_device_t *>> difftest_plugin_devices;
@@ -97,6 +101,19 @@ void sim_t::diff_get_regs(void *diff_context)
 
     ctx->prvi = state->prv;
     ctx->INTR = false;
+
+#ifdef CONFIG_RV64_FPU
+    for (int i = 0; i < 32; i++)
+    {
+        /*
+         * Spike stores FPRs in a 128-bit container so it can also model Q.
+         * RV64D's architectural FLEN is 64; the low lane is the complete raw
+         * value transferred through NEMU's public DiffTest state.
+         */
+        ctx->fpr[i] = state->FPR[i].v[0];
+    }
+    ctx->fcsr = diff_read_csr(CSR_FCSR) & 0xffu;
+#endif
 }
 
 void sim_t::diff_set_regs(void *diff_context)
@@ -109,13 +126,46 @@ void sim_t::diff_set_regs(void *diff_context)
     state->pc = ctx->pc;
 
     diff_write_csr(CSR_SATP, ctx->csr.satp);
+#ifdef CONFIG_RV64_FPU
+    /*
+     * Spike treats an fcsr write as architectural FP use: it marks
+     * mstatus.FS Dirty and deliberately aborts if FS is Off.  DiffTest state
+     * restoration is different from guest execution, though, and must also
+     * be able to restore a reset state whose FS field is Off.
+     *
+     * Temporarily select the Initial state when necessary, restore fcsr, and
+     * then write the requested mstatus again below.  The final write is
+     * needed for every non-Off state too, because Spike's fcsr write changes
+     * Clean or Initial to Dirty.
+     */
+    reg_t target_mstatus = ctx->csr.mstatus;
+    reg_t fp_restore_mstatus = target_mstatus;
+    if ((fp_restore_mstatus & MSTATUS_FS) == 0)
+    {
+        fp_restore_mstatus |= (reg_t)1 << 13;
+    }
+    diff_write_csr(CSR_MSTATUS, fp_restore_mstatus);
+#else
     diff_write_csr(CSR_MSTATUS, ctx->csr.mstatus);
+#endif
     diff_write_csr(CSR_MTVEC, ctx->csr.mtvec);
     diff_write_csr(CSR_MSCRATCH, ctx->csr.mscratch);
     diff_write_csr(CSR_MEPC, ctx->csr.mepc);
     diff_write_csr(CSR_MCAUSE, ctx->csr.mcause);
     diff_write_csr(CSR_MTVAL, ctx->csr.mtval);
     state->prv = ctx->prvi;
+
+#ifdef CONFIG_RV64_FPU
+    for (int i = 0; i < 32; i++)
+    {
+        freg_t value;
+        value.v[0] = ctx->fpr[i];
+        value.v[1] = UINT64_MAX;
+        state->FPR.write(i, value);
+    }
+    diff_write_csr(CSR_FCSR, ctx->fcsr & 0xffu);
+    diff_write_csr(CSR_MSTATUS, target_mstatus);
+#endif
 }
 
 void sim_t::diff_memcpy(reg_t dest, void *src, size_t n)

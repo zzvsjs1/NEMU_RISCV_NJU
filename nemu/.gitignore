@@ -7,8 +7,11 @@
 !*.cc
 !.gitignore
 !README.md
+!src/softfloat/README.nemu.md
+!tools/spike-diff/patches/rv64-fd.patch
 !LICENSE
 !Kconfig
 include/config
 include/generated
 build/
+/tools/softfloat/repo

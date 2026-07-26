@@ -57,6 +57,11 @@ void trace_iringbuf_dump();
 void ftrace_init(const char *elf_file);
 void ftrace_call(vaddr_t pc, vaddr_t target);
 void ftrace_ret(vaddr_t pc);
+#ifdef CONFIG_ISA_mips32
+void etrace_exception(word_t no, vaddr_t epc, vaddr_t vector,
+                      word_t cause, word_t status);
+void etrace_eret(vaddr_t epc, word_t status);
+#endif
 
 // ----------- log -----------
 

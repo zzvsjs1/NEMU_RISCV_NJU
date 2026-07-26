@@ -422,7 +422,7 @@ SDL_AudioSpec *SDL_LoadWAV(
 
             if (audioFormat != 1 /* PCM */)
             {
-                // compressed formats are not supported in PA
+                // Compressed formats are not supported by this WAV decoder.
                 parse_ok = 0;
                 break;
             }

@@ -20,7 +20,15 @@ endif
 
 REPO_BUILD_PATH = $(REPO_PATH)/build
 REPO_MAKEFILE = $(REPO_BUILD_PATH)/Makefile
-$(REPO_MAKEFILE):
+RV64_FD_PATCH = patches/rv64-fd.patch
+RV64_FD_PATCH_STAMP = $(REPO_PATH)/.nemu-rv64-fd-patched
+
+$(RV64_FD_PATCH_STAMP): $(RV64_FD_PATCH)
+	@mkdir -p $(REPO_BUILD_PATH)
+	TMPDIR=$(abspath $(REPO_BUILD_PATH)) patch -d $(REPO_PATH) -p1 --forward < $(abspath $(RV64_FD_PATCH))
+	touch $@
+
+$(REPO_MAKEFILE): $(RV64_FD_PATCH_STAMP)
 	@mkdir -p $(@D)
 	cd $(@D) && $(abspath $(REPO_PATH))/configure
 	sed -i -e 's/-g -O2/-O2/' $@
@@ -32,6 +40,8 @@ $(SPIKE): $(REPO_MAKEFILE)
 BUILD_DIR = ./build
 $(shell mkdir -p $(BUILD_DIR))
 
+NEMU_AUTOCONF = $(NEMU_HOME)/include/generated/autoconf.h
+NEMU_DIFFTEST_DEF = $(NEMU_HOME)/include/difftest-def.h
 inc_dependencies = fesvr riscv disasm customext fdt softfloat spike_main spike_dasm build
 INC_PATH  = -I$(REPO_PATH) $(addprefix -I$(REPO_PATH)/, $(inc_dependencies))
 INC_PATH += -I$(NEMU_HOME)/include
@@ -42,7 +52,10 @@ NAME = $(GUEST_ISA)-spike-so
 BINARY = $(BUILD_DIR)/$(NAME)
 SRCS = difftest.cc
 
-$(BINARY): $(SPIKE) $(SRCS)
+# difftest-def.h changes its public context layout with CONFIG_RV64_FPU.
+# Rebuild after every NEMU configuration update so an old shared object can
+# never read or write an ABI-incompatible DiffTest state.
+$(BINARY): $(SPIKE) $(SRCS) $(NEMU_AUTOCONF) $(NEMU_DIFFTEST_DEF)
 	g++ -std=c++17 -O2 -shared -fPIC -fvisibility=hidden $(INC_PATH) $(SRCS) $(INC_LIBS) -o $@
 
 clean:

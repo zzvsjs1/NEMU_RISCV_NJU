@@ -27,11 +27,16 @@ static const uint32_t img[] = {
 
 static void restart()
 {
+    /* A restart begins from deterministic architectural state. */
+    memset(&cpu, 0, sizeof(cpu));
+    mips32_tlb_reset();
+
     /* Set the initial program counter. */
     cpu.pc = RESET_VECTOR;
 
     /* The zero register is always 0. */
     cpu.gpr[0] = 0;
+
 }
 
 void init_isa()

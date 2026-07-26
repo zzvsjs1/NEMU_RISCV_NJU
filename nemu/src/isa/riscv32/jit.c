@@ -465,7 +465,7 @@ static uint32_t jit_required_perm(int type)
  * Permission checks intentionally match the simplified interpreter MMU in
  * system/mmu.c: valid 4 KiB leaves with the required R/W/X bit can use the fast
  * path; privilege-sensitive rules such as U/SUM/MXR and accessed/dirty-bit
- * management are not implemented by this teaching MMU yet.
+ * management are not implemented by the current interpreter MMU.
  */
 static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *paddr)
 {
@@ -1031,8 +1031,8 @@ static void jit_cache_clear(void)
 /*
  * Allocate the executable code arena on first use.
  *
- * The arena is RWX because this small teaching JIT emits bytes directly and then
- * calls them. If allocation fails, the sticky disabled flag avoids repeated mmap
+ * The arena is RWX because this compact JIT emits bytes directly and then calls
+ * them. If allocation fails, the sticky disabled flag avoids repeated mmap
  * attempts and execution falls back to the interpreter.
  */
 static bool jit_code_init(void)

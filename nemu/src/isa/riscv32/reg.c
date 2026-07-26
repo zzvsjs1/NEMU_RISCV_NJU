@@ -18,8 +18,16 @@ typedef struct
 } csr_disp_t;
 
 static const csr_disp_t csr_list[] = {
+#ifdef CONFIG_RV64_FPU
+    {0x001, "fflags"},
+    {0x002, "frm"},
+    {0x003, "fcsr"},
+#endif
     {0x180, "satp"},
     {0x300, "mstatus"},
+#ifdef CONFIG_RV64_FPU
+    {0x301, "misa"},
+#endif
     {0x305, "mtvec"},
     {0x340, "mscratch"},
     {0x341, "mepc"},
@@ -120,16 +128,90 @@ static bool csr_name_to_address(const char *name, word_t *addr)
     return false;
 }
 
-/* Read a CSR by address after resolving it to the CPU_state storage slot. */
+/*
+ * Read a CSR by architectural value.  FP control CSRs are overlapping views of
+ * one fcsr slot, so a pointer API cannot represent them without duplicated
+ * state.  Ordinary CSRs continue to use their direct backing storage below.
+ */
 word_t getCSRValue(const word_t address)
 {
+#ifdef CONFIG_RV64_FPU
+    switch (address)
+    {
+    case 0x001:
+        return cpu.fcsr & RISCV_FFLAGS_MASK;
+    case 0x002:
+        return (cpu.fcsr & RISCV_FRM_MASK) >> 5;
+    case 0x003:
+        return cpu.fcsr & RISCV_FCSR_MASK;
+    case 0x301:
+        /*
+         * RV64 MXL=2 plus the implemented base, multiply/divide, FP, and
+         * privilege-mode extension bits. Zicsr/Zifencei are not represented in
+         * misa's single-letter bitmap.
+         */
+        return ((word_t)2u << 62) |
+               ((word_t)1u << ('I' - 'A')) |
+               ((word_t)1u << ('M' - 'A')) |
+               ((word_t)1u << ('F' - 'A')) |
+               ((word_t)1u << ('D' - 'A')) |
+               ((word_t)1u << ('S' - 'A')) |
+               ((word_t)1u << ('U' - 'A'));
+    default:
+        break;
+    }
+#endif
+
     return (word_t)(*getCSRAddress(address));
 }
 
 /*
+ * Write one implemented CSR after the instruction path has checked privilege,
+ * read-only status, and FS permission.  FP alias writes update only their
+ * visible field and mark the shared floating-point state Dirty.
+ */
+void setCSRValue(const word_t address, word_t value)
+{
+#ifdef CONFIG_RV64_FPU
+    switch (address)
+    {
+    case 0x001:
+        cpu.fcsr = (cpu.fcsr & ~RISCV_FFLAGS_MASK) |
+                   ((uint32_t)value & RISCV_FFLAGS_MASK);
+        cpu.csr.mstatus =
+            riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
+        return;
+    case 0x002:
+        cpu.fcsr = (cpu.fcsr & ~RISCV_FRM_MASK) |
+                   (((uint32_t)value & 0x7u) << 5);
+        cpu.csr.mstatus =
+            riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
+        return;
+    case 0x003:
+        cpu.fcsr = (uint32_t)value & RISCV_FCSR_MASK;
+        cpu.csr.mstatus =
+            riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
+        return;
+    case 0x301:
+        /*
+         * This implementation exposes a fixed maximal ISA set.  Treat writes
+         * as WARL attempts that leave the supported F/D dependency intact.
+         */
+        return;
+    default:
+        break;
+    }
+#endif
+
+    rtlreg_t *csr = getCSRAddress(address);
+    *csr = address == 0x300 ? riscv_mstatus_normalise(value) : value;
+}
+
+/*
  * Return the storage location for an implemented CSR.  Instruction execution
- * should call isCSRImplemented()/permission checks before this; the Assert here
- * catches internal misuse during development.
+ * should use value-based get/set helpers.  This legacy accessor remains for
+ * ordinary storage-backed CSRs only; the Assert catches attempts to represent
+ * an aliased FP CSR as a standalone pointer.
  */
 rtlreg_t *getCSRAddress(const word_t address)
 {
@@ -292,7 +374,7 @@ void isa_set_reg_val(const char *name, const word_t val)
 
     if (csr_name_to_address(name, &csr_addr))
     {
-        *getCSRAddress(csr_addr) = (csr_addr == 0x300) ? riscv_mstatus_normalise(val) : val;
+        setCSRValue(csr_addr, val);
         return;
     }
 

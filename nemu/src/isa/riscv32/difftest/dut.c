@@ -17,16 +17,28 @@ _Static_assert(offsetof(CPU_state, prvi) == offsetof(riscv_difftest_state_t, prv
                "RISC-V DiffTest privilege offset drifted");
 _Static_assert(offsetof(CPU_state, INTR) == offsetof(riscv_difftest_state_t, INTR),
                "RISC-V DiffTest interrupt-pending offset drifted");
+#ifdef CONFIG_RV64_FPU
+_Static_assert(offsetof(CPU_state, fpr) == offsetof(riscv_difftest_state_t, fpr),
+               "RISC-V DiffTest FPR offset drifted");
+_Static_assert(offsetof(CPU_state, fcsr) == offsetof(riscv_difftest_state_t, fcsr),
+               "RISC-V DiffTest FCSR offset drifted");
+#endif
 
 #ifdef CONFIG_RV64
 #define RISCV_DIFF_GPR(state, idx) ((state)->gpr[idx]._64)
 #define RISCV_DIFF_REG_NAME_LEN 8
+#ifdef CONFIG_RV64_FPU
+#define RISCV_DIFF_FP_MSTATUS_MASK (RISCV_MSTATUS_FS_MASK | RISCV64_MSTATUS_SD)
+#else
+#define RISCV_DIFF_FP_MSTATUS_MASK 0
+#endif
 #define RISCV_DIFF_MSTATUS_MASK (((word_t)1u << 3) | \
                                  ((word_t)1u << 7) | \
                                  ((word_t)0x3u << 11) | \
                                  ((word_t)1u << 17) | \
                                  ((word_t)1u << 18) | \
-                                 ((word_t)1u << 19))
+                                 ((word_t)1u << 19) | \
+                                 RISCV_DIFF_FP_MSTATUS_MASK)
 #else
 #define RISCV_DIFF_GPR(state, idx) ((state)->gpr[idx]._32)
 #define RISCV_DIFF_REG_NAME_LEN 4
@@ -50,6 +62,22 @@ static bool riscv_difftest_same_state(CPU_state *ref_r)
             return false;
         }
     }
+
+#ifdef CONFIG_RV64_FPU
+    for (size_t i = 0; i < RISCV_FPR_NUM; i++)
+    {
+        if (ref_r->fpr[i] != cpu.fpr[i])
+        {
+            return false;
+        }
+    }
+
+    if ((ref_r->fcsr & RISCV_FCSR_MASK) !=
+        (cpu.fcsr & RISCV_FCSR_MASK))
+    {
+        return false;
+    }
+#endif
 
     return ref_r->pc == cpu.pc &&
            ref_r->csr.satp == cpu.csr.satp &&
@@ -117,6 +145,18 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
     {
         riscv_difftest_print_reg(i, RISCV_DIFF_GPR(ref_r, i), gpr(i));
     }
+
+#ifdef CONFIG_RV64_FPU
+    for (size_t i = 0; i < RISCV_FPR_NUM; i++)
+    {
+        char name[8];
+        snprintf(name, sizeof(name), "f%zu", i);
+        riscv_difftest_print_named(name, ref_r->fpr[i], cpu.fpr[i]);
+    }
+    riscv_difftest_print_named("fcsr",
+                               ref_r->fcsr & RISCV_FCSR_MASK,
+                               cpu.fcsr & RISCV_FCSR_MASK);
+#endif
 
     riscv_difftest_print_named("pc", ref_r->pc, cpu.pc);
     riscv_difftest_print_named("satp", ref_r->csr.satp, cpu.csr.satp);

@@ -58,6 +58,15 @@ typedef struct
 
     RISCV_GPR_TYPE prvi;
     bool INTR;
+
+#ifdef CONFIG_RV64_FPU
+    /*
+     * This tail exactly mirrors the conditional RV64 NEMU CPU state.  RV32 and
+     * every non-RISC-V DiffTest ABI remain unchanged when the feature is absent.
+     */
+    uint64_t fpr[32];
+    uint32_t fcsr;
+#endif
 } riscv_difftest_state_t;
 
 #define DIFFTEST_REG_SIZE (sizeof(riscv_difftest_state_t))

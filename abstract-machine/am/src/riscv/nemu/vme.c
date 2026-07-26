@@ -217,10 +217,9 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
         table = (PTE *)next_table_base;
     }
 
-    // Build flags for leaf PTE.
-    // In PA, we do not implement fine-grained protection,
-    // so we can set R/W/X all to 1 to avoid permission faults.
-    // Also set A and D to 1, avoiding hardware A/D update complexity.
+    // This implementation does not enforce fine-grained leaf permissions, so
+    // R/W/X are all set to avoid permission faults. A and D are also set to
+    // avoid requiring hardware-managed accessed/dirty updates.
     uintptr_t flags = PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
 
     // Mark user pages with U=1, kernel pages keep U=0.

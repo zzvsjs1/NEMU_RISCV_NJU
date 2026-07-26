@@ -1,4 +1,7 @@
 #include <common.h>
+#if defined(__ISA_MIPS32__)
+#include <proc.h>
+#endif
 
 #ifdef NANOS_INIT_PRIV_TEST
 #define X86_EFLAGS_CF (1u << 0)
@@ -17,7 +20,14 @@ static Context *do_event(Event e, Context *c)
     {
     case EVENT_YIELD:
     {
-        // Yield event always triggers scheduling.
+#if defined(__ISA_MIPS32__)
+        /* An image entered directly through naive_uload() has no scheduler-owned PCB. */
+        if (current == NULL)
+        {
+            return c;
+        }
+#endif
+
         return schedule(c);
     }
 

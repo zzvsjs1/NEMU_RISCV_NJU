@@ -9,6 +9,13 @@
 #endif
 #define RISCV_INTERRUPT_BIT MUXDEF(CONFIG_RV64, ((word_t)1ull << 63), ((word_t)1u << 31))
 
+#ifdef CONFIG_RV64_FPU
+#define RISCV_FPR_NUM 32
+#define RISCV_FFLAGS_MASK UINT32_C(0x1f)
+#define RISCV_FRM_MASK UINT32_C(0xe0)
+#define RISCV_FCSR_MASK UINT32_C(0xff)
+#endif
+
 typedef struct riscv_CPU_state
 {
     struct
@@ -35,6 +42,19 @@ typedef struct riscv_CPU_state
 
     rtlreg_t prvi;
     bool INTR;
+
+#ifdef CONFIG_RV64_FPU
+    /*
+     * RV64D sets FLEN=64, so one raw 64-bit slot represents each architectural
+     * FPR.  Keeping fcsr as one value makes fflags and frm true aliases instead
+     * of three independent storage locations that could drift apart.
+     *
+     * These fields are conditional and placed at the end so RV32, RV32E, and
+     * non-FPU RV64 state layouts remain byte-for-byte unchanged.
+     */
+    uint64_t fpr[RISCV_FPR_NUM];
+    uint32_t fcsr;
+#endif
 } riscv_CPU_state;
 
 typedef riscv_CPU_state riscv32_CPU_state;
@@ -95,6 +115,18 @@ enum
 
 #define RISCV64_MSTATUS_UXL_SXL (((word_t)2u << 32) | ((word_t)2u << 34))
 
+#ifdef CONFIG_RV64_FPU
+#define RISCV_MSTATUS_VS_MASK ((word_t)0x3u << 9)
+#define RISCV_MSTATUS_FS_SHIFT 13
+#define RISCV_MSTATUS_FS_MASK ((word_t)0x3u << RISCV_MSTATUS_FS_SHIFT)
+#define RISCV_MSTATUS_FS_OFF ((word_t)0u << RISCV_MSTATUS_FS_SHIFT)
+#define RISCV_MSTATUS_FS_INITIAL ((word_t)1u << RISCV_MSTATUS_FS_SHIFT)
+#define RISCV_MSTATUS_FS_CLEAN ((word_t)2u << RISCV_MSTATUS_FS_SHIFT)
+#define RISCV_MSTATUS_FS_DIRTY ((word_t)3u << RISCV_MSTATUS_FS_SHIFT)
+#define RISCV_MSTATUS_XS_MASK ((word_t)0x3u << 15)
+#define RISCV64_MSTATUS_SD ((word_t)1ull << 63)
+#endif
+
 /*
  * Apply the WARL parts of mstatus that this model currently implements.  WARL
  * means "write any, read legal": software may write a reserved value, but the
@@ -112,6 +144,21 @@ static inline word_t riscv_mstatus_normalise(word_t value)
     }
 
 #ifdef CONFIG_RV64
+#ifdef CONFIG_RV64_FPU
+    /*
+     * SD is a derived, read-only summary bit.  This RV64 model has no vector
+     * or custom extension state, so VS and XS are read-only zero and only
+     * FS=Dirty contributes to the summary.
+     */
+    value &= ~(RISCV64_MSTATUS_SD |
+               RISCV_MSTATUS_VS_MASK |
+               RISCV_MSTATUS_XS_MASK);
+    if ((value & RISCV_MSTATUS_FS_MASK) == RISCV_MSTATUS_FS_DIRTY)
+    {
+        value |= RISCV64_MSTATUS_SD;
+    }
+#endif
+
     /* RV64 exposes SXL=2 and UXL=2 in mstatus. */
     return value | RISCV64_MSTATUS_UXL_SXL;
 #else
@@ -120,6 +167,22 @@ static inline word_t riscv_mstatus_normalise(word_t value)
 }
 
 #define riscv64_mstatus_normalise(value) riscv_mstatus_normalise(value)
+
+#ifdef CONFIG_RV64_FPU
+/* FP instructions and FP CSR accesses are illegal only while FS is Off. */
+static inline bool riscv_mstatus_fp_enabled(word_t mstatus)
+{
+    return (mstatus & RISCV_MSTATUS_FS_MASK) != RISCV_MSTATUS_FS_OFF;
+}
+
+/* Return mstatus with the floating-point state marked Dirty and SD derived. */
+static inline word_t riscv_mstatus_mark_fp_dirty(word_t mstatus)
+{
+    mstatus = (mstatus & ~RISCV_MSTATUS_FS_MASK) |
+              RISCV_MSTATUS_FS_DIRTY;
+    return riscv_mstatus_normalise(mstatus);
+}
+#endif
 
 /*
  * ECALL has a different exception cause for each current privilege level.  The

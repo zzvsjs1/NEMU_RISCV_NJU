@@ -585,7 +585,7 @@ static word_t eflags_write_protected_width(word_t requested, int width)
     /*
      * Intel POPF/IRET do not let ring-3 code take control of interrupt delivery.
      * IOPL can only be changed at CPL0, and IF can only be changed when CPL <=
-     * IOPL.  Other EFLAGS bits used by PA programs remain writable.
+     * IOPL. Other guest-visible EFLAGS bits remain writable.
      */
     if (cpl != 0)
     {

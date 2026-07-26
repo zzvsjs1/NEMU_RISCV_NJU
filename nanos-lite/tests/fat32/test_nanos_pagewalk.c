@@ -166,6 +166,116 @@ int main(void)
     return 0;
 }
 
+#elif PAGEWALK_TEST_MODE == 320
+
+#if !defined(NANOS_PAGEWALK_MIPS32)
+#error "The MIPS32 page-walk regression requires NANOS_PAGEWALK_MIPS32"
+#endif
+
+enum
+{
+    MIPS32_PTE_V = 0x2u,
+    MIPS32_PTE_D = 0x4u,
+};
+
+#define MIPS32_PTE_ADDRESS_MASK 0xfffff000u
+
+static int require_32_bit_page(void *page, const char *name)
+{
+    const uintptr_t addr = (uintptr_t)page;
+
+    if ((addr & (PAGE_SIZE - 1u)) != 0 || addr > UINT32_MAX)
+    {
+        printf("%s is not a low aligned page: 0x%lx\n", name, (unsigned long)addr);
+        return 1;
+    }
+
+    return 0;
+}
+
+static uint32_t make_mips32_pte(void *page, uint32_t flags)
+{
+    return ((uint32_t)(uintptr_t)page & MIPS32_PTE_ADDRESS_MASK) | flags;
+}
+
+static int prepare_mips32_mapping(uintptr_t va, uint32_t **root_out, void **leaf_out)
+{
+    clear_pages();
+
+    uint32_t *const root = (uint32_t *)root_page;
+    uint32_t *const level0 = (uint32_t *)level0_page;
+    void *const leaf = leaf_page;
+    const size_t directory_index = (va >> 22) & 0x3ffu;
+    const size_t table_index = (va >> 12) & 0x3ffu;
+
+    CHECK(require_32_bit_page(root, "mips32 root") == 0);
+    CHECK(require_32_bit_page(level0, "mips32 level0") == 0);
+    CHECK(require_32_bit_page(leaf, "mips32 leaf") == 0);
+
+    /*
+     * AM stores the raw page address in bits 31:12. Its V and D flags retain
+     * the CP0 EntryLo bit positions instead of using the RISC-V PTE layout.
+     */
+    root[directory_index] = make_mips32_pte(level0, MIPS32_PTE_V);
+    level0[table_index] =
+        make_mips32_pte(leaf, MIPS32_PTE_V | MIPS32_PTE_D);
+
+    *root_out = root;
+    *leaf_out = leaf;
+    return 0;
+}
+
+static int test_mips32_lookup_returns_raw_address_leaf(void)
+{
+    const uintptr_t va = 0x40049000u;
+    uint32_t *root = NULL;
+    void *leaf = NULL;
+
+    CHECK(prepare_mips32_mapping(va, &root, &leaf) == 0);
+    CHECK(nanos_pagewalk_lookup_page(root, va) == leaf);
+    CHECK(nanos_pagewalk_lookup_page(root, va + 321u) == leaf);
+    return 0;
+}
+
+static int test_mips32_lookup_returns_null_for_invalid_pde(void)
+{
+    clear_pages();
+
+    uint32_t *const root = (uint32_t *)root_page;
+    CHECK(nanos_pagewalk_lookup_page(root, 0x40049000u) == NULL);
+    return 0;
+}
+
+static int test_mips32_lookup_returns_null_for_invalid_pte(void)
+{
+    clear_pages();
+
+    uint32_t *const root = (uint32_t *)root_page;
+    uint32_t *const level0 = (uint32_t *)level0_page;
+    const uintptr_t va = 0x40049000u;
+    const size_t directory_index = (va >> 22) & 0x3ffu;
+
+    CHECK(require_32_bit_page(root, "mips32 root") == 0);
+    CHECK(require_32_bit_page(level0, "mips32 level0") == 0);
+
+    root[directory_index] = make_mips32_pte(level0, MIPS32_PTE_V);
+    CHECK(nanos_pagewalk_lookup_page(root, va) == NULL);
+    return 0;
+}
+
+int main(void)
+{
+    if (test_mips32_lookup_returns_raw_address_leaf() != 0 ||
+        test_mips32_lookup_returns_null_for_invalid_pde() != 0 ||
+        test_mips32_lookup_returns_null_for_invalid_pte() != 0)
+    {
+        return 1;
+    }
+
+    puts("MIPS32 nanos pagewalk tests passed");
+    return 0;
+}
+
 #elif PAGEWALK_TEST_MODE == 86
 
 static int require_32_bit_page(void *page, const char *name)

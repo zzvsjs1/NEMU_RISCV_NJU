@@ -48,6 +48,16 @@ static void restart()
     /* NEMU starts bare-metal RISC-V code in machine mode. */
     cpu.prvi = RISCV_PRIV_M;
     cpu.INTR = false;
+
+#ifdef CONFIG_RV64_FPU
+    /*
+     * FS remains Off at reset, as required for privileged software to opt in.
+     * Clearing the backing state makes debugger, snapshot, and DiffTest startup
+     * deterministic without claiming that software may use it while FS is Off.
+     */
+    memset(cpu.fpr, 0, sizeof(cpu.fpr));
+    cpu.fcsr = 0;
+#endif
 }
 
 /*

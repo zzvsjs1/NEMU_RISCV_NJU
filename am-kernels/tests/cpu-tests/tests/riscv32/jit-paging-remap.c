@@ -150,7 +150,7 @@ static void enter_supervisor_mode(void)
     /*
      * satp is active for S/U effective privilege, not for normal M-mode. Run
      * the generated-code calls in S-mode so this test follows the privileged
-     * architecture instead of the old teaching shortcut.
+     * architecture instead of relying on a direct-address shortcut.
      */
     asm volatile(
         "csrr %[mstatus], mstatus\n"

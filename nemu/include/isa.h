@@ -3,7 +3,7 @@
 
 // Located at src/isa/$(GUEST_ISA)/include/isa-def.h
 #include <isa-def.h>
-#if defined(CONFIG_ISA_x86)
+#if defined(CONFIG_ISA_x86) || defined(CONFIG_ISA_mips32)
 #include <setjmp.h>
 #endif
 
@@ -66,6 +66,12 @@ void x86_mmu_clear_cpl_override(void);
 void x86_raise_page_fault(void) __attribute__((noreturn));
 void x86_seg_set_flat(int idx, uint16_t selector);
 void x86_seg_load_from_descriptor(int idx, uint16_t selector, uint32_t lo, uint32_t hi);
+#endif
+#if defined(CONFIG_ISA_mips32)
+extern jmp_buf mips32_exception_env;
+extern bool mips32_exception_env_valid;
+extern vaddr_t mips32_exception_target;
+void mips32_raise_tlb_exception(void) __attribute__((noreturn));
 #endif
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
 vaddr_t isa_raise_intr_tval(word_t NO, vaddr_t epc, word_t tval);

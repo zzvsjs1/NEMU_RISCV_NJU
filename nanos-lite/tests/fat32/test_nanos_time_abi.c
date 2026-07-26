@@ -4,11 +4,11 @@
 
 /*
  * Nanos-lite writes these structs directly into Navy user memory.  The kernel
- * layout must therefore match the RISC-V32 newlib ABI, where this tree defines
- * time_t as long through _USE_LONG_TIME_T.
+ * layout must therefore match the 32-bit Navy newlib ABI, where this tree
+ * defines time_t as long through _USE_LONG_TIME_T.
  */
 _Static_assert(sizeof(time_t) == sizeof(long),
-               "Nanos time_t must match RISC-V32 Navy newlib time_t");
+               "Nanos time_t must match 32-bit Navy newlib time_t");
 _Static_assert(offsetof(struct timeval, tv_usec) == sizeof(long),
                "struct timeval tv_usec must follow a long tv_sec");
 _Static_assert(offsetof(struct timespec, tv_nsec) == sizeof(long),

@@ -28,7 +28,7 @@ static int colors[] = {
 Terminal::Pattern Terminal::esc_seqs[] = {
     // These sequences are a compact ANSI subset used by Busybox-style tools
     // on Navy. The custom raw/cooked toggles stand in for terminal ioctl state,
-    // which this teaching OS does not provide.
+    // which this minimal OS environment does not provide.
     {"\033[1t", &Terminal::esc_cookmode}, // added by us
     {"\033[2t", &Terminal::esc_rawmode},  // added by us
 

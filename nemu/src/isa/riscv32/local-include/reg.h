@@ -22,6 +22,8 @@ static inline int check_reg_idx(int idx)
 
 word_t getCSRValue(const word_t address);
 
+void setCSRValue(const word_t address, word_t value);
+
 rtlreg_t *getCSRAddress(const word_t address);
 
 bool isCSRImplemented(const word_t address);

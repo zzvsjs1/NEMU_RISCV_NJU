@@ -42,6 +42,13 @@ _Static_assert(offsetof(CPU_state, prvi) == offsetof(riscv_difftest_state_t, prv
 _Static_assert(offsetof(CPU_state, INTR) == offsetof(riscv_difftest_state_t, INTR),
                "RISC-V DiffTest interrupt-pending offset drifted");
 
+#ifdef CONFIG_RV64_FPU
+_Static_assert(offsetof(CPU_state, fpr) == offsetof(riscv_difftest_state_t, fpr),
+               "RISC-V DiffTest FPR offset drifted");
+_Static_assert(offsetof(CPU_state, fcsr) == offsetof(riscv_difftest_state_t, fcsr),
+               "RISC-V DiffTest FCSR offset drifted");
+#endif
+
 int main(void) { return 0; }
 PROBE
 

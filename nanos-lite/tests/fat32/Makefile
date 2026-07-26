@@ -42,9 +42,14 @@ LOADER_CFLAGS := $(CFLAGS) -I../../include \
 	-I../../../abstract-machine/am/include -I../../../abstract-machine/klib/include \
 	-I../../../navy-apps/libs/libos/src \
 	-D__ISA_MIPS32__ -DARCH_H='"arch/mips32-nemu.h"' -U__LP64__
-TIME_ABI_CC ?= riscv64-linux-gnu-gcc
-TIME_ABI_CFLAGS := -std=c11 -Wall -Wextra -Werror -march=rv32im_zicsr -mabi=ilp32 \
-	-DARCH_H='"arch/riscv.h"' -I../../include \
+TIME_ABI_RV_CC ?= riscv64-linux-gnu-gcc
+TIME_ABI_RV_CFLAGS := -std=c11 -Wall -Wextra -Werror -march=rv32im_zicsr -mabi=ilp32 \
+	-DARCH_H='"arch/riscv.h"' -I../../../navy-apps/libs/libc/include -I../../include \
+	-I../../../abstract-machine/am/include -I../../../abstract-machine/klib/include
+TIME_ABI_MIPS32_CC ?= mips-linux-gnu-gcc
+TIME_ABI_MIPS32_CFLAGS := -std=c11 -Wall -Wextra -Werror -march=mips32 -mabi=32 -EL \
+	-D__ISA_MIPS32__ -DARCH_H='"arch/mips32-nemu.h"' -U__LP64__ \
+	-I../../../navy-apps/libs/libc/include -I../../include \
 	-I../../../abstract-machine/am/include -I../../../abstract-machine/klib/include
 
 .PHONY: all test clean
@@ -59,10 +64,12 @@ all: test_fs_path \
 	test_nanos_syscall_abi \
 	test_nanos_pagewalk_sv39 \
 	test_nanos_pagewalk_sv32 \
+	test_nanos_pagewalk_mips32 \
 	test_nanos_pagewalk_x86 \
 	test_nanos_loader_checks \
 	test_nanos_loader \
-	test_nanos_time_abi.o
+	test_nanos_time_abi_rv32.o \
+	test_nanos_time_abi_mips32.o
 
 test: all
 	./test_fs_path
@@ -75,6 +82,7 @@ test: all
 	./test_nanos_syscall_abi
 	./test_nanos_pagewalk_sv39
 	./test_nanos_pagewalk_sv32
+	./test_nanos_pagewalk_mips32
 	./test_nanos_pagewalk_x86
 	./test_nanos_loader_checks
 	./test_nanos_loader
@@ -109,6 +117,9 @@ test_nanos_pagewalk_sv39: $(PAGEWALK_SRCS)
 test_nanos_pagewalk_sv32: $(PAGEWALK_SRCS)
 	$(CC) $(PAGEWALK_LOW_CFLAGS) -DNANOS_PAGEWALK_XLEN=32 -DPAGEWALK_TEST_MODE=32 -o $@ $(PAGEWALK_SRCS)
 
+test_nanos_pagewalk_mips32: $(PAGEWALK_SRCS)
+	$(CC) $(PAGEWALK_LOW_CFLAGS) -DNANOS_PAGEWALK_MIPS32 -DNANOS_PAGEWALK_XLEN=32 -DPAGEWALK_TEST_MODE=320 -o $@ $(PAGEWALK_SRCS)
+
 test_nanos_pagewalk_x86: $(PAGEWALK_SRCS)
 	$(CC) $(PAGEWALK_LOW_CFLAGS) -D__ISA_X86__ -DPAGEWALK_TEST_MODE=86 -o $@ $(PAGEWALK_SRCS)
 
@@ -118,8 +129,11 @@ test_nanos_loader_checks: $(LOADER_CHECKS_SRCS) ../../src/loader_checks.h
 test_nanos_loader: $(LOADER_SRCS) ../../src/loader.c ../../src/loader_checks.h
 	$(CC) $(LOADER_CFLAGS) -o $@ $(LOADER_SRCS)
 
-test_nanos_time_abi.o: test_nanos_time_abi.c ../../include/common.h
-	$(TIME_ABI_CC) $(TIME_ABI_CFLAGS) -c -o $@ $<
+test_nanos_time_abi_rv32.o: test_nanos_time_abi.c ../../include/common.h
+	$(TIME_ABI_RV_CC) $(TIME_ABI_RV_CFLAGS) -c -o $@ $<
+
+test_nanos_time_abi_mips32.o: test_nanos_time_abi.c ../../include/common.h
+	$(TIME_ABI_MIPS32_CC) $(TIME_ABI_MIPS32_CFLAGS) -c -o $@ $<
 
 clean:
 	rm -rf \
@@ -133,10 +147,12 @@ clean:
 		test_nanos_syscall_abi \
 		test_nanos_pagewalk_sv39 \
 		test_nanos_pagewalk_sv32 \
+		test_nanos_pagewalk_mips32 \
 		test_nanos_pagewalk_x86 \
 		test_nanos_loader_checks \
 		test_nanos_loader \
-		test_nanos_time_abi.o \
+		test_nanos_time_abi_rv32.o \
+		test_nanos_time_abi_mips32.o \
 		fat32-read-work \
 		fat32-lookup-work \
 		fat32-write-work \

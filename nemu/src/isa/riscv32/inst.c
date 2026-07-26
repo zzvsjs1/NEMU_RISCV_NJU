@@ -1,4 +1,7 @@
 #include "local-include/reg.h"
+#ifdef CONFIG_RV64_FPU
+#include "local-include/fpu.h"
+#endif
 #include <cpu/cpu.h>
 #include <cpu/decode.h>
 #include <cpu/difftest.h>
@@ -349,11 +352,12 @@ static inline bool riscv_check_jump_alignment(Decode *s, word_t target)
 }
 
 /*
- * Return an implemented CSR pointer or raise an illegal-instruction trap.
- * The helper enforces implemented-address, current-privilege, and read-only
- * checks before the instruction reads or writes CSR state.
+ * Validate one CSR access or raise an illegal-instruction trap.  Value-based
+ * access is required because fflags, frm, and fcsr are overlapping views of one
+ * architectural storage value and therefore cannot each have a truthful
+ * backing pointer.
  */
-static inline rtlreg_t *riscv_get_csr_or_trap(Decode *s, word_t addr, bool will_write)
+static inline bool riscv_csr_access_ok(Decode *s, word_t addr, bool will_write)
 {
     const word_t required_priv = (addr >> 8) & 0x3u;
 
@@ -362,16 +366,23 @@ static inline rtlreg_t *riscv_get_csr_or_trap(Decode *s, word_t addr, bool will_
         (will_write && !isCSRWriteable(addr)))
     {
         riscv_raise_trap(s, RISCV_CAUSE_ILLEGAL_INST, 0);
-        return NULL;
+        return false;
     }
 
-    return getCSRAddress(addr);
-}
+#ifdef CONFIG_RV64_FPU
+    /*
+     * FP control CSR addresses are unprivileged, but the privileged ISA adds a
+     * separate FS gate: any read or write is illegal while mstatus.FS is Off.
+     */
+    if (addr >= 0x001 && addr <= 0x003 &&
+        !riscv_mstatus_fp_enabled(cpu.csr.mstatus))
+    {
+        riscv_raise_trap(s, RISCV_CAUSE_ILLEGAL_INST, 0);
+        return false;
+    }
+#endif
 
-/* Write a CSR, applying the local WARL normalisation that RISC-V currently models. */
-static inline void riscv_write_csr(word_t addr, rtlreg_t *csr, word_t value)
-{
-    *csr = addr == 0x300 ? riscv_mstatus_normalise(value) : value;
+    return true;
 }
 
 /* Evaluate one branch comparison using signedness selected by the decoded funct3. */
@@ -699,6 +710,29 @@ static int decode_exec(Decode *s)
                 Mw(src1 + imm, 8, src2));
 #endif
 
+#ifdef CONFIG_RV64_FPU
+    /*
+     * RV64 floating-point decoding is isolated in fpu.c.  These major-opcode
+     * routes carry no integer decode type because FPR operand roles differ
+     * from the base I/R/S formats.  The executor performs every finer encoding
+     * check and raises illegal instruction for unsupported/reserved forms.
+     */
+    INSTPAT("??????? ????? ????? ??? ????? 00001 11", fp_load, N,
+            riscv64_fpu_exec(s));
+    INSTPAT("??????? ????? ????? ??? ????? 01001 11", fp_store, N,
+            riscv64_fpu_exec(s));
+    INSTPAT("??????? ????? ????? ??? ????? 10000 11", fp_fmadd, N,
+            riscv64_fpu_exec(s));
+    INSTPAT("??????? ????? ????? ??? ????? 10001 11", fp_fmsub, N,
+            riscv64_fpu_exec(s));
+    INSTPAT("??????? ????? ????? ??? ????? 10010 11", fp_fnmsub, N,
+            riscv64_fpu_exec(s));
+    INSTPAT("??????? ????? ????? ??? ????? 10011 11", fp_fnmadd, N,
+            riscv64_fpu_exec(s));
+    INSTPAT("??????? ????? ????? ??? ????? 10100 11", fp_op, N,
+            riscv64_fpu_exec(s));
+#endif
+
     /*
      * OP-IMM arithmetic and logic:
      * ADDI uses the sign-extended I-immediate as a normal XLEN value.  SLTI and
@@ -874,18 +908,17 @@ static int decode_exec(Decode *s)
      */
     INSTPAT("??????? ????? ????? 001 ????? 11100 11", csrrw, CSR,
             {
-                rtlreg_t *csr = riscv_get_csr_or_trap(s, imm, true);
-                if (csr != NULL)
+                if (riscv_csr_access_ok(s, imm, true))
                 {
                     if (rd != 0)
                     {
-                        rtlreg_t old = *csr;
-                        riscv_write_csr(imm, csr, src1);
+                        word_t old = getCSRValue(imm);
+                        setCSRValue(imm, src1);
                         R(rd) = old;
                     }
                     else
                     {
-                        riscv_write_csr(imm, csr, src1);
+                        setCSRValue(imm, src1);
                     }
                 }
             });
@@ -896,13 +929,13 @@ static int decode_exec(Decode *s)
     INSTPAT("??????? ????? ????? 010 ????? 11100 11", csrrs, CSR,
             {
                 bool will_write = rs1 != 0;
-                rtlreg_t *csr = riscv_get_csr_or_trap(s, imm, will_write);
-                if (csr != NULL)
+                if (riscv_csr_access_ok(s, imm, will_write))
                 {
-                    R(rd) = *csr;
+                    word_t old = getCSRValue(imm);
+                    R(rd) = old;
                     if (will_write)
                     {
-                        riscv_write_csr(imm, csr, *csr | src1);
+                        setCSRValue(imm, old | src1);
                     }
                 }
             });
@@ -913,13 +946,13 @@ static int decode_exec(Decode *s)
     INSTPAT("??????? ????? ????? 011 ????? 11100 11", csrrc, CSR,
             {
                 bool will_write = rs1 != 0;
-                rtlreg_t *csr = riscv_get_csr_or_trap(s, imm, will_write);
-                if (csr != NULL)
+                if (riscv_csr_access_ok(s, imm, will_write))
                 {
-                    R(rd) = *csr;
+                    word_t old = getCSRValue(imm);
+                    R(rd) = old;
                     if (will_write)
                     {
-                        riscv_write_csr(imm, csr, *csr & ~src1);
+                        setCSRValue(imm, old & ~src1);
                     }
                 }
             });
@@ -929,18 +962,17 @@ static int decode_exec(Decode *s)
      */
     INSTPAT("??????? ????? ????? 101 ????? 11100 11", csrrwi, CSI,
             {
-                rtlreg_t *csr = riscv_get_csr_or_trap(s, imm, true);
-                if (csr != NULL)
+                if (riscv_csr_access_ok(s, imm, true))
                 {
                     if (rd != 0)
                     {
-                        rtlreg_t old = *csr;
-                        riscv_write_csr(imm, csr, src1);
+                        word_t old = getCSRValue(imm);
+                        setCSRValue(imm, src1);
                         R(rd) = old;
                     }
                     else
                     {
-                        riscv_write_csr(imm, csr, src1);
+                        setCSRValue(imm, src1);
                     }
                 }
             });
@@ -951,13 +983,13 @@ static int decode_exec(Decode *s)
     INSTPAT("??????? ????? ????? 110 ????? 11100 11", csrrsi, CSI,
             {
                 bool will_write = rs1 != 0;
-                rtlreg_t *csr = riscv_get_csr_or_trap(s, imm, will_write);
-                if (csr != NULL)
+                if (riscv_csr_access_ok(s, imm, will_write))
                 {
-                    R(rd) = *csr;
+                    word_t old = getCSRValue(imm);
+                    R(rd) = old;
                     if (will_write)
                     {
-                        riscv_write_csr(imm, csr, *csr | src1);
+                        setCSRValue(imm, old | src1);
                     }
                 }
             });
@@ -968,13 +1000,13 @@ static int decode_exec(Decode *s)
     INSTPAT("??????? ????? ????? 111 ????? 11100 11", csrrci, CSI,
             {
                 bool will_write = rs1 != 0;
-                rtlreg_t *csr = riscv_get_csr_or_trap(s, imm, will_write);
-                if (csr != NULL)
+                if (riscv_csr_access_ok(s, imm, will_write))
                 {
-                    R(rd) = *csr;
+                    word_t old = getCSRValue(imm);
+                    R(rd) = old;
                     if (will_write)
                     {
-                        riscv_write_csr(imm, csr, *csr & ~src1);
+                        setCSRValue(imm, old & ~src1);
                     }
                 }
             });

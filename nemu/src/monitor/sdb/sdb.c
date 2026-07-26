@@ -149,8 +149,8 @@ static int cmd_scan_memory(char *args)
 {
     /*
      * `x N EXPR` deliberately evaluates EXPR once, then walks forward by machine
-     * word size.  This mirrors the monitor contract from PA: the expression is a
-     * base address, not a per-row expression re-evaluated after each read.
+     * word size. The expression is a base address, not a per-row expression
+     * re-evaluated after each read.
      */
     size_t lenOfStr;
     size_t i;
@@ -214,7 +214,17 @@ static int cmd_scan_memory(char *args)
     for (size_t j = 0; j < n; j++)
     {
         const vaddr_t curAddress = res + j * sizeof(word_t);
+#ifdef CONFIG_ISA_mips32
+        word_t memData;
+
+        if (!mips32_debug_vaddr_read(curAddress, sizeof(word_t), &memData))
+        {
+            PRI_ERR("Cannot read memory at " FMT_WORD ".\n", curAddress);
+            goto error;
+        }
+#else
         const word_t memData = vaddr_read(curAddress, sizeof(word_t));
+#endif
 
         printf(ANSI_FMT(FMT_WORD " ", ANSI_FG_CYAN), (word_t)(curAddress));
         printf(ANSI_FMT(FMT_WORD " ", ANSI_FG_MAGENTA), memData);

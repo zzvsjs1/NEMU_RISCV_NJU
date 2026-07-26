@@ -15,14 +15,22 @@ static inline void outw(uintptr_t addr, uint16_t data) { *(volatile uint16_t *)a
 
 static inline void outl(uintptr_t addr, uint32_t data) { *(volatile uint32_t *)addr = data; }
 
-#define PTE_V 0x2
-#define PTE_D 0x4
+#define PTE_V 0x2u
+#define PTE_D 0x4u
+
+/*
+ * MIPS32 uses 4 KiB pages and a two-level 10/10/12 page-table split.  Page
+ * table entries keep the page-aligned address in bits 31:12; their low bits
+ * deliberately use the same V and D positions as CP0 EntryLo.
+ */
+#define MIPS32_PTE_ADDR_MASK 0xfffff000u
+#define MIPS32_TLB_NR 16u
 
 // Page directory and page table constants
-#define PTXSHFT 12 // Offset of PTX in a linear address
-#define PDXSHFT 22 // Offset of PDX in a linear address
+#define PTXSHFT 12u // Offset of PTX in a linear address
+#define PDXSHFT 22u // Offset of PDX in a linear address
 
-#define PDX(va) (((uint32_t)(va) >> PDXSHFT) & 0x3ff)
-#define PTX(va) (((uint32_t)(va) >> PTXSHFT) & 0x3ff)
+#define PDX(va) (((uintptr_t)(va) >> PDXSHFT) & 0x3ffu)
+#define PTX(va) (((uintptr_t)(va) >> PTXSHFT) & 0x3ffu)
 
 #endif

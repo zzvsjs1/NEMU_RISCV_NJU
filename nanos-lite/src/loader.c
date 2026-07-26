@@ -453,12 +453,13 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
 
     // 6) Set user initial SP and the ABI argument pointer.
     /*
-     * Only the actively supported PA4 targets expose GPRSP in their AM Context
-     * headers. Other historical NEMU ISA headers can still syntax-check this
-     * file, but they do not have enough ABI information here to initialise a
-     * user stack pointer.
+     * The AM Context layouts listed below expose GPRSP. Other NEMU ISA headers
+     * can still syntax-check this file, but they do not provide the ABI accessor
+     * needed to initialise a user stack pointer here.
      */
-#if defined(__ISA_X86__) || defined(__ISA_RISCV32__) || defined(__ISA_RISCV32E__) || defined(__ISA_RISCV64__)
+#if defined(__ISA_X86__) || defined(__ISA_RISCV32__) || \
+    defined(__ISA_RISCV32E__) || defined(__ISA_RISCV64__) || \
+    defined(__ISA_MIPS32__)
     pcb->cp->GPRSP = args_va;
 #endif
     pcb->cp->GPRx = args_va;
@@ -468,5 +469,10 @@ void naive_uload(PCB *pcb, const char *filename)
 {
     uintptr_t entry = loader(pcb, filename);
     Log("Jump to entry = %p", (void *)entry);
+
+#if defined(__ISA_MIPS32__)
+    ((void (*)(uintptr_t))entry)(0);
+#else
     ((void (*)())entry)();
+#endif
 }

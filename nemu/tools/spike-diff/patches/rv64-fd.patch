@@ -1,0 +1,29 @@
+diff --git a/softfloat/softfloat.mk.in b/softfloat/softfloat.mk.in
+index 1111111..2222222 100644
+--- a/softfloat/softfloat.mk.in
++++ b/softfloat/softfloat.mk.in
+@@ -226,9 +226,6 @@ softfloat_c_srcs = \
+ 	ui64_to_f32.c \
+ 	ui64_to_f64.c \
+ 
+-### overwrite for PA
+-softfloat_c_srcs = dummy_for_pa.c
+-
+ softfloat_install_shared_lib = yes
+ 
+ softfloat_test_srcs =
+diff --git a/riscv/riscv.mk.in b/riscv/riscv.mk.in
+index 3333333..4444444 100644
+--- a/riscv/riscv.mk.in
++++ b/riscv/riscv.mk.in
+@@ -1382,6 +1382,10 @@ riscv_insn_list = \
+ 	$(riscv_insn_ext_m) \
+ 	$(riscv_insn_priv) \
+ 
++riscv_insn_list += \
++	$(riscv_insn_ext_f) \
++	$(riscv_insn_ext_d) \
++
+ ### disable unused extension in PA
+ #riscv_insn_list += \
+ 	$(riscv_insn_ext_f) \

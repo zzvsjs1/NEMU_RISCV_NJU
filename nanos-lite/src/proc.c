@@ -200,9 +200,10 @@ Context *schedule(Context *prev)
     if (current == &pcb[HELLO_PROC])
     {
         /*
-         * A kernel thread context must keep a NULL address-space marker.  PA4 VME
-         * relies on that marker so the trap return path keeps the currently active
-         * page table instead of treating the kernel thread as a user process.
+         * A kernel thread context must keep a NULL address-space marker. The
+         * address-space switcher uses that marker so trap return keeps the
+         * currently active page table instead of treating the kernel thread as
+         * a user process.
          */
         assert(!context_has_user_as(current->cp));
     }

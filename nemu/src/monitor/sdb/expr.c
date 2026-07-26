@@ -395,14 +395,28 @@ error:
 
 static word_t unaryOperation(const TokenType op, const word_t val, bool *success)
 {
-    (void)success;
-
     switch (op)
     {
     case TK_NEGATIVE:
         return -val;
     case TK_DEFER:
+#ifdef CONFIG_ISA_mips32
+    {
+        word_t value;
+
+        if (!mips32_debug_vaddr_read(val, sizeof(word_t), &value))
+        {
+            PRI_ERR("Cannot read memory at " FMT_WORD ".\n", val);
+            *success = false;
+            return (word_t)-1;
+        }
+
+        return value;
+    }
+#else
+        (void)success;
         return vaddr_read(val, sizeof(word_t));
+#endif
     default:
         assert(0);
     }

@@ -33,7 +33,21 @@ _start:
 #elif defined(__ISA_MIPS32__)
 
   move $fp, $zero
+
+#ifdef __NAVY_VME__
+  # Nanos passes the virtual address of argc through v0/GPRx.  Keep a0 on
+  # that exact word while rounding only the active O32 stack pointer down.
+  move $a0, $v0
+  move $sp, $v0
+  li $t0, -8
+  and $sp, $sp, $t0
+#endif
+
+  # Every O32 caller reserves four argument-home words for its callee.  Keep
+  # the argument block in a0 unchanged while placing this area below it.
+  addiu $sp, $sp, -16
   jal call_main
+  nop
 
 #elif defined(__riscv)
   mv s0, zero

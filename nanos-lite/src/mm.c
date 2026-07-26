@@ -56,6 +56,14 @@ int mm_brk(uintptr_t brk)
         return 0;
     }
 
+#if defined(__ISA_MIPS32__)
+    /* An image entered directly through naive_uload() has no page table to extend. */
+    if (current == NULL)
+    {
+        return 0;
+    }
+#endif
+
     // Only grow mappings, we do not reclaim pages when brk shrinks.
     if (brk <= current->max_brk)
     {

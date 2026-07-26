@@ -2,8 +2,8 @@
 
 # usage: addenv env_name path
 function addenv() {
-  # Replace the old export instead of appending duplicates.  Many PA/NEMU
-  # exercises are cloned side by side, so a stale *_HOME entry can silently make
+  # Replace the old export instead of appending duplicates. Multiple NEMU
+  # worktrees may exist side by side, so a stale *_HOME entry can silently make
   # builds use headers or images from the wrong checkout.
   sed -i -e "/^export $1=.*/d" ~/.bashrc
   echo -e "\nexport $1=`readlink -e $2`" >> ~/.bashrc
@@ -15,9 +15,9 @@ function addenv() {
 # usage: init repo branch directory trace [env]
 # trace = true|false
 function init() {
-  # The upstream teaching repos are optional subtrees in this checkout.  Skip an
-  # existing directory so local course work is not overwritten by re-running the
-  # bootstrap helper.
+  # Upstream component repositories are optional subtrees in this checkout.
+  # Skip an existing directory so local changes are not overwritten when the
+  # bootstrap helper is run again.
   if [ -d $3 ]; then
     echo "$3 is already initialized, skipping..."
     return

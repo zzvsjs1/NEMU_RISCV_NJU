@@ -4,6 +4,15 @@ config RV64
   bool
   default y if ISA_riscv64
 
+config RV64_FPU
+  bool "Enable RV64 F and D floating-point extensions"
+  depends on ISA_riscv64
+  default y
+  help
+    Implement the scalar RV64 F and D extensions in the interpreter using
+    Berkeley SoftFloat. The RV64 JIT continues to fall back to the interpreter
+    for floating-point opcodes that it does not translate.
+
 config RVE
   bool "Use E extension"
   depends on ISA_riscv32

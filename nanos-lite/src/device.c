@@ -67,6 +67,20 @@ static uint32_t *fb_backing[NR_FOREGROUND_PROC] = {};
 static bool fb_backing_stale[NR_FOREGROUND_PROC] = {};
 static bool fb_backing_ready = false;
 
+#if defined(__ISA_MIPS32__) && defined(NANOS_INIT_MIPS32_PA4)
+/*
+ * NEMU's accelerated framebuffer device consumes its source synchronously, but
+ * the MMIO callback cannot raise and retry a guest TLB refill halfway through
+ * that host-side copy.  A scheduled process therefore copies foreground pixels
+ * into this direct-mapped kernel bounce buffer first.  Guest CPU loads perform
+ * any required refills normally; the subsequent device transfer sees only a
+ * stable kseg address.  One page covers a complete row at NEMU's maximum
+ * supported width and avoids allocating this storage on any other ISA.
+ */
+static uint32_t fb_user_bounce[PGSIZE / sizeof(uint32_t)]
+    __attribute__((aligned(PGSIZE)));
+#endif
+
 /*
  * Audio is also a foreground-owned physical device. PAL and Bird keep their
  * own userspace SDL state after a hotkey switch, but NEMU has only one host
@@ -496,6 +510,64 @@ size_t dispinfo_read(void *buf, size_t offset, size_t len)
     return toCopy;
 }
 
+#if defined(__ISA_MIPS32__) && defined(NANOS_INIT_MIPS32_PA4)
+static void draw_scheduled_foreground(const void *buf, size_t pixel_offset,
+                                      size_t pixel_count)
+{
+    const size_t capacity = sizeof(fb_user_bounce) / sizeof(fb_user_bounce[0]);
+    const uint32_t *source = (const uint32_t *)buf;
+    size_t destination = pixel_offset;
+    size_t remaining = pixel_count;
+
+    assert(fb_screen_w > 0);
+    assert(capacity >= (size_t)fb_screen_w);
+
+    while (remaining > 0)
+    {
+        const int row = (int)(destination / (size_t)fb_screen_w);
+        const int col = (int)(destination % (size_t)fb_screen_w);
+        size_t copied_pixels;
+        int draw_width;
+        int draw_height;
+
+        if (col == 0 && remaining >= (size_t)fb_screen_w)
+        {
+            /* Batch as many complete rows as the direct-mapped buffer holds. */
+            size_t rows = remaining / (size_t)fb_screen_w;
+            const size_t capacity_rows = capacity / (size_t)fb_screen_w;
+
+            if (rows > capacity_rows)
+                rows = capacity_rows;
+
+            copied_pixels = rows * (size_t)fb_screen_w;
+            draw_width = fb_screen_w;
+            draw_height = (int)rows;
+        }
+        else
+        {
+            /* Finish the current linear row before advancing to the next one. */
+            const size_t row_remaining = (size_t)fb_screen_w - (size_t)col;
+            copied_pixels = remaining < row_remaining ? remaining : row_remaining;
+            if (copied_pixels > capacity)
+                copied_pixels = capacity;
+
+            assert(copied_pixels <= (size_t)INT32_MAX);
+            draw_width = (int)copied_pixels;
+            draw_height = 1;
+        }
+
+        memcpy(fb_user_bounce, source,
+               copied_pixels * sizeof(fb_user_bounce[0]));
+        io_write(AM_GPU_FBDRAW, col, row, fb_user_bounce,
+                 draw_width, draw_height, true);
+
+        source += copied_pixels;
+        destination += copied_pixels;
+        remaining -= copied_pixels;
+    }
+}
+#endif
+
 size_t fb_write(const void *buf, size_t offset, size_t len)
 {
     assert(fb_backing_ready);
@@ -504,7 +576,11 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
     const int owner = current_pcb_index();
     const int foreground_owner = foreground_pcb_index();
 
+#if defined(__ISA_MIPS32__)
+    if (owner >= 0 && owner != foreground_owner)
+#else
     if (owner != foreground_owner)
+#endif
     {
         update_fb_backing(owner, buf, offset, len);
         return len;
@@ -532,7 +608,15 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
      * those as one multi-row draw so the VGA sync flag is raised once instead of
      * once per row.  Other linear spans keep the old one-span behaviour.
      */
+#if defined(__ISA_MIPS32__) && defined(NANOS_INIT_MIPS32_PA4)
+    if (owner >= 0)
+    {
+        draw_scheduled_foreground(buf, pixelOffset, pixelCount);
+    }
+    else if (col == 0 && pixelCount >= (size_t)screenW && pixelCount % (size_t)screenW == 0)
+#else
     if (col == 0 && pixelCount >= (size_t)screenW && pixelCount % (size_t)screenW == 0)
+#endif
     {
         const int hPixels = (int)(pixelCount / (size_t)screenW);
         io_write(AM_GPU_FBDRAW, col, row, (void *)buf, screenW, hPixels, true);

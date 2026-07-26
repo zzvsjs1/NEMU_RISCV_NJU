@@ -2,7 +2,7 @@
 #include <cpu/exec.h>
 #include <cpu/difftest.h>
 #include <inttypes.h>
-#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86)
+#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86) && !defined(CONFIG_ISA_mips32)
 #include <isa-all-instr.h>
 #endif
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
@@ -33,7 +33,7 @@ const rtlreg_t rzero = 0;
 rtlreg_t tmp_reg[6];
 
 void device_update();
-#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86)
+#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86) && !defined(CONFIG_ISA_mips32)
 void fetch_decode(Decode *s, vaddr_t pc);
 #endif
 
@@ -76,7 +76,7 @@ static void trace_and_difftest(Decode *_this, vaddr_t dnpc)
 #endif
 }
 
-#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86)
+#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86) && !defined(CONFIG_ISA_mips32)
 #include <isa-exec.h>
 
 /*
@@ -170,8 +170,8 @@ static inline void fetch_decode_exec_updatepc(Decode *s)
      * Direct-interpreter step: isa_exec_once() owns both fetch and
      * execution, so the common CPU loop only copies the committed dnpc into
      * cpu.pc and formats the trace line afterwards. RISC-V uses this for its
-     * pattern interpreter; PA x86 also uses it because x86 length decode is
-     * interleaved with instruction fetch.
+     * pattern interpreter; the x86 interpreter also uses it because x86 length
+     * decode is interleaved with instruction fetch.
      */
     s->pc = cpu.pc;
     s->snpc = cpu.pc;
@@ -303,7 +303,7 @@ static uint64_t diagnostic_instr_limit(void)
     return limit;
 }
 
-#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86)
+#if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86) && !defined(CONFIG_ISA_mips32)
 void fetch_decode(Decode *s, vaddr_t pc)
 {
     /*
@@ -496,6 +496,33 @@ void cpu_exec(uint64_t n)
                 g_nr_guest_instr += executed;
                 difftest_skip_ref();
                 difftest_step(fault_pc, cpu.pc);
+            }
+#elif defined(CONFIG_ISA_mips32)
+            /*
+             * A translated MIPS access can leave the normal C call stack from
+             * instruction fetch or execution.  Arm the environment for one
+             * instruction only, so a memory access outside this boundary is a
+             * clear emulator error rather than a jump into a stale cpu_exec().
+             */
+            mips32_exception_env_valid = true;
+            if (setjmp(mips32_exception_env) == 0)
+            {
+                fetch_decode_exec_updatepc(&s);
+                mips32_exception_env_valid = false;
+                executed = 1;
+                n -= executed;
+                g_nr_guest_instr += executed;
+                trace_and_difftest(&s, cpu.pc);
+            }
+            else
+            {
+                mips32_exception_env_valid = false;
+                cpu.pc = mips32_exception_target;
+
+                /* The faulting instruction is retried after the refill. */
+                executed = 1;
+                n -= executed;
+                g_nr_guest_instr += executed;
             }
 #else
             fetch_decode_exec_updatepc(&s);

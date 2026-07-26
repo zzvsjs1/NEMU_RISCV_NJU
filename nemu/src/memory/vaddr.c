@@ -54,6 +54,12 @@ static void __attribute__((noreturn)) handle_translate_failure(int status, const
         x86_raise_page_fault();
     }
 #endif
+#ifdef CONFIG_ISA_mips32
+    if (status == MEM_RET_FAIL)
+    {
+        mips32_raise_tlb_exception();
+    }
+#endif
 
     panic("%s: mmu translate failed", caller);
 }

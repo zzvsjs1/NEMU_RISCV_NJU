@@ -24,10 +24,10 @@
 static uint32_t nemu_eflags_to_kvm(uint32_t eflags)
 {
     /*
-     * KVM single-steps the reference through TF, while NEMU's architectural
-     * state keeps TF clear for PA programs.  Keep bit 1 set, as required by
-     * x86, and let KVM observe the same arithmetic/control flags as the DUT
-     * when DiffTest re-synchronises after skipped device or trap operations.
+     * KVM single-steps the reference through TF, while NEMU's guest
+     * architectural state keeps TF clear. Keep bit 1 set, as required by x86,
+     * and let KVM observe the same arithmetic/control flags as the DUT when
+     * DiffTest re-synchronises after skipped device or trap operations.
      */
     return (eflags | RFLAGS_ALWAYS_ON | RFLAGS_TF);
 }
