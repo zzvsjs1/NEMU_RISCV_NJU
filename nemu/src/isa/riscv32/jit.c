@@ -112,12 +112,16 @@
 #define RV32_JIT_PMEM_CHUNK_COUNT \
     (((size_t)CONFIG_MSIZE + (size_t)RV32_JIT_SOURCE_CHUNK_SIZE - 1u) / \
      (size_t)RV32_JIT_SOURCE_CHUNK_SIZE)
-#define RV32_JIT_SATP_MODE_MASK 0x80000000u
-#define RV32_JIT_SATP_PPN_MASK 0x003fffffu
-#define RV32_JIT_PTE_V 0x001u
-#define RV32_JIT_PTE_R 0x002u
-#define RV32_JIT_PTE_W 0x004u
-#define RV32_JIT_PTE_X 0x008u
+/*
+ * Preserve the concise JIT paging vocabulary while taking every architectural
+ * SATP and PTE value from the common ISA definitions.
+ */
+#define RV32_JIT_SATP_MODE_MASK RISCV32_SATP_MODE_MASK
+#define RV32_JIT_SATP_PPN_MASK RISCV32_SATP_PPN_MASK
+#define RV32_JIT_PTE_V RISCV_PTE_V
+#define RV32_JIT_PTE_R RISCV_PTE_R
+#define RV32_JIT_PTE_W RISCV_PTE_W
+#define RV32_JIT_PTE_X RISCV_PTE_X
 #define RV32_JIT_TLB_SIZE 128u
 #define RV32_JIT_PMEM_PAGE_COUNT \
     (((size_t)CONFIG_MSIZE + (size_t)PAGE_SIZE - 1u) / (size_t)PAGE_SIZE)
@@ -471,7 +475,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
 {
     const uint32_t satp = cpu.csr.satp;
 
-    if ((satp & RV32_JIT_SATP_MODE_MASK) == 0)
+    if ((satp & RV32_JIT_SATP_MODE_MASK) == RISCV_SATP_MODE_BARE)
     {
         const paddr_t direct = (paddr_t)addr;
 
@@ -510,10 +514,17 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
 
     const paddr_t root =
         ((paddr_t)(satp & RV32_JIT_SATP_PPN_MASK)) << PAGE_SHIFT;
-    const word_t vpn1 = (word_t)((addr >> 22) & 0x3ffu);
-    const word_t vpn0 = (word_t)((addr >> 12) & 0x3ffu);
-    const paddr_t pte1_addr = root + (paddr_t)(vpn1 * 4u);
-    const uint32_t pte1 = (uint32_t)paddr_read(pte1_addr, 4);
+    const word_t vpn1 =
+        (word_t)((addr >>
+                  (PAGE_SHIFT +
+                   RISCV32_SV32_ROOT_LEVEL * RISCV32_SV32_VPN_BITS)) &
+                 RISCV32_SV32_VPN_MASK);
+    const word_t vpn0 =
+        (word_t)((addr >> PAGE_SHIFT) & RISCV32_SV32_VPN_MASK);
+    const paddr_t pte1_addr =
+        root + (paddr_t)(vpn1 * RISCV32_SV32_PTE_BYTES);
+    const uint32_t pte1 =
+        (uint32_t)paddr_read(pte1_addr, RISCV32_SV32_PTE_BYTES);
 
     if ((pte1 & RV32_JIT_PTE_V) == 0)
     {
@@ -531,9 +542,12 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
         return false;
     }
 
-    const paddr_t l0_pt = ((paddr_t)(pte1 >> 10)) << PAGE_SHIFT;
-    const paddr_t pte0_addr = l0_pt + (paddr_t)(vpn0 * 4u);
-    const uint32_t pte0 = (uint32_t)paddr_read(pte0_addr, 4);
+    const paddr_t l0_pt =
+        ((paddr_t)(pte1 >> RISCV_PTE_PPN_SHIFT)) << PAGE_SHIFT;
+    const paddr_t pte0_addr =
+        l0_pt + (paddr_t)(vpn0 * RISCV32_SV32_PTE_BYTES);
+    const uint32_t pte0 =
+        (uint32_t)paddr_read(pte0_addr, RISCV32_SV32_PTE_BYTES);
 
     if ((pte0 & RV32_JIT_PTE_V) == 0)
     {
@@ -547,7 +561,8 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
         return false;
     }
 
-    const paddr_t pg_paddr = ((paddr_t)(pte0 >> 10)) << PAGE_SHIFT;
+    const paddr_t pg_paddr =
+        ((paddr_t)(pte0 >> RISCV_PTE_PPN_SHIFT)) << PAGE_SHIFT;
 
     if (!jit_pmem_range(pg_paddr | (paddr_t)(addr & PAGE_MASK), len))
     {
@@ -838,7 +853,7 @@ static uint32_t jit_op_complex(uint32_t instr)
         panic("jit: unsupported complex OP instruction 0x%08x", instr);
     }
 
-    if (rd != 0)
+    if (rd != RISCV_GPR_ZERO)
     {
         gpr(rd) = out;
     }
@@ -1696,7 +1711,8 @@ static rv32_jit_reg_slot_t *jit_reg_find(rv32_jit_reg_cache_t *regs,
 static bool jit_reg_emit_flush_slot(rv32_jit_writer_t *w,
                                     const rv32_jit_reg_slot_t *slot)
 {
-    if (!slot->valid || !slot->loaded || !slot->dirty || slot->guest_reg == 0)
+    if (!slot->valid || !slot->loaded || !slot->dirty ||
+        slot->guest_reg == RISCV_GPR_ZERO)
     {
         return true;
     }
@@ -1813,7 +1829,7 @@ static rv32_jit_reg_slot_t *jit_reg_alloc(rv32_jit_writer_t *w,
 static bool jit_reg_read_eax(rv32_jit_writer_t *w,
                              rv32_jit_reg_cache_t *regs, uint32_t reg)
 {
-    if (reg == 0)
+    if (reg == RISCV_GPR_ZERO)
     {
         return emit_mov_eax_imm(w, 0);
     }
@@ -1843,7 +1859,7 @@ static bool jit_reg_read_eax(rv32_jit_writer_t *w,
 static bool jit_reg_read_ecx(rv32_jit_writer_t *w,
                              rv32_jit_reg_cache_t *regs, uint32_t reg)
 {
-    if (reg == 0)
+    if (reg == RISCV_GPR_ZERO)
     {
         return emit_u8(w, 0x31) && emit_u8(w, 0xc9);
     }
@@ -1873,7 +1889,7 @@ static bool jit_reg_read_ecx(rv32_jit_writer_t *w,
 static bool jit_reg_write_eax(rv32_jit_writer_t *w,
                               rv32_jit_reg_cache_t *regs, uint32_t reg)
 {
-    if (reg == 0)
+    if (reg == RISCV_GPR_ZERO)
     {
         return true;
     }
@@ -1900,7 +1916,7 @@ static bool jit_reg_write_eax(rv32_jit_writer_t *w,
 static bool jit_reg_write_imm(rv32_jit_writer_t *w,
                               rv32_jit_reg_cache_t *regs, uint32_t reg, uint32_t value)
 {
-    if (reg == 0)
+    if (reg == RISCV_GPR_ZERO)
     {
         return true;
     }
@@ -2073,12 +2089,12 @@ static bool jit_reg_apply_reg(rv32_jit_writer_t *w,
 static bool jit_reg_copy(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                          uint32_t dst_reg, uint32_t src_reg)
 {
-    if (dst_reg == 0)
+    if (dst_reg == RISCV_GPR_ZERO)
     {
         return true;
     }
 
-    if (src_reg == 0)
+    if (src_reg == RISCV_GPR_ZERO)
     {
         return jit_reg_write_imm(w, regs, dst_reg, 0);
     }
@@ -2212,7 +2228,7 @@ static bool emit_rv32_div(rv32_jit_writer_t *w,
 
     if (!emit_test_ecx_ecx(w) ||
         !emit_jcc_rel32_placeholder(w, 0x84, &zero_disp) ||
-        !emit_cmp_eax_imm(w, 0x80000000u) ||
+        !emit_cmp_eax_imm(w, (uint32_t)INT32_MIN) ||
         !emit_jcc_rel32_placeholder(w, 0x85, &normal_disp) ||
         !emit_cmp_ecx_imm8(w, 0xff) ||
         !emit_jcc_rel32_placeholder(w, 0x84, &overflow_disp))
@@ -2239,7 +2255,7 @@ static bool emit_rv32_div(rv32_jit_writer_t *w,
 
     patch_rel32(overflow_disp, w->cur);
 
-    if (!emit_mov_eax_imm(w, 0x80000000u))
+    if (!emit_mov_eax_imm(w, (uint32_t)INT32_MIN))
     {
         return false;
     }
@@ -2261,7 +2277,7 @@ static bool emit_rv32_rem(rv32_jit_writer_t *w,
 
     if (!emit_test_ecx_ecx(w) ||
         !emit_jcc_rel32_placeholder(w, 0x84, &zero_disp) ||
-        !emit_cmp_eax_imm(w, 0x80000000u) ||
+        !emit_cmp_eax_imm(w, (uint32_t)INT32_MIN) ||
         !emit_jcc_rel32_placeholder(w, 0x85, &normal_disp) ||
         !emit_cmp_ecx_imm8(w, 0xff) ||
         !emit_jcc_rel32_placeholder(w, 0x84, &overflow_disp))
@@ -2470,7 +2486,8 @@ static bool emit_direct_pmem_guard(rv32_jit_writer_t *w, uint32_t len,
      * jump straight to the helper path.
      */
 
-    if ((cpu.csr.satp & 0x80000000u) != 0)
+    if ((cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) !=
+        RISCV_SATP_MODE_BARE)
     {
         if (!emit_jmp_rel32_placeholder(w, &patch->satp_slow_disp))
         {
@@ -2856,7 +2873,8 @@ static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
         return false;
     }
 
-    if ((cpu.csr.satp & 0x80000000u) != 0)
+    if ((cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) !=
+        RISCV_SATP_MODE_BARE)
     {
         rv32_jit_tlb_load_patch_t tlb_guard = {0};
         uint8_t *done_disp = NULL;
@@ -2977,7 +2995,8 @@ static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
         return false;
     }
 
-    if ((cpu.csr.satp & 0x80000000u) != 0)
+    if ((cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) !=
+        RISCV_SATP_MODE_BARE)
     {
         rv32_jit_tlb_load_patch_t tlb_guard = {0};
         uint8_t *cross_chunk_disp = NULL;
@@ -3112,17 +3131,18 @@ static bool emit_load_store_instr(rv32_jit_writer_t *w,
                                   uint32_t exit_count,
                                   bool loop_count_needed)
 {
-    const uint32_t opcode = instr & 0x7fu;
+    const uint32_t opcode = instr & RISCV_OPCODE_MASK;
 
-    if (opcode == 0x03)
+    if (opcode == RISCV_OPCODE_LOAD)
     {
         return emit_load_instr(w, regs, instr, cur_pc, exit_count,
                                loop_count_needed);
     }
 
-    if (opcode == 0x23)
+    if (opcode == RISCV_OPCODE_STORE)
     {
-        return emit_store_instr(w, regs, instr, cur_pc, cur_pc + 4u,
+        return emit_store_instr(w, regs, instr, cur_pc,
+                                cur_pc + RISCV_BASE_INSN_BYTES,
                                 exit_count, loop_count_needed);
     }
 
@@ -3132,24 +3152,25 @@ static bool emit_load_store_instr(rv32_jit_writer_t *w,
 /* Return true for RV32 instructions that terminate a straight-line block. */
 static bool jit_instr_is_control_flow(uint32_t instr)
 {
-    const uint32_t opcode = instr & 0x7fu;
-    return opcode == 0x63 || opcode == 0x6f || opcode == 0x67;
+    const uint32_t opcode = instr & RISCV_OPCODE_MASK;
+    return opcode == RISCV_OPCODE_BRANCH || opcode == RISCV_OPCODE_JAL ||
+           opcode == RISCV_OPCODE_JALR;
 }
 
 /* Return true for instructions that can stay inside a chained loop body. */
 static bool jit_instr_can_chain_body(uint32_t instr)
 {
-    const uint32_t opcode = instr & 0x7fu;
+    const uint32_t opcode = instr & RISCV_OPCODE_MASK;
 
     switch (opcode)
     {
-    case 0x13: /* OP-IMM */
-    case 0x03: /* LOAD */
-    case 0x23: /* STORE */
-    case 0x17: /* AUIPC */
-    case 0x33: /* OP */
-    case 0x37: /* LUI */
-    case 0x63: /* BRANCH */
+    case RISCV_OPCODE_OP_IMM:
+    case RISCV_OPCODE_LOAD:
+    case RISCV_OPCODE_STORE:
+    case RISCV_OPCODE_AUIPC:
+    case RISCV_OPCODE_OP:
+    case RISCV_OPCODE_LUI:
+    case RISCV_OPCODE_BRANCH:
         return true;
     default:
         return false;
@@ -3233,7 +3254,7 @@ static bool emit_branch_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     uint8_t *fallthrough_disp = NULL;
     const vaddr_t target = pc + imm_b(instr);
 
-    if ((target & 0x3u) != 0)
+    if ((target & RISCV_IALIGN_32_MASK) != 0)
     {
         return false;
     }
@@ -3281,29 +3302,33 @@ static bool emit_control_flow_instr(rv32_jit_writer_t *w,
                                     rv32_jit_reg_cache_t *regs, uint32_t instr,
                                     vaddr_t pc, uint32_t exit_count)
 {
-    const uint32_t opcode = instr & 0x7fu;
+    const uint32_t opcode = instr & RISCV_OPCODE_MASK;
     const uint32_t rd = bits(instr, 11, 7);
     const uint32_t funct3 = bits(instr, 14, 12);
     const uint32_t rs1 = bits(instr, 19, 15);
 
-    if (opcode == 0x63)
+    if (opcode == RISCV_OPCODE_BRANCH)
     {
         return false;
     }
 
-    if (opcode == 0x6f)
+    if (opcode == RISCV_OPCODE_JAL)
     {
         const vaddr_t target = pc + imm_j(instr);
 
-        if ((target & 0x3u) != 0)
+        if ((target & RISCV_IALIGN_32_MASK) != 0)
         {
             return false;
         }
 
-        return emit_mov_eax_imm(w, pc + 4u) && jit_reg_write_eax(w, regs, rd) && jit_reg_emit_flush_all_dirty(w, regs) && emit_set_pc_imm(w, target);
+        return emit_mov_eax_imm(w, pc + RISCV_BASE_INSN_BYTES) &&
+               jit_reg_write_eax(w, regs, rd) &&
+               jit_reg_emit_flush_all_dirty(w, regs) &&
+               emit_set_pc_imm(w, target);
     }
 
-    if (opcode == 0x67 && funct3 == 0)
+    if (opcode == RISCV_OPCODE_JALR &&
+        funct3 == RISCV_JALR_FUNCT3)
     {
         /*
          * JALR computes and aligns the target before writing the link register.
@@ -3315,8 +3340,9 @@ static bool emit_control_flow_instr(rv32_jit_writer_t *w,
 
         if (!jit_reg_read_eax(w, regs, rs1) ||
             !emit_add_eax_imm(w, (uint32_t)imm_i(instr)) ||
-            !emit_and_eax_imm(w, 0xfffffffeu) ||
-            !emit_test_eax_imm(w, 0x3u) ||
+            !emit_and_eax_imm(
+                w, ~(uint32_t)RISCV_JALR_TARGET_LSB_MASK) ||
+            !emit_test_eax_imm(w, RISCV_IALIGN_32_MASK) ||
             !emit_jcc_rel32_placeholder(w, 0x84, &aligned_disp) ||
             !emit_trap_side_exit_from_eax(w, regs,
                                           RISCV32_CAUSE_INST_ADDR_MISALIGNED,
@@ -3328,7 +3354,7 @@ static bool emit_control_flow_instr(rv32_jit_writer_t *w,
         patch_rel32(aligned_disp, w->cur);
 
         return emit_store_pc_eax(w) &&
-               emit_mov_eax_imm(w, pc + 4u) &&
+               emit_mov_eax_imm(w, pc + RISCV_BASE_INSN_BYTES) &&
                jit_reg_write_eax(w, regs, rd) &&
                jit_reg_emit_flush_all_dirty(w, regs);
     }
@@ -3346,29 +3372,29 @@ static bool emit_control_flow_instr(rv32_jit_writer_t *w,
 static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                            uint32_t instr, vaddr_t cur_pc)
 {
-    const uint32_t opcode = instr & 0x7fu;
+    const uint32_t opcode = instr & RISCV_OPCODE_MASK;
     const uint32_t rd = bits(instr, 11, 7);
     const uint32_t funct3 = bits(instr, 14, 12);
     const uint32_t rs1 = bits(instr, 19, 15);
     const uint32_t rs2 = bits(instr, 24, 20);
     const uint32_t funct7 = bits(instr, 31, 25);
 
-    if (opcode == 0x37)
+    if (opcode == RISCV_OPCODE_LUI)
     {
         /* LUI places the U-immediate directly in rd. */
         return jit_reg_write_imm(w, regs, rd, imm_u(instr));
     }
 
-    if (opcode == 0x17)
+    if (opcode == RISCV_OPCODE_AUIPC)
     {
         return jit_reg_write_imm(w, regs, rd, cur_pc + imm_u(instr));
     }
 
-    if (opcode == 0x13)
+    if (opcode == RISCV_OPCODE_OP_IMM)
     {
         const uint32_t imm = (uint32_t)imm_i(instr);
 
-        if (rs1 == 0)
+        if (rs1 == RISCV_GPR_ZERO)
         {
             switch (funct3)
             {
@@ -3403,7 +3429,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
             }
         }
 
-        if (rd != 0 && rd == rs1)
+        if (rd != RISCV_GPR_ZERO && rd == rs1)
         {
             switch (funct3)
             {
@@ -3442,7 +3468,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
             }
         }
 
-        if (rd != 0)
+        if (rd != RISCV_GPR_ZERO)
         {
             const uint8_t shamt = (uint8_t)bits(instr, 24, 20);
 
@@ -3543,27 +3569,27 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
         }
     }
 
-    if (opcode == 0x33)
+    if (opcode == RISCV_OPCODE_OP)
     {
         const uint32_t key = (funct7 << 3) | funct3;
 
-        if (rd != 0)
+        if (rd != RISCV_GPR_ZERO)
         {
             switch (key)
             {
             case 0x000:
-                if (rd == rs1 && rs2 != 0)
+                if (rd == rs1 && rs2 != RISCV_GPR_ZERO)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs2, 0x01);
                 }
 
-                if (rd == rs2 && rs1 != 0)
+                if (rd == rs2 && rs1 != RISCV_GPR_ZERO)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs1, 0x01);
                 }
                 break;
             case 0x100:
-                if (rd == rs1 && rs2 != 0)
+                if (rd == rs1 && rs2 != RISCV_GPR_ZERO)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs2, 0x29);
                 }
@@ -3575,12 +3601,12 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 }
                 break;
             case 0x004:
-                if (rd == rs1 && rs2 != 0)
+                if (rd == rs1 && rs2 != RISCV_GPR_ZERO)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs2, 0x31);
                 }
 
-                if (rd == rs2 && rs1 != 0)
+                if (rd == rs2 && rs1 != RISCV_GPR_ZERO)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs1, 0x31);
                 }
@@ -3598,23 +3624,23 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 }
                 break;
             case 0x006:
-                if (rd == rs1 && rs2 != 0)
+                if (rd == rs1 && rs2 != RISCV_GPR_ZERO)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs2, 0x09);
                 }
 
-                if (rd == rs2 && rs1 != 0)
+                if (rd == rs2 && rs1 != RISCV_GPR_ZERO)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs1, 0x09);
                 }
                 break;
             case 0x007:
-                if (rd == rs1 && rs2 != 0)
+                if (rd == rs1 && rs2 != RISCV_GPR_ZERO)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs2, 0x21);
                 }
 
-                if (rd == rs2 && rs1 != 0)
+                if (rd == rs2 && rs1 != RISCV_GPR_ZERO)
                 {
                     return jit_reg_apply_reg(w, regs, rd, rs1, 0x21);
                 }
@@ -3634,12 +3660,12 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
             switch (key)
             {
             case 0x000:
-                if (rs1 == 0)
+                if (rs1 == RISCV_GPR_ZERO)
                 {
                     return jit_reg_copy(w, regs, rd, rs2);
                 }
 
-                if (rs2 == 0)
+                if (rs2 == RISCV_GPR_ZERO)
                 {
                     return jit_reg_copy(w, regs, rd, rs1);
                 }
@@ -3651,7 +3677,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 }
                 break;
             case 0x100:
-                if (rs1 == rs2 || rs2 == 0)
+                if (rs1 == rs2 || rs2 == RISCV_GPR_ZERO)
                 {
                     return rs1 == rs2 ? jit_reg_write_imm(w, regs, rd, 0) : jit_reg_copy(w, regs, rd, rs1);
                 }
@@ -3663,12 +3689,12 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 }
                 break;
             case 0x001:
-                if (rs1 == 0)
+                if (rs1 == RISCV_GPR_ZERO)
                 {
                     return jit_reg_write_imm(w, regs, rd, 0);
                 }
 
-                if (rs2 == 0)
+                if (rs2 == RISCV_GPR_ZERO)
                 {
                     return jit_reg_copy(w, regs, rd, rs1);
                 }
@@ -3692,12 +3718,12 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                     return jit_reg_write_imm(w, regs, rd, 0);
                 }
 
-                if (rs1 == 0)
+                if (rs1 == RISCV_GPR_ZERO)
                 {
                     return jit_reg_copy(w, regs, rd, rs2);
                 }
 
-                if (rs2 == 0)
+                if (rs2 == RISCV_GPR_ZERO)
                 {
                     return jit_reg_copy(w, regs, rd, rs1);
                 }
@@ -3710,12 +3736,12 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 break;
             case 0x005:
             case 0x105:
-                if (rs1 == 0)
+                if (rs1 == RISCV_GPR_ZERO)
                 {
                     return jit_reg_write_imm(w, regs, rd, 0);
                 }
 
-                if (rs2 == 0)
+                if (rs2 == RISCV_GPR_ZERO)
                 {
                     return jit_reg_copy(w, regs, rd, rs1);
                 }
@@ -3728,12 +3754,12 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 }
                 break;
             case 0x006:
-                if (rs1 == 0)
+                if (rs1 == RISCV_GPR_ZERO)
                 {
                     return jit_reg_copy(w, regs, rd, rs2);
                 }
 
-                if (rs2 == 0)
+                if (rs2 == RISCV_GPR_ZERO)
                 {
                     return jit_reg_copy(w, regs, rd, rs1);
                 }
@@ -3745,7 +3771,8 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 }
                 break;
             case 0x007:
-                if (rs1 == 0 || rs2 == 0)
+                if (rs1 == RISCV_GPR_ZERO ||
+                    rs2 == RISCV_GPR_ZERO)
                 {
                     return jit_reg_write_imm(w, regs, rd, 0);
                 }
@@ -3947,7 +3974,8 @@ static bool jit_block_matches(const rv32_jit_block_t *block, vaddr_t pc)
      * their native block if the recorded physical source bytes are unchanged.
      */
 
-    if ((cpu.csr.satp & 0x80000000u) != 0)
+    if ((cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) !=
+        RISCV_SATP_MODE_BARE)
     {
         uint32_t offset = 0;
 
@@ -4030,15 +4058,16 @@ static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
             return false;
         }
 
-        const uint32_t instr = vaddr_ifetch(cur_pc, 4);
-        const uint32_t opcode = instr & 0x7fu;
+        const uint32_t instr =
+            vaddr_ifetch(cur_pc, RISCV_BASE_INSN_BYTES);
+        const uint32_t opcode = instr & RISCV_OPCODE_MASK;
 
         if (!jit_instr_can_chain_body(instr))
         {
             return false;
         }
 
-        if (opcode == 0x63 && cur_pc + imm_b(instr) == pc)
+        if (opcode == RISCV_OPCODE_BRANCH && cur_pc + imm_b(instr) == pc)
         {
             return true;
         }
@@ -4129,7 +4158,8 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
             break;
         }
 
-        const uint32_t instr = vaddr_ifetch(cur_pc, 4);
+        const uint32_t instr =
+            vaddr_ifetch(cur_pc, RISCV_BASE_INSN_BYTES);
         uint8_t *instr_start = w.cur;
         /*
          * Native bytes and compile-time register-cache metadata describe the same
@@ -4137,9 +4167,9 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
          */
         rv32_jit_reg_cache_t regs_start = regs;
         bool end_block = false;
-        const uint32_t opcode = instr & 0x7fu;
+        const uint32_t opcode = instr & RISCV_OPCODE_MASK;
 
-        if (opcode == 0x63)
+        if (opcode == RISCV_OPCODE_BRANCH)
         {
             bool branch_chained = false;
 
@@ -4200,7 +4230,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
     if (count == 0)
     {
-        jit_mark_unsupported(pc, first_paddr, 4);
+        jit_mark_unsupported(pc, first_paddr, RISCV_BASE_INSN_BYTES);
         return NULL;
     }
 

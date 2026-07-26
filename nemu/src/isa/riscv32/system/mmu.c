@@ -2,39 +2,6 @@
 #include <memory/paddr.h>
 #include <memory/vaddr.h>
 
-#define PTE_V ((word_t)1u << 0)
-#define PTE_R ((word_t)1u << 1)
-#define PTE_W ((word_t)1u << 2)
-#define PTE_X ((word_t)1u << 3)
-#define PTE_U ((word_t)1u << 4)
-#define PTE_A ((word_t)1u << 6)
-#define PTE_D ((word_t)1u << 7)
-#define PTE_RWX (PTE_R | PTE_W | PTE_X)
-#define PTE_PPN_SHIFT 10u
-
-#define MSTATUS_MPRV ((word_t)1u << 17)
-#define MSTATUS_SUM ((word_t)1u << 18)
-#define MSTATUS_MXR ((word_t)1u << 19)
-#define MSTATUS_MPP_SHIFT 11u
-#define MSTATUS_MPP_MASK ((word_t)0x3u << MSTATUS_MPP_SHIFT)
-
-#ifdef CONFIG_RV64
-#define SATP_MODE_SHIFT 60u
-#define SATP_MODE_MASK ((word_t)0xfu << SATP_MODE_SHIFT)
-#define SATP_MODE_SV39 8u
-#define SATP_PPN_MASK (((word_t)1u << 44) - 1u)
-#define PTE_PPN_MASK (((word_t)1u << 44) - 1u)
-#define PTE_NON_LEAF_RESERVED (PTE_U | PTE_A | PTE_D)
-/*
- * This NEMU target does not implement Svnapot or Svpbmt, and the remaining
- * Sv39 PTE bits [60:54] are still reserved by the privileged spec.
- */
-#define PTE_RESERVED_63_54_MASK (((word_t)0x3ffu) << 54)
-#else
-#define SATP_MODE_MASK 0x80000000u
-#define SATP_PPN_MASK 0x003fffffu
-#endif
-
 /*
  * The vaddr layer handles one page at a time.  A zero/negative length or an
  * access that runs past PAGE_SIZE is reported specially so the caller can split
@@ -58,9 +25,11 @@ static word_t effective_mem_priv(int type)
         return cpu.prvi;
     }
 
-    if (cpu.prvi == RISCV_PRIV_M && (cpu.csr.mstatus & MSTATUS_MPRV) != 0)
+    if (cpu.prvi == RISCV_PRIV_M &&
+        (cpu.csr.mstatus & RISCV_MSTATUS_MPRV) != 0)
     {
-        return (cpu.csr.mstatus & MSTATUS_MPP_MASK) >> MSTATUS_MPP_SHIFT;
+        return (cpu.csr.mstatus & RISCV_MSTATUS_MPP_MASK) >>
+               RISCV_MSTATUS_MPP_SHIFT;
     }
 
     return cpu.prvi;
@@ -71,7 +40,8 @@ static word_t effective_mem_priv(int type)
 /* Extract satp.MODE from the RV64 satp layout. */
 static word_t satp_mode(word_t satp)
 {
-    return (satp & SATP_MODE_MASK) >> SATP_MODE_SHIFT;
+    return (satp & (word_t)RISCV64_SATP_MODE_MASK) >>
+           RISCV64_SATP_MODE_SHIFT;
 }
 
 /*
@@ -80,7 +50,7 @@ static word_t satp_mode(word_t satp)
  */
 static bool sv39_active_for_access(int type)
 {
-    return satp_mode(cpu.csr.satp) == SATP_MODE_SV39 &&
+    return satp_mode(cpu.csr.satp) == RISCV64_SATP_MODE_SV39 &&
            effective_mem_priv(type) != RISCV_PRIV_M;
 }
 
@@ -91,10 +61,16 @@ static bool sv39_active_for_access(int type)
  */
 static bool is_sv39_canonical(vaddr_t vaddr)
 {
-    const uint64_t sign = ((uint64_t)vaddr >> 38) & 1u;
-    const uint64_t high = (uint64_t)vaddr >> 39;
+    const uint64_t sign =
+        ((uint64_t)vaddr >> RISCV64_SV39_CANONICAL_SIGN_BIT) & 1u;
+    const uint64_t high =
+        (uint64_t)vaddr >> RISCV64_SV39_CANONICAL_HIGH_SHIFT;
 
-    return sign ? high == ((1ull << 25) - 1ull) : high == 0;
+    return sign
+               ? high == ((UINT64_C(1)
+                           << RISCV64_SV39_CANONICAL_HIGH_BITS) -
+                          UINT64_C(1))
+               : high == 0;
 }
 
 /*
@@ -103,21 +79,22 @@ static bool is_sv39_canonical(vaddr_t vaddr)
  */
 static bool pte_is_valid(word_t pte)
 {
-    return (pte & PTE_V) != 0 &&
-           (pte & (PTE_R | PTE_W)) != PTE_W &&
-           (pte & PTE_RESERVED_63_54_MASK) == 0;
+    return (pte & RISCV_PTE_V) != 0 &&
+           (pte & (RISCV_PTE_R | RISCV_PTE_W)) != RISCV_PTE_W &&
+           (pte & (word_t)RISCV64_PTE_UNSUPPORTED_HIGH_MASK) == 0;
 }
 
 /* A PTE with any R/W/X bit set is a leaf mapping; otherwise it points lower. */
 static bool pte_is_leaf(word_t pte)
 {
-    return (pte & PTE_RWX) != 0;
+    return (pte & RISCV_PTE_RWX) != 0;
 }
 
 /* Extract the physical page number from a Sv39 PTE. */
 static word_t pte_ppn(word_t pte)
 {
-    return (pte >> PTE_PPN_SHIFT) & PTE_PPN_MASK;
+    return (pte >> RISCV_PTE_PPN_SHIFT) &
+           (word_t)RISCV64_PTE_PPN_MASK;
 }
 
 /*
@@ -126,14 +103,14 @@ static word_t pte_ppn(word_t pte)
  */
 static bool superpage_aligned(word_t ppn, int level)
 {
-    if (level == 2)
+    if (level == RISCV64_SV39_ROOT_LEVEL)
     {
-        return (ppn & 0x3ffffu) == 0;
+        return (ppn & RISCV64_SV39_LEVEL2_LOW_PPN_MASK) == 0;
     }
 
-    if (level == 1)
+    if (level == RISCV64_SV39_MEGAPAGE_LEVEL)
     {
-        return (ppn & 0x1ffu) == 0;
+        return (ppn & RISCV64_SV39_LEVEL1_LOW_PPN_MASK) == 0;
     }
 
     return true;
@@ -146,7 +123,7 @@ static bool superpage_aligned(word_t ppn, int level)
  */
 static bool pte_allows_priv(word_t pte, word_t priv, int type)
 {
-    const bool user_page = (pte & PTE_U) != 0;
+    const bool user_page = (pte & RISCV_PTE_U) != 0;
 
     if (priv == RISCV_PRIV_U)
     {
@@ -164,38 +141,43 @@ static bool pte_allows_priv(word_t pte, word_t priv, int type)
          * SUM lets S-mode load/store user pages.  It never permits S-mode
          * instruction fetch from a user page.
          */
-        return type != MEM_TYPE_IFETCH && (cpu.csr.mstatus & MSTATUS_SUM) != 0;
+        return type != MEM_TYPE_IFETCH &&
+               (cpu.csr.mstatus & RISCV_MSTATUS_SUM) != 0;
     }
 
     return false;
 }
 
 /*
- * Check access permissions after privilege is known.  A must be set for all
- * accesses, D must also be set for writes, and MXR lets reads treat executable
- * pages as readable.
+ * Check access permissions after privilege is known.  The architecture permits
+ * an implementation either to update A/D in memory or to raise a page fault so
+ * software can update them.  This Sv39 walker chooses the latter, Svade-style
+ * policy: A must already be set for every access and D must also be set for a
+ * write.  MXR separately lets a read treat an executable page as readable.
  */
 static bool pte_allows_access(word_t pte, word_t priv, int type)
 {
-    if (!pte_allows_priv(pte, priv, type) || (pte & PTE_A) == 0)
+    if (!pte_allows_priv(pte, priv, type) || (pte & RISCV_PTE_A) == 0)
     {
         return false;
     }
 
     if (type == MEM_TYPE_IFETCH)
     {
-        return (pte & PTE_X) != 0;
+        return (pte & RISCV_PTE_X) != 0;
     }
 
     if (type == MEM_TYPE_READ)
     {
-        return (pte & PTE_R) != 0 ||
-               ((cpu.csr.mstatus & MSTATUS_MXR) != 0 && (pte & PTE_X) != 0);
+        return (pte & RISCV_PTE_R) != 0 ||
+               ((cpu.csr.mstatus & RISCV_MSTATUS_MXR) != 0 &&
+                (pte & RISCV_PTE_X) != 0);
     }
 
     if (type == MEM_TYPE_WRITE)
     {
-        return (pte & (PTE_W | PTE_D)) == (PTE_W | PTE_D);
+        return (pte & (RISCV_PTE_W | RISCV_PTE_D)) ==
+               (RISCV_PTE_W | RISCV_PTE_D);
     }
 
     return false;
@@ -206,7 +188,10 @@ static bool pte_allows_access(word_t pte, word_t priv, int type)
  * PPN fields come from the virtual page number, which is why vpn[] is needed
  * even after the leaf has been found.
  */
-static paddr_t leaf_page_base(word_t ppn, const word_t vpn[3], int level)
+static paddr_t
+leaf_page_base(word_t ppn,
+               const word_t vpn[RISCV64_SV39_LEVELS],
+               int level)
 {
     word_t pa_ppn = ppn;
 
@@ -214,14 +199,18 @@ static paddr_t leaf_page_base(word_t ppn, const word_t vpn[3], int level)
      * For a legal superpage leaf, the lower physical PPN fields come from the
      * virtual page number.  The vaddr layer adds the original page offset.
      */
-    if (level >= 1)
+    if (level >= RISCV64_SV39_MEGAPAGE_LEVEL)
     {
-        pa_ppn = (pa_ppn & ~0x1ffu) | vpn[0];
+        pa_ppn = (pa_ppn & ~RISCV64_SV39_LEVEL1_LOW_PPN_MASK) |
+                 vpn[RISCV64_SV39_PAGE_LEVEL];
     }
 
-    if (level >= 2)
+    if (level >= RISCV64_SV39_GIGAPAGE_LEVEL)
     {
-        pa_ppn = (pa_ppn & ~0x3ffffu) | (vpn[1] << 9) | vpn[0];
+        pa_ppn = (pa_ppn & ~RISCV64_SV39_LEVEL2_LOW_PPN_MASK) |
+                 (vpn[RISCV64_SV39_MEGAPAGE_LEVEL]
+                  << RISCV64_SV39_VPN_BITS) |
+                 vpn[RISCV64_SV39_PAGE_LEVEL];
     }
 
     return (paddr_t)(pa_ppn << PAGE_SHIFT);
@@ -238,12 +227,12 @@ int isa_mmu_check(vaddr_t vaddr, int len, int type)
 
     const word_t mode = satp_mode(cpu.csr.satp);
 
-    if (mode == 0)
+    if (mode == RISCV_SATP_MODE_BARE)
     {
         return MMU_DIRECT;
     }
 
-    if (mode != SATP_MODE_SV39)
+    if (mode != RISCV64_SATP_MODE_SV39)
     {
         return MMU_FAIL;
     }
@@ -268,18 +257,40 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
         return (paddr_t)MEM_RET_CROSS_PAGE;
     }
 
-    const word_t vpn[3] = {
-        ((word_t)vaddr >> 12) & 0x1ffu,
-        ((word_t)vaddr >> 21) & 0x1ffu,
-        ((word_t)vaddr >> 30) & 0x1ffu,
+    /*
+     * Starting at the twelve-bit page offset, Sv39 divides the virtual page
+     * number into three adjacent nine-bit indices.  Expressing each shift as
+     * PAGE_SHIFT + level * VPN_BITS keeps the array order identical to the
+     * page-table level number used by the descending walk below.
+     */
+    const word_t vpn[RISCV64_SV39_LEVELS] = {
+        ((word_t)vaddr >>
+         (PAGE_SHIFT +
+          RISCV64_SV39_PAGE_LEVEL * RISCV64_SV39_VPN_BITS)) &
+            RISCV64_SV39_VPN_MASK,
+        ((word_t)vaddr >>
+         (PAGE_SHIFT +
+          RISCV64_SV39_MEGAPAGE_LEVEL * RISCV64_SV39_VPN_BITS)) &
+            RISCV64_SV39_VPN_MASK,
+        ((word_t)vaddr >>
+         (PAGE_SHIFT +
+          RISCV64_SV39_GIGAPAGE_LEVEL * RISCV64_SV39_VPN_BITS)) &
+            RISCV64_SV39_VPN_MASK,
     };
     const word_t priv = effective_mem_priv(type);
-    paddr_t pt_base = (paddr_t)((cpu.csr.satp & SATP_PPN_MASK) << PAGE_SHIFT);
+    paddr_t pt_base =
+        (paddr_t)((cpu.csr.satp & (word_t)RISCV64_SATP_PPN_MASK)
+                  << PAGE_SHIFT);
 
-    for (int level = 2; level >= 0; --level)
+    for (int level = RISCV64_SV39_ROOT_LEVEL;
+         level >= RISCV64_SV39_PAGE_LEVEL;
+         --level)
     {
-        const paddr_t pte_addr = pt_base + (paddr_t)(vpn[level] * sizeof(uint64_t));
-        const word_t pte = (word_t)paddr_read(pte_addr, 8);
+        const paddr_t pte_addr =
+            pt_base +
+            (paddr_t)(vpn[level] * RISCV64_SV39_PTE_BYTES);
+        const word_t pte =
+            (word_t)paddr_read(pte_addr, RISCV64_SV39_PTE_BYTES);
 
         if (!pte_is_valid(pte))
         {
@@ -298,7 +309,8 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
             return leaf_page_base(ppn, vpn, level) | (paddr_t)MEM_RET_OK;
         }
 
-        if (level == 0 || (pte & PTE_NON_LEAF_RESERVED) != 0)
+        if (level == RISCV64_SV39_PAGE_LEVEL ||
+            (pte & RISCV_PTE_NON_LEAF_RESERVED) != 0)
         {
             return (paddr_t)MEM_RET_FAIL;
         }
@@ -317,7 +329,8 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
  */
 static bool sv32_active_for_access(int type)
 {
-    if ((cpu.csr.satp & SATP_MODE_MASK) == 0)
+    if ((cpu.csr.satp & RISCV32_SATP_MODE_MASK) ==
+        RISCV_SATP_MODE_BARE)
     {
         return false;
     }
@@ -357,45 +370,66 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
     const rtlreg_t satp = cpu.csr.satp;
     Assert(sv32_active_for_access(type), "Not in memory protection mode!");
 
-    const paddr_t root = (paddr_t)((satp & SATP_PPN_MASK) * PAGE_SIZE);
-    const word_t vpn1 = (word_t)((vaddr >> 22) & 0x3ffu);
-    const word_t vpn0 = (word_t)((vaddr >> 12) & 0x3ffu);
+    /*
+     * Sv32 places a twelve-bit page offset below two ten-bit VPN fields.
+     * vpn[0] begins at PAGE_SHIFT and vpn[1] begins one VPN field above it.
+     * Multiplying an index by the four-byte PTE size selects its entry without
+     * embedding `22`, `0x3ff`, or `4` independently in the walk.
+     */
+    const paddr_t root =
+        (paddr_t)((satp & RISCV32_SATP_PPN_MASK) * PAGE_SIZE);
+    const word_t vpn1 =
+        (word_t)((vaddr >>
+                  (PAGE_SHIFT +
+                   RISCV32_SV32_ROOT_LEVEL * RISCV32_SV32_VPN_BITS)) &
+                 RISCV32_SV32_VPN_MASK);
+    const word_t vpn0 =
+        (word_t)((vaddr >> PAGE_SHIFT) & RISCV32_SV32_VPN_MASK);
 
-    const paddr_t pte1_addr = root + (paddr_t)(vpn1 * 4u);
-    const uint32_t pte1 = (uint32_t)paddr_read(pte1_addr, 4);
+    const paddr_t pte1_addr =
+        root + (paddr_t)(vpn1 * RISCV32_SV32_PTE_BYTES);
+    const uint32_t pte1 =
+        (uint32_t)paddr_read(pte1_addr, RISCV32_SV32_PTE_BYTES);
 
-    Assert((pte1 & PTE_V) != 0, "Not a valid pte at %u", (word_t)pte1_addr);
+    Assert((pte1 & RISCV_PTE_V) != 0,
+           "Not a valid pte at %u", (word_t)pte1_addr);
 
-    const uint32_t pte1_rwx = pte1 & PTE_RWX;
+    const uint32_t pte1_rwx = pte1 & RISCV_PTE_RWX;
     /*
      * Superpages are deliberately not implemented here.  Requiring a non-leaf
      * level-1 PTE keeps every successful translation on a normal 4 KiB leaf.
      */
     Assert(pte1_rwx == 0, "super page");
 
-    const paddr_t l0_pt = (paddr_t)(((paddr_t)(pte1 >> PTE_PPN_SHIFT)) * PAGE_SIZE);
-    const paddr_t pte0_addr = l0_pt + (paddr_t)(vpn0 * 4u);
-    const uint32_t pte0 = (uint32_t)paddr_read(pte0_addr, 4);
+    const paddr_t l0_pt =
+        (paddr_t)(((paddr_t)(pte1 >> RISCV_PTE_PPN_SHIFT)) *
+                  PAGE_SIZE);
+    const paddr_t pte0_addr =
+        l0_pt + (paddr_t)(vpn0 * RISCV32_SV32_PTE_BYTES);
+    const uint32_t pte0 =
+        (uint32_t)paddr_read(pte0_addr, RISCV32_SV32_PTE_BYTES);
 
-    Assert((pte0 & PTE_V) != 0, "PTE 0 invalid");
+    Assert((pte0 & RISCV_PTE_V) != 0, "PTE 0 invalid");
 
-    const uint32_t pte0_rwx = pte0 & PTE_RWX;
+    const uint32_t pte0_rwx = pte0 & RISCV_PTE_RWX;
     assert(pte0_rwx != 0);
 
     if (type == MEM_TYPE_IFETCH)
     {
-        assert((pte0 & PTE_X) != 0);
+        assert((pte0 & RISCV_PTE_X) != 0);
     }
     else if (type == MEM_TYPE_READ)
     {
-        assert((pte0 & PTE_R) != 0);
+        assert((pte0 & RISCV_PTE_R) != 0);
     }
     else if (type == MEM_TYPE_WRITE)
     {
-        assert((pte0 & PTE_W) != 0);
+        assert((pte0 & RISCV_PTE_W) != 0);
     }
 
-    const paddr_t pg_paddr = (paddr_t)(((paddr_t)(pte0 >> PTE_PPN_SHIFT)) << PAGE_SHIFT);
+    const paddr_t pg_paddr =
+        (paddr_t)(((paddr_t)(pte0 >> RISCV_PTE_PPN_SHIFT))
+                  << PAGE_SHIFT);
     return pg_paddr | (paddr_t)MEM_RET_OK;
 }
 

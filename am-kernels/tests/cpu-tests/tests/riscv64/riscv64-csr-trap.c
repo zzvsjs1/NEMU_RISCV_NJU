@@ -59,6 +59,21 @@ enum
     MSTATUS_SUM = 1ull << 18,
 };
 
+/*
+ * RV64 mstatus stores the XLEN selected for U-mode and S-mode in two adjacent
+ * WARL fields.  Each field is two bits wide, and encoding 2 means 64-bit
+ * execution.  NEMU implements no 32-bit lower-privilege mode, so every possible
+ * incoming encoding must be canonicalised to 2 rather than allowing reserved
+ * encoding 3 to remain visible.
+ */
+#define MSTATUS_XLEN_FIELD_WIDTH 2u
+#define MSTATUS_XLEN_VALUE_MASK ((1ull << MSTATUS_XLEN_FIELD_WIDTH) - 1ull)
+#define MSTATUS_UXL_SHIFT 32u
+#define MSTATUS_SXL_SHIFT 34u
+#define MSTATUS_UXL_MASK (MSTATUS_XLEN_VALUE_MASK << MSTATUS_UXL_SHIFT)
+#define MSTATUS_SXL_MASK (MSTATUS_XLEN_VALUE_MASK << MSTATUS_SXL_SHIFT)
+#define MSTATUS_XLEN_64 2ull
+
 static inline uintptr_t read_mstatus(void)
 {
     uintptr_t v;
@@ -194,6 +209,50 @@ static void test_mstatus_write_normalises_reserved_mpp(void)
     check((observed & MSTATUS_MPP_MASK) != (2ull << 11));
 }
 
+static void test_mstatus_write_normalises_uxl_and_sxl(void)
+{
+    uintptr_t old_mstatus = read_mstatus();
+    const uintptr_t xlen_fields_mask = MSTATUS_UXL_MASK | MSTATUS_SXL_MASK;
+
+    /*
+     * Exercise all four encodings in each field independently.  Keeping the
+     * other field at the supported value makes a failure identify which input
+     * was not normalised, rather than allowing one malformed field to obscure
+     * the other.
+     */
+    for (uintptr_t incoming = 0; incoming <= MSTATUS_XLEN_VALUE_MASK; incoming++)
+    {
+        uintptr_t requested = (old_mstatus & ~xlen_fields_mask) |
+                              (incoming << MSTATUS_UXL_SHIFT) |
+                              (MSTATUS_XLEN_64 << MSTATUS_SXL_SHIFT);
+
+        write_mstatus(requested);
+        uintptr_t observed = read_mstatus();
+
+        check(((observed & MSTATUS_UXL_MASK) >> MSTATUS_UXL_SHIFT) ==
+              MSTATUS_XLEN_64);
+        check(((observed & MSTATUS_SXL_MASK) >> MSTATUS_SXL_SHIFT) ==
+              MSTATUS_XLEN_64);
+    }
+
+    for (uintptr_t incoming = 0; incoming <= MSTATUS_XLEN_VALUE_MASK; incoming++)
+    {
+        uintptr_t requested = (old_mstatus & ~xlen_fields_mask) |
+                              (MSTATUS_XLEN_64 << MSTATUS_UXL_SHIFT) |
+                              (incoming << MSTATUS_SXL_SHIFT);
+
+        write_mstatus(requested);
+        uintptr_t observed = read_mstatus();
+
+        check(((observed & MSTATUS_UXL_MASK) >> MSTATUS_UXL_SHIFT) ==
+              MSTATUS_XLEN_64);
+        check(((observed & MSTATUS_SXL_MASK) >> MSTATUS_SXL_SHIFT) ==
+              MSTATUS_XLEN_64);
+    }
+
+    write_mstatus(old_mstatus);
+}
+
 static void test_user_mode_ecall_and_csr_faults(void)
 {
     uintptr_t old_mstatus = read_mstatus();
@@ -257,6 +316,7 @@ int main(void)
     test_m_mode_ecall_trap_entry();
     test_mret_restores_machine_mstatus_fields();
     test_mstatus_write_normalises_reserved_mpp();
+    test_mstatus_write_normalises_uxl_and_sxl();
     test_user_mode_ecall_and_csr_faults();
     test_wfi_is_non_blocking_hint();
 #endif

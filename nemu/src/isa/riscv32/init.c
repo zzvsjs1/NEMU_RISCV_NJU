@@ -35,7 +35,7 @@ static void restart()
     cpu.pc = RESET_VECTOR;
 
     /* The zero register is always 0. */
-    gpr(0) = 0;
+    gpr(RISCV_GPR_ZERO) = 0;
 
     cpu.csr.satp = 0;
     cpu.csr.mstatus = riscv_mstatus_normalise(0);
@@ -51,9 +51,12 @@ static void restart()
 
 #ifdef CONFIG_RV64_FPU
     /*
-     * FS remains Off at reset, as required for privileged software to opt in.
-     * Clearing the backing state makes debugger, snapshot, and DiffTest startup
-     * deterministic without claiming that software may use it while FS is Off.
+     * The privileged architecture requires reset to enter M-mode with MIE and
+     * MPRV clear and every WARL field legal; most other hart state is
+     * unspecified.  NEMU additionally chooses zero for its FPR backing storage
+     * and fcsr so debugger, snapshot, and DiffTest startup are deterministic.
+     * FS=Off is therefore an implementation policy, not an architectural reset
+     * requirement, and software must enable FS before using this cleared state.
      */
     memset(cpu.fpr, 0, sizeof(cpu.fpr));
     cpu.fcsr = 0;
@@ -69,6 +72,6 @@ void init_isa()
     /* Load built-in image. */
     memcpy(guest_to_host(RESET_VECTOR), img, sizeof(img));
 
-    /* Initialize this virtual computer system. */
+    /* Initialise this virtual computer system. */
     restart();
 }

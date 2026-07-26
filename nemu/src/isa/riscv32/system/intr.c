@@ -1,13 +1,5 @@
 #include <isa.h>
 
-#define MSTATUS_MIE_BIT 3
-#define MSTATUS_MPIE_BIT 7
-#define MSTATUS_MPP_SHIFT 11
-#define MSTATUS_MPP_WIDTH 2
-#define MSTATUS_MPRV_BIT 17
-
-#define IRQ_TIMER (RISCV_INTERRUPT_BIT | (word_t)7u)
-
 /* Extract one mstatus bit as a boolean-sized integer. */
 static inline uint64_t get_bit(uint64_t csr, unsigned bit)
 {
@@ -54,15 +46,19 @@ static void update_mstatus_on_trap_entry(void)
      */
     uint64_t status = cpu.csr.mstatus;
 
-    status = set_bit(status, MSTATUS_MPIE_BIT, get_bit(status, MSTATUS_MIE_BIT));
-    status = set_field(status, MSTATUS_MPP_SHIFT, MSTATUS_MPP_WIDTH, cpu.prvi);
-    status = set_bit(status, MSTATUS_MIE_BIT, false);
+    status = set_bit(status, RISCV_MSTATUS_MPIE_BIT,
+                     get_bit(status, RISCV_MSTATUS_MIE_BIT));
+    status = set_field(status, RISCV_MSTATUS_MPP_SHIFT,
+                       RISCV_MSTATUS_MPP_WIDTH, cpu.prvi);
+    status = set_bit(status, RISCV_MSTATUS_MIE_BIT, false);
 #ifdef CONFIG_RV64
     /*
-     * RV64's GVA bit lives in the high mstatus layout.  RV32 would need
-     * mstatush for that field, so the shared model leaves it untouched there.
+     * GVA tells a hypervisor trap handler that mtval contains a guest virtual
+     * address.  NEMU does not implement the hypervisor extension or guest
+     * translation, so every locally generated trap clears it.  RV32 would hold
+     * this high field in mstatush, which this shared CPU state does not model.
      */
-    status = set_bit(status, 38, false);
+    status = set_bit(status, RISCV64_MSTATUS_GVA_BIT, false);
 #endif
 
     cpu.csr.mstatus = riscv_mstatus_normalise(status);
@@ -88,15 +84,20 @@ word_t isa_raise_intr_tval(word_t NO, vaddr_t epc, word_t tval)
     update_mstatus_on_trap_entry();
 
     const word_t mtvec = cpu.csr.mtvec;
-    const word_t mode = mtvec & 0x3u;
-    const word_t base = mtvec & ~(word_t)0x3u;
-    const word_t interrupt_mask = RISCV_INTERRUPT_BIT;
+    /*
+     * Remove MODE to recover the aligned BASE before applying Vectored mode.
+     * The interrupt marker in mcause is not part of the cause number, so it is
+     * stripped before the cause selects a four-byte vector-table entry.
+     */
+    const word_t mode = mtvec & RISCV_MTVEC_MODE_MASK;
+    const word_t base = mtvec & ~(word_t)RISCV_MTVEC_MODE_MASK;
+    const word_t interrupt_mask = RISCV_XCAUSE_INTERRUPT_MASK;
     const bool is_interrupt = (NO & interrupt_mask) != 0;
     const word_t cause = NO & ~interrupt_mask;
 
-    if (mode == 1 && is_interrupt)
+    if (mode == RISCV_MTVEC_MODE_VECTORED && is_interrupt)
     {
-        return base + cause * 4u;
+        return base + cause * RISCV_MTVEC_VECTOR_ENTRY_BYTES;
     }
 
     return base;
@@ -109,16 +110,18 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc)
 }
 
 /*
- * Report a pending timer interrupt only when the CPU interrupt latch is set and
- * MIE allows delivery.  Consuming the latch here prevents the same timer event
- * being delivered repeatedly without the device layer raising it again.
+ * Report a pending timer interrupt only when the implementation latch is set
+ * and the currently modelled MIE gate allows delivery.  cpu.INTR is not the
+ * architectural mip CSR, and this legacy path does not yet model the
+ * privilege-dependent global-enable rule or delegation.  Consuming the latch
+ * here prevents one device event from being delivered repeatedly.
  */
 word_t isa_query_intr()
 {
-    if (cpu.INTR && (cpu.csr.mstatus & ((word_t)1u << MSTATUS_MIE_BIT)))
+    if (cpu.INTR && (cpu.csr.mstatus & RISCV_MSTATUS_MIE) != 0)
     {
         cpu.INTR = false;
-        return IRQ_TIMER;
+        return RISCV_MCAUSE_MACHINE_TIMER_INTERRUPT;
     }
 
     return INTR_EMPTY;

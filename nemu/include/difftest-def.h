@@ -42,11 +42,34 @@ enum
 #define RISCV_GPR_NUM MUXDEF(CONFIG_RVE, 16, 32)
 #endif
 
+#ifdef CONFIG_RV64_FPU
+/*
+ * The architectural F/D register file always contains f0-f31.  This public
+ * count names the corresponding DiffTest wire-layout array and is checked
+ * against NEMU's private CPU-state count by the RISC-V DiffTest adapter.
+ *
+ * The DiffTest fcsr value carries the two implemented architectural fields:
+ * fflags occupies bits [4:0] and frm occupies bits [7:5].  Bits [31:8] are
+ * reserved and read as zero in NEMU, so deriving an eight-low-bit mask here
+ * documents exactly which state a reference model may exchange with the DUT.
+ */
+#define RISCV_DIFFTEST_FPR_NUM 32
+#define RISCV_DIFFTEST_FCSR_IMPLEMENTED_WIDTH 8
+#define RISCV_DIFFTEST_FCSR_MASK \
+    ((UINT32_C(1) << RISCV_DIFFTEST_FCSR_IMPLEMENTED_WIDTH) - 1)
+#endif
+
 typedef struct
 {
     RISCV_GPR_TYPE gpr[RISCV_GPR_NUM];
     RISCV_GPR_TYPE pc;
 
+    /*
+     * This member order is a stable wire-layout contract shared with NEMU's
+     * private CPU state; it is not sorted by numerical CSR address.  Adding or
+     * moving a member changes DIFFTEST_REG_SIZE and therefore requires both
+     * sides of every reference-model bridge to change together.
+     */
     struct
     {
         RISCV_GPR_TYPE satp;
@@ -58,6 +81,11 @@ typedef struct
         RISCV_GPR_TYPE mtval;
     } csr;
 
+    /*
+     * `prvi` carries the architectural U=0, S=1, or M=3 privilege encoding;
+     * value 2 is reserved.  `INTR` is NEMU's device-pending latch, not the
+     * architectural mip CSR or a complete interrupt-controller state.
+     */
     RISCV_GPR_TYPE prvi;
     bool INTR;
 
@@ -66,7 +94,7 @@ typedef struct
      * This tail exactly mirrors the conditional RV64 NEMU CPU state.  RV32 and
      * every non-RISC-V DiffTest ABI remain unchanged when the feature is absent.
      */
-    uint64_t fpr[32];
+    uint64_t fpr[RISCV_DIFFTEST_FPR_NUM];
     uint32_t fcsr;
 #endif
 } riscv_difftest_state_t;

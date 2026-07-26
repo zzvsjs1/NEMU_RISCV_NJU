@@ -4,11 +4,6 @@
 #include <memory/vaddr.h>
 
 #ifdef CONFIG_ISA_riscv32
-#define RISCV32_SATP_MODE_MASK 0x80000000u
-#define RISCV32_MSTATUS_MPRV ((word_t)1u << 17)
-#define RISCV32_MSTATUS_MPP_SHIFT 11u
-#define RISCV32_MSTATUS_MPP_MASK ((word_t)0x3u << RISCV32_MSTATUS_MPP_SHIFT)
-
 static inline word_t rv32_effective_mem_priv(int type)
 {
     if (type == MEM_TYPE_IFETCH)
@@ -16,9 +11,11 @@ static inline word_t rv32_effective_mem_priv(int type)
         return cpu.prvi;
     }
 
-    if (cpu.prvi == RISCV32_PRIV_M && (cpu.csr.mstatus & RISCV32_MSTATUS_MPRV) != 0)
+    if (cpu.prvi == RISCV32_PRIV_M &&
+        (cpu.csr.mstatus & RISCV_MSTATUS_MPRV) != 0)
     {
-        return (cpu.csr.mstatus & RISCV32_MSTATUS_MPP_MASK) >> RISCV32_MSTATUS_MPP_SHIFT;
+        return (cpu.csr.mstatus & RISCV_MSTATUS_MPP_MASK) >>
+               RISCV_MSTATUS_MPP_SHIFT;
     }
 
     return cpu.prvi;
@@ -26,7 +23,8 @@ static inline word_t rv32_effective_mem_priv(int type)
 
 static inline bool rv32_mmu_direct_mode(int type)
 {
-    return likely((cpu.csr.satp & RISCV32_SATP_MODE_MASK) == 0 ||
+    return likely((cpu.csr.satp & RISCV32_SATP_MODE_MASK) ==
+                      RISCV_SATP_MODE_BARE ||
                   rv32_effective_mem_priv(type) == RISCV32_PRIV_M);
 }
 #endif

@@ -305,7 +305,7 @@ static bool jit_sv39_pte_valid(word_t pte)
 {
     return (pte & RV64_JIT_PTE_V) != 0 &&
            (pte & (RV64_JIT_PTE_R | RV64_JIT_PTE_W)) != RV64_JIT_PTE_W &&
-           (pte & RV64_JIT_PTE_RESERVED_63_54_MASK) == 0;
+           (pte & RV64_JIT_PTE_UNSUPPORTED_HIGH_MASK) == 0;
 }
 
 /* Return whether an Sv39 PTE is a leaf rather than the next-level pointer. */
@@ -447,7 +447,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
     const word_t mode = jit_sv39_satp_mode(satp);
     const word_t priv = jit_data_effective_priv(type);
 
-    if (mode == 0)
+    if (mode == RV64_JIT_SATP_MODE_BARE)
     {
         const paddr_t direct = (paddr_t)addr;
 
@@ -667,7 +667,7 @@ uint64_t rv64_jit_load_u16(vaddr_t addr)
 /* Load one unsigned word and zero-extend it to RV64 XLEN. */
 uint64_t rv64_jit_load_u32(vaddr_t addr)
 {
-    return jit_load_vaddr_raw(addr, 4) & 0xffffffffu;
+    return jit_load_vaddr_raw(addr, 4) & UINT32_MAX;
 }
 
 /* Commit a proven PMEM store and invalidate only when the bytes are sensitive. */
@@ -693,7 +693,9 @@ static uint32_t jit_store_pmem_direct_continue(paddr_t addr, uint32_t len,
         isa_jit_invalidate_paddr(addr, (int)len);
     }
 
-    return (touch_source || touch_page_table) ? 0u : 1u;
+    return (touch_source || touch_page_table)
+               ? RV64_JIT_STORE_MUST_EXIT
+               : RV64_JIT_STORE_MAY_CONTINUE;
 }
 
 /* Shared RV64 store helper that preserves MMIO, tracing, and invalidation. */
@@ -743,8 +745,8 @@ static uint64_t jit_sext32(uint32_t value)
 uint64_t rv64_jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr)
 {
     const uint32_t opcode = instr & RV64_OPCODE_MASK;
-    const uint32_t funct3 = bits(instr, 14, 12);
-    const uint32_t key = RV64_OP_KEY(bits(instr, 31, 25), funct3);
+    const uint32_t funct3 = rv64_instr_funct3(instr);
+    const uint32_t key = RV64_OP_KEY(rv64_instr_funct7(instr), funct3);
 
     if (opcode == RV64_OPCODE_OP)
     {
@@ -882,7 +884,7 @@ static bool jit_paddr_to_source_chunk(paddr_t addr, size_t *chunk)
 
 /* Convert one physical source range to the chunk range that covers it. */
 bool rv64_jit_source_chunk_range(paddr_t addr, uint32_t len,
-                                   size_t *first, size_t *last)
+                                 size_t *first, size_t *last)
 {
     if (len == 0)
     {
@@ -897,7 +899,7 @@ bool rv64_jit_source_chunk_range(paddr_t addr, uint32_t len,
 
 /* Append one instruction's physical bytes to the current source-segment list. */
 bool rv64_jit_source_builder_append(rv64_jit_source_builder_t *source,
-                                      paddr_t paddr, uint32_t len)
+                                    paddr_t paddr, uint32_t len)
 {
     if (len == 0)
     {
@@ -1006,7 +1008,7 @@ static bool jit_block_source_paddr_at(const rv64_jit_block_t *block,
 
 /* Return whether a PMEM write overlaps any physical segment of one block. */
 bool rv64_jit_block_source_overlaps(const rv64_jit_block_t *block,
-                                      paddr_t addr, int len)
+                                    paddr_t addr, int len)
 {
     for (uint32_t i = 0; i < block->source_segment_count; i++)
     {
@@ -1033,7 +1035,7 @@ static bool jit_block_source_chunk_seen_before(const rv64_jit_block_t *block,
         size_t last = 0;
 
         if (rv64_jit_source_chunk_range(segment->paddr_start, segment->len,
-                                   &first, &last) &&
+                                        &first, &last) &&
             chunk >= first && chunk <= last)
         {
             return true;
@@ -1333,8 +1335,8 @@ static bool jit_ifetch_leaf_allows(word_t pte)
 
 /* Translate an instruction fetch, optionally collecting page-table deps. */
 bool rv64_jit_translate_ifetch_collect(vaddr_t pc, paddr_t *paddr,
-                                         bool *translated,
-                                         rv64_jit_ifetch_ref_builder_t *refs)
+                                       bool *translated,
+                                       rv64_jit_ifetch_ref_builder_t *refs)
 {
     /* Only 32-bit base instructions are compiled; compressed fetch is fallback. */
     const int mmu = isa_mmu_check(pc, RV64_INSN_SIZE, MEM_TYPE_IFETCH);
@@ -1496,7 +1498,7 @@ void rv64_jit_mark_unsupported(vaddr_t pc, paddr_t paddr, bool translated)
         bool checked_translated = false;
 
         if (!rv64_jit_translate_ifetch_collect(pc, &checked_paddr,
-                                          &checked_translated, &refs) ||
+                                               &checked_translated, &refs) ||
             !checked_translated ||
             checked_paddr != paddr)
         {

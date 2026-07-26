@@ -69,13 +69,6 @@ enum
     TYPE_N, // none
 };
 
-/*
- * Shift amounts are masked by XLEN: RV32 uses five low bits and RV64 uses six.
- * The original immediate encodings are still matched by INSTPAT, so this mask
- * only protects the C shift operation from seeing an oversized host shift.
- */
-#define RISCV_SHIFT_MASK MUXDEF(CONFIG_RV64, 0x3f, 0x1f)
-
 enum
 {
     /*
@@ -341,10 +334,15 @@ static inline bool riscv_check_store_alignment(Decode *s, word_t addr, int len)
     return true;
 }
 
-/* Check JAL/JALR/branch targets while this RISC-V path has no compressed-instruction mode. */
+/*
+ * Check JAL, JALR, and taken-branch targets.  This implementation has no
+ * compressed instructions, so IALIGN=32 and both low address bits must be zero.
+ * The named mask is three because `address & (four-byte size - 1)` selects
+ * exactly those two alignment bits.
+ */
 static inline bool riscv_check_jump_alignment(Decode *s, word_t target)
 {
-    if ((target & 0x3u) != 0)
+    if ((target & RISCV_IALIGN_32_MASK) != 0)
     {
         riscv_raise_trap(s, RISCV_CAUSE_INST_ADDR_MISALIGNED, target);
         return false;
@@ -361,7 +359,13 @@ static inline bool riscv_check_jump_alignment(Decode *s, word_t target)
  */
 static inline bool riscv_csr_access_ok(Decode *s, word_t addr, bool will_write)
 {
-    const word_t required_priv = (addr >> 8) & 0x3u;
+    /*
+     * CSR address bits [9:8] are part of the architectural permission
+     * encoding.  Extracting them here makes an unimplemented or underprivileged
+     * CSR access trap before any source or destination state is committed.
+     */
+    const word_t required_priv =
+        (addr >> RISCV_CSR_PRIV_SHIFT) & RISCV_CSR_PRIV_MASK;
 
     if (!isCSRImplemented(addr) ||
         cpu.prvi < required_priv ||
@@ -376,7 +380,7 @@ static inline bool riscv_csr_access_ok(Decode *s, word_t addr, bool will_write)
      * FP control CSR addresses are unprivileged, but the privileged ISA adds a
      * separate FS gate: any read or write is illegal while mstatus.FS is Off.
      */
-    if (addr >= 0x001 && addr <= 0x003 &&
+    if (addr >= RISCV_CSR_FFLAGS && addr <= RISCV_CSR_FCSR &&
         !riscv_mstatus_fp_enabled(cpu.csr.mstatus))
     {
         riscv_raise_trap(s, RISCV_CAUSE_ILLEGAL_INST, 0);
@@ -582,23 +586,34 @@ static inline void riscv_mret(Decode *s)
     }
 
     word_t mstatus = cpu.csr.mstatus;
-    const word_t mpp = (mstatus >> 11) & 0x3u;
-    const word_t mpie = (mstatus >> 7) & 0x1u;
+    const word_t mpp =
+        (mstatus & RISCV_MSTATUS_MPP_MASK) >> RISCV_MSTATUS_MPP_SHIFT;
+    const bool previous_mie = (mstatus & RISCV_MSTATUS_MPIE) != 0;
 
-    if (mpp == 0x2u)
+    if (mpp == RISCV_PRIV_RESERVED)
     {
         riscv_raise_trap(s, RISCV_CAUSE_ILLEGAL_INST, 0);
         return;
     }
 
-    mstatus &= ~((word_t)0x3u << 11);
-    mstatus = (mstatus & ~((word_t)1u << 3)) | (mpie << 3);
-    mstatus |= ((word_t)1u << 7);
+    /*
+     * MRET pops the machine interrupt stack.  MPP becomes the new current
+     * privilege and is then cleared to the least-privileged supported mode.
+     * MPIE supplies the restored MIE value and is finally set to one so a
+     * subsequent trap/return pair has the architecturally defined reset state.
+     */
+    mstatus &= ~RISCV_MSTATUS_MPP_MASK;
+    mstatus &= ~RISCV_MSTATUS_MIE;
+    if (previous_mie)
+    {
+        mstatus |= RISCV_MSTATUS_MIE;
+    }
+    mstatus |= RISCV_MSTATUS_MPIE;
 
     /* MPRV is cleared when returning to a mode below M-mode. */
     if (mpp != RISCV_PRIV_M)
     {
-        mstatus &= ~((word_t)1u << 17);
+        mstatus &= ~RISCV_MSTATUS_MPRV;
     }
 
     cpu.csr.mstatus = riscv_mstatus_normalise(mstatus);
@@ -613,8 +628,6 @@ static inline void riscv_mret(Decode *s)
  */
 static inline void riscv_sfence_vma(Decode *s)
 {
-    const word_t mstatus_tvm = (word_t)1u << 20;
-
     if (!riscv_reg_ok(s, rs1_idx(s->isa.inst)) ||
         !riscv_reg_ok(s, rs2_idx(s->isa.inst)))
     {
@@ -622,7 +635,8 @@ static inline void riscv_sfence_vma(Decode *s)
     }
 
     if (cpu.prvi == RISCV_PRIV_U ||
-        (cpu.prvi == RISCV_PRIV_S && (cpu.csr.mstatus & mstatus_tvm) != 0))
+        (cpu.prvi == RISCV_PRIV_S &&
+         (cpu.csr.mstatus & RISCV_MSTATUS_TVM) != 0))
     {
         riscv_raise_trap(s, RISCV_CAUSE_ILLEGAL_INST, 0);
         return;
@@ -745,23 +759,25 @@ static int decode_exec(Decode *s)
     INSTPAT("??????? ????? ????? 000 ????? 00100 11", addi, I, R(rd) = src1 + imm);
     /*
      * Immediate shifts use the shamt bits from the I-immediate.  The pattern
-     * checks the legal funct7/funct6 prefix while RISCV_SHIFT_MASK selects the
-     * five RV32 bits or six RV64 bits used by the actual C shift.
+     * checks the legal funct7/funct6 prefix while RISCV_XLEN_SHAMT_MASK selects
+     * the five RV32 bits or six RV64 bits used by the actual C shift.  Masking
+     * also prevents the host C operator from receiving a count at least as wide
+     * as its left operand, which would be undefined behaviour.
      */
 #ifdef CONFIG_RV64
-    INSTPAT("000000? ????? ????? 001 ????? 00100 11", slli, I, R(rd) = src1 << (imm & RISCV_SHIFT_MASK));
+    INSTPAT("000000? ????? ????? 001 ????? 00100 11", slli, I, R(rd) = src1 << (imm & RISCV_XLEN_SHAMT_MASK));
 #else
-    INSTPAT("0000000 ????? ????? 001 ????? 00100 11", slli, I, R(rd) = src1 << (imm & RISCV_SHIFT_MASK));
+    INSTPAT("0000000 ????? ????? 001 ????? 00100 11", slli, I, R(rd) = src1 << (imm & RISCV_XLEN_SHAMT_MASK));
 #endif
     INSTPAT("??????? ????? ????? 010 ????? 00100 11", slti, I, R(rd) = (sword_t)src1 < (sword_t)imm);
     INSTPAT("??????? ????? ????? 011 ????? 00100 11", sltiu, I, R(rd) = src1 < imm);
     INSTPAT("??????? ????? ????? 100 ????? 00100 11", xori, I, R(rd) = src1 ^ imm);
 #ifdef CONFIG_RV64
-    INSTPAT("000000? ????? ????? 101 ????? 00100 11", srli, I, R(rd) = src1 >> (imm & RISCV_SHIFT_MASK));
-    INSTPAT("010000? ????? ????? 101 ????? 00100 11", srai, I, R(rd) = (word_t)((sword_t)src1 >> (imm & RISCV_SHIFT_MASK)));
+    INSTPAT("000000? ????? ????? 101 ????? 00100 11", srli, I, R(rd) = src1 >> (imm & RISCV_XLEN_SHAMT_MASK));
+    INSTPAT("010000? ????? ????? 101 ????? 00100 11", srai, I, R(rd) = (word_t)((sword_t)src1 >> (imm & RISCV_XLEN_SHAMT_MASK)));
 #else
-    INSTPAT("0000000 ????? ????? 101 ????? 00100 11", srli, I, R(rd) = src1 >> (imm & RISCV_SHIFT_MASK));
-    INSTPAT("0100000 ????? ????? 101 ????? 00100 11", srai, I, R(rd) = (word_t)((sword_t)src1 >> (imm & RISCV_SHIFT_MASK)));
+    INSTPAT("0000000 ????? ????? 101 ????? 00100 11", srli, I, R(rd) = src1 >> (imm & RISCV_XLEN_SHAMT_MASK));
+    INSTPAT("0100000 ????? ????? 101 ????? 00100 11", srai, I, R(rd) = (word_t)((sword_t)src1 >> (imm & RISCV_XLEN_SHAMT_MASK)));
 #endif
     INSTPAT("??????? ????? ????? 110 ????? 00100 11", ori, I, R(rd) = src1 | imm);
     INSTPAT("??????? ????? ????? 111 ????? 00100 11", andi, I, R(rd) = src1 & imm);
@@ -772,9 +788,9 @@ static int decode_exec(Decode *s)
      * the 32-bit result.  Shift counts are always five bits for W-form shifts.
      */
     INSTPAT("??????? ????? ????? 000 ????? 00110 11", addiw, I, R(rd) = riscv_sext32((uint32_t)(src1 + imm)));
-    INSTPAT("0000000 ????? ????? 001 ????? 00110 11", slliw, I, R(rd) = riscv_sext32((uint32_t)src1 << (imm & 0x1f)));
-    INSTPAT("0000000 ????? ????? 101 ????? 00110 11", srliw, I, R(rd) = riscv_sext32((uint32_t)src1 >> (imm & 0x1f)));
-    INSTPAT("0100000 ????? ????? 101 ????? 00110 11", sraiw, I, R(rd) = riscv_sext32((uint32_t)((int32_t)src1 >> (imm & 0x1f))));
+    INSTPAT("0000000 ????? ????? 001 ????? 00110 11", slliw, I, R(rd) = riscv_sext32((uint32_t)src1 << (imm & RISCV32_WORD_SHAMT_MASK)));
+    INSTPAT("0000000 ????? ????? 101 ????? 00110 11", srliw, I, R(rd) = riscv_sext32((uint32_t)src1 >> (imm & RISCV32_WORD_SHAMT_MASK)));
+    INSTPAT("0100000 ????? ????? 101 ????? 00110 11", sraiw, I, R(rd) = riscv_sext32((uint32_t)((int32_t)src1 >> (imm & RISCV32_WORD_SHAMT_MASK))));
 #endif
 
     /*
@@ -784,12 +800,12 @@ static int decode_exec(Decode *s)
      */
     INSTPAT("0000000 ????? ????? 000 ????? 01100 11", add, R, R(rd) = src1 + src2);
     INSTPAT("0100000 ????? ????? 000 ????? 01100 11", sub, R, R(rd) = src1 - src2);
-    INSTPAT("0000000 ????? ????? 001 ????? 01100 11", sll, R, R(rd) = src1 << (src2 & RISCV_SHIFT_MASK));
+    INSTPAT("0000000 ????? ????? 001 ????? 01100 11", sll, R, R(rd) = src1 << (src2 & RISCV_XLEN_SHAMT_MASK));
     INSTPAT("0000000 ????? ????? 010 ????? 01100 11", slt, R, R(rd) = (sword_t)src1 < (sword_t)src2);
     INSTPAT("0000000 ????? ????? 011 ????? 01100 11", sltu, R, R(rd) = src1 < src2);
     INSTPAT("0000000 ????? ????? 100 ????? 01100 11", xor, R, R(rd) = src1 ^ src2);
-    INSTPAT("0000000 ????? ????? 101 ????? 01100 11", srl, R, R(rd) = src1 >> (src2 & RISCV_SHIFT_MASK));
-    INSTPAT("0100000 ????? ????? 101 ????? 01100 11", sra, R, R(rd) = (word_t)((sword_t)src1 >> (src2 & RISCV_SHIFT_MASK)));
+    INSTPAT("0000000 ????? ????? 101 ????? 01100 11", srl, R, R(rd) = src1 >> (src2 & RISCV_XLEN_SHAMT_MASK));
+    INSTPAT("0100000 ????? ????? 101 ????? 01100 11", sra, R, R(rd) = (word_t)((sword_t)src1 >> (src2 & RISCV_XLEN_SHAMT_MASK)));
     INSTPAT("0000000 ????? ????? 110 ????? 01100 11", or, R, R(rd) = src1 | src2);
     INSTPAT("0000000 ????? ????? 111 ????? 01100 11", and, R, R(rd) = src1 & src2);
 
@@ -817,9 +833,9 @@ static int decode_exec(Decode *s)
      */
     INSTPAT("0000000 ????? ????? 000 ????? 01110 11", addw, R, R(rd) = riscv_sext32((uint32_t)(src1 + src2)));
     INSTPAT("0100000 ????? ????? 000 ????? 01110 11", subw, R, R(rd) = riscv_sext32((uint32_t)(src1 - src2)));
-    INSTPAT("0000000 ????? ????? 001 ????? 01110 11", sllw, R, R(rd) = riscv_sext32((uint32_t)src1 << (src2 & 0x1f)));
-    INSTPAT("0000000 ????? ????? 101 ????? 01110 11", srlw, R, R(rd) = riscv_sext32((uint32_t)src1 >> (src2 & 0x1f)));
-    INSTPAT("0100000 ????? ????? 101 ????? 01110 11", sraw, R, R(rd) = riscv_sext32((uint32_t)((int32_t)src1 >> (src2 & 0x1f))));
+    INSTPAT("0000000 ????? ????? 001 ????? 01110 11", sllw, R, R(rd) = riscv_sext32((uint32_t)src1 << (src2 & RISCV32_WORD_SHAMT_MASK)));
+    INSTPAT("0000000 ????? ????? 101 ????? 01110 11", srlw, R, R(rd) = riscv_sext32((uint32_t)src1 >> (src2 & RISCV32_WORD_SHAMT_MASK)));
+    INSTPAT("0100000 ????? ????? 101 ????? 01110 11", sraw, R, R(rd) = riscv_sext32((uint32_t)((int32_t)src1 >> (src2 & RISCV32_WORD_SHAMT_MASK))));
     INSTPAT("0000001 ????? ????? 000 ????? 01110 11", mulw, R, R(rd) = riscv_sext32((uint32_t)((uint32_t)src1 * (uint32_t)src2)));
     INSTPAT("0000001 ????? ????? 100 ????? 01110 11", divw, R, R(rd) = riscv_divw(src1, src2));
     INSTPAT("0000001 ????? ????? 101 ????? 01110 11", divuw, R, R(rd) = riscv_divuw(src1, src2));
@@ -840,9 +856,11 @@ static int decode_exec(Decode *s)
     INSTPAT("??????? ????? ????? 111 ????? 11000 11", bgeu, B, riscv_branch(s, RISCV_RELOP_GEU, src1, src2, imm));
 
     /*
-     * JAL stores the return address (pc + 4) in rd and redirects to pc + imm.
-     * Link-register writes are reported to ftrace before the architectural
-     * writeback, and the writeback is skipped if target alignment traps.
+     * JAL stores the return address (pc plus one base instruction) in rd and
+     * redirects to pc + imm.  x1 is the standard link register and x5 is the
+     * alternate link register used by compact calling conventions.  Writes to
+     * either are reported to ftrace before architectural writeback, which is
+     * skipped if target alignment traps.
      */
     INSTPAT("??????? ????? ????? ??? ????? 11011 11", jal, J,
             {
@@ -850,12 +868,13 @@ static int decode_exec(Decode *s)
 
                 if (riscv_check_jump_alignment(s, target))
                 {
-                    if (rd == 1 || rd == 5)
+                    if (rd == RISCV_GPR_LINK ||
+                        rd == RISCV_GPR_ALTERNATE_LINK)
                     {
                         ftrace_call(s->pc, target);
                     }
 
-                    R(rd) = s->pc + 4;
+                    R(rd) = s->pc + RISCV_BASE_INSN_BYTES;
                     s->dnpc = target;
                 }
             });
@@ -866,20 +885,25 @@ static int decode_exec(Decode *s)
      */
     INSTPAT("??????? ????? ????? 000 ????? 11001 11", jalr, I,
             {
-                word_t target = (src1 + imm) & ~(word_t)1;
+                word_t target =
+                    (src1 + imm) & ~(word_t)RISCV_JALR_TARGET_LSB_MASK;
 
                 if (riscv_check_jump_alignment(s, target))
                 {
-                    if (rd == 0 && (rs1 == 1 || rs1 == 5) && imm == 0)
+                    if (rd == RISCV_GPR_ZERO &&
+                        (rs1 == RISCV_GPR_LINK ||
+                         rs1 == RISCV_GPR_ALTERNATE_LINK) &&
+                        imm == 0)
                     {
                         ftrace_ret(s->pc);
                     }
-                    else if (rd == 1 || rd == 5)
+                    else if (rd == RISCV_GPR_LINK ||
+                             rd == RISCV_GPR_ALTERNATE_LINK)
                     {
                         ftrace_call(s->pc, target);
                     }
 
-                    R(rd) = s->pc + 4;
+                    R(rd) = s->pc + RISCV_BASE_INSN_BYTES;
                     s->dnpc = target;
                 }
             });

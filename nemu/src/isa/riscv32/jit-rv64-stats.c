@@ -42,32 +42,22 @@ static const rv64_jit_reason_name_t
     jit_block_end_reason_names[RV64_JIT_BLOCK_END_COUNT] = {
         [RV64_JIT_BLOCK_END_BUDGET] = {
             "budget", "instruction budget or trace limit"},
-        [RV64_JIT_BLOCK_END_JUMP] = {
-            "jump", "JAL or JALR ended the native region"},
-        [RV64_JIT_BLOCK_END_CHAINED_LOOP] = {
-            "chained-loop", "a native backedge ended the region"},
-        [RV64_JIT_BLOCK_END_SOURCE_BOUNDARY] = {
-            "source-boundary", "fetch/source metadata could not be extended"},
-        [RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX] = {
-            "unsupported-after-prefix", "the next instruction needs fallback"},
+        [RV64_JIT_BLOCK_END_JUMP] = {"jump", "JAL or JALR ended the native region"},
+        [RV64_JIT_BLOCK_END_CHAINED_LOOP] = {"chained-loop", "a native backedge ended the region"},
+        [RV64_JIT_BLOCK_END_SOURCE_BOUNDARY] = {"source-boundary", "fetch/source metadata could not be extended"},
+        [RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX] = {"unsupported-after-prefix", "the next instruction needs fallback"},
 };
 
 static const rv64_jit_reason_name_t
     jit_side_exit_reason_names[RV64_JIT_SIDE_EXIT_COUNT] = {
         [RV64_JIT_SIDE_EXIT_LOAD_GUARD] = {
             "load-guard", "load alignment, range, or translation guard"},
-        [RV64_JIT_SIDE_EXIT_STORE_GUARD] = {
-            "store-guard", "store alignment, range, or translation guard"},
-        [RV64_JIT_SIDE_EXIT_STORE_SOURCE] = {
-            "store-source", "store may modify compiled source bytes"},
-        [RV64_JIT_SIDE_EXIT_PAGED_STORE_HELPER] = {
-            "paged-store-helper", "translated store completed through a helper"},
-        [RV64_JIT_SIDE_EXIT_BRANCH_TAKEN] = {
-            "branch-taken", "taken branch returned to the dispatcher"},
-        [RV64_JIT_SIDE_EXIT_CHAINED_OVER_BUDGET] = {
-            "chained-over-budget", "another native loop lap exceeded its budget"},
-        [RV64_JIT_SIDE_EXIT_JALR_MISALIGNED] = {
-            "jalr-misaligned", "JALR target failed the IALIGN check"},
+        [RV64_JIT_SIDE_EXIT_STORE_GUARD] = {"store-guard", "store alignment, range, or translation guard"},
+        [RV64_JIT_SIDE_EXIT_STORE_SOURCE] = {"store-source", "store may modify compiled source bytes"},
+        [RV64_JIT_SIDE_EXIT_PAGED_STORE_HELPER] = {"paged-store-helper", "translated store completed through a helper"},
+        [RV64_JIT_SIDE_EXIT_BRANCH_TAKEN] = {"branch-taken", "taken branch returned to the dispatcher"},
+        [RV64_JIT_SIDE_EXIT_CHAINED_OVER_BUDGET] = {"chained-over-budget", "another native loop lap exceeded its budget"},
+        [RV64_JIT_SIDE_EXIT_JALR_MISALIGNED] = {"jalr-misaligned", "JALR target failed the IALIGN check"},
 };
 
 /* Multiply in 128 bits so long-running profiles cannot overflow before division. */
@@ -181,50 +171,52 @@ static const char *jit_opcode_name(uint32_t opcode)
 {
     switch (opcode)
     {
-    case 0x03:
+    case RISCV_OPCODE_LOAD:
         return "LOAD";
-    case 0x07:
+    case RISCV_FP_OPCODE_LOAD:
         return "LOAD-FP";
-    case 0x0f:
+    case RISCV_OPCODE_MISC_MEM:
         return "MISC-MEM";
-    case 0x13:
+    case RISCV_OPCODE_OP_IMM:
         return "OP-IMM";
-    case 0x17:
+    case RISCV_OPCODE_AUIPC:
         return "AUIPC";
-    case 0x1b:
+    case RISCV_OPCODE_OP_IMM_32:
         return "OP-IMM-32";
-    case 0x23:
+    case RISCV_OPCODE_STORE:
         return "STORE";
-    case 0x27:
+    case RISCV_FP_OPCODE_STORE:
         return "STORE-FP";
-    case 0x2f:
+    case RISCV_OPCODE_AMO:
         return "AMO";
-    case 0x33:
+    case RISCV_OPCODE_OP:
         return "OP";
-    case 0x37:
+    case RISCV_OPCODE_LUI:
         return "LUI";
-    case 0x3b:
+    case RISCV_OPCODE_OP_32:
         return "OP-32";
-    case 0x43:
+    case RISCV_FP_OPCODE_FMADD:
         return "MADD";
-    case 0x47:
+    case RISCV_FP_OPCODE_FMSUB:
         return "MSUB";
-    case 0x4b:
+    case RISCV_FP_OPCODE_FNMSUB:
         return "NMSUB";
-    case 0x4f:
+    case RISCV_FP_OPCODE_FNMADD:
         return "NMADD";
-    case 0x53:
+    case RISCV_FP_OPCODE_OP:
         return "OP-FP";
-    case 0x57:
+    case RISCV_OPCODE_OP_V:
         return "OP-V";
-    case 0x63:
+    case RISCV_OPCODE_BRANCH:
         return "BRANCH";
-    case 0x67:
+    case RISCV_OPCODE_JALR:
         return "JALR";
-    case 0x6f:
+    case RISCV_OPCODE_JAL:
         return "JAL";
-    case 0x73:
+    case RISCV_OPCODE_SYSTEM:
         return "SYSTEM";
+    case RISCV_OPCODE_OP_VE:
+        return "OP-VE";
     default:
         return "reserved, custom, or non-32-bit";
     }

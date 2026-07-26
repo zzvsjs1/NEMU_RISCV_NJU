@@ -19,20 +19,20 @@ typedef struct
 
 static const csr_disp_t csr_list[] = {
 #ifdef CONFIG_RV64_FPU
-    {0x001, "fflags"},
-    {0x002, "frm"},
-    {0x003, "fcsr"},
+    {RISCV_CSR_FFLAGS, "fflags"},
+    {RISCV_CSR_FRM, "frm"},
+    {RISCV_CSR_FCSR, "fcsr"},
 #endif
-    {0x180, "satp"},
-    {0x300, "mstatus"},
+    {RISCV_CSR_SATP, "satp"},
+    {RISCV_CSR_MSTATUS, "mstatus"},
 #ifdef CONFIG_RV64_FPU
-    {0x301, "misa"},
+    {RISCV_CSR_MISA, "misa"},
 #endif
-    {0x305, "mtvec"},
-    {0x340, "mscratch"},
-    {0x341, "mepc"},
-    {0x342, "mcause"},
-    {0x343, "mtval"},
+    {RISCV_CSR_MTVEC, "mtvec"},
+    {RISCV_CSR_MSCRATCH, "mscratch"},
+    {RISCV_CSR_MEPC, "mepc"},
+    {RISCV_CSR_MCAUSE, "mcause"},
+    {RISCV_CSR_MTVAL, "mtval"},
 };
 
 /* Keep the CSR table length derived from the table itself to avoid drift. */
@@ -139,19 +139,20 @@ word_t getCSRValue(const word_t address)
 #ifdef CONFIG_RV64_FPU
     switch (address)
     {
-    case 0x001:
+    case RISCV_CSR_FFLAGS:
         return cpu.fcsr & RISCV_FFLAGS_MASK;
-    case 0x002:
-        return (cpu.fcsr & RISCV_FRM_MASK) >> 5;
-    case 0x003:
+    case RISCV_CSR_FRM:
+        return (cpu.fcsr & RISCV_FRM_MASK) >> RISCV_FRM_SHIFT;
+    case RISCV_CSR_FCSR:
         return cpu.fcsr & RISCV_FCSR_MASK;
-    case 0x301:
+    case RISCV_CSR_MISA:
         /*
          * RV64 MXL=2 plus the implemented base, multiply/divide, FP, and
          * privilege-mode extension bits. Zicsr/Zifencei are not represented in
          * misa's single-letter bitmap.
          */
-        return ((word_t)2u << 62) |
+        return ((word_t)RISCV64_MISA_MXL_ENCODING
+                << RISCV64_MISA_MXL_SHIFT) |
                ((word_t)1u << ('I' - 'A')) |
                ((word_t)1u << ('M' - 'A')) |
                ((word_t)1u << ('F' - 'A')) |
@@ -176,24 +177,25 @@ void setCSRValue(const word_t address, word_t value)
 #ifdef CONFIG_RV64_FPU
     switch (address)
     {
-    case 0x001:
+    case RISCV_CSR_FFLAGS:
         cpu.fcsr = (cpu.fcsr & ~RISCV_FFLAGS_MASK) |
                    ((uint32_t)value & RISCV_FFLAGS_MASK);
         cpu.csr.mstatus =
             riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
         return;
-    case 0x002:
+    case RISCV_CSR_FRM:
         cpu.fcsr = (cpu.fcsr & ~RISCV_FRM_MASK) |
-                   (((uint32_t)value & 0x7u) << 5);
+                   (((uint32_t)value & RISCV_FRM_VALUE_MASK)
+                    << RISCV_FRM_SHIFT);
         cpu.csr.mstatus =
             riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
         return;
-    case 0x003:
+    case RISCV_CSR_FCSR:
         cpu.fcsr = (uint32_t)value & RISCV_FCSR_MASK;
         cpu.csr.mstatus =
             riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
         return;
-    case 0x301:
+    case RISCV_CSR_MISA:
         /*
          * This implementation exposes a fixed maximal ISA set.  Treat writes
          * as WARL attempts that leave the supported F/D dependency intact.
@@ -205,7 +207,9 @@ void setCSRValue(const word_t address, word_t value)
 #endif
 
     rtlreg_t *csr = getCSRAddress(address);
-    *csr = address == 0x300 ? riscv_mstatus_normalise(value) : value;
+    *csr = address == RISCV_CSR_MSTATUS
+               ? riscv_mstatus_normalise(value)
+               : value;
 }
 
 /*
@@ -218,19 +222,19 @@ rtlreg_t *getCSRAddress(const word_t address)
 {
     switch (address)
     {
-    case 0x180:
+    case RISCV_CSR_SATP:
         return &cpu.csr.satp;
-    case 0x300:
+    case RISCV_CSR_MSTATUS:
         return &cpu.csr.mstatus;
-    case 0x305:
+    case RISCV_CSR_MTVEC:
         return &cpu.csr.mtvec;
-    case 0x340:
+    case RISCV_CSR_MSCRATCH:
         return &cpu.csr.mscratch;
-    case 0x341:
+    case RISCV_CSR_MEPC:
         return &cpu.csr.mepc;
-    case 0x342:
+    case RISCV_CSR_MCAUSE:
         return &cpu.csr.mcause;
-    case 0x343:
+    case RISCV_CSR_MTVAL:
         return &cpu.csr.mtval;
     default:
         Assert(false, "Invalid csr address: " FMT_WORD "\n", address);
@@ -255,11 +259,14 @@ bool isCSRImplemented(const word_t address)
 bool isCSRWriteable(const word_t csrAddr)
 {
     /*
-     * CSR bits [11:10] encode read/write capability.
-     * 0b11 marks read-only CSRs; privilege checks are handled separately.
+     * This check deliberately examines the access-class field encoded in the
+     * CSR address rather than maintaining a second per-CSR permission table.
+     * Privilege is encoded in the neighbouring address field and is checked by
+     * the instruction path before this helper is called.
      */
-    const uint32_t access_type = (csrAddr >> 10) & 0x3u;
-    return access_type != 0x3u;
+    const uint32_t access_type =
+        (csrAddr >> RISCV_CSR_ACCESS_SHIFT) & RISCV_CSR_ACCESS_MASK;
+    return access_type != RISCV_CSR_ACCESS_READ_ONLY;
 }
 
 /*

@@ -32,6 +32,20 @@
 #endif
 #endif
 
+#ifdef CONFIG_RV64_FPU
+/*
+ * The privileged architecture places the two-bit FS state in mstatus[14:13].
+ * Encoding 01 means Initial, so only the field's low bit (mstatus[13]) is set.
+ * Spike exposes the complete MSTATUS_FS field mask but no state-specific name
+ * through the interface used here; keep the encoding in one descriptive
+ * constant and verify at compile time that it remains inside Spike's FS field.
+ */
+static constexpr reg_t SPIKE_MSTATUS_FS_INITIAL = (reg_t)1 << 13;
+static_assert((SPIKE_MSTATUS_FS_INITIAL & MSTATUS_FS) ==
+                  SPIKE_MSTATUS_FS_INITIAL,
+              "Spike FS Initial encoding is outside mstatus.FS");
+#endif
+
 static std::vector<std::pair<reg_t, abstract_device_t *>> difftest_plugin_devices;
 static std::vector<std::string> difftest_htif_args;
 static std::vector<std::pair<reg_t, mem_t *>> difftest_mem(
@@ -104,7 +118,7 @@ void sim_t::diff_get_regs(void *diff_context)
     ctx->INTR = false;
 
 #ifdef CONFIG_RV64_FPU
-    for (int i = 0; i < 32; i++)
+    for (int i = 0; i < RISCV_DIFFTEST_FPR_NUM; i++)
     {
         /*
          * Spike stores FPRs in a 128-bit container so it can also model Q.
@@ -114,7 +128,8 @@ void sim_t::diff_get_regs(void *diff_context)
         ctx->fpr[i] = state->FPR[i].v[0];
     }
 
-    ctx->fcsr = diff_read_csr(CSR_FCSR) & 0xffu;
+    ctx->fcsr =
+        diff_read_csr(CSR_FCSR) & RISCV_DIFFTEST_FCSR_MASK;
 #endif
 }
 
@@ -147,7 +162,7 @@ void sim_t::diff_set_regs(void *diff_context)
 
     if ((fp_restore_mstatus & MSTATUS_FS) == 0)
     {
-        fp_restore_mstatus |= (reg_t)1 << 13;
+        fp_restore_mstatus |= SPIKE_MSTATUS_FS_INITIAL;
     }
 
     diff_write_csr(CSR_MSTATUS, fp_restore_mstatus);
@@ -162,7 +177,7 @@ void sim_t::diff_set_regs(void *diff_context)
     state->prv = ctx->prvi;
 
 #ifdef CONFIG_RV64_FPU
-    for (int i = 0; i < 32; i++)
+    for (int i = 0; i < RISCV_DIFFTEST_FPR_NUM; i++)
     {
         freg_t value;
         value.v[0] = ctx->fpr[i];
@@ -170,7 +185,8 @@ void sim_t::diff_set_regs(void *diff_context)
         state->FPR.write(i, value);
     }
 
-    diff_write_csr(CSR_FCSR, ctx->fcsr & 0xffu);
+    diff_write_csr(CSR_FCSR,
+                   ctx->fcsr & RISCV_DIFFTEST_FCSR_MASK);
     diff_write_csr(CSR_MSTATUS, target_mstatus);
 #endif
 }

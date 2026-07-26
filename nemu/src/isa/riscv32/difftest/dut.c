@@ -19,6 +19,10 @@ _Static_assert(offsetof(CPU_state, INTR) == offsetof(riscv_difftest_state_t, INT
                "RISC-V DiffTest interrupt-pending offset drifted");
 
 #ifdef CONFIG_RV64_FPU
+_Static_assert(RISCV_FPR_NUM == RISCV_DIFFTEST_FPR_NUM,
+               "RISC-V DiffTest FPR count drifted");
+_Static_assert(RISCV_FCSR_MASK == RISCV_DIFFTEST_FCSR_MASK,
+               "RISC-V DiffTest fcsr mask drifted");
 _Static_assert(offsetof(CPU_state, fpr) == offsetof(riscv_difftest_state_t, fpr),
                "RISC-V DiffTest FPR offset drifted");
 _Static_assert(offsetof(CPU_state, fcsr) == offsetof(riscv_difftest_state_t, fcsr),
@@ -33,13 +37,22 @@ _Static_assert(offsetof(CPU_state, fcsr) == offsetof(riscv_difftest_state_t, fcs
 #else
 #define RISCV_DIFF_FP_MSTATUS_MASK 0
 #endif
-#define RISCV_DIFF_MSTATUS_MASK (((word_t)1u << 3) | \
-                                 ((word_t)1u << 7) | \
-                                 ((word_t)0x3u << 11) | \
-                                 ((word_t)1u << 17) | \
-                                 ((word_t)1u << 18) | \
-                                 ((word_t)1u << 19) | \
-                                 RISCV_DIFF_FP_MSTATUS_MASK)
+/*
+ * Preserve the established mstatus comparison contract, expressed as named
+ * architectural fields rather than bit literals.  UXL/SXL join that contract
+ * now that writes are canonicalised to the only lower-privilege XLEN this target
+ * implements.  TVM, WPRI fields, and unimplemented extension state remain
+ * intentionally outside this DiffTest mask.
+ */
+#define RISCV_DIFF_MSTATUS_MASK \
+    (RISCV_MSTATUS_MIE | \
+     RISCV_MSTATUS_MPIE | \
+     RISCV_MSTATUS_MPP_MASK | \
+     RISCV_MSTATUS_MPRV | \
+     RISCV_MSTATUS_SUM | \
+     RISCV_MSTATUS_MXR | \
+     (word_t)RISCV64_MSTATUS_UXL_SXL_MASK | \
+     RISCV_DIFF_FP_MSTATUS_MASK)
 #else
 #define RISCV_DIFF_GPR(state, idx) ((state)->gpr[idx]._32)
 #define RISCV_DIFF_REG_NAME_LEN 4
@@ -150,7 +163,7 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
 #ifdef CONFIG_RV64_FPU
     for (size_t i = 0; i < RISCV_FPR_NUM; i++)
     {
-        char name[8];
+        char name[RISCV_DIFF_REG_NAME_LEN];
         snprintf(name, sizeof(name), "f%zu", i);
         riscv_difftest_print_named(name, ref_r->fpr[i], cpu.fpr[i]);
     }

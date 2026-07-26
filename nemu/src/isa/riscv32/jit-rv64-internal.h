@@ -33,30 +33,39 @@
 #define RV64_JIT_STATS 0
 #endif
 
-/* RISC-V base instructions are 4 bytes here; compressed `C` is not emitted yet. */
-#define RV64_INSN_SIZE 4u
-/* Seven low bits select the base RISC-V opcode. */
-#define RV64_OPCODE_MASK 0x7fu
+/*
+ * Retain the compact RV64 JIT vocabulary used throughout the emitter, while
+ * deriving architectural values from the ISA-wide definitions.  This keeps
+ * the JIT and interpreter decoders in agreement when the shared definitions
+ * are audited or extended.
+ */
+#define RV64_INSN_SIZE RISCV_BASE_INSN_BYTES
+#define RV64_OPCODE_MASK RISCV_OPCODE_MASK
 /*
  * This NEMU RV64 configuration does not implement the compressed C extension,
  * so the guest architecture has IALIGN=32.  JAL, JALR, and a taken conditional
  * branch therefore require the target address bits selected by this mask to be
  * zero.
  */
-#define RV64_IALIGN_MASK 0x3u
+#define RV64_IALIGN_MASK RISCV_IALIGN_32_MASK
 
 /* RISC-V opcodes used by this first native subset. */
-#define RV64_OPCODE_LOAD 0x03u
-#define RV64_OPCODE_OP_IMM 0x13u
-#define RV64_OPCODE_AUIPC 0x17u
-#define RV64_OPCODE_OP_IMM_32 0x1bu
-#define RV64_OPCODE_STORE 0x23u
-#define RV64_OPCODE_OP 0x33u
-#define RV64_OPCODE_LUI 0x37u
-#define RV64_OPCODE_OP_32 0x3bu
-#define RV64_OPCODE_BRANCH 0x63u
-#define RV64_OPCODE_JALR 0x67u
-#define RV64_OPCODE_JAL 0x6fu
+#define RV64_OPCODE_LOAD RISCV_OPCODE_LOAD
+#define RV64_OPCODE_OP_IMM RISCV_OPCODE_OP_IMM
+#define RV64_OPCODE_AUIPC RISCV_OPCODE_AUIPC
+#define RV64_OPCODE_OP_IMM_32 RISCV_OPCODE_OP_IMM_32
+#define RV64_OPCODE_STORE RISCV_OPCODE_STORE
+#define RV64_OPCODE_OP RISCV_OPCODE_OP
+#define RV64_OPCODE_LUI RISCV_OPCODE_LUI
+#define RV64_OPCODE_OP_32 RISCV_OPCODE_OP_32
+#define RV64_OPCODE_BRANCH RISCV_OPCODE_BRANCH
+#define RV64_OPCODE_JALR RISCV_OPCODE_JALR
+#define RV64_OPCODE_JAL RISCV_OPCODE_JAL
+
+/* Architectural register and JALR values used by generic emitter logic. */
+#define RV64_GPR_ZERO RISCV_GPR_ZERO
+#define RV64_FUNCT3_JALR RISCV_JALR_FUNCT3
+#define RV64_JALR_TARGET_LSB_MASK RISCV_JALR_TARGET_LSB_MASK
 
 /* RISC-V funct3 values used by load, store, branch and integer emitters. */
 #define RV64_FUNCT3_LB 0x0u
@@ -130,7 +139,7 @@
     (((RV64_JIT_TRACE_MAX_INSNS * RV64_INSN_SIZE) + PAGE_SIZE - 1u) / \
          PAGE_SIZE + \
      1u)
-#define RV64_JIT_SV39_LEVELS 3u
+#define RV64_JIT_SV39_LEVELS RISCV64_SV39_LEVELS
 #define RV64_JIT_BLOCK_MAX_IFETCH_PT_PAGES \
     (RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS * RV64_JIT_SV39_LEVELS)
 #define RV64_JIT_BLOCK_MAX_SOURCE_CHUNKS \
@@ -141,8 +150,16 @@
 #define RV64_JIT_SOURCE_LINK_NULL 0u
 #define RV64_JIT_SOURCE_LINK_COUNT \
     (RV64_JIT_CACHE_SIZE * RV64_JIT_BLOCK_MAX_SOURCE_CHUNKS + 1u)
-/* Guard failures in one direct-link exit all jump to the same miss path. */
-#define RV64_JIT_DIRECT_LINK_MISS_PATCHES 10u
+/*
+ * One direct link can emit eight miss branches: valid, PC, satp, instruction
+ * privilege, optional data privilege, translation generation, body entry, and
+ * execution-budget guards.  The inline DTLB proof has six: valid, satp, VPN,
+ * privilege state, access permission, and same-page byte range.  Keeping these
+ * independent maxima prevents a new guard in one path from silently borrowing
+ * spare capacity that happened to belong to the other.
+ */
+#define RV64_JIT_DIRECT_LINK_MAX_MISS_PATCHES 8u
+#define RV64_JIT_DTLB_MAX_SLOW_PATCHES 6u
 /*
  * Keep the helper data TLB intentionally small: 256 direct-mapped entries cover
  * common hot pages while keeping the inline index mask to one byte of entropy.
@@ -155,45 +172,53 @@
 #define RV64_JIT_PMEM_PAGE_COUNT \
     (((size_t)CONFIG_MSIZE + (size_t)PAGE_SIZE - 1u) / (size_t)PAGE_SIZE)
 
-/* RV64/Sv39 constants repeated here so the JIT helper can reject unsafe cases. */
-#define RV64_JIT_SATP_MODE_SHIFT 60u
-#define RV64_JIT_SATP_MODE_SV39 8u
-#define RV64_JIT_SATP_PPN_MASK (((word_t)1u << 44) - 1u)
-#define RV64_JIT_SV39_VPN_BITS 9u
-#define RV64_JIT_SV39_VPN_MASK \
-    ((word_t)((1u << RV64_JIT_SV39_VPN_BITS) - 1u))
+/*
+ * Keep the established JIT names for readable translation code, but source all
+ * architectural paging values from the common Sv39 definitions.
+ */
+#define RV64_JIT_SATP_MODE_SHIFT RISCV64_SATP_MODE_SHIFT
+#define RV64_JIT_SATP_MODE_BARE RISCV_SATP_MODE_BARE
+#define RV64_JIT_SATP_MODE_SV39 RISCV64_SATP_MODE_SV39
+#define RV64_JIT_SATP_PPN_MASK RISCV64_SATP_PPN_MASK
+#define RV64_JIT_SV39_VPN_BITS RISCV64_SV39_VPN_BITS
+#define RV64_JIT_SV39_VPN_MASK RISCV64_SV39_VPN_MASK
 #define RV64_JIT_SV39_VPN_SHIFT(level) \
     (PAGE_SHIFT + (level) * RV64_JIT_SV39_VPN_BITS)
-#define RV64_JIT_SV39_CANONICAL_SIGN_BIT 38u
-#define RV64_JIT_SV39_CANONICAL_HIGH_SHIFT 39u
-#define RV64_JIT_SV39_CANONICAL_HIGH_BITS 25u
-#define RV64_JIT_SV39_LEVEL1_LOW_PPN_MASK 0x1ffu
-#define RV64_JIT_SV39_LEVEL2_LOW_PPN_MASK 0x3ffffu
-#define RV64_JIT_PTE_SIZE (sizeof(uint64_t))
-#define RV64_JIT_PTE_V ((word_t)1u << 0)
-#define RV64_JIT_PTE_R ((word_t)1u << 1)
-#define RV64_JIT_PTE_W ((word_t)1u << 2)
-#define RV64_JIT_PTE_X ((word_t)1u << 3)
-#define RV64_JIT_PTE_U ((word_t)1u << 4)
-#define RV64_JIT_PTE_A ((word_t)1u << 6)
-#define RV64_JIT_PTE_D ((word_t)1u << 7)
-#define RV64_JIT_PTE_RWX (RV64_JIT_PTE_R | RV64_JIT_PTE_W | RV64_JIT_PTE_X)
-#define RV64_JIT_PTE_NON_LEAF_RESERVED \
-    (RV64_JIT_PTE_U | RV64_JIT_PTE_A | RV64_JIT_PTE_D)
-#define RV64_JIT_PTE_PPN_SHIFT 10u
-#define RV64_JIT_PTE_PPN_MASK (((word_t)1u << 44) - 1u)
+#define RV64_JIT_SV39_CANONICAL_SIGN_BIT \
+    RISCV64_SV39_CANONICAL_SIGN_BIT
+#define RV64_JIT_SV39_CANONICAL_HIGH_SHIFT \
+    RISCV64_SV39_CANONICAL_HIGH_SHIFT
+#define RV64_JIT_SV39_CANONICAL_HIGH_BITS \
+    RISCV64_SV39_CANONICAL_HIGH_BITS
+#define RV64_JIT_SV39_LEVEL1_LOW_PPN_MASK \
+    RISCV64_SV39_LEVEL1_LOW_PPN_MASK
+#define RV64_JIT_SV39_LEVEL2_LOW_PPN_MASK \
+    RISCV64_SV39_LEVEL2_LOW_PPN_MASK
+#define RV64_JIT_PTE_SIZE RISCV64_SV39_PTE_BYTES
+#define RV64_JIT_PTE_V RISCV_PTE_V
+#define RV64_JIT_PTE_R RISCV_PTE_R
+#define RV64_JIT_PTE_W RISCV_PTE_W
+#define RV64_JIT_PTE_X RISCV_PTE_X
+#define RV64_JIT_PTE_U RISCV_PTE_U
+#define RV64_JIT_PTE_A RISCV_PTE_A
+#define RV64_JIT_PTE_D RISCV_PTE_D
+#define RV64_JIT_PTE_RWX RISCV_PTE_RWX
+#define RV64_JIT_PTE_NON_LEAF_RESERVED RISCV_PTE_NON_LEAF_RESERVED
+#define RV64_JIT_PTE_PPN_SHIFT RISCV_PTE_PPN_SHIFT
+#define RV64_JIT_PTE_PPN_MASK RISCV64_PTE_PPN_MASK
 /*
- * The RV64 JIT has no Svnapot, Svpbmt, or Svrsw60t59b support.  Sv39 PTE bits
- * [63:54] therefore remain reserved and must fault rather than produce a cached
- * translation.  Add the relevant state to the JIT guards before enabling any of
- * those extensions in NEMU's architectural walker.
+ * The RV64 JIT has no Svnapot, Svpbmt, or Svrsw60t59b support.  The high Sv39
+ * PTE region therefore contains both unsupported extension fields and reserved
+ * bits, all of which must fault rather than produce a cached translation.  Add
+ * the relevant state to the JIT guards before enabling any of those extensions
+ * in NEMU's architectural walker.
  */
-#define RV64_JIT_PTE_RESERVED_63_54_MASK (((word_t)0x3ffu) << 54)
-#define RV64_JIT_MSTATUS_MPRV ((word_t)1u << 17)
-#define RV64_JIT_MSTATUS_SUM ((word_t)1u << 18)
-#define RV64_JIT_MSTATUS_MXR ((word_t)1u << 19)
-#define RV64_JIT_MSTATUS_MPP_SHIFT 11u
-#define RV64_JIT_MSTATUS_MPP_MASK ((word_t)0x3u << RV64_JIT_MSTATUS_MPP_SHIFT)
+#define RV64_JIT_PTE_UNSUPPORTED_HIGH_MASK RISCV64_PTE_UNSUPPORTED_HIGH_MASK
+#define RV64_JIT_MSTATUS_MPRV RISCV_MSTATUS_MPRV
+#define RV64_JIT_MSTATUS_SUM RISCV_MSTATUS_SUM
+#define RV64_JIT_MSTATUS_MXR RISCV_MSTATUS_MXR
+#define RV64_JIT_MSTATUS_MPP_SHIFT RISCV_MSTATUS_MPP_SHIFT
+#define RV64_JIT_MSTATUS_MPP_MASK RISCV_MSTATUS_MPP_MASK
 #define RV64_JIT_DATA_TLB_READ 0x1u
 #define RV64_JIT_DATA_TLB_WRITE 0x2u
 #define RV64_JIT_DATA_TLB_ENTRY_SHIFT 6u
@@ -202,6 +227,18 @@
 #define RV64_JIT_DATA_TLB_STATE_PRIV_MASK 0x3u
 #define RV64_JIT_DATA_TLB_STATE_SUM (1u << 2)
 #define RV64_JIT_DATA_TLB_STATE_MXR (1u << 3)
+
+/*
+ * rv64_jit_store_pmem_continue() returns this one-bit ABI in EAX.  Zero asks
+ * generated code to leave the current block because the store invalidated
+ * compiled source or translation state; one proves that execution may continue
+ * at the next guest instruction.
+ */
+enum
+{
+    RV64_JIT_STORE_MUST_EXIT = 0,
+    RV64_JIT_STORE_MAY_CONTINUE = 1,
+};
 
 /*
  * Native block data model.
@@ -307,7 +344,7 @@ _Static_assert((uint64_t)CONFIG_MSIZE <= (uint64_t)UINT32_MAX + 1u,
                "RV64 JIT inline PMEM offsets must fit in 32 bits");
 _Static_assert(RV64_JIT_PMEM_CHUNK_COUNT <= UINT32_MAX,
                "RV64 JIT source chunk indexes must fit in 32 bits");
-_Static_assert(RV64_JIT_DATA_TLB_SIZE * RV64_JIT_SV39_LEVELS < UINT16_MAX,
+_Static_assert(RV64_JIT_DATA_TLB_SIZE *RV64_JIT_SV39_LEVELS < UINT16_MAX,
                "RV64 JIT data-TLB dependency refs must fit in 16 bits");
 
 typedef struct
@@ -434,7 +471,7 @@ typedef struct
 
 typedef struct
 {
-    uint8_t *slow_disps[RV64_JIT_DIRECT_LINK_MISS_PATCHES];
+    uint8_t *slow_disps[RV64_JIT_DTLB_MAX_SLOW_PATCHES];
     uint32_t count;
 } rv64_jit_tlb_guard_patch_t;
 
@@ -449,6 +486,52 @@ static inline uint32_t bits(uint32_t value, int hi, int lo)
     const unsigned width = (unsigned)(hi - lo + 1);
     const uint32_t mask = UINT32_MAX >> (32u - width);
     return (value >> lo) & mask;
+}
+
+/*
+ * Common RISC-V instruction formats keep these register and function fields in
+ * fixed positions.  Naming the extractions once avoids scattering numeric bit
+ * tuples through the emitters.  Shift-immediate instructions use funct6/shamt6
+ * at XLEN=64 and funct7/shamt5 for the RV64 word-operation forms.
+ */
+static inline uint32_t rv64_instr_rd(uint32_t instr)
+{
+    return bits(instr, 11, 7);
+}
+
+static inline uint32_t rv64_instr_funct3(uint32_t instr)
+{
+    return bits(instr, 14, 12);
+}
+
+static inline uint32_t rv64_instr_rs1(uint32_t instr)
+{
+    return bits(instr, 19, 15);
+}
+
+static inline uint32_t rv64_instr_rs2(uint32_t instr)
+{
+    return bits(instr, 24, 20);
+}
+
+static inline uint32_t rv64_instr_funct7(uint32_t instr)
+{
+    return bits(instr, 31, 25);
+}
+
+static inline uint32_t rv64_instr_funct6(uint32_t instr)
+{
+    return bits(instr, 31, 26);
+}
+
+static inline uint32_t rv64_instr_shamt6(uint32_t instr)
+{
+    return bits(instr, 25, 20);
+}
+
+static inline uint32_t rv64_instr_shamt5(uint32_t instr)
+{
+    return bits(instr, 24, 20);
 }
 
 /* Sign-extend an instruction field whose sign bit is at width - 1. */

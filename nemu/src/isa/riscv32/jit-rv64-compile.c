@@ -251,8 +251,8 @@ static rv64_jit_block_t *jit_publish_compiled_block(
         .source_len = info->source->source_len,
         .source_segment_count = info->source->segment_count,
         .ifetch_pt_page_count = info->uses_translated_ifetch
-                                   ? info->ifetch_refs->count
-                                   : 0,
+                                    ? info->ifetch_refs->count
+                                    : 0,
         .insn_count = info->compiled_insn_count,
         .entry = (rv64_jit_entry_t)w->start,
         .body_entry = (rv64_jit_entry_t)info->native_body_entry,
@@ -324,8 +324,8 @@ static void jit_record_compilation_stats(const rv64_jit_publish_info_t *info,
  * reset without ever creating an unsupported-instruction cache entry.
  */
 static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
-                                                 uint32_t max_insns,
-                                                 bool *arena_overflowed)
+                                                uint32_t max_insns,
+                                                bool *arena_overflowed)
 {
     *arena_overflowed = false;
 
@@ -467,7 +467,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                 break;
             }
 
-            if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != 0)
+            if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) !=
+                RV64_JIT_SATP_MODE_BARE)
             {
                 /*
                  * MPRV, SUM, and MXR affect explicit data accesses, whereas
@@ -499,7 +500,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                 break;
             }
 
-            if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != 0)
+            if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) !=
+                RV64_JIT_SATP_MODE_BARE)
             {
                 needs_data_translation_guard = true;
             }
