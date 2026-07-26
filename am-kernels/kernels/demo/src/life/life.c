@@ -13,11 +13,13 @@ void show(void *u)
     int x, y;
     int(*univ)[w] = u;
     screen_clear();
+
     for (y = 0; y < h; y++)
     {
         for (x = 0; x < w; x++)
             print_char(univ[y][x] ? 'o' : ' ', y, x);
     }
+
     screen_refresh();
 }
 
@@ -31,6 +33,7 @@ void evolve(void *u)
         for (x = 0; x < w; x++)
         {
             int n = 0;
+
             for (y1 = y - 1; y1 <= y + 1; y1++)
                 for (x1 = x - 1; x1 <= x + 1; x1++)
                     if (univ[(y1 + h) % h][(x1 + w) % w])
@@ -38,8 +41,10 @@ void evolve(void *u)
 
             if (univ[y][x])
                 n--;
+
             new[y][x] = (n == 3 || (n == 2 && univ[y][x]));
         }
+
     for (y = 0; y < h; y++)
         for (x = 0; x < w; x++)
             univ[y][x] = new[y][x];
@@ -54,6 +59,7 @@ void game_of_life(void)
     unsigned(*univ)[w] = (void *)univ_array;
 
     int x, y;
+
     for (x = 0; x < w; x++)
         for (y = 0; y < h; y++)
             univ[y][x] = rand() % 2;

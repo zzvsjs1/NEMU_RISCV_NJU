@@ -102,6 +102,7 @@ static paddr_t x86_mmu_fail(vaddr_t vaddr, int type, bool protection, bool rsvd)
 static uint32_t x86_set_ad_bits(paddr_t entry_addr, uint32_t entry, bool dirty)
 {
     uint32_t updated = entry | X86_PTE_A;
+
     if (dirty)
     {
         updated |= X86_PTE_D;

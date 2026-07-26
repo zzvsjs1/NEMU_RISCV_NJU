@@ -8,6 +8,7 @@ int partition(int *a, int p, int q)
 {
     int pivot = a[p];
     int i = p, j = q;
+
     while (i < j)
     {
         while (i < j && a[j] > pivot)
@@ -38,6 +39,7 @@ int main()
     quick_sort(a, 0, N - 1);
 
     int i;
+
     for (i = 0; i < N; i++)
     {
         check(a[i] == i);

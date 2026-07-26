@@ -93,6 +93,7 @@ static bool mouse_coalesce_motion(MouseEvent event)
      * queue overflow during fast host movement or slow guest polling.
      */
     int index = mouse_prev_index(mouse_r);
+
     for (int i = 0; i < mouse_count; i++)
     {
         if (mouse_queue[index].type == MOUSE_EVENT_MOVE)

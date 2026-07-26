@@ -14,6 +14,7 @@ static PCB pcb[MAX_NR_PROC] __attribute__((used)) = {};
 static PCB pcb_boot = {};
 PCB *current = NULL;
 static PCB *fg_pcb = &pcb[0];
+
 /* The foreground app normally runs continuously.  If the optional background
  * slot is loaded, this small budget lets it make progress without giving it
  * ownership of foreground-only devices such as /dev/fb and /dev/sb.
@@ -121,6 +122,7 @@ void hello_fun(void *arg)
 {
     const char *name = (const char *)arg;
     Log("Kernel thread %s started", name != NULL ? name : "(null)");
+
     // int j = 1;
     while (1)
     {

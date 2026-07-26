@@ -60,6 +60,7 @@ static int reg_name_to_index(const char *raw_name)
     }
 
     int index = 0;
+
     for (const char *p = name; *p != '\0'; p++)
     {
         if (*p < '0' || *p > '9')
@@ -68,6 +69,7 @@ static int reg_name_to_index(const char *raw_name)
         }
 
         index = index * 10 + (*p - '0');
+
         if (index >= 32)
         {
             return -1;
@@ -141,11 +143,13 @@ void isa_reg_display()
     };
 
     printf("\n");
+
     for (size_t i = 0; i < ARRLEN(special); i++)
     {
         const word_t value = special[i].value;
         printf(REG_FMT, special[i].name, value, " ", value, " ", (sword_t)value);
     }
+
     printf("\n");
 }
 
@@ -157,6 +161,7 @@ word_t isa_reg_str2val(const char *s, bool *success)
     }
 
     const int index = reg_name_to_index(s);
+
     if (index >= 0)
     {
         *success = true;
@@ -164,6 +169,7 @@ word_t isa_reg_str2val(const char *s, bool *success)
     }
 
     word_t *special = special_reg_address(s);
+
     if (special != NULL)
     {
         *success = true;
@@ -178,6 +184,7 @@ word_t isa_reg_str2val(const char *s, bool *success)
 void isa_set_reg_val(const char *name, const word_t value)
 {
     const int index = reg_name_to_index(name);
+
     if (index >= 0)
     {
         /* GPR[0] is hard-wired to zero; debugger writes must not change it. */
@@ -185,10 +192,12 @@ void isa_set_reg_val(const char *name, const word_t value)
         {
             gpr(index) = value;
         }
+
         return;
     }
 
     word_t *special = special_reg_address(name);
+
     if (special != NULL)
     {
         *special = value;

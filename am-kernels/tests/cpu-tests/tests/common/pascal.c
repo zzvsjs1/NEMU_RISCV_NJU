@@ -14,12 +14,14 @@ int main()
     for (i = 2; i < N; i++)
     {
         t0 = 1;
+
         for (j = 1; j < i; j++)
         {
             t1 = a[j];
             a[j] = t0 + t1;
             t0 = t1;
         }
+
         a[i] = 1;
     }
 

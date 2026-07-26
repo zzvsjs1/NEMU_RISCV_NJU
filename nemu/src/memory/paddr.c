@@ -5,6 +5,7 @@
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
 #include <isa-jit.h>
 #endif
+
 #include <utils.h>
 
 #if defined(CONFIG_PMEM_MALLOC)
@@ -84,6 +85,7 @@ word_t paddr_ifetch(paddr_t addr)
                       cpu.pc, addr, data);
         }
 #endif
+
         return data;
     }
 
@@ -104,6 +106,7 @@ word_t paddr_read(paddr_t addr, int len)
                       cpu.pc, addr, len, data);
         }
 #endif
+
         return data;
     }
 
@@ -130,7 +133,9 @@ void paddr_write(paddr_t addr, int len, word_t data)
                       cpu.pc, addr, len, data);
         }
 #endif
+
         pmem_write(addr, len, data);
+
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
         /*
          * PMEM writes are the common meeting point for interpreter stores and
@@ -151,8 +156,10 @@ void paddr_write(paddr_t addr, int len, word_t data)
                 isa_jit_invalidate_paddr(addr, len);
         }
 #endif
+
         return;
     }
+
     MUXDEF(CONFIG_DEVICE, mmio_write(addr, len, data),
            panic("address = " FMT_PADDR " is out of bound of pmem [" FMT_PADDR ", " FMT_PADDR ") at pc = " FMT_WORD,
                  addr, CONFIG_MBASE, CONFIG_MBASE + CONFIG_MSIZE, cpu.pc));
@@ -173,6 +180,7 @@ void paddr_write_no_jit_invalidate(paddr_t addr, int len, word_t data)
                       cpu.pc, addr, len, data);
         }
 #endif
+
         pmem_write(addr, len, data);
         return;
     }

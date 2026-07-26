@@ -51,6 +51,7 @@ Window *WindowManager::spawn(const char *path, const char *argv[])
         navyhome,
         NULL,
     };
+
     for (Window *&win : windows)
     {
         if (!win)
@@ -63,6 +64,7 @@ Window *WindowManager::spawn(const char *path, const char *argv[])
             return win;
         }
     }
+
     return nullptr;
 }
 
@@ -79,6 +81,7 @@ void WindowManager::render()
                 draw_window(win);
             }
         }
+
         draw_window(focus);
 
         if (display_switcher)
@@ -94,14 +97,17 @@ void WindowManager::render()
     }
 
     const int T = 1 << tile_shift;
+
     for (int y = 0; y < th; y++)
     {
         for (int x = 0; x < tw; x++)
             if (changed[x + y * tw])
             {
                 int n = 1;
+
                 while (x + n < tw && changed[x + n + y * tw])
                     n++;
+
                 for (int i = 0; i < T; i++)
                 {
                     int x1 = x * T, y1 = y * T + i;
@@ -114,11 +120,14 @@ void WindowManager::render()
                     {
                         sz -= x1 + T * n - w;
                     }
+
                     NDL_DrawRect(&fb[y1 * w + x1], x1, y1, sz, 1);
                 }
+
                 x += n - 1;
             }
     }
+
     memset(changed, false, tw * th);
 }
 
@@ -126,6 +135,7 @@ void WindowManager::set_focus(Window *win)
 {
     if (focus)
         focus->draw();
+
     focus = win;
     focus->draw();
 }
@@ -144,6 +154,7 @@ void WindowManager::draw_px(int x, int y, uint32_t color, bool has_alpha)
 void WindowManager::draw_window(Window *win)
 {
     const int T = (1 << tile_shift);
+
     for (int x = 0; x < tw; x++)
         for (int y = 0; y < th; y++)
             if (changed[x + y * tw])
@@ -161,6 +172,7 @@ void WindowManager::draw_window(Window *win)
 
                 if (basey >= win->y + win->h)
                     continue;
+
                 for (int i = 0; i < T; i++)
                     for (int j = 0; j < T; j++)
                     {

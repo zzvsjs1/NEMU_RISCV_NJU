@@ -168,6 +168,7 @@ static int cmd_scan_memory(char *args)
     }
 
     lenOfStr = strlen(args);
+
     for (i = 0; i < lenOfStr; i++)
     {
         if (isspace((unsigned)args[i]))
@@ -415,6 +416,7 @@ void sdb_mainloop()
 #endif
 
         int i;
+
         for (i = 0; i < NR_CMD; i++)
         {
             if (strcmp(cmd, cmd_table[i].name) == 0)

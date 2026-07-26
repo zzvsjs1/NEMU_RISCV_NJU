@@ -11,5 +11,6 @@ int main(const char *args)
     {
         (*p == '%') ? putstr(args) : putch(*p);
     }
+
     return 0;
 }

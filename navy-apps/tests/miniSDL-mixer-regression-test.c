@@ -479,6 +479,7 @@ static void test_mono_output_decodes_stereo_ogg_music_safely(void)
     CHECK(Mix_PlayMusic(music, 0) == 0);
 
     mixer_callback(NULL, stream, sizeof(stream));
+
     for (size_t i = 0; i < sizeof(stream); i++)
     {
         if (stream[i] != 0)
@@ -487,6 +488,7 @@ static void test_mono_output_decodes_stereo_ogg_music_safely(void)
             break;
         }
     }
+
     CHECK(non_silent == 1);
 
     Mix_CloseAudio();

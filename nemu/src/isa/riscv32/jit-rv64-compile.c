@@ -281,20 +281,24 @@ static void jit_record_compilation_stats(const rv64_jit_publish_info_t *info,
     {
         JIT_STAT_INC(translated_blocks);
         const vaddr_t last_pc = info->next_pc - RV64_INSN_SIZE;
+
         if (((info->start_pc ^ last_pc) & ~(vaddr_t)PAGE_MASK) != 0)
         {
             JIT_STAT_INC(translated_cross_page_blocks);
         }
     }
+
     if (info->source->segment_count > 1u)
     {
         JIT_STAT_INC(segmented_source_blocks);
     }
+
     if (info->compiled_insn_count > RV64_JIT_BLOCK_MAX_INSNS)
     {
         JIT_STAT_INC(trace_blocks);
         JIT_STAT_ADD(trace_insns, info->compiled_insn_count);
     }
+
     JIT_STAT_ADD(compiled_insns, info->compiled_insn_count);
 }
 
@@ -342,6 +346,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
 
     paddr_t first_paddr = 0;
     bool uses_translated_ifetch = false;
+
     if (!rv64_jit_translate_ifetch_ex(pc, &first_paddr,
                                       &uses_translated_ifetch) ||
         !in_pmem(first_paddr))
@@ -436,6 +441,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                 }
                 break;
             }
+
             block_end_reason = RV64_JIT_BLOCK_END_JUMP;
             exit_state = RV64_JIT_COMPILE_HAS_TERMINAL_EXIT;
             stop_after_instruction = true;
@@ -460,6 +466,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                 }
                 break;
             }
+
             if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != 0)
             {
                 /*
@@ -491,6 +498,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                 }
                 break;
             }
+
             if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != 0)
             {
                 needs_data_translation_guard = true;
@@ -557,6 +565,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
             rv64_jit_mark_unsupported(pc, first_paddr,
                                       uses_translated_ifetch);
         }
+
         jit_restore_emitted_site_stats(&attempt_site_stats);
         return NULL;
     }

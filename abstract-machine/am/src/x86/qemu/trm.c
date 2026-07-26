@@ -50,9 +50,11 @@ void halt(int code)
     const char *fmt = "CPU #$ Halt (40).\n";
     cli();
     __am_stop_the_world();
+
     for (const char *p = fmt; *p; p++)
     {
         char ch = *p;
+
         switch (ch)
         {
         case '$':
@@ -66,7 +68,9 @@ void halt(int code)
             putch(ch);
         }
     }
+
     outw(0x604, 0x2000); // offer of qemu :)
+
     while (1)
         hlt();
 }
@@ -90,6 +94,7 @@ void __am_lapic_init()
             uint32_t mpconf_ptr = ((volatile MPDesc *)st)->conf;
             MPConf *conf = (void *)((uintptr_t)(mpconf_ptr));
             __am_lapic = (void *)((uintptr_t)(conf->lapicaddr));
+
             for (volatile char *ptr = (char *)(conf + 1);
                  ptr < (char *)conf + conf->length; ptr += 8)
             {
@@ -99,9 +104,11 @@ void __am_lapic_init()
                     panic_on(++__am_ncpu > MAX_CPU, "cannot support > MAX_CPU processors");
                 }
             }
+
             return;
         }
     }
+
     bug();
 }
 

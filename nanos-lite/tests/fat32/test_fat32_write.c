@@ -83,10 +83,12 @@ static void write_pattern_file(const char *path, size_t size)
     FILE *file = fopen(path, "wb");
 
     assert(file != 0);
+
     for (size_t i = 0; i < size; i++)
     {
         assert(fputc((int)(i & 0xffu), file) != EOF);
     }
+
     assert(fclose(file) == 0);
 }
 

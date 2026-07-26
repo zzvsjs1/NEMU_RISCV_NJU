@@ -20,6 +20,7 @@ static void test_conversion()
     int fails = 0;
 
     printf("=== Conversion & round‐trip tests ===\n");
+
     for (int i = 0; i < N; i++)
     {
         float f = vals[i];
@@ -54,6 +55,7 @@ static void test_floor_ceil()
     int fails = 0;
 
     printf("=== floor/ceil tests ===\n");
+
     for (int i = 0; i < N; i++)
     {
         float f = vals[i];
@@ -89,6 +91,7 @@ static void test_arithmetic()
     int fails = 0;
 
     printf("=== fixedpt_mul/div tests ===\n");
+
     for (int i = 0; i < N; i++)
     {
         float a = A[i], b = B[i];
@@ -175,6 +178,7 @@ static void test_arithmetic()
                 ifails++;
             }
         }
+
         printf("muli/divi/abs tests %s\n\n", ifails ? "had failures" : "all passed");
         fails += ifails;
     }

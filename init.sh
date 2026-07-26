@@ -26,6 +26,7 @@ function init() {
   while [ ! -d $3 ]; do
     git clone -b $2 git@github.com:$1.git $3
   done
+
   log="$1 `cd $3 && git log --oneline --no-abbrev-commit -n1`"$'\n'
 
   sed -i -e "/^\/$3/d" .gitignore

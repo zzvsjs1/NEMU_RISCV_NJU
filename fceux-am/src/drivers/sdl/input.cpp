@@ -47,6 +47,7 @@ extern int gametype;
 void InputUserActiveFix()
 {
     int x;
+
     for (x = 0; x < 3; x++)
     {
         CurInputType[x] = UsrInputType[x];
@@ -78,6 +79,7 @@ void ParseGIInput(FCEUGI *gi)
     {
         CurInputType[2] = gi->inputfc;
     }
+
     cspec = gi->cspecial;
 }
 
@@ -146,6 +148,7 @@ DTestButton(ButtConfig *bc)
             }
         }
     }
+
     return 0;
 }
 
@@ -269,6 +272,7 @@ void InitInputInterface()
             InputDPtr = &JSreturn;
             break;
         }
+
         FCEUI_SetInput(x, (ESI)CurInputType[x], InputDPtr, attrib);
     }
 

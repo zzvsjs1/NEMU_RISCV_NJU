@@ -33,6 +33,7 @@ static vaddr_t mips32_raise_exception(word_t exception, vaddr_t epc,
     if (!old_exl)
     {
         cpu.epc = epc;
+
         /* NEMU omits delay slots, so an exception can never set Cause.BD. */
         cpu.cause &= ~(1u << 31);
     }

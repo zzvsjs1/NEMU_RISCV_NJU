@@ -109,6 +109,7 @@ static void DoFun(int frameskip, int periodic_saves)
     {
         gfx = 0;
     }
+
     FCEUI_Emulate(&gfx, &sound, &ssize, fskipc);
     FCEUD_Update(gfx, sound, ssize);
 
@@ -190,6 +191,7 @@ void FCEUD_Update(uint8 *XBuf,
                 BlitScreen(XBuf);
                 blitDone = 1;
             }
+
             Buffer += can;
             Count -= can;
 
@@ -201,6 +203,7 @@ void FCEUD_Update(uint8 *XBuf,
 
                     if (Count > can)
                         Count = can;
+
                     WriteSound(Buffer, Count);
                 }
                 else
@@ -238,6 +241,7 @@ void FCEUD_Update(uint8 *XBuf,
             BlitScreen(XBuf);
         }
     }
+
     FCEUD_UpdateInput();
 }
 
@@ -394,6 +398,7 @@ int main(int argc, char *argv[])
     {
         DoFun(NR_FRAMESKIP, periodic_saves);
     }
+
     CloseGame();
 
     // exit the infrastructure
@@ -453,6 +458,7 @@ void FCEUD_PrintError(const char *errormsg)
         printf("%s\n", #__f); \
         FCEU_DispMessage("Not implemented."); \
     }
+
 DUMMY(FCEUD_HideMenuToggle)
 DUMMY(FCEUD_MovieReplayFrom)
 DUMMY(FCEUD_ToggleStatusIcon)

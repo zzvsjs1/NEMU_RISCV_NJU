@@ -23,6 +23,7 @@ static int rnd(int a) { return rand() % a; }
 static void show_board()
 {
     int i, j;
+
     for (i = 0; i < h; i++)
         for (j = 0; j < W; j++)
         {
@@ -36,6 +37,7 @@ static void show_board()
             {
                 print_char(B(i, j), i, 2 * j);
             }
+
             print_char(' ', i, 2 * j + 1);
         }
     screen_refresh();
@@ -103,6 +105,7 @@ static int run(void)
 {
     static int step = 0;
     int i;
+
     for (i = 0; i < cnt; i++)
         move(i);
 
@@ -117,6 +120,7 @@ static int run(void)
         V(cnt) = rnd(80) + 43;
         cnt++;
     }
+
     return 1;
 }
 
@@ -129,11 +133,14 @@ void galton()
 
     if (h < H_MIN)
         h = H_MIN;
+
     init();
+
     do
     {
         show_board(), usleep(6000);
     } while (run());
+
     free(x);
     free(b);
 }

@@ -44,6 +44,7 @@ static uint32_t pushf16_result(void)
 static uint32_t run_low_code(uintptr_t entry, const uint8_t *code, size_t len)
 {
     uint8_t *dst = (uint8_t *)entry;
+
     for (size_t i = 0; i < len; i++)
     {
         dst[i] = code[i];

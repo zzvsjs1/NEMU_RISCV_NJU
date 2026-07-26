@@ -14,15 +14,18 @@ bool mpe_init(void (*entry)())
 {
     user_entry = entry;
     boot_record()->jmp_code = 0x000bfde9; // (16-bit) jmp (0x7c00)
+
     for (int cpu = 1; cpu < __am_ncpu; cpu++)
     {
         boot_record()->is_ap = 1;
         __am_lapic_bootap(cpu, (void *)boot_record());
+
         while (xchg(&ap_ready, 0) != 1)
         {
             pause();
         }
     }
+
     call_user_entry();
     return true;
 }
@@ -57,6 +60,7 @@ int atomic_xchg(int *addr, int newval)
 void __am_stop_the_world()
 {
     boot_record()->jmp_code = 0x0000feeb; // (16-bit) jmp .
+
     for (int cpu_ = 0; cpu_ < __am_ncpu; cpu_++)
     {
         if (cpu_ != cpu_current())

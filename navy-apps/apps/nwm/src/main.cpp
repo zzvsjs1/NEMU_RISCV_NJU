@@ -12,6 +12,7 @@ int main()
 
     uint32_t last = 0, now = 0;
     char buf[64];
+
     while (1)
     {
         if (NDL_PollEvent(buf, sizeof(buf)))
@@ -25,5 +26,6 @@ int main()
             last = now;
         }
     }
+
     return 0;
 }

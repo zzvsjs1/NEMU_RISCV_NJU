@@ -298,6 +298,7 @@ int NDL_PlayAudio(void *buf, int len)
      * treat a short write as progress rather than rebuilding the callback buffer.
      */
     int written = 0;
+
     while (written < len)
     {
         ssize_t w = write(sbFd, (uint8_t *)buf + written, len - written);

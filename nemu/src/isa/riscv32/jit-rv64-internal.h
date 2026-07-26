@@ -438,7 +438,6 @@ typedef struct
     uint32_t count;
 } rv64_jit_tlb_guard_patch_t;
 
-
 /* Extract an inclusive bit range from a 32-bit RISC-V instruction. */
 static inline uint32_t bits(uint32_t value, int hi, int lo)
 {
@@ -526,7 +525,6 @@ static inline uint32_t jit_pc_offset(void)
     return (uint32_t)offsetof(CPU_state, pc);
 }
 
-
 extern rv64_jit_block_t rv64_jit_cache[RV64_JIT_CACHE_SIZE];
 extern rv64_jit_data_tlb_entry_t rv64_jit_data_tlb[RV64_JIT_DATA_TLB_SIZE];
 extern uint16_t rv64_jit_data_tlb_pt_page_refs[RV64_JIT_PMEM_PAGE_COUNT];
@@ -564,7 +562,6 @@ extern volatile uint32_t rv64_jit_loop_extra;
         (void)(value); \
     } while (0)
 #endif
-
 
 void rv64_jit_stat_unsupported_opcode(uint32_t instr);
 void rv64_jit_stat_block_end(rv64_jit_block_end_reason_t reason);

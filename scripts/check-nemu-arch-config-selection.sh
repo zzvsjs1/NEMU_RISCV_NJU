@@ -10,10 +10,12 @@ TEMP_CONFIGS=()
 cleanup() {
     rm -f "$OUT"
     local cfg
+
     for cfg in "${TEMP_CONFIGS[@]}"; do
         rm -f "$cfg"
     done
 }
+
 trap cleanup EXIT
 
 fail() {
@@ -27,6 +29,7 @@ if grep -R -n '^NEMU_DEFCONFIG[[:space:]]*?=' "$ROOT/abstract-machine/scripts" >
 fi
 
 make -C "$NEMU_HOME" riscv32-am-headless-jit_defconfig >/dev/null
+
 if make -C "$NEMU_HOME" -n ISA=riscv64 run >"$OUT" 2>&1; then
     cat "$OUT" >&2
     fail "NEMU accepted ISA=riscv64 while .config selects riscv32"
@@ -39,6 +42,7 @@ fi
 
 make -C "$NEMU_HOME" riscv64-am-headless_defconfig >/dev/null
 make -C "$NEMU_HOME" -n ISA=riscv64 run >"$OUT" 2>&1
+
 if ! grep -q "riscv64-nemu-interpreter" "$OUT"; then
     cat "$OUT" >&2
     fail "matching RV64 config did not select the RV64 interpreter"
@@ -61,6 +65,7 @@ EOF
 
 make -C "$NEMU_HOME" codex-riscv64-bad-mbase_defconfig >/dev/null
 make -C "$ROOT/am-kernels/benchmarks/microbench" ARCH=riscv64-nemu nemu-config >"$OUT" 2>&1
+
 if ! grep -q "adjusting NEMU memory layout for ARCH=riscv64-nemu" "$OUT"; then
     cat "$OUT" >&2
     fail "bad RV64 memory layout was not adjusted"
@@ -91,6 +96,7 @@ EOF
 
 make -C "$NEMU_HOME" codex-x86-bad-mbase_defconfig >/dev/null
 make -C "$ROOT/am-kernels/benchmarks/microbench" ARCH=x86-nemu nemu-config >"$OUT" 2>&1
+
 if ! grep -q "adjusting NEMU memory layout for ARCH=x86-nemu" "$OUT"; then
     cat "$OUT" >&2
     fail "bad x86 memory layout was not adjusted"

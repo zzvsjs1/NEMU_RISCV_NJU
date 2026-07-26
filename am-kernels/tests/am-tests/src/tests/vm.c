@@ -14,8 +14,10 @@ void *simple_pgalloc(int size)
     {
         st = (uintptr_t)heap.start;
     }
+
     while (st % size != 0)
         st++;
+
     void *ret = (void *)st;
     st += size;
     return ret;
@@ -47,8 +49,10 @@ Context *vm_handler(Event ev, Context *ctx)
         break;
     case EVENT_SYSCALL:
         iset(1);
+
         for (int volatile i = 0; i < 1000000; i++)
             ;
+
         printf("%d ", ctx->GPRx);
         break;
     default:
@@ -98,6 +102,7 @@ void vm_test()
         printf("Not supported architecture.\n");
         return;
     }
+
     protect(&prot);
     printf("Protected address space: [%p, %p)\n", prot.area.start, prot.area.end);
 

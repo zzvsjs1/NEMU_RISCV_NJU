@@ -46,16 +46,19 @@ int main(void)
      */
     iset(false);
     const uint64_t disabled_start = uptime_us();
+
     while (uptime_us() - disabled_start < DISABLED_WINDOW_US)
     {
         asm volatile("nop");
     }
+
     check(timer_events == 0u);
 
     iset(true);
     check(ienabled());
 
     const uint64_t enabled_start = uptime_us();
+
     while (timer_events < REQUIRED_TIMER_EVENTS &&
            uptime_us() - enabled_start < ENABLED_TIMEOUT_US)
     {

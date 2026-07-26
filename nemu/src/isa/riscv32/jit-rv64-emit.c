@@ -1029,6 +1029,7 @@ static rv64_jit_reg_slot_t *jit_reg_loaded_slot(rv64_jit_writer_t *w,
         {
             return NULL;
         }
+
         slot->loaded = true;
     }
 
@@ -1455,6 +1456,7 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
         {
             return false;
         }
+
         patch_rel32(data_state_ok_disp, w->cur);
     }
     else if (!emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count))
@@ -1471,6 +1473,7 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
     {
         return false;
     }
+
     patch_rel32(ifetch_generation_ok_disp, w->cur);
 
     if (!emit_cmp_rdxq_field_imm8(w, body_entry_off, 0) ||
@@ -1502,11 +1505,14 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
     {
         return false;
     }
+
     patch_rel32(guarded_taken_disp, w->cur);
+
     if (!emit_inc_jit_stat_counter(w, &rv64_jit_stats.direct_guarded_link_taken_count))
     {
         return false;
     }
+
     patch_rel32(guarded_done_disp, w->cur);
 #endif
 
@@ -1882,6 +1888,7 @@ static bool emit_paged_load_instr(rv64_jit_writer_t *w,
         }
 
         patch_rel32(align_slow_disp, w->cur);
+
         if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
                                         RV64_JIT_SIDE_EXIT_LOAD_GUARD))
         {
@@ -2002,6 +2009,7 @@ bool rv64_jit_emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     if (align_slow_disp != NULL)
     {
         patch_rel32(align_slow_disp, w->cur);
+
         if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
                                         RV64_JIT_SIDE_EXIT_LOAD_GUARD))
         {
@@ -2103,6 +2111,7 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
         }
 
         patch_rel32(align_slow_disp, w->cur);
+
         if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
                                         RV64_JIT_SIDE_EXIT_STORE_GUARD))
         {
@@ -2236,6 +2245,7 @@ bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     {
         patch_rel32(align_slow_disp, w->cur);
     }
+
     patch_rel32(range_slow_disp, w->cur);
 
     if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
@@ -2394,6 +2404,7 @@ static bool emit_op_hreg(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         {
             return false;
         }
+
         rhs = src2;
     }
 
@@ -2466,6 +2477,7 @@ static bool emit_op32_hreg_commutative(rv64_jit_writer_t *w,
             {
                 return false;
             }
+
             rhs = src2;
         }
     }
@@ -2504,6 +2516,7 @@ static bool emit_op_imm(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         {
             return false;
         }
+
         return emit_cmp_rax_imm32(w, imm) &&
                emit_setcc_rax(w, HOST_SETCC_L) &&
                jit_reg_write_rax(w, regs, rd);
@@ -2512,6 +2525,7 @@ static bool emit_op_imm(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         {
             return false;
         }
+
         return emit_cmp_rax_imm32(w, imm) &&
                emit_setcc_rax(w, HOST_SETCC_B) &&
                jit_reg_write_rax(w, regs, rd);
@@ -2526,6 +2540,7 @@ static bool emit_op_imm(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         {
             return false;
         }
+
         return emit_shift_imm_hreg(w, regs, rd, rs1, HOST_SHIFT_GROUP_SAL,
                                    (uint8_t)bits(instr, 25, 20));
     case RV64_FUNCT3_SRL_SRA: /* SRLI/SRAI; funct6 selects logical versus arithmetic right shift. */
@@ -2540,6 +2555,7 @@ static bool emit_op_imm(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
             return emit_shift_imm_hreg(w, regs, rd, rs1, HOST_SHIFT_GROUP_SAR,
                                        (uint8_t)bits(instr, 25, 20));
         }
+
         return false;
     default:
         return false;
@@ -2567,6 +2583,7 @@ static bool emit_op_imm32(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         {
             return false;
         }
+
         return jit_reg_read_rax(w, regs, rs1) &&
                emit_shift_eax_imm_sext(
                    w, HOST_SHIFT_SAL, (uint8_t)bits(instr, 24, 20)) &&
@@ -2589,6 +2606,7 @@ static bool emit_op_imm32(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
                        (uint8_t)bits(instr, 24, 20)) &&
                    jit_reg_write_rax(w, regs, rd);
         }
+
         return false;
     default:
         return false;
@@ -2667,6 +2685,7 @@ static bool emit_op(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         {
             JIT_STAT_INC(native_m_ops);
         }
+
         return emitted;
     }
     case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_SLL): /* MULH */
@@ -2710,6 +2729,7 @@ static bool emit_op32(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
             {
                 JIT_STAT_INC(native_m_ops);
             }
+
             return emitted;
         }
         break;
@@ -2745,6 +2765,7 @@ static bool emit_op32(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         {
             JIT_STAT_INC(native_m_ops);
         }
+
         return emitted;
     }
     case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_XOR): /* DIVW */
@@ -2885,6 +2906,7 @@ bool rv64_jit_emit_branch(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         {
             return false;
         }
+
         *emitted_native_backedge = true;
     }
     else if (!rv64_jit_direct_link_enabled())
@@ -2941,6 +2963,7 @@ bool rv64_jit_emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         {
             JIT_STAT_INC(native_jumps);
         }
+
         return emitted;
     }
 
@@ -2977,6 +3000,7 @@ bool rv64_jit_emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
 
     patch_rel32(misaligned_disp, w->cur);
+
     if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
                                     RV64_JIT_SIDE_EXIT_JALR_MISALIGNED))
     {

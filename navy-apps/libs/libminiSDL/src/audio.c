@@ -105,6 +105,7 @@ static int readExact(int fd, void *buf, size_t n)
      */
     uint8_t *p = (uint8_t *)buf;
     size_t got = 0;
+
     while (got < n)
     {
         ssize_t r = read(fd, p + got, n - got);
@@ -118,6 +119,7 @@ static int readExact(int fd, void *buf, size_t n)
                 continue;
             return 0;
         }
+
         got += (size_t)r;
     }
 
@@ -129,6 +131,7 @@ static int skipBytes(int fd, uint32_t n)
     // Some targets may not have lseek on /proc-like FS, fallback to read+discard
     uint8_t tmp[512];
     uint32_t left = n;
+
     while (left)
     {
         uint32_t chunk = left > sizeof(tmp) ? sizeof(tmp) : left;
@@ -294,6 +297,7 @@ void SDL_MixAudio(uint8_t *dst, const uint8_t *src, uint32_t len, int volume)
 
             if (mixed < -128)
                 mixed = -128;
+
             dst[i] = (uint8_t)(mixed + 128);
         }
         break;
@@ -303,6 +307,7 @@ void SDL_MixAudio(uint8_t *dst, const uint8_t *src, uint32_t len, int volume)
     {
         // Native-endian S16SYS, using byte copies so unaligned buffers work.
         uint32_t samples = len / 2;
+
         for (uint32_t i = 0; i < samples; i++)
         {
             uint8_t *d = dst + i * 2;
@@ -348,6 +353,7 @@ SDL_AudioSpec *SDL_LoadWAV(
         close(fd);
         return NULL;
     }
+
     (void)riff_size;
 
     // Parse chunks until we find "fmt " and "data"

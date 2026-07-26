@@ -201,6 +201,7 @@ static void sh_handle_cmd(const char *cmd)
         return;
 
     size_t len = strlen(line);
+
     while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
     {
         line[--len] = '\0';
@@ -236,6 +237,7 @@ static void sh_handle_cmd(const char *cmd)
         free(line);
         return;
     }
+
     argv[argc] = NULL;
 
     // 4) Built-ins
@@ -248,6 +250,7 @@ static void sh_handle_cmd(const char *cmd)
                 sh_printf(" ");
             sh_printf("%s", argv[i]);
         }
+
         sh_printf("\n");
         free(line);
         return;
@@ -377,6 +380,7 @@ void builtin_sh_run()
                 }
             }
         }
+
         refresh_terminal();
     }
 }

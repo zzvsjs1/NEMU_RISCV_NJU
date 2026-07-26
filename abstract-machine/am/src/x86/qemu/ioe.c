@@ -65,12 +65,16 @@ static void read_rtc_async(AM_TIMER_RTC_T *rtc)
 static void wait_sec(AM_TIMER_RTC_T *t1)
 {
     AM_TIMER_RTC_T t0;
+
     while (1)
     {
         read_rtc_async(&t0);
+
         for (int volatile i = 0; i < 100000; i++)
             ;
+
         read_rtc_async(t1);
+
         if (t0.second != t1->second)
         {
             return;
@@ -88,6 +92,7 @@ static uint32_t estimate_freq()
     wait_sec(&rtc2);
     tsc2 = rdtsc();
     t2 = rtc2.minute * 60 + rtc2.second;
+
     if (t1 >= t2)
         return estimate_freq(); // passed an hour; try again
     return ((tsc2 - tsc1) >> 20) / (t2 - t1);
@@ -277,11 +282,13 @@ static void gpu_fbdraw(AM_GPU_FBDRAW_T *draw)
     int W = display.w, H = display.h;
     uint32_t *pixels = draw->pixels;
     int len = (x + w >= W) ? W - x : w;
+
     for (int j = 0; j < h; j++, pixels += w)
     {
         if (y + j < H)
         {
             struct pixel *px = &fb[x + (j + y) * W];
+
             for (int i = 0; i < len; i++, px++)
             {
                 uint32_t p = pixels[i];
@@ -299,6 +306,7 @@ static void gpu_status(AM_GPU_STATUS_T *stat)
 static void gpu_memcpy(AM_GPU_MEMCPY_T *params)
 {
     char *src = params->src, *dst = to_host(params->dest);
+
     for (int i = 0; i < params->size; i++)
         dst[i] = src[i];
 }
@@ -308,8 +316,10 @@ static void *vbuf_alloc(int size)
     void *ret = vbuf_head;
     vbuf_head += size;
     panic_on(vbuf_head > vbuf + sizeof(vbuf), "no memory");
+
     for (int i = 0; i < size; i++)
         ((char *)ret)[i] = 0;
+
     return ret;
 }
 
@@ -332,10 +342,12 @@ static struct pixel *render(struct gpu_canvas *cv, struct gpu_canvas *parent, st
         w = cv->w;
         h = cv->h;
         px_local = vbuf_alloc(w * h * sizeof(struct pixel));
+
         for (struct gpu_canvas *ch = to_host(cv->child); ch; ch = to_host(ch->sibling))
         {
             render(ch, cv, px_local);
         }
+
         break;
     }
     default:
@@ -349,6 +361,7 @@ static struct pixel *render(struct gpu_canvas *cv, struct gpu_canvas *parent, st
             int x = cv->x1 + i, y = cv->y1 + j;
             px[W * y + x] = px_local[w * (j * h / cv->h1) + (i * w / cv->w1)];
         }
+
     return 0;
 }
 
@@ -386,6 +399,7 @@ static void disk_blkio(AM_DISK_BLKIO_T *bio)
 {
     uint32_t blkno = bio->blkno, remain = bio->blkcnt;
     uint32_t *ptr = bio->buf;
+
     for (remain = bio->blkcnt; remain; remain--, blkno++)
     {
         wait_disk();
@@ -396,6 +410,7 @@ static void disk_blkio(AM_DISK_BLKIO_T *bio)
         outb(0x1f6, (blkno >> 24) | 0xe0);
         outb(0x1f7, bio->write ? 0x30 : 0x20);
         wait_disk();
+
         if (bio->write)
         {
             for (int i = 0; i < BLKSZ / 4; i++)
@@ -524,16 +539,20 @@ void __am_percpu_initlapic(void)
     lapicw(TICR, 10000000);
     lapicw(LINT0, MASKED);
     lapicw(LINT1, MASKED);
+
     if (((__am_lapic[VER] >> 16) & 0xFF) >= 4)
         lapicw(PCINT, MASKED);
+
     lapicw(ERROR, T_IRQ0 + IRQ_ERROR);
     lapicw(ESR, 0);
     lapicw(ESR, 0);
     lapicw(EOI, 0);
     lapicw(ICRHI, 0);
     lapicw(ICRLO, BCAST | INIT | LEVEL);
+
     while (__am_lapic[ICRLO] & DELIVS)
         ;
+
     lapicw(TPR, 0);
 }
 

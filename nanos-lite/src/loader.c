@@ -175,6 +175,7 @@ static uintptr_t load_mapped(PCB *pcb, int fd, const Elf_Phdr *phdr,
                                             &file_va_end));
 
     assert(entry_mapped != NULL);
+
     if ((phdr->p_flags & PF_X) != 0 && entry >= seg_va && entry < mem_va_end)
     {
         *entry_mapped = true;
@@ -386,11 +387,13 @@ static uintptr_t build_user_stack(uintptr_t ustack_va_base, uintptr_t ustack_va_
 
     // envp NULL terminator
     PUSH_U(0);
+
     for (int i = envc - 1; i >= 0; i--)
         PUSH_U(envp_ptrs[i]);
 
     // argv NULL terminator
     PUSH_U(0);
+
     for (int i = argc - 1; i >= 0; i--)
         PUSH_U(argv_ptrs[i]);
 

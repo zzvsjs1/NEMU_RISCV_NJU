@@ -153,6 +153,7 @@ static int zero_cluster(const Fat32Volume *vol, uint32_t cluster)
     }
 
     memset(zero, 0, sizeof(zero));
+
     for (uint32_t sector_index = 0; sector_index < vol->sectors_per_cluster; sector_index++)
     {
         size_t byte_offset;
@@ -509,6 +510,7 @@ int fat32_free_chain(Fat32Volume *vol, uint32_t first_cluster)
         {
             return -1;
         }
+
         mark_cluster_freed(vol, cluster);
 
         if (fat32_is_end_of_chain(next))
@@ -520,6 +522,7 @@ int fat32_free_chain(Fat32Volume *vol, uint32_t first_cluster)
         {
             return -1;
         }
+
         cluster = next & FAT32_ENTRY_MASK;
     }
 

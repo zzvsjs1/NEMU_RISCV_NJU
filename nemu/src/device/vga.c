@@ -4,6 +4,7 @@
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
 #include <isa-jit.h>
 #endif
+
 #include <memory/paddr.h>
 #include <utils.h>
 
@@ -233,6 +234,7 @@ static bool vga_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
         {
             return false;
         }
+
         paddr = (ret & ~(paddr_t)VGA_PAGE_MASK) | (paddr_t)(addr & VGA_PAGE_MASK);
     }
     else
@@ -282,6 +284,7 @@ static bool vga_guest_write_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
         {
             return false;
         }
+
         paddr = (ret & ~(paddr_t)VGA_PAGE_MASK) | (paddr_t)(addr & VGA_PAGE_MASK);
     }
     else
@@ -323,6 +326,7 @@ static void vga_blit_from_guest(vaddr_t src, int x, int y, int w, int h)
            x, y, w, h, sw, sh);
 
     const size_t row_bytes = (size_t)w * sizeof(uint32_t);
+
     for (int row = 0; row < h; row++)
     {
         /*
@@ -366,6 +370,7 @@ static void vga_capture_to_guest(vaddr_t dst)
      */
     size_t done = 0;
     const size_t bytes = screen_size();
+
     while (done < bytes)
     {
         uint8_t *host = NULL;
@@ -390,6 +395,7 @@ static void vga_capture_to_guest(vaddr_t dst)
             isa_jit_invalidate_paddr(paddr, (int)chunk);
         }
 #endif
+
         done += chunk;
     }
 }

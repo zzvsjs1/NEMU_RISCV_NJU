@@ -6,6 +6,7 @@ int is_prime(int n)
         return 0;
 
     int i;
+
     for (i = 2; i < n; i++)
     {
         if (n % i == 0)
@@ -20,6 +21,7 @@ int is_prime(int n)
 int goldbach(int n)
 {
     int i;
+
     for (i = 2; i < n; i++)
     {
         if (is_prime(i) && is_prime(n - i))
@@ -34,6 +36,7 @@ int goldbach(int n)
 int main()
 {
     int n;
+
     for (n = 4; n <= 30; n += 2)
     {
         check(goldbach(n) == 1);

@@ -18,6 +18,7 @@ static size_t bounded_strlen(const char *text, size_t max_len)
     {
         len++;
     }
+
     return len;
 }
 

@@ -273,6 +273,7 @@ require_min_jit_instructions() {
   local jit_insns
 
   jit_insns=$(sed -n 's/.*JIT instructions = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$jit_insns" ]; then
     echo "Failed to find JIT instruction stats for $test_name" >&2
     cat "$log" >&2
@@ -295,6 +296,7 @@ require_max_unsupported_hits() {
   [ -n "$max_hits" ] || return 0
 
   unsupported_hits=$(sed -n 's/.*unsupported hits = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$unsupported_hits" ]; then
     echo "Failed to find unsupported-hit stats for $test_name" >&2
     cat "$log" >&2
@@ -317,6 +319,7 @@ require_max_executed_blocks() {
   [ -n "$max_blocks" ] || return 0
 
   executed_blocks=$(sed -n 's/.*executed blocks = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$executed_blocks" ]; then
     echo "Failed to find executed-block stats for $test_name" >&2
     cat "$log" >&2
@@ -339,6 +342,7 @@ require_min_native_alu_ops() {
   [ -n "$min_ops" ] || return 0
 
   native_ops=$(sed -n 's/.*native ALU ops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_ops" ]; then
     echo "Failed to find native ALU stats for $test_name" >&2
     cat "$log" >&2
@@ -361,6 +365,7 @@ require_min_native_incdec_ops() {
   [ -n "$min_ops" ] || return 0
 
   native_ops=$(sed -n 's/.*native inc\/dec ops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_ops" ]; then
     echo "Failed to find native inc/dec stats for $test_name" >&2
     cat "$log" >&2
@@ -383,6 +388,7 @@ require_min_native_incdec_jcc_backedges() {
   [ -n "$min_edges" ] || return 0
 
   native_edges=$(sed -n 's/.*native inc\/dec Jcc backedges = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_edges" ]; then
     echo "Failed to find native inc/dec Jcc backedge stats for $test_name" >&2
     cat "$log" >&2
@@ -405,6 +411,7 @@ require_min_native_incdec_resident_loops() {
   [ -n "$min_loops" ] || return 0
 
   native_loops=$(sed -n 's/.*native inc\/dec resident loops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_loops" ]; then
     echo "Failed to find native inc/dec resident-loop stats for $test_name" >&2
     cat "$log" >&2
@@ -427,6 +434,7 @@ require_max_helper_incdec_reg_calls() {
   [ -n "$max_calls" ] || return 0
 
   helper_calls=$(sed -n 's/.*helper inc\/dec register calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$helper_calls" ]; then
     echo "Failed to find helper register inc/dec stats for $test_name" >&2
     cat "$log" >&2
@@ -449,6 +457,7 @@ require_min_native_pmem_loads() {
   [ -n "$min_loads" ] || return 0
 
   native_loads=$(sed -n 's/.*native PMEM loads = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_loads" ]; then
     echo "Failed to find native PMEM load stats for $test_name" >&2
     cat "$log" >&2
@@ -471,6 +480,7 @@ require_min_native_pmem_stores() {
   [ -n "$min_stores" ] || return 0
 
   native_stores=$(sed -n 's/.*native PMEM stores = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_stores" ]; then
     echo "Failed to find native PMEM store stats for $test_name" >&2
     cat "$log" >&2
@@ -493,6 +503,7 @@ require_min_native_imul_ops() {
   [ -n "$min_ops" ] || return 0
 
   native_ops=$(sed -n 's/.*native imul ops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_ops" ]; then
     echo "Failed to find native imul stats for $test_name" >&2
     cat "$log" >&2
@@ -515,6 +526,7 @@ require_min_native_mul_ops() {
   [ -n "$min_ops" ] || return 0
 
   native_ops=$(sed -n 's/.*native mul ops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_ops" ]; then
     echo "Failed to find native mul stats for $test_name" >&2
     cat "$log" >&2
@@ -537,6 +549,7 @@ require_min_native_div_ops() {
   [ -n "$min_ops" ] || return 0
 
   native_ops=$(sed -n 's/.*native div ops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_ops" ]; then
     echo "Failed to find native div stats for $test_name" >&2
     cat "$log" >&2
@@ -559,6 +572,7 @@ require_min_native_alu_jcc_fusions() {
   [ -n "$min_ops" ] || return 0
 
   native_ops=$(sed -n 's/.*native ALU\/Jcc fusions = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_ops" ]; then
     echo "Failed to find native ALU/Jcc fusion stats for $test_name" >&2
     cat "$log" >&2
@@ -581,6 +595,7 @@ require_min_native_alu_jcc_resident_loops() {
   [ -n "$min_ops" ] || return 0
 
   native_ops=$(sed -n 's/.*native ALU\/Jcc resident loops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_ops" ]; then
     echo "Failed to find native ALU/Jcc resident-loop stats for $test_name" >&2
     cat "$log" >&2
@@ -603,6 +618,7 @@ require_min_native_shift_ops() {
   [ -n "$min_ops" ] || return 0
 
   native_ops=$(sed -n 's/.*native shift\/rotate ops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_ops" ]; then
     echo "Failed to find native shift/rotate stats for $test_name" >&2
     cat "$log" >&2
@@ -625,6 +641,7 @@ require_min_native_not_ops() {
   [ -n "$min_ops" ] || return 0
 
   native_ops=$(sed -n 's/.*native not ops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_ops" ]; then
     echo "Failed to find native not stats for $test_name" >&2
     cat "$log" >&2
@@ -647,6 +664,7 @@ require_min_native_movzx_ops() {
   [ -n "$min_ops" ] || return 0
 
   native_ops=$(sed -n 's/.*native movzx ops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_ops" ]; then
     echo "Failed to find native movzx stats for $test_name" >&2
     cat "$log" >&2
@@ -669,6 +687,7 @@ require_max_helper_jcc_rel_calls() {
   [ -n "$max_calls" ] || return 0
 
   helper_calls=$(sed -n 's/.*helper profile jcc-rel[[:space:]]*calls = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$helper_calls" ]; then
     helper_calls=0
   fi
@@ -921,6 +940,7 @@ for test_name in "${TESTS[@]}"; do
     cat "$out" >&2
     exit 2
   fi
+
   if grep -q '\*\*\*FAIL\*\*\*\|HIT BAD TRAP' "$out"; then
     echo "$test_name reported failure" >&2
     cat "$out" >&2

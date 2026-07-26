@@ -96,6 +96,7 @@ int main(int argc, char *argv[], char *envp[])
         } while (e.type != SDL_KEYDOWN);
 
         int i = -1;
+
         switch (e.key.keysym.sym)
         {
         case SDLK_0:
@@ -154,6 +155,7 @@ int main(int argc, char *argv[], char *envp[])
             fprintf(stderr, "Choose a number between %d and %d\n\n", 0, i_max);
         }
     }
+
     return -1;
 }
 
@@ -190,6 +192,7 @@ static void display_menu(int n)
     printf("Available applications:\n");
     char buf[80];
     int i;
+
     for (i = 0; i <= n; i++)
     {
         auto *item = &items[page * 10 + i];

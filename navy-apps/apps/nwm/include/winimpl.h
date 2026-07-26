@@ -67,6 +67,7 @@ class WindowSwitcher : public Window
             w1 = win->w * h / win->h;
             h1 = h;
         }
+
         for (int x = 0; x < w1; x++)
             for (int y = 0; y < h1; y++)
             {
@@ -95,6 +96,7 @@ class WindowSwitcher : public Window
         if (visible)
         {
             int n = 0;
+
             for (Window *win : wm->windows)
                 if (win)
                     n++; // number of windows
@@ -104,6 +106,7 @@ class WindowSwitcher : public Window
             if (n != last_n)
             {
                 last_n = n;
+
                 for (int i = 0; i < base; i++)
                     for (int j = 0; j < h; j++)
                     {
@@ -146,6 +149,7 @@ class WindowSwitcher : public Window
                 }
             }
         }
+
         center();
     }
 };
@@ -166,6 +170,7 @@ class AppFinder : public Window
         move((wm->w - w) / 2, wm->h - h + 1);
 
         cutline = h * 1 / 2;
+
         for (int x = 0; x < w; x++)
         {
             for (int y = 0; y < h; y++)
@@ -180,6 +185,7 @@ class AppFinder : public Window
                 }
             }
         }
+
         sync();
     }
 
@@ -223,6 +229,7 @@ class AppFinder : public Window
             }
 
         int dx = 0, dy = 0;
+
         for (const char *p = default_apps[idx].name; *p; p++)
         {
             if (dx + font->w >= icon_size)
@@ -242,6 +249,7 @@ class AppFinder : public Window
     {
         int dx = item_pad;
         int dy = item_pad;
+
         for (int i = 0; i < n; i++)
         {
             draw_item(i, dx, dy);

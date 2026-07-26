@@ -78,6 +78,7 @@ void init_regex()
 {
     char error_msg[128];
     int ret;
+
     for (int i = 0; i < NR_REGEX; ++i)
     {
         ret = regcomp(&re[i], rules[i].regex, REG_EXTENDED);
@@ -617,6 +618,7 @@ static word_t eval(int start, int end, bool *success)
         if (isNumType(tokens[start].type))
         {
             int base;
+
             switch (tokens[start].type)
             {
             case TK_DEC_NUM:
@@ -641,6 +643,7 @@ static word_t eval(int start, int end, bool *success)
                 *success = false;
                 return -1;
             }
+
             return v;
         }
         else if (tokens[start].type == TK_REGS)
@@ -854,6 +857,7 @@ static word_t calculate(bool *success)
                 *success = false;
                 return 0;
             }
+
             return v;
         }
         case TK_DEC_NUM:
@@ -866,6 +870,7 @@ static word_t calculate(bool *success)
                 *success = false;
                 return 0;
             }
+
             return v;
         }
         case TK_B_NUM:
@@ -878,6 +883,7 @@ static word_t calculate(bool *success)
                 *success = false;
                 return 0;
             }
+
             return v;
         }
         default:
@@ -918,6 +924,7 @@ static bool removeBlank(char *string)
         return true;
 
     size_t j = 0;
+
     for (size_t i = 0; i < len; i++)
     {
         if (!isspace((unsigned char)string[i]))

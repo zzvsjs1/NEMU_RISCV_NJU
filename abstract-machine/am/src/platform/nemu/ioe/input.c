@@ -14,6 +14,7 @@
 void __am_input_keybrd(AM_INPUT_KEYBRD_T *kbd)
 {
     const uint32_t key = inl(KBD_ADDR);
+
     /* NEMU returns zero when the event queue is empty.  For real key events,
      * the high bit is only a down/up tag; clearing it gives the stable AM key
      * code consumed by /dev/events.

@@ -75,11 +75,13 @@ Window::Window(WindowManager *wm, const char *cmd, const char *const *argv, cons
         has_titlebar = true;
         has_alpha = false;
         const char *title = cmd;
+
         for (const char *p = cmd; *p; p++)
         {
             if (*p == '/')
                 title = p + 1;
         }
+
         strcpy(this->title, title);
 
         // create child process
@@ -171,6 +173,7 @@ void Window::resize(int width, int height)
         this->dx = 0;
         this->dy = 0;
     }
+
     this->fw = width; // frame buffer w/h
     this->fh = height;
 
@@ -204,6 +207,7 @@ void Window::resize(int width, int height)
 
         int x = (w - strlen(title) * wm->title_font->w) / 2;
         int y = 2;
+
         for (const char *p = title; *p; p++)
         {
             draw_raw_ch(wm->title_font, x, y, *p, title_col);
@@ -262,11 +266,14 @@ void Window::update()
             if (ret == 2)
                 resize(w, h);
         } while (1);
+
         int y;
+
         for (y = 0; y < fh; y++)
         {
             memcpy(&canvas[(dy + y) * w + dx], &fb[y * fw], fw * sizeof(uint32_t));
         }
+
         draw();
     }
 }

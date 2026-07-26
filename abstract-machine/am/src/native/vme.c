@@ -67,6 +67,7 @@ void __am_switch(Context *c)
         goto end;
 
     PageMap *pp;
+
     if (now_head != NULL)
     {
         // munmap all mappings
@@ -109,6 +110,7 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
     ENTRY item = {.key = buf};
     ENTRY *item_find;
     hsearch_r(item, FIND, &item_find, &vm_head->hash);
+
     if (item_find == NULL)
     {
         pp = pgalloc(__am_pgsize); // this will waste memory, any better idea?
@@ -123,6 +125,7 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
     {
         pp = item_find->data;
     }
+
     pp->va = va;
     pp->pa = pa;
     pp->prot = prot;

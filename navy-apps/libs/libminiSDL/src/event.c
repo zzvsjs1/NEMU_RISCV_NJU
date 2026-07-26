@@ -364,6 +364,7 @@ int SDL_WaitEvent(SDL_Event *event)
     while (!SDL_PollEvent(event))
     { /* busy-wait */
     }
+
     return 1;
 }
 
@@ -376,6 +377,7 @@ int SDL_PeepEvents(SDL_Event *ev, int numevents, int action, uint32_t mask)
     {
         for (int i = 0; i < numevents; i++)
             enqueueEvent(&ev[i]);
+
         return numevents;
     }
 
@@ -411,6 +413,7 @@ int SDL_PeepEvents(SDL_Event *ev, int numevents, int action, uint32_t mask)
     }
 
     queueHead = queueTail = 0;
+
     for (int i = 0; i < tmp_count; i++)
         enqueueEventRaw(&tmp[i]);
 

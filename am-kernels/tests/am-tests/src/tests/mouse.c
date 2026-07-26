@@ -62,6 +62,7 @@ static void draw_rect(int x, int y, int w, int h, uint32_t colour)
     {
         pixels[i] = colour;
     }
+
     io_write(AM_GPU_FBDRAW, x, y, pixels, w, h, false);
 }
 
@@ -74,6 +75,7 @@ static void fill_screen(uint32_t colour)
 
         if (h > 64)
             h = 64;
+
         draw_rect(0, y, screen_w, h, colour);
     }
 }

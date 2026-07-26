@@ -275,11 +275,13 @@ int fs_open(const char *pathname, int flags, int mode)
         {
             return -1;
         }
+
         special_offsets[fd] = 0;
         return fd;
     }
 
     path = fs_normalise_path(pathname, path_buf, sizeof(path_buf));
+
     if (path == 0)
     {
         return -1;
@@ -291,12 +293,14 @@ int fs_open(const char *pathname, int flags, int mode)
      * synthetic event stream rather than fall through to the FAT32 backend.
      */
     fd = find_special_file(path);
+
     if (fd >= 0)
     {
         if ((flags & FS_O_DIRECTORY) != 0)
         {
             return -1;
         }
+
         special_offsets[fd] = 0;
         return fd;
     }
@@ -312,12 +316,14 @@ int fs_open(const char *pathname, int flags, int mode)
         {
             return -1;
         }
+
         new_fd = allocate_fd(OPEN_DIRECTORY, 1, 0, 0);
 
         if (new_fd < 0)
         {
             return -1;
         }
+
         open_files[new_fd - FIRST_REGULAR_FD].dir = dir;
 
         if (regular_fs_backend.lookup(path, &open_files[new_fd - FIRST_REGULAR_FD].metadata) != 0)
@@ -326,6 +332,7 @@ int fs_open(const char *pathname, int flags, int mode)
             open_files[new_fd - FIRST_REGULAR_FD].metadata.size = 0;
             open_files[new_fd - FIRST_REGULAR_FD].metadata.inode = dir.u.fat32.first_cluster;
         }
+
         return new_fd;
     }
 
@@ -357,6 +364,7 @@ int fs_open(const char *pathname, int flags, int mode)
             regular_fs_backend.close(&file);
             return -1;
         }
+
         open_files[new_fd - FIRST_REGULAR_FD].file = file;
         open_files[new_fd - FIRST_REGULAR_FD].metadata = metadata_from_file(&file);
 
@@ -364,6 +372,7 @@ int fs_open(const char *pathname, int flags, int mode)
         {
             open_files[new_fd - FIRST_REGULAR_FD].offset = file.size;
         }
+
         return new_fd;
     }
 
@@ -375,6 +384,7 @@ int fs_open(const char *pathname, int flags, int mode)
         {
             return -1;
         }
+
         new_fd = allocate_fd(OPEN_REGULAR, readable, writable, (flags & FS_O_APPEND) != 0);
 
         if (new_fd < 0)
@@ -382,6 +392,7 @@ int fs_open(const char *pathname, int flags, int mode)
             regular_fs_backend.close(&file);
             return -1;
         }
+
         open_files[new_fd - FIRST_REGULAR_FD].file = file;
         open_files[new_fd - FIRST_REGULAR_FD].metadata = metadata_from_file(&file);
         return new_fd;
@@ -408,6 +419,7 @@ size_t fs_read(int fd, void *buf, size_t len)
         {
             return (size_t)-1;
         }
+
         return file->read(buf, special_offsets[fd], len);
     }
 
@@ -424,6 +436,7 @@ size_t fs_read(int fd, void *buf, size_t len)
     {
         open->offset += ret;
     }
+
     return ret;
 }
 
@@ -442,6 +455,7 @@ size_t fs_write(int fd, const void *buf, size_t len)
         {
             return (size_t)-1;
         }
+
         return file->write(buf, special_offsets[fd], len);
     }
 
@@ -464,6 +478,7 @@ size_t fs_write(int fd, const void *buf, size_t len)
         open->offset += ret;
         open->metadata.size = open->file.size;
     }
+
     return ret;
 }
 
@@ -484,6 +499,7 @@ size_t fs_lseek(int fd, size_t offset, int whence)
             {
                 return (size_t)-1;
             }
+
             open->offset = 0;
             open->dir.u.fat32.next_entry_index = 0;
             return 0;
@@ -571,6 +587,7 @@ int fs_stat(const char *pathname, NanosStat *buf)
     }
 
     path = fs_normalise_path(pathname, path_buf, sizeof(path_buf));
+
     if (path == 0)
     {
         return -1;
@@ -581,6 +598,7 @@ int fs_stat(const char *pathname, NanosStat *buf)
      * matching the rooted form against the special-file table.
      */
     fd = find_special_file(path);
+
     if (fd >= 0)
     {
         fill_stat_from_special(buf, fd);
@@ -621,6 +639,7 @@ int fs_fstat(int fd, NanosStat *buf)
     {
         metadata.size = open->file.size;
     }
+
     fill_stat_from_metadata(buf, &metadata);
     return 0;
 }
@@ -694,8 +713,10 @@ int fs_getdents(int fd, void *buf, int len)
             {
                 return -1;
             }
+
             break;
         }
+
         used += record_len;
         open->offset = open->dir.u.fat32.next_entry_index;
     }
@@ -726,6 +747,7 @@ int fs_ftruncate(int fd, size_t size)
     {
         open->metadata.size = open->file.size;
     }
+
     return ret;
 }
 
@@ -744,6 +766,7 @@ int fs_truncate(const char *pathname, size_t size)
      * their simpler contract: they only ever receive absolute Navy paths.
      */
     path = fs_normalise_path(pathname, path_buf, sizeof(path_buf));
+
     if (path == 0 || regular_fs_backend.open(path, &file) != 0)
     {
         return -1;
@@ -782,6 +805,7 @@ int fs_mkdir(const char *pathname, int mode)
     (void)mode;
 
     path = fs_normalise_path(pathname, path_buf, sizeof(path_buf));
+
     if (path == 0)
     {
         return -1;

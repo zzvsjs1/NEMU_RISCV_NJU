@@ -61,5 +61,6 @@ int SpeedThrottle()
         Lasttime = now;
         return 0; /* Done waiting */
     }
+
     return 1; /* Must still wait some more */
 }

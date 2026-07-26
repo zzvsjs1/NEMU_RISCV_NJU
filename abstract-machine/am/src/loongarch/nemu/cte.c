@@ -10,6 +10,7 @@ Context *__am_irq_handle(Context *c)
     {
         Event ev = {0};
         uintptr_t ecode = 0;
+
         switch (ecode)
         {
         default:

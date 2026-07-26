@@ -142,14 +142,17 @@ static void install_page_tables(void)
 
     clear_page_table(root_pt);
     clear_page_table(identity_l1);
+
     for (uint64_t i = 0; i < IDENTITY_L1_ENTRIES; i++)
     {
         clear_page_table(identity_l0[i]);
     }
+
     clear_page_table(alias_l0);
     map_identity_window();
 
     root_pt[vpn2(IDENTITY_BASE)] = pte_for_page(identity_l1, table_flags);
+
     for (uint64_t i = 0; i < 512ull; i++)
     {
         const uintptr_t pa =
@@ -157,6 +160,7 @@ static void install_page_tables(void)
         alias_l0[i] = ((uint64_t)(pa >> 12) << 10) |
                       (PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
     }
+
     identity_l1[vpn1(ALIAS_VA)] = pte_for_page(alias_l0, table_flags);
     alias_l0[vpn0(ALIAS_VA)] = pte_for_page(code_page_a, execute_flags);
 }

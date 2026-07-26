@@ -54,6 +54,7 @@ grep -q 'IOMark PASS' "$jit_out" || {
   cat "$jit_out" >&2
   fail "IOMark did not pass"
 }
+
 grep -q 'IOMark PASS' "$interp_out" || {
   cat "$interp_out" >&2
   fail "interpreter IOMark did not pass"
@@ -65,6 +66,7 @@ interp_us=$(sed -n 's/.*iomark_total_us: \([0-9][0-9]*\).*/\1/p' "$interp_out" |
   cat "$jit_out" >&2
   fail "could not parse JIT IOMark time"
 }
+
 [ -n "$interp_us" ] || {
   cat "$interp_out" >&2
   fail "could not parse interpreter IOMark time"
@@ -97,4 +99,5 @@ printf "iomark_us=%s interpreter_us=%s speedup=%sx iters=%s checksum=%s" \
 if [ -n "$MAX_IOMARK_US" ]; then
   printf " max_us=%s" "$MAX_IOMARK_US"
 fi
+
 printf "\n"

@@ -215,6 +215,7 @@ static void sdlAudioCallback(void *userdata, Uint8 *stream, int len)
         audio_stats_underrun_callbacks++;
         audio_stats_underrun_bytes += missingBytes;
     }
+
     audio_note_count();
     publish_audio_count();
 }
@@ -309,6 +310,7 @@ static void append_audio_bytes(vaddr_t src, uint32_t len)
 
     uint32_t writeIndex = (sbufReadIndex + audio_count) % CONFIG_SB_SIZE;
     size_t done = 0;
+
     while (done < len)
     {
         uint8_t *host = NULL;
@@ -324,6 +326,7 @@ static void append_audio_bytes(vaddr_t src, uint32_t len)
         {
             dst_chunk = src_chunk;
         }
+
         memcpy(sbuf + writeIndex, host, dst_chunk);
         writeIndex = (writeIndex + dst_chunk) % CONFIG_SB_SIZE;
         done += dst_chunk;

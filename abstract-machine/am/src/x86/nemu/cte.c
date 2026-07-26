@@ -46,6 +46,7 @@ void __am_irq_handle(struct trap_frame *tf)
     if (user_handler)
     {
         Event ev = {0};
+
         switch (tf->irq)
         {
         case 32:
@@ -72,6 +73,7 @@ void __am_irq_handle(struct trap_frame *tf)
     }
 
     __am_switch(c);
+
     if (c->cr3 != NULL)
     {
         tss.ss0 = KSEL(SEG_KDATA);
@@ -104,8 +106,10 @@ bool cte_init(Context *(*handler)(Event, Context *))
 
     // ----------------------- interrupts ----------------------------
     idt[32] = GATE32(STS_IG, KSEL(SEG_KCODE), __am_irq0, DPL_KERN);
+
     // ----------------------- exceptions ----------------------------
     idt[14] = GATE32(STS_IG, KSEL(SEG_KCODE), __am_vecpf, DPL_KERN);
+
     // ---------------------- system call ----------------------------
     idt[0x80] = GATE32(STS_TG, KSEL(SEG_KCODE), __am_vecsys, DPL_USER);
     idt[0x81] = GATE32(STS_TG, KSEL(SEG_KCODE), __am_vectrap, DPL_KERN);

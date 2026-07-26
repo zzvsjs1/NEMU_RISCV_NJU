@@ -88,6 +88,7 @@ static void kvm_setregs(const struct kvm_regs *r)
         perror("KVM_SET_REGS");
         assert(0);
     }
+
     kvm_set_step_mode(false, 0);
 }
 
@@ -134,6 +135,7 @@ static void *create_mem(int slot, uintptr_t base, size_t mem_size)
         perror("KVM_SET_USER_MEMORY_REGION");
         assert(0);
     }
+
     return mem;
 }
 
@@ -264,6 +266,7 @@ static uint64_t va2pa(uint64_t va)
         assert(ret == 0);
         return t.valid ? t.physical_address : -1ull;
     }
+
     return va;
 }
 
@@ -309,6 +312,7 @@ static int patching()
         vcpu.int_wp_state = STATE_IRET_INSTR;
         return 0;
     }
+
     return 0;
 }
 
@@ -359,6 +363,7 @@ static void kvm_exec(uint64_t n)
                 n++;
                 continue;
             }
+
             perror("KVM_RUN");
             assert(0);
         }

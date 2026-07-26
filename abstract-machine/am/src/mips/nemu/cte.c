@@ -111,6 +111,7 @@ Context *kcontext(Area kstack, void (*entry)(void *), void *arg)
 
     memset(c, 0, sizeof(*c));
     c->epc = (uintptr_t)entry;
+
     /*
      * ERET enters `entry` without a real caller, so construct the four-word
      * argument-home area that an O32 caller would normally reserve.  Placing
@@ -119,6 +120,7 @@ Context *kcontext(Area kstack, void (*entry)(void *), void *arg)
      */
     c->GPRSP = (uintptr_t)c - caller_home_size;
     c->GPR2 = (uintptr_t)arg;
+
     /*
      * trap.S temporarily sets EXL before ERET.  ERET then clears EXL and
      * resumes with this saved IE bit, so a newly created kernel context must

@@ -12,6 +12,7 @@ static void refresh(int x, int y)
 {
     int i, j, k;
     screen_clear();
+
     for (i = k = 0; i < h; i++)
         for (j = 0; j < w; j++, k++)
             print_char(pix[k] ? '#' : ' ', i, j);
@@ -48,15 +49,19 @@ void ant()
         if (x < 0)
         {
             memmove(pix + 1, pix, w * h - 1);
+
             for (i = 0; i < w * h; i += w)
                 pix[i] = 0;
+
             x++, k = 1;
         }
         else if (x >= w)
         {
             memmove(pix, pix + 1, w * h - 1);
+
             for (i = w - 1; i < w * h; i += w)
                 pix[i] = 0;
+
             x--, k = 1;
         }
 

@@ -52,12 +52,14 @@ __attribute__((noinline)) static uint32_t hot_state_before_trap(uint32_t seed)
 {
     uint32_t a = seed;
     uint32_t b = 0x9e3779b9u;
+
     for (uint32_t i = 0; i < 4096u; i++)
     {
         a += (b ^ i) + 3u;
         b = (b << 5) | (b >> 27);
         b ^= a;
     }
+
     return a ^ b;
 }
 

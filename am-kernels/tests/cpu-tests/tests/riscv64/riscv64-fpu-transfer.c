@@ -284,6 +284,7 @@ static void test_compare_and_classify(void)
     check((read_fflags() & UINT64_C(0x10)) != 0);
 
     write_fflags(0);
+
     for (unsigned i = 0;
          i < sizeof(fclass_s_cases) / sizeof(fclass_s_cases[0]); ++i)
     {
@@ -291,6 +292,7 @@ static void test_compare_and_classify(void)
               fclass_s_cases[i].expected);
         check(read_fflags() == 0);
     }
+
     for (unsigned i = 0;
          i < sizeof(fclass_d_cases) / sizeof(fclass_d_cases[0]); ++i)
     {

@@ -77,6 +77,7 @@ static void short_alias_to_path_component(const uint8_t short_name[11], char out
     {
         base_end--;
     }
+
     for (int i = 0; i <= base_end; i++)
     {
         out[pos++] = (char)short_name[i];
@@ -90,11 +91,13 @@ static void short_alias_to_path_component(const uint8_t short_name[11], char out
     if (ext_end >= 8)
     {
         out[pos++] = '.';
+
         for (int i = 8; i <= ext_end; i++)
         {
             out[pos++] = (char)short_name[i];
         }
     }
+
     out[pos] = '\0';
 }
 
@@ -148,6 +151,7 @@ static int find_entry_by_short_name(const Fat32Volume *vol, uint32_t dir_cluster
         for (uint32_t sector_index = 0; sector_index < vol->sectors_per_cluster; sector_index++)
         {
             image_read(base + (uint64_t)sector_index * FAT32_SECTOR_SIZE, sector, sizeof(sector));
+
             for (size_t i = 0; i < FAT32_DIR_ENTRIES_PER_SECTOR; i++)
             {
                 const uint8_t *entry = &sector[i * FAT32_DIR_ENTRY_SIZE];
@@ -191,6 +195,7 @@ static int find_lfn_entry(const Fat32Volume *vol, uint32_t dir_cluster, const ch
     uint64_t start = 0;
 
     memset(present, 0, sizeof(present));
+
     for (uint32_t links = 0; links < vol->cluster_count; links++)
     {
         uint64_t base = cluster_offset(vol, cluster);
@@ -198,6 +203,7 @@ static int find_lfn_entry(const Fat32Volume *vol, uint32_t dir_cluster, const ch
         for (uint32_t sector_index = 0; sector_index < vol->sectors_per_cluster; sector_index++)
         {
             image_read(base + (uint64_t)sector_index * FAT32_SECTOR_SIZE, sector, sizeof(sector));
+
             for (size_t i = 0; i < FAT32_DIR_ENTRIES_PER_SECTOR; i++)
             {
                 const uint8_t *entry = &sector[i * FAT32_DIR_ENTRY_SIZE];
@@ -237,11 +243,13 @@ static int find_lfn_entry(const Fat32Volume *vol, uint32_t dir_cluster, const ch
                     for (unsigned sequence = 1; sequence <= count; sequence++)
                     {
                         assert(present[sequence] != 0);
+
                         for (const char *p = pieces[sequence]; *p != '\0'; p++)
                         {
                             reconstructed[pos++] = *p;
                         }
                     }
+
                     reconstructed[pos] = '\0';
 
                     if (ascii_equal_ignore_case(reconstructed, name))

@@ -235,12 +235,14 @@ static int test_stack_preflight_halts_before_any_copy(void)
     oversized_envp[sizeof(oversized_envp) - 1u] = '\0';
 
     expect_halt = 1;
+
     if (setjmp(halt_env) == 0)
     {
         (void)build_user_stack(va_base, va_end, pa_base, pa_end, argv, envp);
         expect_halt = 0;
         CHECK(false);
     }
+
     expect_halt = 0;
 
     for (size_t i = 0; i < sizeof(stack_backing); i++)

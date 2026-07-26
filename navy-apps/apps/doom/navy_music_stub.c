@@ -23,7 +23,6 @@ static boolean NavyMusic_Init(void)
 
 static void NavyMusic_Shutdown(void)
 {
-
 }
 
 static void NavyMusic_SetMusicVolume(int volume)
@@ -33,12 +32,10 @@ static void NavyMusic_SetMusicVolume(int volume)
 
 static void NavyMusic_PauseMusic(void)
 {
-
 }
 
 static void NavyMusic_ResumeMusic(void)
 {
-
 }
 
 static void *NavyMusic_RegisterSong(void *data, int len)
@@ -75,7 +72,6 @@ static boolean NavyMusic_MusicIsPlaying(void)
 
 static void NavyMusic_Poll(void)
 {
-    
 }
 
 static snddevice_t navy_music_devices[] = {

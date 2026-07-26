@@ -39,6 +39,7 @@ static inline bool difftest_check_reg(const char *name, vaddr_t pc, rtlreg_t ref
             name, pc, ref, dut);
         return false;
     }
+
     return true;
 }
 

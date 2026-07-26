@@ -4,6 +4,7 @@ int main()
 {
     int i = 1;
     volatile int sum = 0;
+
     while (i <= 100)
     {
         sum += i;

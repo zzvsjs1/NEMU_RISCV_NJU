@@ -33,6 +33,7 @@ int main(const char *args)
     case 'H':
     default:
         printf("Usage: make run mainargs=*\n");
+
         for (int ch = 0; ch < 256; ch++)
         {
             if (tests[ch])
@@ -41,5 +42,6 @@ int main(const char *args)
             }
         }
     }
+
     return 0;
 }

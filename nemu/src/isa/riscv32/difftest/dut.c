@@ -17,6 +17,7 @@ _Static_assert(offsetof(CPU_state, prvi) == offsetof(riscv_difftest_state_t, prv
                "RISC-V DiffTest privilege offset drifted");
 _Static_assert(offsetof(CPU_state, INTR) == offsetof(riscv_difftest_state_t, INTR),
                "RISC-V DiffTest interrupt-pending offset drifted");
+
 #ifdef CONFIG_RV64_FPU
 _Static_assert(offsetof(CPU_state, fpr) == offsetof(riscv_difftest_state_t, fpr),
                "RISC-V DiffTest FPR offset drifted");
@@ -153,6 +154,7 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
         snprintf(name, sizeof(name), "f%zu", i);
         riscv_difftest_print_named(name, ref_r->fpr[i], cpu.fpr[i]);
     }
+
     riscv_difftest_print_named("fcsr",
                                ref_r->fcsr & RISCV_FCSR_MASK,
                                cpu.fcsr & RISCV_FCSR_MASK);

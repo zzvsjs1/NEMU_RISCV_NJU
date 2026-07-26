@@ -47,6 +47,7 @@ int main(void)
                                                 DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
 
     uint32_t *pixels = (uint32_t *)surface->pixels;
+
     for (uint32_t i = 0; i < 12; i++)
     {
         pixels[i] = i;

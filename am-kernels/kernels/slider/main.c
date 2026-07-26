@@ -33,5 +33,6 @@ int main()
             last = current;
         }
     }
+
     return 0;
 }

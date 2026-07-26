@@ -76,6 +76,7 @@ static void draw_ch(int x, int y, char ch, uint32_t fg, uint32_t bg)
 void refresh_terminal()
 {
     int needsync = 0;
+
     for (int i = 0; i < term->w; i++)
         for (int j = 0; j < term->h; j++)
             if (term->is_dirty(i, j))
@@ -83,6 +84,7 @@ void refresh_terminal()
                 draw_ch(i * font->w, j * font->h, term->getch(i, j), term->foreground(i, j), term->background(i, j));
                 needsync = 1;
             }
+
     term->clear();
 
     static uint32_t last = 0;
@@ -193,6 +195,7 @@ char handle_key(const char *buf)
             else
                 return key[0] - 'A' + 'a';
         }
+
         for (auto item : SHIFT)
         {
             if (strcmp(item.name, key) == 0)
@@ -204,6 +207,7 @@ char handle_key(const char *buf)
             }
         }
     }
+
     return '\0';
 }
 
@@ -234,5 +238,6 @@ char handle_key(SDL_Event *ev)
             }
         }
     }
+
     return '\0';
 }

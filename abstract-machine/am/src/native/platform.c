@@ -68,6 +68,7 @@ static void init_platform()
     // create memory object and set up mapping to simulate the physical memory
     pmem_fd = memfd_create("pmem", 0);
     assert(pmem_fd != -1);
+
     // use dynamic linking to avoid linking to the same function in RT-Thread
     int (*ftruncate_libc)(int, off_t) = dlsym(RTLD_NEXT, "ftruncate");
     assert(ftruncate_libc != NULL);
@@ -99,6 +100,7 @@ static void init_platform()
     Elf64_Phdr *phdr = (void *)getauxval(AT_PHDR);
     int phnum = (int)getauxval(AT_PHNUM);
     int i;
+
     for (i = 0; i < phnum; i++)
     {
         if (phdr[i].p_type == PT_LOAD && (phdr[i].p_flags & PF_W))
@@ -119,6 +121,7 @@ static void init_platform()
             // since calling the library functions requires accessing GOT, which will be unmapped
             void *(*mmap_libc)(void *, size_t, int, int, int, off_t) = dlsym(RTLD_NEXT, "mmap");
             assert(mmap_libc != NULL);
+
             // load the address of memcpy() on stack, which can still be accessed
             // after the data section is unmapped
             void *(*volatile memcpy_libc_temp)(void *, const void *, size_t) = memcpy_libc;
@@ -186,8 +189,10 @@ void __am_exit_platform(int code)
 {
     // let Linux clean up other resource
     extern int __am_mpe_init;
+
     if (__am_mpe_init && cpu_count() > 1)
         kill(0, SIGKILL);
+
     exit(code);
 }
 
@@ -195,12 +200,15 @@ void __am_pmem_map(void *va, void *pa, int prot)
 {
     // translate AM prot to mmap prot
     int mmap_prot = PROT_NONE;
+
     // we do not support executable bit, so mark
     // all readable pages executable as well
     if (prot & MMAP_READ)
         mmap_prot |= PROT_READ | PROT_EXEC;
+
     if (prot & MMAP_WRITE)
         mmap_prot |= PROT_WRITE;
+
     void *ret = mmap(va, __am_pgsize, mmap_prot,
                      MAP_SHARED | MAP_FIXED, pmem_fd, (uintptr_t)(pa - pmem));
     assert(ret != (void *)-1);

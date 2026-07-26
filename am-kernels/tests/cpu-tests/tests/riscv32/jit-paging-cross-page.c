@@ -98,6 +98,7 @@ static void clear_page_table(uint32_t *pt)
 static void map_identity_window(void)
 {
     const uint32_t leaf_flags = PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+
     for (uint32_t i = 0; i < IDENTITY_PAGES; i++)
     {
         const uintptr_t pa = (uintptr_t)IDENTITY_BASE + (uintptr_t)i * PAGE_SIZE;

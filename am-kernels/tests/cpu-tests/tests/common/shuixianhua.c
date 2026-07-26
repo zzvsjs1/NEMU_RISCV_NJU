@@ -11,6 +11,7 @@ int main()
 {
     int n, n2, n1, n0;
     int k = 0;
+
     for (n = 100; n < 500; n++)
     {
         n2 = n / 100;

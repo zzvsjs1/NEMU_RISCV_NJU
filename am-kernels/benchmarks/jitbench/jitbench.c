@@ -68,6 +68,7 @@ __attribute__((noinline)) static uint32_t memory_hot_loop(uint32_t count)
     }
 
     uint32_t acc = 0xdeadbeefu;
+
     for (uint32_t i = 0; i < count; i++)
     {
         uint32_t idx = (i * 17u + (acc >> 24)) & (MEM_WORDS - 1u);

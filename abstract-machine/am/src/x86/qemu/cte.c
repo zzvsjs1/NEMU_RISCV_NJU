@@ -39,6 +39,7 @@ void __am_irq_handle(struct trap_frame *tf)
     saved_ctx->eflags = tf->eflags;
     saved_ctx->esp0 = CPU->tss.esp0;
     saved_ctx->ss3 = USEL(SEG_UDATA);
+
     // no ss/esp saved for DPL_KERNEL
     saved_ctx->esp = (tf->cs & DPL_USER ? tf->esp : (uint32_t)(tf + 1) - 8);
 #endif
@@ -109,8 +110,10 @@ void __am_irq_handle(struct trap_frame *tf)
     case EX_PF:
         MSG("PF #14, page fault, @cause: PROT_XXX")
         ev.event = EVENT_PAGEFAULT;
+
         if (tf->errcode & 0x1)
             ev.cause |= MMAP_NONE;
+
         if (tf->errcode & 0x2)
             ev.cause |= MMAP_WRITE;
         else

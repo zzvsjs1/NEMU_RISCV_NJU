@@ -554,6 +554,7 @@ int vsnprintf(char *out,
             {
                 out[out_pos] = '%';
             }
+
             out_pos++;
             total_written++;
 
@@ -561,6 +562,7 @@ int vsnprintf(char *out,
             {
                 out[out_pos] = spec;
             }
+
             out_pos++;
             total_written++;
             break;
@@ -642,17 +644,22 @@ int __am_vsscanf_internal(const char *str, const char **end_pstr, const char *fm
     const char *pstr = str;
     const char *pfmt = fmt;
     int assigned = 0;
+
     while (*pfmt)
     {
         char ch = *pfmt++;
+
         if (isspace(ch))
         {
             for (ch = *pfmt; isspace(ch); ch = *(++pfmt))
                 ;
+
             for (ch = *pstr; isspace(ch); ch = *(++pstr))
                 ;
+
             continue;
         }
+
         switch (ch)
         {
         case '%':
@@ -663,11 +670,13 @@ int __am_vsscanf_internal(const char *str, const char **end_pstr, const char *fm
                 pstr++;
                 continue;
             }
+
             goto end; // fail
         }
 
         char *p;
         ch = *pfmt++;
+
         switch (ch)
         {
         // conversion specifier
@@ -697,6 +706,7 @@ end:
     {
         *end_pstr = pstr;
     }
+
     return assigned;
 }
 

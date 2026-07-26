@@ -43,12 +43,15 @@ static inline void print_char(char c, int y, int x)
             b = b * 0x100 / 5;
             color = (r << 16) | (g << 8) | b;
         }
+
         int i;
+
         for (i = 0; i < TILE_W * TILE_W; i++)
         {
             buf[i] = color;
         }
     }
+
     io_write(AM_GPU_FBDRAW, x * TILE_W, y * TILE_W, buf, TILE_W, TILE_W, false);
 }
 
@@ -56,6 +59,7 @@ static inline void screen_clear()
 {
     static uint32_t buf[SCREEN_W];
     int i;
+
     for (i = 0; i < SCREEN_H; i++)
     {
         io_write(AM_GPU_FBDRAW, 0, i, buf, SCREEN_W, 1, false);
@@ -111,6 +115,7 @@ static inline void usleep(int us)
 {
     uint64_t now = io_read(AM_TIMER_UPTIME).us;
     uint64_t next = now + us;
+
     while (io_read(AM_TIMER_UPTIME).us < next)
         ;
 }

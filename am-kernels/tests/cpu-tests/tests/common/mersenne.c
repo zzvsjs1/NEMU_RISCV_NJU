@@ -20,6 +20,7 @@ int isPrime(int n)
             return 0;
         d += 4;
     }
+
     return 1;
 }
 
@@ -30,9 +31,12 @@ int main()
     if (!isPrime(q))
         return 1;
     r = q;
+
     while (r > 0)
         r <<= 1;
+
     d = 2 * q + 1;
+
     do
     {
         for (p = r, i = 1; p; p <<= 1)
@@ -51,6 +55,8 @@ int main()
         else
             break;
     } while (1);
+
     check(d == 13007);
+
     return 0;
 }

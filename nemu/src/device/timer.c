@@ -80,5 +80,6 @@ void init_timer()
 #else
     add_mmio_map("rtc", CONFIG_RTC_MMIO, rtc_port_base, RTC_MMIO_SIZE, rtc_io_handler);
 #endif
+
     IFNDEF(CONFIG_TARGET_AM, add_alarm_handle(timer_intr));
 }

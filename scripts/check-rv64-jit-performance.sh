@@ -63,6 +63,7 @@ run_branchmark() {
 
   local jit_insns=0
   local jit_blocks=0
+
   if [ "$stats_env" = "jit" ]; then
     jit_insns=$(sed -n 's/.*JIT instructions = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
     [ -n "$jit_insns" ] || {

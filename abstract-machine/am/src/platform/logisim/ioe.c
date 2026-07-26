@@ -38,6 +38,7 @@ bool ioe_init()
     for (int i = 0; i < LENGTH(lut); i++)
         if (!lut[i])
             lut[i] = fail;
+
     return true;
 }
 
@@ -89,10 +90,12 @@ void __am_gpu_config(AM_GPU_CONFIG_T *cfg)
 void __am_gpu_fbdraw(AM_GPU_FBDRAW_T *ctl)
 {
     uint32_t *pixels = ctl->pixels;
+
     if (pixels)
     {
         uint32_t *const fb = (uint32_t *)0x20000000ul;
         int x = ctl->x, y = ctl->y, w = ctl->w, h = ctl->h;
+
         if (x == 0 && y == 0 && w == W && h == H)
         {
             memcpy(fb, pixels, sizeof(uint32_t) * W * H);

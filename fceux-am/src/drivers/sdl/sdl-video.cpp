@@ -179,6 +179,7 @@ void BlitScreen(uint8 *XBuf)
              * visible NES band instead of the whole 800x600 display.
              */
             uint32_t *dst0 = screen_frame + i * scale * frame_w + x;
+
             for (int px = 0; px < NWIDTH; px++)
             {
                 for (int sx = 0; sx < scale; sx++)
@@ -186,18 +187,22 @@ void BlitScreen(uint8 *XBuf)
                     dst0[px * scale + sx] = canvas_line[px];
                 }
             }
+
             for (int sy = 1; sy < scale; sy++)
             {
                 memcpy(dst0 + sy * frame_w, dst0, draw_w * sizeof(uint32_t));
             }
         }
     }
+
     io_write(AM_GPU_FBDRAW, 0, y, screen_frame, frame_w, frame_h, true);
 #else
     printf("\033[0;0H");
+
     for (i = 0; i < s_tlines; i += 4, XBuf += NWIDTH * 4)
     {
         Blit8ToHigh(XBuf, (uint8 *)canvas_line, NWIDTH, 1, NWIDTH * 4, 1, 1);
+
         for (int x = 0; x < NWIDTH; x += 2)
         {
             uint32_t color = canvas_line[x];
@@ -205,6 +210,7 @@ void BlitScreen(uint8 *XBuf)
             char c = list[color / 0x222222u];
             putch(c);
         }
+
         putch('\n');
     }
 #endif

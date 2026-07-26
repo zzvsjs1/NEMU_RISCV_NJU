@@ -45,10 +45,12 @@ static inline word_t c_mulsu_hi_impl(word_t lhs, word_t rhs)
      */
     const __uint128_t product = (__uint128_t)lhs * (__uint128_t)rhs;
     word_t high = (word_t)(product >> 64);
+
     if ((sword_t)lhs < 0)
     {
         high -= rhs;
     }
+
     return high;
 }
 
@@ -69,10 +71,12 @@ static inline word_t c_mulsu_hi_impl(word_t lhs, word_t rhs)
      */
     const uint64_t product = (uint64_t)lhs * (uint64_t)rhs;
     word_t high = (word_t)(product >> 32);
+
     if ((sword_t)lhs < 0)
     {
         high -= rhs;
     }
+
     return high;
 }
 

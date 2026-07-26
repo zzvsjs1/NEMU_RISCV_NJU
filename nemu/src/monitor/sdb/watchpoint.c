@@ -197,6 +197,7 @@ void printWpByInfoCommand()
     }
 
     printf(ANSI_FMT("%-5s%-32s%-32s\n", ANSI_FG_CYAN), "NO", "Expression", "Last Value");
+
     for (WP *cur = head; cur; cur = cur->next)
     {
         printf(

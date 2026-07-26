@@ -66,6 +66,7 @@ int InitSound()
     {
         s_BufferSize = samples * 2;
     }
+
     io_write(AM_AUDIO_CTRL, soundrate, 1, samples);
 #endif
 
@@ -121,6 +122,7 @@ void WriteSound(int32 *buf,
         // buffer before feeding it to the audio device
         assert(Count < (int)LENGTH(buf16));
         int i;
+
         for (i = 0; i < Count; i++)
         {
             buf16[i] = buf[i];
@@ -129,10 +131,12 @@ void WriteSound(int32 *buf,
         Area sbuf;
         sbuf.start = buf16;
         int free;
+
         while (Count)
         {
             while ((free = GetWriteSound()) == 0)
                 ; // wait until there is free space
+
             int nrplay = (free > Count ? Count : free);
             sbuf.end = (uint16_t *)sbuf.start + nrplay;
             io_write(AM_AUDIO_PLAY, sbuf);

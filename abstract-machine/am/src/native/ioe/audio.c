@@ -19,17 +19,22 @@ void __am_audio_init()
 static void audio_play(void *userdata, uint8_t *stream, int len)
 {
     int nread = len;
+
     if (count < len)
         nread = count;
+
     int b = 0;
+
     while (b < nread)
     {
         int n = read(rfd, stream, nread);
+
         if (n > 0)
             b += n;
     }
 
     count -= nread;
+
     if (len > nread)
     {
         memset(stream + nread, 0, len - nread);
@@ -39,11 +44,14 @@ static void audio_play(void *userdata, uint8_t *stream, int len)
 static void audio_write(uint8_t *buf, int len)
 {
     int nwrite = 0;
+
     while (nwrite < len)
     {
         int n = write(wfd, buf, len);
+
         if (n == -1)
             n = 0;
+
         count += n;
         nwrite += n;
     }
@@ -61,6 +69,7 @@ void __am_audio_ctrl(AM_AUDIO_CTRL_T *ctrl)
 
     count = 0;
     int ret = SDL_InitSubSystem(SDL_INIT_AUDIO);
+
     if (ret == 0)
     {
         SDL_OpenAudio(&s, NULL);

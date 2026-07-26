@@ -2,6 +2,7 @@
 
 extern uint8_t ramdisk_start;
 extern uint8_t ramdisk_end;
+
 /*
  * Size of the linked-in fallback ramdisk image.  resources.S provides the two
  * symbols, and pointer subtraction gives the byte length exposed to disk.c when

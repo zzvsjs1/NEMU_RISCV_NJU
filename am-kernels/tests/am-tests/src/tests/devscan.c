@@ -77,6 +77,7 @@ void devscan()
     video_test();
     //storage_test();
     printf("Test End!\n");
+
     while (1)
         ;
 }

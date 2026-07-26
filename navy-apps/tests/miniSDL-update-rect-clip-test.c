@@ -39,6 +39,7 @@ void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
 static void check_32_bit_negative_x_clip(void)
 {
     uint32_t backing[32];
+
     for (uint32_t i = 0; i < sizeof(backing) / sizeof(backing[0]); i++)
         backing[i] = 1000u + i;
 

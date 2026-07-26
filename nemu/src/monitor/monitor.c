@@ -77,6 +77,7 @@ static int parse_args(int argc, char *argv[])
     };
 
     int o;
+
     while ((o = getopt_long(argc, argv, "-bhl:d:f:p:e:", table, NULL)) != -1)
     {
         switch (o)
@@ -115,6 +116,7 @@ static int parse_args(int argc, char *argv[])
             exit(0);
         }
     }
+
     return 0;
 }
 

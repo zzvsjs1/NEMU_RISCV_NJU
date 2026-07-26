@@ -274,6 +274,7 @@ static int ensure_cluster(Fat32File *file, uint32_t cluster_index, uint32_t *out
         {
             return -1;
         }
+
         file->first_cluster = cluster;
         file->cached_cluster_index = 0;
         file->cached_cluster = cluster;
@@ -343,6 +344,7 @@ static int ensure_cluster(Fat32File *file, uint32_t cluster_index, uint32_t *out
                 (void)fat32_free_chain(&mounted_volume, new_cluster);
                 return -1;
             }
+
             next_cluster = new_cluster;
         }
         else if (is_unusable_chain_value(&mounted_volume, next_cluster))
@@ -612,6 +614,7 @@ static size_t write_bytes(Fat32File *file, size_t offset, const void *buf, size_
                 {
                     return copied;
                 }
+
                 memcpy(&sector[offset_in_sector], &src[copied], chunk);
 
                 if (disk_write(sector, byte_offset, sizeof(sector)) != sizeof(sector))
@@ -632,6 +635,7 @@ static size_t write_bytes(Fat32File *file, size_t offset, const void *buf, size_
     {
         file->size = (uint32_t)offset;
     }
+
     return copied;
 }
 
@@ -645,12 +649,14 @@ static size_t zero_fill_gap(Fat32File *file, size_t offset, size_t len)
     size_t done = 0;
 
     memset(zero, 0, sizeof(zero));
+
     while (done < len)
     {
         const size_t chunk = min_size(sizeof(zero), len - done);
         const size_t wrote = write_bytes(file, offset + done, zero, chunk);
 
         done += wrote;
+
         if (wrote != chunk)
         {
             break;
@@ -677,10 +683,12 @@ static int open_from_dir_entry(const Fat32DirEntry *entry, Fat32File *out)
         {
             return -1;
         }
+
         out->contiguous_cluster_count = 1;
         out->cached_cluster = entry->first_cluster;
         discover_contiguous_prefix(out);
     }
+
     return 0;
 }
 
@@ -913,6 +921,7 @@ static int shrink_file(Fat32File *file, uint32_t size)
         {
             return -1;
         }
+
         file->first_cluster = 0;
         file->cached_cluster = 0;
         file->cached_cluster_index = 0;
@@ -947,6 +956,7 @@ static int shrink_file(Fat32File *file, uint32_t size)
                 return -1;
             }
         }
+
         file->cached_cluster_index = keep_clusters - 1u;
         file->cached_cluster = last_kept;
 
@@ -987,6 +997,7 @@ size_t fat32_backend_read(Fat32File *file, size_t offset, void *buf, size_t len)
     }
 
     remaining = min_size(len, (size_t)file->size - offset);
+
     while (remaining > 0)
     {
         const uint32_t cluster_index = (uint32_t)(offset / cluster_size);

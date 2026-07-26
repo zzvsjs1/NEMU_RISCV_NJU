@@ -61,6 +61,7 @@ static void write_tlb_slot(uint32_t index)
 {
     Assert(index < MIPS32_TLB_NR,
            "MIPS32 TLB index out of range: %u", index);
+
     cpu.tlb[index].entryhi = cpu.entryhi & MIPS32_ENTRYHI_VPN2_MASK;
     cpu.tlb[index].entrylo0 = cpu.entrylo0;
     cpu.tlb[index].entrylo1 = cpu.entrylo1;
@@ -71,6 +72,7 @@ void mips32_tlbwi(void)
     /* Reserved Index bits are not a valid indexed-write destination. */
     Assert((cpu.index & ~0x0fu) == 0,
            "MIPS32 TLBWI invalid Index=" FMT_WORD, cpu.index);
+
     write_tlb_slot(cpu.index);
 }
 
@@ -215,6 +217,7 @@ bool mips32_debug_vaddr_read(vaddr_t addr, int len, word_t *value)
     }
 
     paddr_t first_paddr;
+
     if ((uint32_t)len <= 4096u - (addr & 0xfffu) &&
         debug_translate(addr, &first_paddr))
     {

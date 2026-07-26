@@ -105,12 +105,15 @@ int main()
         check(rem == div7_rem);
 
         div3_rem++;
+
         if (div3_rem == mul_src[0])
         {
             div3_rem = 0;
             div3_quo++;
         }
+
         div7_rem++;
+
         if (div7_rem == mul_src[1])
         {
             div7_rem = 0;

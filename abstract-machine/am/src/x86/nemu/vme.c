@@ -48,9 +48,11 @@ bool vme_init(void *(*pgalloc_f)(int), void (*pgfree_f)(void *))
     kas.pgsize = PGSIZE;
 
     int i;
+
     for (i = 0; i < LENGTH(segments); i++)
     {
         void *va = segments[i].start;
+
         for (; va < segments[i].end; va += PGSIZE)
         {
             map(&kas, va, va, MMAP_READ | MMAP_WRITE);
@@ -70,6 +72,7 @@ void protect(AddrSpace *as)
     as->ptr = updir;
     as->area = USER_SPACE;
     as->pgsize = PGSIZE;
+
     // map kernel space
     memcpy(updir, kas.ptr, PGSIZE);
 }

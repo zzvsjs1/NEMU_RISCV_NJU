@@ -8,6 +8,7 @@ TMPDIR=$(mktemp -d)
 cleanup() {
     rm -rf "$TMPDIR"
 }
+
 trap cleanup EXIT
 
 fail() {

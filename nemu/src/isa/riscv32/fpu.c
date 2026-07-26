@@ -245,6 +245,7 @@ static void fp_exec_load(Decode *s, uint32_t inst)
             const float32_t value = {.v = (uint32_t)vaddr_read(address, 4)};
             fp_write_s(rd, value);
         }
+
         return;
     case 3: /* FLD */
         if (fp_check_load_alignment(s, address, 8))
@@ -252,6 +253,7 @@ static void fp_exec_load(Decode *s, uint32_t inst)
             const float64_t value = {.v = (uint64_t)vaddr_read(address, 8)};
             fp_write_d(rd, value);
         }
+
         return;
     default:
         fp_raise_illegal(s);
@@ -272,12 +274,14 @@ static void fp_exec_store(Decode *s, uint32_t inst)
         {
             vaddr_write(address, 4, (uint32_t)value);
         }
+
         return;
     case 3: /* FSD transfers every raw bit. */
         if (fp_check_store_alignment(s, address, 8))
         {
             vaddr_write(address, 8, value);
         }
+
         return;
     default:
         fp_raise_illegal(s);
@@ -389,6 +393,7 @@ static void fp_exec_sqrt(Decode *s, uint32_t inst, bool is_double)
         {
             fp_raise_illegal(s);
         }
+
         return;
     }
 
@@ -624,17 +629,21 @@ static word_t fp_classify_s(float32_t value)
         {
             return (word_t)1u << (sign ? 0 : 7);
         }
+
         return (word_t)1u <<
                ((fraction & UINT32_C(0x00400000)) ? 9 : 8);
     }
+
     if (exponent == 0)
     {
         if (fraction == 0)
         {
             return (word_t)1u << (sign ? 3 : 4);
         }
+
         return (word_t)1u << (sign ? 2 : 5);
     }
+
     return (word_t)1u << (sign ? 1 : 6);
 }
 
@@ -656,17 +665,21 @@ static word_t fp_classify_d(float64_t value)
         {
             return (word_t)1u << (sign ? 0 : 7);
         }
+
         return (word_t)1u <<
                ((fraction & UINT64_C(0x0008000000000000)) ? 9 : 8);
     }
+
     if (exponent == 0)
     {
         if (fraction == 0)
         {
             return (word_t)1u << (sign ? 3 : 4);
         }
+
         return (word_t)1u << (sign ? 2 : 5);
     }
+
     return (word_t)1u << (sign ? 1 : 6);
 }
 
@@ -699,6 +712,7 @@ static void fp_exec_move_or_class(Decode *s, uint32_t inst)
         {
             fp_raise_illegal(s);
         }
+
         return;
     case 0x71: /* FMV.X.D is a raw RV64 transfer. */
         if (funct3 == 0)
@@ -713,6 +727,7 @@ static void fp_exec_move_or_class(Decode *s, uint32_t inst)
         {
             fp_raise_illegal(s);
         }
+
         return;
     case 0x78: /* FMV.W.X boxes the raw low integer word. */
     {
@@ -721,6 +736,7 @@ static void fp_exec_move_or_class(Decode *s, uint32_t inst)
             fp_raise_illegal(s);
             return;
         }
+
         const float32_t value = {.v = (uint32_t)gpr(rs1)};
         fp_write_s(rd, value);
         return;
@@ -732,6 +748,7 @@ static void fp_exec_move_or_class(Decode *s, uint32_t inst)
             fp_raise_illegal(s);
             return;
         }
+
         const float64_t value = {.v = (uint64_t)gpr(rs1)};
         fp_write_d(rd, value);
         return;
@@ -760,6 +777,7 @@ static void fp_exec_float_to_integer(Decode *s, uint32_t inst,
         {
             fp_raise_illegal(s);
         }
+
         return;
     }
 
@@ -832,6 +850,7 @@ static void fp_exec_integer_to_float(Decode *s, uint32_t inst,
         {
             fp_raise_illegal(s);
         }
+
         return;
     }
 
@@ -898,6 +917,7 @@ static void fp_exec_cross_precision(Decode *s, uint32_t inst,
         {
             fp_raise_illegal(s);
         }
+
         return;
     }
 
@@ -936,6 +956,7 @@ static void fp_exec_fused(Decode *s, uint32_t inst)
         {
             fp_raise_illegal(s);
         }
+
         return;
     }
 
@@ -951,6 +972,7 @@ static void fp_exec_fused(Decode *s, uint32_t inst)
         {
             lhs.v ^= RISCV_FP64_SIGN;
         }
+
         if (negate_addend)
         {
             addend.v ^= RISCV_FP64_SIGN;
@@ -970,6 +992,7 @@ static void fp_exec_fused(Decode *s, uint32_t inst)
         {
             lhs.v ^= RISCV_FP32_SIGN;
         }
+
         if (negate_addend)
         {
             addend.v ^= RISCV_FP32_SIGN;

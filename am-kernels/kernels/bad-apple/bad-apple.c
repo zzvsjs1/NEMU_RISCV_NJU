@@ -50,9 +50,11 @@ int main()
     }
 
     uint64_t now = io_read(AM_TIMER_UPTIME).us;
+
     for (; f < fend; f++)
     {
         printf("\033[0;0H"); // reset cursor
+
         for (int y = 0; y < VIDEO_ROW; y++)
         {
             for (int x = 0; x < VIDEO_COL; x++)
@@ -70,7 +72,9 @@ int main()
 
             if (total_to_play > audio_left)
                 total_to_play = audio_left;
+
             int should_play = total_to_play;
+
             while (should_play > 0)
             {
                 int len = (should_play > 4096 ? 4096 : should_play);
@@ -79,6 +83,7 @@ int main()
                 sbuf.start += len;
                 should_play -= len;
             }
+
             audio_left -= total_to_play;
         }
 

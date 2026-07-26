@@ -73,6 +73,7 @@ def file_size(entry: bytes) -> int:
 
 def directory_entries(data: bytes) -> list[bytes]:
     entries = []
+
     for offset in range(0, len(data), 32):
         entry = data[offset : offset + 32]
         if entry[0] == 0x00:
@@ -96,6 +97,7 @@ def fat_entry(image: Path, layout: Fat32Layout, cluster: int) -> int:
 
 def lfn_checksum(short: bytes) -> int:
     checksum = 0
+
     for byte in short:
         checksum = (((checksum & 1) << 7) + (checksum >> 1) + byte) & 0xFF
     return checksum
@@ -103,6 +105,7 @@ def lfn_checksum(short: bytes) -> int:
 
 def decode_lfn_payload(entry: bytes) -> str:
     chars = []
+
     for offset in (1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30):
         unit = struct.unpack_from("<H", entry, offset)[0]
         if unit == 0x0000:

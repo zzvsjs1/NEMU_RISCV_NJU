@@ -16,6 +16,7 @@ void rtc_test()
         // realtime hardware path and the UTC conversion used by AM_TIMER_RTC.
         while (io_read(AM_TIMER_UPTIME).us / 1000000 < sec)
             ;
+
         rtc = io_read(AM_TIMER_RTC);
         assert(rtc.year >= 2024);
         assert(rtc.month >= 1 && rtc.month <= 12);
@@ -33,6 +34,7 @@ void rtc_test()
         {
             printf("%d seconds).\n", sec);
         }
+
         sec++;
     }
 }

@@ -82,6 +82,7 @@ static bool parse_wav(const uint8_t *buf, uint32_t len, WavInfo *out)
             data_size = chunk_size;
             got_data = true;
         }
+
         // chunks are padded to even size
         off += 8 + chunk_size + (chunk_size & 1);
     }

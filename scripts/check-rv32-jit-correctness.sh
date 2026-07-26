@@ -52,6 +52,7 @@ require_positive_jit_instructions() {
   local jit_insns
 
   jit_insns=$(extract_last_stat 's/.*JIT instructions = \([0-9][0-9]*\).*/\1/p' "$log")
+
   if [ -z "$jit_insns" ]; then
     echo "Failed to find JIT instruction stats for $test_name" >&2
     cat "$log" >&2
@@ -71,6 +72,7 @@ require_positive_unsupported_hits() {
   local unsupported_hits
 
   unsupported_hits=$(extract_last_stat 's/.*unsupported hits = \([0-9][0-9]*\).*/\1/p' "$log")
+
   if [ -z "$unsupported_hits" ]; then
     echo "Failed to find unsupported-hit stats for $test_name" >&2
     cat "$log" >&2
@@ -90,6 +92,7 @@ require_positive_invalidated_blocks() {
   local invalidated_blocks
 
   invalidated_blocks=$(extract_last_stat 's/.*invalidated blocks = \([0-9][0-9]*\).*/\1/p' "$log")
+
   if [ -z "$invalidated_blocks" ]; then
     echo "Failed to find invalidated-block stats for $test_name" >&2
     cat "$log" >&2
@@ -119,9 +122,11 @@ for test_name in "${TESTS[@]}"; do
   fi
 
   require_positive_jit_instructions "$out" "$test_name"
+
   if [ "$test_name" = "riscv32-jit-system-fence" ]; then
     require_positive_unsupported_hits "$out" "$test_name"
   fi
+
   if [ "$test_name" = "jit-smc" ]; then
     require_positive_invalidated_blocks "$out" "$test_name"
   fi

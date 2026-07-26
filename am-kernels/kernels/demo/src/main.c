@@ -54,6 +54,7 @@ int main(const char *args)
     }
 
     printf("Press Q to Exit\n");
+
     while (1)
     {
         AM_INPUT_KEYBRD_T ev = io_read(AM_INPUT_KEYBRD);
@@ -61,5 +62,6 @@ int main(const char *args)
         if (ev.keydown && ev.keycode == AM_KEY_Q)
             break;
     }
+
     return 0;
 }

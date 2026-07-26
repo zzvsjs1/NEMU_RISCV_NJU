@@ -76,12 +76,14 @@ static unsigned long long strtoull_core(const char *nptr, char **endptr, int bas
         {
             *endptr = (char *)nptr;
         }
+
         return 0;
     }
 
     while (*p)
     {
         int digit = digit_value(*p);
+
         if (digit < 0 || digit >= base)
         {
             break;
@@ -229,10 +231,12 @@ void *calloc(size_t nmemb, size_t size)
 
     size *= nmemb;
     void *ret = malloc(size);
+
     if (ret != NULL)
     {
         memset(ret, 0, size);
     }
+
     return ret;
 }
 

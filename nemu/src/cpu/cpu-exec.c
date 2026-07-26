@@ -5,9 +5,11 @@
 #if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86) && !defined(CONFIG_ISA_mips32)
 #include <isa-all-instr.h>
 #endif
+
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
 #include <isa-jit.h>
 #endif
+
 #include <locale.h>
 #include <stdlib.h>
 
@@ -33,6 +35,7 @@ const rtlreg_t rzero = 0;
 rtlreg_t tmp_reg[6];
 
 void device_update();
+
 #if !defined(CONFIG_ISA_riscv32) && !defined(CONFIG_ISA_riscv64) && !defined(CONFIG_ISA_x86) && !defined(CONFIG_ISA_mips32)
 void fetch_decode(Decode *s, vaddr_t pc);
 #endif
@@ -121,6 +124,7 @@ static inline int fetch_decode_idx(Decode *s, vaddr_t pc)
     s->snpc = pc;
     int idx = isa_fetch_decode(s);
     s->dnpc = s->snpc;
+
 #ifdef CONFIG_ITRACE
     char *p = s->logbuf;
     p += snprintf(p, sizeof(s->logbuf), FMT_WORD ":", s->pc);
@@ -150,6 +154,7 @@ static inline int fetch_decode_idx(Decode *s, vaddr_t pc)
     disassemble(p, s->logbuf + sizeof(s->logbuf) - p,
                 MUXDEF(CONFIG_ISA_x86, s->snpc, s->pc), (uint8_t *)&s->isa.instr.val, ilen);
 #endif
+
     return idx;
 }
 
@@ -177,6 +182,7 @@ static inline void fetch_decode_exec_updatepc(Decode *s)
     s->snpc = cpu.pc;
     isa_exec_once(s);
     cpu.pc = s->dnpc;
+
 #ifdef CONFIG_ITRACE
     char *p = s->logbuf;
     p += snprintf(p, sizeof(s->logbuf), FMT_WORD ":", s->pc);
@@ -253,6 +259,7 @@ static void statistic(void)
         Log(STATISTIC_LABEL_FMT "n/a (run completed in less than 1 us)",
             "simulation frequency");
     }
+
 #undef STATISTIC_LABEL_FMT
 #undef NUMERIC_FMT
 
@@ -288,15 +295,18 @@ static uint64_t diagnostic_instr_limit(void)
     if (!parsed)
     {
         const char *value = getenv("NEMU_EXIT_AFTER_INSTR");
+
         if (value != NULL && value[0] != '\0')
         {
             char *end = NULL;
             limit = strtoull(value, &end, 0);
+
             if (end == value || *end != '\0')
             {
                 limit = 0;
             }
         }
+
         parsed = true;
     }
 
@@ -344,6 +354,7 @@ static inline word_t query_pending_intr()
         return INTR_EMPTY;
     }
 #endif
+
     return isa_query_intr();
 }
 
@@ -413,9 +424,11 @@ void cpu_exec(uint64_t n)
     uint64_t timer_start = get_time();
 
     Decode s;
+
 #ifdef CONFIG_DEVICE
     uint32_t device_update_counter = 0;
 #endif
+
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
     const bool jit_exec = can_jit_exec();
 #endif
@@ -431,6 +444,7 @@ void cpu_exec(uint64_t n)
             }
 
             const uint64_t remaining_to_limit = instr_limit - g_nr_guest_instr;
+
             if (n > remaining_to_limit)
             {
                 n = remaining_to_limit;
@@ -439,6 +453,7 @@ void cpu_exec(uint64_t n)
 
         uint32_t executed = 0;
         bool jit_done = false;
+
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64) || defined(CONFIG_ISA_x86)
         if (jit_exec)
         {
@@ -454,6 +469,7 @@ void cpu_exec(uint64_t n)
 #ifdef CONFIG_DEVICE
             device_budget = DEVICE_UPDATE_CHECK_INTERVAL - device_update_counter;
 #endif
+
             jit_done = isa_jit_exec(n, device_budget, &executed);
         }
 #endif
@@ -477,6 +493,7 @@ void cpu_exec(uint64_t n)
 #if defined(CONFIG_ISA_x86)
             vaddr_t fault_pc = cpu.pc;
             x86_exception_env_valid = true;
+
             if (setjmp(x86_exception_env) == 0)
             {
                 fetch_decode_exec_updatepc(&s);
@@ -505,6 +522,7 @@ void cpu_exec(uint64_t n)
              * clear emulator error rather than a jump into a stale cpu_exec().
              */
             mips32_exception_env_valid = true;
+
             if (setjmp(mips32_exception_env) == 0)
             {
                 fetch_decode_exec_updatepc(&s);

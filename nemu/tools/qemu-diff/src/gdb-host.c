@@ -19,6 +19,7 @@ static bool gdb_memcpy_to_qemu_small(uint32_t dest, void *src, int len)
     assert(buf != NULL);
     int p = sprintf(buf, "M0x%x,%x:", dest, len);
     int i;
+
     for (i = 0; i < len; i++)
     {
         p += sprintf(buf + p, "%c%c", hex_encode(((uint8_t *)src)[i] >> 4), hex_encode(((uint8_t *)src)[i] & 0xf));
@@ -39,6 +40,7 @@ bool gdb_memcpy_to_qemu(uint32_t dest, void *src, int len)
 {
     const int mtu = 1500;
     bool ok = true;
+
     while (len > mtu)
     {
         ok &= gdb_memcpy_to_qemu_small(dest, src, mtu);
@@ -46,6 +48,7 @@ bool gdb_memcpy_to_qemu(uint32_t dest, void *src, int len)
         src += mtu;
         len -= mtu;
     }
+
     ok &= gdb_memcpy_to_qemu_small(dest, src, len);
     return ok;
 }
@@ -59,6 +62,7 @@ bool gdb_getregs(union isa_gdb_regs *r)
     int i;
     uint8_t *p = reply;
     uint8_t c;
+
     for (i = 0; i < sizeof(union isa_gdb_regs) / sizeof(uint32_t); i++)
     {
         c = p[8];
@@ -83,6 +87,7 @@ bool gdb_setregs(union isa_gdb_regs *r)
     void *src = r;
     int p = 1;
     int i;
+
     for (i = 0; i < len; i++)
     {
         p += sprintf(buf + p, "%c%c", hex_encode(((uint8_t *)src)[i] >> 4), hex_encode(((uint8_t *)src)[i] & 0xf));

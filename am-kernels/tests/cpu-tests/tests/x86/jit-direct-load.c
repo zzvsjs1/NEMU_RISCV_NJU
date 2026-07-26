@@ -28,6 +28,7 @@ int main()
     };
 
     uint32_t expected = 0;
+
     for (int i = 0; i < 8; i++)
     {
         expected += data[i];

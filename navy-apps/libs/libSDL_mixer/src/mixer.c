@@ -487,6 +487,7 @@ static void mixer_callback(void *userdata, uint8_t *stream, int len)
     memset(stream, device.format == AUDIO_U8 ? 128 : 0, len);
 
     int frames = len / frame_bytes;
+
     for (int i = 0; i < frames; i++)
     {
         uint8_t *frame = stream + i * frame_bytes;
@@ -531,6 +532,7 @@ static int allocate_channels_locked(int numchans)
      * finish truncated channels so their completion hooks still fire.
      */
     int copy = mix_channel_count < numchans ? mix_channel_count : numchans;
+
     for (int i = 0; i < copy; i++)
     {
         next[i] = mix_channels[i];
@@ -653,6 +655,7 @@ static uint8_t *read_rwops_data(SDL_RWops *src, int *out_len)
         }
 
         int got = 0;
+
         while (got < wanted)
         {
             size_t request = (size_t)(wanted - got);
@@ -1101,6 +1104,7 @@ void Mix_FreeChunk(Mix_Chunk *chunk)
         return;
 
     SDL_LockAudio();
+
     for (int i = 0; i < mix_channel_count; i++)
     {
         if (mix_channels[i].chunk == chunk)
@@ -1108,6 +1112,7 @@ void Mix_FreeChunk(Mix_Chunk *chunk)
             finish_channel(i, 1);
         }
     }
+
     SDL_UnlockAudio();
 
     if (chunk->allocated)
@@ -1140,6 +1145,7 @@ int Mix_Volume(int channel, int volume)
         }
 
         int total = 0;
+
         for (int i = 0; i < mix_channel_count; i++)
         {
             total += mix_channels[i].volume;
@@ -1154,6 +1160,7 @@ int Mix_Volume(int channel, int volume)
                 mix_channels[i].volume = volume;
             }
         }
+
         SDL_UnlockAudio();
         return previous;
     }
@@ -1185,6 +1192,7 @@ int Mix_Playing(int channel)
     if (channel == -1)
     {
         int playing = 0;
+
         for (int i = 0; i < mix_channel_count; i++)
         {
             if (mix_channels[i].playing && !mix_channels[i].paused)
@@ -1318,6 +1326,7 @@ int Mix_PlayChannel(int channel, Mix_Chunk *chunk, int loops)
     if (channel == -1)
     {
         chosen = -1;
+
         for (int i = 0; i < mix_channel_count; i++)
         {
             if (!mix_channels[i].playing)
@@ -1370,6 +1379,7 @@ void Mix_Pause(int channel)
     {
         mix_channels[channel].paused = 1;
     }
+
     SDL_UnlockAudio();
 }
 
@@ -1411,6 +1421,7 @@ void Mix_FreeMusic(Mix_Music *music)
     {
         finish_music(0);
     }
+
     SDL_UnlockAudio();
 
     if (music->vorbis != NULL)
@@ -1462,6 +1473,7 @@ int Mix_SetMusicPosition(double position)
     SDL_LockAudio();
 
     Mix_Music *music = current_music;
+
     if (music == NULL || music->vorbis == NULL)
     {
         SDL_UnlockAudio();

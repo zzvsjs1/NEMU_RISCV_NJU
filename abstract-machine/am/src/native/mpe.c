@@ -37,6 +37,7 @@ bool mpe_init(void (*entry)())
     {
         assert(write(sync_pipe[1], "+", 1) == 1);
     }
+
     close(sync_pipe[0]);
     close(sync_pipe[1]);
 

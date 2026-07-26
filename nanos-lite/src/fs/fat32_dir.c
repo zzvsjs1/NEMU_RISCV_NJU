@@ -165,6 +165,7 @@ static const char *find_last_dot(const char *name)
         {
             last = name;
         }
+
         name++;
     }
 
@@ -287,6 +288,7 @@ static void short_name_to_alias(const uint8_t short_name[11], char out[13])
     if (ext_end >= 8)
     {
         out[pos++] = '.';
+
         for (int i = 8; i <= ext_end; i++)
         {
             out[pos++] = ascii_lower((char)short_name[i]);
@@ -309,6 +311,7 @@ static void render_short_name(const uint8_t short_name[11], char out[13])
     {
         base_end--;
     }
+
     for (int i = 0; i <= base_end; i++)
     {
         out[pos++] = (char)short_name[i];
@@ -322,11 +325,13 @@ static void render_short_name(const uint8_t short_name[11], char out[13])
     if (ext_end >= 8)
     {
         out[pos++] = '.';
+
         for (int i = 8; i <= ext_end; i++)
         {
             out[pos++] = (char)short_name[i];
         }
     }
+
     out[pos] = '\0';
 }
 
@@ -373,6 +378,7 @@ static void clean_short_part(const char *src, size_t len, char *out, size_t out_
         {
             ch = (char)(ch - 'a' + 'A');
         }
+
         out[pos++] = string_contains_char(allowed, ch) ? ch : '_';
     }
 
@@ -410,10 +416,12 @@ static void split_short_parts(const char *name, char *base, size_t base_size, ch
 static void format_short_name(const char *base, const char *ext, uint8_t out[11])
 {
     memset(out, ' ', 11);
+
     for (size_t i = 0; i < 8 && base[i] != '\0'; i++)
     {
         out[i] = (uint8_t)base[i];
     }
+
     for (size_t i = 0; i < 3 && ext[i] != '\0'; i++)
     {
         out[8 + i] = (uint8_t)ext[i];
@@ -446,6 +454,7 @@ static int make_tilde_suffix(unsigned value, char out[8])
     {
         out[pos++] = digits[--count];
     }
+
     out[pos] = '\0';
     return 0;
 }
@@ -486,12 +495,14 @@ static int read_directory_slot(const Fat32Volume *vol, uint32_t dir_cluster, uin
             {
                 return -1;
             }
+
             const uint64_t real_sector = (uint64_t)first_sector + sector_index;
 
             if (real_sector > SIZE_MAX / FAT32_SECTOR_SIZE)
             {
                 return -1;
             }
+
             offset = (size_t)real_sector * FAT32_SECTOR_SIZE + (size_t)slot_index * FAT32_DIR_ENTRY_SIZE;
 
             if (disk_read(raw_entry, offset, FAT32_DIR_ENTRY_SIZE) != FAT32_DIR_ENTRY_SIZE)
@@ -503,6 +514,7 @@ static int read_directory_slot(const Fat32Volume *vol, uint32_t dir_cluster, uin
             {
                 *entry_offset = (uint64_t)offset;
             }
+
             return 1;
         }
 
@@ -545,6 +557,7 @@ static int write_directory_slot(const Fat32Volume *vol, uint32_t dir_cluster, ui
     {
         return -1;
     }
+
     return disk_write(raw_entry, (size_t)offset, FAT32_DIR_ENTRY_SIZE) == FAT32_DIR_ENTRY_SIZE ? 0 : -1;
 }
 
@@ -646,6 +659,7 @@ static int find_in_directory_full(const Fat32Volume *vol, uint32_t dir_cluster, 
             {
                 lfn_start_index = entry_index;
             }
+
             lfn_add(&lfn, raw_entry);
             continue;
         }
@@ -721,9 +735,11 @@ static int next_component(const char **cursor, char *component, size_t component
         component[len] = p[len];
         len++;
     }
+
     component[len] = '\0';
 
     p += len;
+
     while (*p == '/')
     {
         p++;
@@ -757,6 +773,7 @@ static int split_parent_path(const char *path, char parent[FAT32_MAX_PATH], char
     }
 
     end = len;
+
     while (end > 1 && path[end - 1] == '/')
     {
         end--;
@@ -768,6 +785,7 @@ static int split_parent_path(const char *path, char parent[FAT32_MAX_PATH], char
     }
 
     slash = end;
+
     while (slash > 0 && path[slash - 1] != '/')
     {
         slash--;
@@ -784,6 +802,7 @@ static int split_parent_path(const char *path, char parent[FAT32_MAX_PATH], char
     {
         return -1;
     }
+
     memcpy(name, &path[slash], name_len);
     name[name_len] = '\0';
 
@@ -875,6 +894,7 @@ static int make_short_alias(const Fat32Volume *vol, uint32_t dir_cluster, const 
     {
         strncpy(candidate_base, base, 8);
         format_short_name(candidate_base, candidate_ext, out);
+
         if (!short_name_in_use(vol, dir_cluster, out))
         {
             return 0;
@@ -891,6 +911,7 @@ static int make_short_alias(const Fat32Volume *vol, uint32_t dir_cluster, const 
         {
             return -1;
         }
+
         suffix_len = strlen(suffix);
         prefix_len = 8u > suffix_len ? 8u - suffix_len : 1u;
 
@@ -908,6 +929,7 @@ static int make_short_alias(const Fat32Volume *vol, uint32_t dir_cluster, const 
         strncpy(candidate_base, base, prefix_len);
         strcat(candidate_base, suffix);
         format_short_name(candidate_base, candidate_ext, out);
+
         if (!short_name_in_use(vol, dir_cluster, out))
         {
             return 0;
@@ -972,14 +994,17 @@ static void fill_lfn_entry(uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE], const char *
     entry->type = 0;
     entry->checksum = fat32_lfn_checksum(short_name);
     entry->first_cluster_low = 0;
+
     for (int i = 0; i < 5; i++)
     {
         entry->name1[i] = units[i];
     }
+
     for (int i = 0; i < 6; i++)
     {
         entry->name2[i] = units[5 + i];
     }
+
     for (int i = 0; i < 2; i++)
     {
         entry->name3[i] = units[11 + i];
@@ -1007,10 +1032,12 @@ static void fill_dot_entry(uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE], const char *
     uint8_t short_name[11];
 
     memset(short_name, ' ', sizeof(short_name));
+
     for (size_t i = 0; i < 2 && name[i] != '\0'; i++)
     {
         short_name[i] = (uint8_t)name[i];
     }
+
     fill_short_entry(raw_entry, short_name, FAT32_ATTR_DIRECTORY, first_cluster, 0);
 }
 
@@ -1064,6 +1091,7 @@ static int append_directory_clusters(Fat32Volume *vol, uint32_t dir_cluster, uin
 
     *out_start_index = cluster_count * per_cluster;
     clusters_needed = (needed_entries + per_cluster - 1u) / per_cluster;
+
     for (uint32_t i = 0; i < clusters_needed; i++)
     {
         uint32_t new_cluster;
@@ -1078,6 +1106,7 @@ static int append_directory_clusters(Fat32Volume *vol, uint32_t dir_cluster, uin
             (void)fat32_free_chain(vol, new_cluster);
             return -1;
         }
+
         tail = new_cluster;
     }
 
@@ -1115,6 +1144,7 @@ static int find_free_entry_run(Fat32Volume *vol, uint32_t dir_cluster, uint32_t 
             {
                 run_start = entry_index;
             }
+
             run_count++;
 
             if (run_count >= needed_entries)
@@ -1150,6 +1180,7 @@ static int write_entry_set(Fat32Volume *vol, uint32_t parent_cluster, uint32_t s
         {
             return -1;
         }
+
         slot++;
 
         if (sequence == 1)
@@ -1238,6 +1269,7 @@ static int directory_is_empty(Fat32Volume *vol, uint32_t dir_cluster)
 
     dir.first_cluster = dir_cluster;
     dir.next_entry_index = 0;
+
     while ((ret = fat32_readdir(vol, &dir, &entry)) == 1)
     {
         if (strcmp(entry.name, ".") != 0 && strcmp(entry.name, "..") != 0)
@@ -1261,6 +1293,7 @@ static int mark_entry_deleted(const Fat32Volume *vol, uint32_t dir_cluster, uint
     {
         return -1;
     }
+
     raw_entry[0] = 0xe5;
     return write_directory_slot(vol, dir_cluster, entry_index, raw_entry);
 }
@@ -1439,6 +1472,7 @@ int fat32_readdir(Fat32Volume *vol, Fat32Dir *dir, Fat32Dirent *out)
     }
 
     lfn_reset(&lfn);
+
     for (;;)
     {
         uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE];
@@ -1487,6 +1521,7 @@ int fat32_readdir(Fat32Volume *vol, Fat32Dir *dir, Fat32Dirent *out)
         {
             short_name_to_alias(raw_entry, out->name);
         }
+
         fill_dir_entry(vol, raw_entry, entry_offset, &out->entry);
         return 1;
     }
@@ -1531,6 +1566,7 @@ int fat32_create_path(Fat32Volume *vol, const char *path, uint8_t attr, Fat32Dir
         {
             (void)fat32_free_chain(vol, first_cluster);
         }
+
         return -1;
     }
 

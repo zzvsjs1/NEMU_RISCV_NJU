@@ -114,6 +114,7 @@ static void jit_format_wide_count(
     {
         buffer[i] = reversed[digit_count - i - 1u];
     }
+
     buffer[digit_count] = '\0';
 }
 
@@ -301,6 +302,7 @@ static void jit_dump_dispatch_stats(void)
             rv64_jit_stats.cache_misses,
             cache_hit_pct / 100u, cache_hit_pct % 100u);
     }
+
     jit_log_count("Native entries with progress",
                   rv64_jit_stats.blocks_executed, "entries");
     jit_log_count("Guest instructions retired",
@@ -333,6 +335,7 @@ static void jit_dump_dispatch_stats(void)
             average_x100 / 100u, average_x100 % 100u,
             rv64_jit_stats.unsupported_hits);
     }
+
     Log("jit:   zero side exits = %" PRIu64,
         rv64_jit_stats.zero_side_exits);
 }
@@ -345,9 +348,11 @@ static void jit_dump_block_end_stats(void)
                        RV64_JIT_BLOCK_END_COUNT);
 
     jit_log_wide_count("Compiled block endings", block_end_total, "blocks");
+
     for (uint32_t reason = 0; reason < RV64_JIT_BLOCK_END_COUNT; reason++)
     {
         const uint64_t count = rv64_jit_stats.block_end_by_reason[reason];
+
         if (count != 0)
         {
             Log("jit:     block end %s = %" PRIu64 " (%s)",
@@ -391,6 +396,7 @@ static void jit_dump_compilation_stats(void)
             rv64_jit_stats.blocks_unsupported,
             average_x100 / 100u, average_x100 % 100u);
     }
+
     Log("jit:   translated blocks = %" PRIu64
         " (blocks fetched through Sv39)",
         rv64_jit_stats.translated_blocks);
@@ -520,6 +526,7 @@ static void jit_dump_fallback_stats(void)
     for (uint32_t opcode = 0; opcode <= RV64_OPCODE_MASK; opcode++)
     {
         const uint64_t count = rv64_jit_stats.unsupported_by_opcode[opcode];
+
         if (count != 0)
         {
             Log("jit:     unsupported opcode 0x%02x = %" PRIu64 " (%s)",
@@ -528,9 +535,11 @@ static void jit_dump_fallback_stats(void)
     }
 
     jit_log_wide_count("Run-time side exits", side_exit_total, "exits");
+
     for (uint32_t reason = 0; reason < RV64_JIT_SIDE_EXIT_COUNT; reason++)
     {
         const uint64_t count = rv64_jit_stats.side_exit_by_reason[reason];
+
         if (count != 0)
         {
             Log("jit:     side exit %s = %" PRIu64 " (%s)",

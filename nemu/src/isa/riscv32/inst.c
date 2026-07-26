@@ -2,6 +2,7 @@
 #ifdef CONFIG_RV64_FPU
 #include "local-include/fpu.h"
 #endif
+
 #include <cpu/cpu.h>
 #include <cpu/decode.h>
 #include <cpu/difftest.h>
@@ -9,6 +10,7 @@
 #if defined(CONFIG_RV32_JIT) || defined(CONFIG_RV64_JIT)
 #include <isa-jit.h>
 #endif
+
 #include <memory/vaddr.h>
 #include <utils.h>
 
@@ -416,6 +418,7 @@ static inline void riscv_branch(Decode *s, int relop, word_t src1, word_t src2, 
     }
 
     word_t target = s->pc + imm;
+
     if (riscv_check_jump_alignment(s, target))
     {
         s->dnpc = target;
@@ -844,12 +847,14 @@ static int decode_exec(Decode *s)
     INSTPAT("??????? ????? ????? ??? ????? 11011 11", jal, J,
             {
                 word_t target = s->pc + imm;
+
                 if (riscv_check_jump_alignment(s, target))
                 {
                     if (rd == 1 || rd == 5)
                     {
                         ftrace_call(s->pc, target);
                     }
+
                     R(rd) = s->pc + 4;
                     s->dnpc = target;
                 }
@@ -862,6 +867,7 @@ static int decode_exec(Decode *s)
     INSTPAT("??????? ????? ????? 000 ????? 11001 11", jalr, I,
             {
                 word_t target = (src1 + imm) & ~(word_t)1;
+
                 if (riscv_check_jump_alignment(s, target))
                 {
                     if (rd == 0 && (rs1 == 1 || rs1 == 5) && imm == 0)
@@ -872,6 +878,7 @@ static int decode_exec(Decode *s)
                     {
                         ftrace_call(s->pc, target);
                     }
+
                     R(rd) = s->pc + 4;
                     s->dnpc = target;
                 }
@@ -922,6 +929,7 @@ static int decode_exec(Decode *s)
                     }
                 }
             });
+
     /*
      * CSRRS reads the CSR into rd and sets bits selected by rs1.  rs1=x0 means
      * read-only behaviour, so read-only CSRs are legal in that case.
@@ -929,16 +937,19 @@ static int decode_exec(Decode *s)
     INSTPAT("??????? ????? ????? 010 ????? 11100 11", csrrs, CSR,
             {
                 bool will_write = rs1 != 0;
+
                 if (riscv_csr_access_ok(s, imm, will_write))
                 {
                     word_t old = getCSRValue(imm);
                     R(rd) = old;
+
                     if (will_write)
                     {
                         setCSRValue(imm, old | src1);
                     }
                 }
             });
+
     /*
      * CSRRC reads the CSR into rd and clears bits selected by rs1.  Like CSRRS,
      * rs1=x0 suppresses the write and therefore only needs read permission.
@@ -946,16 +957,19 @@ static int decode_exec(Decode *s)
     INSTPAT("??????? ????? ????? 011 ????? 11100 11", csrrc, CSR,
             {
                 bool will_write = rs1 != 0;
+
                 if (riscv_csr_access_ok(s, imm, will_write))
                 {
                     word_t old = getCSRValue(imm);
                     R(rd) = old;
+
                     if (will_write)
                     {
                         setCSRValue(imm, old & ~src1);
                     }
                 }
             });
+
     /*
      * CSRRWI is the immediate form of CSRRW.  The zimm value has already been
      * placed in src1 by decode_operand(), so no register read is involved.
@@ -976,6 +990,7 @@ static int decode_exec(Decode *s)
                     }
                 }
             });
+
     /*
      * CSRRSI sets CSR bits selected by zimm.  zimm=0 is a pure read and must not
      * trip the read-only CSR write check.
@@ -983,16 +998,19 @@ static int decode_exec(Decode *s)
     INSTPAT("??????? ????? ????? 110 ????? 11100 11", csrrsi, CSI,
             {
                 bool will_write = rs1 != 0;
+
                 if (riscv_csr_access_ok(s, imm, will_write))
                 {
                     word_t old = getCSRValue(imm);
                     R(rd) = old;
+
                     if (will_write)
                     {
                         setCSRValue(imm, old | src1);
                     }
                 }
             });
+
     /*
      * CSRRCI clears CSR bits selected by zimm.  The old CSR value is written to
      * rd before any modification, matching the atomic read-modify-write rule.
@@ -1000,10 +1018,12 @@ static int decode_exec(Decode *s)
     INSTPAT("??????? ????? ????? 111 ????? 11100 11", csrrci, CSI,
             {
                 bool will_write = rs1 != 0;
+
                 if (riscv_csr_access_ok(s, imm, will_write))
                 {
                     word_t old = getCSRValue(imm);
                     R(rd) = old;
+
                     if (will_write)
                     {
                         setCSRValue(imm, old & ~src1);

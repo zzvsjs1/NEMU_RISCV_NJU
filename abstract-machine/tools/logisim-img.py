@@ -9,6 +9,7 @@ fp_data0 = open(bin + '-logisim-data0.txt', 'w')
 fp_data1 = open(bin + '-logisim-data1.txt', 'w')
 fp_data2 = open(bin + '-logisim-data2.txt', 'w')
 fp_data3 = open(bin + '-logisim-data3.txt', 'w')
+
 for f in [fp_inst, fp_data0, fp_data1, fp_data2, fp_data3]:
   f.write('v2.0 raw\n')
 
@@ -22,6 +23,7 @@ with open(bin, 'rb') as fp:
     fp_data1.write("%02x " % bytes[1])
     fp_data2.write("%02x " % bytes[2])
     fp_data3.write("%02x " % bytes[3])
+
   fp.close()
 
 for f in [fp_inst, fp_data0, fp_data1, fp_data2, fp_data3]:

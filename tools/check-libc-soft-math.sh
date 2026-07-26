@@ -25,6 +25,7 @@ riscv64-linux-gnu-gcc -std=gnu17 -O2 -Wall -Wextra -Werror -Wno-unused-parameter
   -o "$rv32_obj"
 
 riscv64-linux-gnu-objdump -d "$rv32_obj" > "$rv32_dis"
+
 if grep -Eq '\b(flw|fsw|fld|fsd|fadd|fsub|fmul|fdiv|fsqrt|fcvt|fmv|feq|flt|fle|fclass)\b|\bfrcsr\b|\bfscsr\b' "$rv32_dis"; then
   echo "error: RV32 math object contains hardware floating-point instructions" >&2
   exit 1

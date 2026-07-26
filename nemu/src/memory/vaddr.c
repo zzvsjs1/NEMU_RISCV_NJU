@@ -54,6 +54,7 @@ static void __attribute__((noreturn)) handle_translate_failure(int status, const
         x86_raise_page_fault();
     }
 #endif
+
 #ifdef CONFIG_ISA_mips32
     if (status == MEM_RET_FAIL)
     {
@@ -126,10 +127,12 @@ word_t vaddr_ifetch(vaddr_t addr, int len)
         if (st == MEM_RET_CROSS_PAGE)
         {
             word_t data = 0;
+
             for (int i = 0; i < len; i++)
             {
                 data |= vaddr_ifetch(addr + (vaddr_t)i, 1) << (i * 8);
             }
+
             return data;
         }
 
@@ -172,10 +175,12 @@ word_t vaddr_read(vaddr_t addr, int len)
         if (status == MEM_RET_CROSS_PAGE)
         {
             word_t data = 0;
+
             for (int i = 0; i < len; i++)
             {
                 data |= vaddr_read(addr + (vaddr_t)i, 1) << (i * 8);
             }
+
             return data;
         }
 

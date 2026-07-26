@@ -46,6 +46,7 @@ _start:
   # Every O32 caller reserves four argument-home words for its callee.  Keep
   # the argument block in a0 unchanged while placing this area below it.
   addiu $sp, $sp, -16
+
   jal call_main
   nop
 

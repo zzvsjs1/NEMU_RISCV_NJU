@@ -153,6 +153,7 @@ static inline word_t riscv_mstatus_normalise(word_t value)
     value &= ~(RISCV64_MSTATUS_SD |
                RISCV_MSTATUS_VS_MASK |
                RISCV_MSTATUS_XS_MASK);
+
     if ((value & RISCV_MSTATUS_FS_MASK) == RISCV_MSTATUS_FS_DIRTY)
     {
         value |= RISCV64_MSTATUS_SD;

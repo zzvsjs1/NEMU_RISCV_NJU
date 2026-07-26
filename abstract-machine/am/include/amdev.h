@@ -45,6 +45,7 @@ AM_DEVREG(24, NET_RX, WR, Area buf);
 // NEMU/Navy extension used by local event polling. Native implements a no-event
 // compatibility stub for host-side tests.
 AM_DEVREG(25, INPUT_MOUSE, RD, int type; int x, y; int button; int buttons; int wheel_x, wheel_y);
+
 // Local wall-clock extension. NEMU and native implement it; other platforms
 // should use the standard TIMER_UPTIME path.
 AM_DEVREG(26, TIMER_REALTIME, RD, uint64_t us);

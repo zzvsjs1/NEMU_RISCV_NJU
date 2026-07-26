@@ -26,6 +26,7 @@ static void drawVerticalLine(int x, int y0, int y1, uint32_t color)
     assert(y0 <= y1);
     int i;
     uint32_t *p = (void *)screen->pixels;
+
     for (i = y0; i <= y1; i++)
     {
         p[i * W + x] = color;
@@ -38,6 +39,7 @@ static void visualize(int16_t *stream, int samples)
     static int color = 0;
     SDL_FillRect(screen, NULL, 0);
     int center_y = H / 2;
+
     /*
      * The audio callback stores interleaved signed samples and the UI thread
      * draws the latest saved block. This is a lightweight visualiser contract,
@@ -62,6 +64,7 @@ static void visualize(int16_t *stream, int samples)
         color++;
         color &= 0xffffff;
     }
+
     SDL_UpdateRect(screen, 0, 0, 0, 0);
 }
 
@@ -75,7 +78,9 @@ static void AdjustVolume(int16_t *stream, int samples)
         memset(stream, 0, samples * sizeof(stream[0]));
         return;
     }
+
     int i;
+
     for (i = 0; i < samples; i++)
     {
         stream[i] = stream[i] * volume / MAX_VOLUME;
@@ -106,6 +111,7 @@ void FillAudio(void *userdata, uint8_t *stream, int len)
 
     if (nbyte < len)
         memset(stream + nbyte, 0, len - nbyte);
+
     memcpy(stream_save, stream, len);
 }
 
@@ -156,6 +162,7 @@ int main(int argc, char *argv[])
     while (!is_end)
     {
         SDL_Event ev;
+
         while (SDL_PollEvent(&ev))
         {
             if (ev.type == SDL_KEYDOWN)
@@ -173,6 +180,7 @@ int main(int argc, char *argv[])
                 }
             }
         }
+
         SDL_Delay(1000 / FPS);
         visualize(stream_save, SAMPLES * info.channels);
     }

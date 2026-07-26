@@ -7,14 +7,17 @@
 size_t strlen(const char *s)
 {
     size_t i = 0;
+
     for (; s[i]; ++i)
         ;
+
     return i;
 }
 
 char *strcpy(char *dst, const char *src)
 {
     char *dest = dst;
+
     for (; *src; ++src, ++dest)
     {
         *dest = *src;
@@ -27,6 +30,7 @@ char *strcpy(char *dst, const char *src)
 char *strncpy(char *dst, const char *src, size_t n)
 {
     size_t i = 0;
+
     // strncpy() differs from strcpy(): if src ends early, the remaining bytes
     // up to n must be padded with NULs. This matters for fixed-size buffers that
     // are compared byte-for-byte in tests.
@@ -170,6 +174,7 @@ int strncmp(const char *s1, const char *s2, size_t n)
 void *memset(void *s, int c, size_t n)
 {
     unsigned char *p = (unsigned char *)s;
+
     for (; n; --n, ++p)
     {
         *p = (unsigned char)c;
@@ -200,6 +205,7 @@ void *memmove(void *dst, const void *src, size_t n)
         // This prevents overwriting the source data before it's copied.
         d += n;
         s += n;
+
         while (n--)
         {
             *--d = *--s;
@@ -255,6 +261,7 @@ char *strchr(const char *s, int c)
             break;
         p++;
     } while (1);
+
     return NULL;
 }
 
@@ -270,6 +277,7 @@ char *strrchr(const char *s, int c)
             break;
         p--;
     } while (1);
+
     return NULL;
 }
 

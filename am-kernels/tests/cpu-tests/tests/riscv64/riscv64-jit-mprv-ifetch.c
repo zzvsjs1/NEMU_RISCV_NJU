@@ -112,6 +112,7 @@ static void install_page_tables(void)
 {
     clear_page_table(root_pt);
     clear_page_table(identity_l1);
+
     for (uint64_t i = 0; i < IDENTITY_L1_ENTRIES; i++)
     {
         clear_page_table(identity_l0[i]);

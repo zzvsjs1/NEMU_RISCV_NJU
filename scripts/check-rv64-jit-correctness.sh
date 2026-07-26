@@ -26,6 +26,7 @@ require_positive_jit_instructions() {
   local jit_insns
 
   jit_insns=$(sed -n 's/.*JIT instructions = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$jit_insns" ]; then
     echo "Failed to find JIT instruction stats for $test_name" >&2
     cat "$log" >&2
@@ -45,6 +46,7 @@ require_positive_native_loads() {
   local native_loads
 
   native_loads=$(sed -n 's/.*native loads = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_loads" ]; then
     echo "Failed to find native load stats for $test_name" >&2
     cat "$log" >&2
@@ -64,6 +66,7 @@ require_positive_native_stores() {
   local native_stores
 
   native_stores=$(sed -n 's/.*native stores = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_stores" ]; then
     echo "Failed to find native store stats for $test_name" >&2
     cat "$log" >&2
@@ -83,6 +86,7 @@ require_positive_native_jumps() {
   local native_jumps
 
   native_jumps=$(sed -n 's/.*native jumps = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_jumps" ]; then
     echo "Failed to find native jump stats for $test_name" >&2
     cat "$log" >&2
@@ -102,6 +106,7 @@ require_positive_native_m_ops() {
   local native_m_ops
 
   native_m_ops=$(sed -n 's/.*native M ops = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_m_ops" ]; then
     echo "Failed to find native M-op stats for $test_name" >&2
     cat "$log" >&2
@@ -121,6 +126,7 @@ require_positive_translated_blocks() {
   local translated_blocks
 
   translated_blocks=$(sed -n 's/.*translated blocks = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$translated_blocks" ]; then
     echo "Failed to find translated block stats for $test_name" >&2
     cat "$log" >&2
@@ -140,6 +146,7 @@ require_positive_translated_cross_page_blocks() {
   local translated_cross_page_blocks
 
   translated_cross_page_blocks=$(sed -n 's/.*translated cross-page blocks = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$translated_cross_page_blocks" ]; then
     echo "Failed to find translated cross-page block stats for $test_name" >&2
     cat "$log" >&2
@@ -159,6 +166,7 @@ require_positive_segmented_source_blocks() {
   local segmented_source_blocks
 
   segmented_source_blocks=$(sed -n 's/.*segmented source blocks = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$segmented_source_blocks" ]; then
     echo "Failed to find segmented source-block stats for $test_name" >&2
     cat "$log" >&2
@@ -178,6 +186,7 @@ require_positive_trace_blocks() {
   local trace_blocks
 
   trace_blocks=$(sed -n 's/.*trace blocks = \([0-9][0-9]*\), trace instructions = [0-9][0-9]*.*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$trace_blocks" ]; then
     echo "Failed to find trace-block stats for $test_name" >&2
     cat "$log" >&2
@@ -197,6 +206,7 @@ require_positive_reg_cache_spills() {
   local reg_cache_spills
 
   reg_cache_spills=$(sed -n 's/.*reg cache spills = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$reg_cache_spills" ]; then
     echo "Failed to find register-cache spill stats for $test_name" >&2
     cat "$log" >&2
@@ -217,6 +227,7 @@ require_reg_cache_spills_at_most() {
   local reg_cache_spills
 
   reg_cache_spills=$(sed -n 's/.*reg cache spills = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$reg_cache_spills" ]; then
     echo "Failed to find register-cache spill stats for $test_name" >&2
     cat "$log" >&2
@@ -236,6 +247,7 @@ require_positive_store_continuations() {
   local store_continuations
 
   store_continuations=$(sed -n 's/.*native store continuations = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$store_continuations" ]; then
     echo "Failed to find native store continuation stats for $test_name" >&2
     cat "$log" >&2
@@ -255,6 +267,7 @@ require_positive_native_paged_loads() {
   local native_paged_loads
 
   native_paged_loads=$(sed -n 's/.*native paged loads = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_paged_loads" ]; then
     echo "Failed to find native paged load stats for $test_name" >&2
     cat "$log" >&2
@@ -274,6 +287,7 @@ require_positive_native_paged_stores() {
   local native_paged_stores
 
   native_paged_stores=$(sed -n 's/.*native paged stores = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$native_paged_stores" ]; then
     echo "Failed to find native paged store stats for $test_name" >&2
     cat "$log" >&2
@@ -293,6 +307,7 @@ require_positive_invalidated_blocks() {
   local invalidated_blocks
 
   invalidated_blocks=$(sed -n 's/.*invalidated blocks = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$invalidated_blocks" ]; then
     echo "Failed to find invalidated block stats for $test_name" >&2
     cat "$log" >&2
@@ -312,6 +327,7 @@ require_positive_ifetch_generation_fast_hits() {
   local fast_hits
 
   fast_hits=$(sed -n 's/.*ifetch generation fast hits = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$fast_hits" ]; then
     echo "Failed to find ifetch generation fast-hit stats for $test_name" >&2
     cat "$log" >&2
@@ -331,6 +347,7 @@ require_positive_source_reverse_invalidations() {
   local reverse_walks
 
   reverse_walks=$(sed -n 's/.*source reverse invalidations = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$reverse_walks" ]; then
     echo "Failed to find source reverse-invalidation stats for $test_name" >&2
     cat "$log" >&2
@@ -350,6 +367,7 @@ require_positive_zero_side_exits() {
   local zero_side_exits
 
   zero_side_exits=$(sed -n 's/.*zero side exits = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$zero_side_exits" ]; then
     echo "Failed to find zero side-exit stats for $test_name" >&2
     cat "$log" >&2
@@ -369,6 +387,7 @@ require_positive_data_tlb_hits() {
   local data_tlb_hits
 
   data_tlb_hits=$(sed -n 's/.*data TLB hits = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$data_tlb_hits" ]; then
     echo "Failed to find data TLB hit stats for $test_name" >&2
     cat "$log" >&2
@@ -388,6 +407,7 @@ require_positive_data_tlb_fills() {
   local data_tlb_fills
 
   data_tlb_fills=$(sed -n 's/.*data TLB fills = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$data_tlb_fills" ]; then
     echo "Failed to find data TLB fill stats for $test_name" >&2
     cat "$log" >&2
@@ -407,6 +427,7 @@ require_positive_data_tlb_flushes() {
   local data_tlb_flushes
 
   data_tlb_flushes=$(sed -n 's/.*data TLB flushes = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$data_tlb_flushes" ]; then
     echo "Failed to find data TLB flush stats for $test_name" >&2
     cat "$log" >&2
@@ -426,6 +447,7 @@ require_positive_data_tlb_page_table_flushes() {
   local data_tlb_page_table_flushes
 
   data_tlb_page_table_flushes=$(sed -n 's/.*data TLB page-table flushes = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$data_tlb_page_table_flushes" ]; then
     echo "Failed to find data TLB page-table flush stats for $test_name" >&2
     cat "$log" >&2
@@ -445,6 +467,7 @@ require_positive_inline_paged_loads() {
   local inline_paged_loads
 
   inline_paged_loads=$(sed -n 's/.*inline paged loads = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$inline_paged_loads" ]; then
     echo "Failed to find inline paged load stats for $test_name" >&2
     cat "$log" >&2
@@ -464,6 +487,7 @@ require_positive_inline_paged_stores() {
   local inline_paged_stores
 
   inline_paged_stores=$(sed -n 's/.*inline paged stores = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$inline_paged_stores" ]; then
     echo "Failed to find inline paged store stats for $test_name" >&2
     cat "$log" >&2
@@ -483,6 +507,7 @@ require_positive_inline_paged_load_hits() {
   local inline_paged_load_hits
 
   inline_paged_load_hits=$(sed -n 's/.*inline paged load hits = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$inline_paged_load_hits" ]; then
     echo "Failed to find inline paged load hit stats for $test_name" >&2
     cat "$log" >&2
@@ -502,6 +527,7 @@ require_positive_inline_paged_store_hits() {
   local inline_paged_store_hits
 
   inline_paged_store_hits=$(sed -n 's/.*inline paged store hits = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$inline_paged_store_hits" ]; then
     echo "Failed to find inline paged store hit stats for $test_name" >&2
     cat "$log" >&2
@@ -521,6 +547,7 @@ require_positive_helper_loads() {
   local helper_loads
 
   helper_loads=$(sed -n 's/.*helper loads = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$helper_loads" ]; then
     echo "Failed to find helper load stats for $test_name" >&2
     cat "$log" >&2
@@ -540,6 +567,7 @@ require_positive_helper_stores() {
   local helper_stores
 
   helper_stores=$(sed -n 's/.*helper stores = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$helper_stores" ]; then
     echo "Failed to find helper store stats for $test_name" >&2
     cat "$log" >&2
@@ -560,6 +588,7 @@ require_positive_unsupported_opcode() {
   local count
 
   count=$(sed -n "s/.*unsupported opcode $opcode = \\([0-9][0-9]*\\).*/\\1/p" "$log" | tail -n 1)
+
   if [ -z "$count" ]; then
     echo "Failed to find unsupported opcode $opcode stats for $test_name" >&2
     cat "$log" >&2
@@ -580,6 +609,7 @@ require_positive_block_end_reason() {
   local count
 
   count=$(sed -n "s/.*block end $reason = \\([0-9][0-9]*\\).*/\\1/p" "$log" | tail -n 1)
+
   if [ -z "$count" ]; then
     echo "Failed to find block-end $reason stats for $test_name" >&2
     cat "$log" >&2
@@ -600,6 +630,7 @@ require_positive_side_exit_reason() {
   local count
 
   count=$(sed -n "s/.*side exit $reason = \\([0-9][0-9]*\\).*/\\1/p" "$log" | tail -n 1)
+
   if [ -z "$count" ]; then
     echo "Failed to find side-exit $reason stats for $test_name" >&2
     cat "$log" >&2
@@ -630,6 +661,7 @@ require_positive_direct_links() {
   local count
 
   count=$(sed -n 's/.*direct links taken = \([0-9][0-9]*\), misses = [0-9][0-9]*.*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$count" ]; then
     echo "Failed to find direct-link taken stats for $test_name" >&2
     cat "$log" >&2
@@ -649,6 +681,7 @@ require_positive_direct_branch_links() {
   local count
 
   count=$(sed -n 's/.*direct branch links taken = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$count" ]; then
     echo "Failed to find direct branch-link stats for $test_name" >&2
     cat "$log" >&2
@@ -668,6 +701,7 @@ require_positive_guarded_direct_links() {
   local count
 
   count=$(sed -n 's/.*direct guarded links taken = \([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+
   if [ -z "$count" ]; then
     echo "Failed to find guarded direct-link stats for $test_name" >&2
     cat "$log" >&2
@@ -699,48 +733,60 @@ for test_name in "${TESTS[@]}"; do
   fi
 
   require_positive_jit_instructions "$out" "$test_name"
+
   if [ "$test_name" = "riscv64-jit-load-fast" ]; then
     require_positive_native_loads "$out" "$test_name"
   fi
+
   if [ "$test_name" = "riscv64-jit-store-fast" ]; then
     require_positive_native_stores "$out" "$test_name"
   fi
+
   if [ "$test_name" = "riscv64-jit-negative-cache" ]; then
     require_positive_invalidated_blocks "$out" "$test_name"
     require_positive_source_reverse_invalidations "$out" "$test_name"
     require_positive_unsupported_opcode "$out" "$test_name" "0x0f"
     require_direct_link_stats "$out" "$test_name"
   fi
+
   if [ "$test_name" = "riscv64-jit-jump-fast" ]; then
     require_positive_native_jumps "$out" "$test_name"
     require_positive_block_end_reason "$out" "$test_name" "jump"
   fi
+
   if [ "$test_name" = "riscv64-jit-direct-link" ]; then
     require_positive_native_jumps "$out" "$test_name"
     require_positive_direct_links "$out" "$test_name"
     require_positive_direct_branch_links "$out" "$test_name"
   fi
+
   if [ "$test_name" = "riscv64-jit-trace" ]; then
     require_positive_trace_blocks "$out" "$test_name"
   fi
+
   if [ "$test_name" = "riscv64-jit-m-fast" ]; then
     require_positive_native_m_ops "$out" "$test_name"
   fi
+
   if [ "$test_name" = "riscv64-jit-sv39-remap" ]; then
     require_positive_translated_blocks "$out" "$test_name"
   fi
+
   if [ "$test_name" = "riscv64-jit-sv39-cross-page" ]; then
     require_positive_translated_blocks "$out" "$test_name"
     require_positive_translated_cross_page_blocks "$out" "$test_name"
     require_positive_segmented_source_blocks "$out" "$test_name"
   fi
+
   if [ "$test_name" = "riscv64-jit-mprv-ifetch" ]; then
     require_positive_translated_blocks "$out" "$test_name"
   fi
+
   if [ "$test_name" = "riscv64-jit-reg-cache" ]; then
     require_positive_reg_cache_spills "$out" "$test_name"
     require_reg_cache_spills_at_most "$out" "$test_name" 12
   fi
+
   if [ "$test_name" = "riscv64-jit-memory-entry" ]; then
     require_positive_native_loads "$out" "$test_name"
     require_positive_native_stores "$out" "$test_name"
@@ -752,12 +798,14 @@ for test_name in "${TESTS[@]}"; do
     require_positive_side_exit_reason "$out" "$test_name" "store-guard"
     require_positive_side_exit_reason "$out" "$test_name" "store-source"
   fi
+
   if [ "$test_name" = "riscv64-jit-sv39-data" ]; then
     require_positive_translated_blocks "$out" "$test_name"
     require_positive_native_paged_loads "$out" "$test_name"
     require_positive_native_paged_stores "$out" "$test_name"
     require_positive_guarded_direct_links "$out" "$test_name"
   fi
+
   if [ "$test_name" = "riscv64-jit-sv39-dtlb" ]; then
     require_positive_translated_blocks "$out" "$test_name"
     require_positive_ifetch_generation_fast_hits "$out" "$test_name"
@@ -776,6 +824,7 @@ for test_name in "${TESTS[@]}"; do
     require_positive_side_exit_reason "$out" "$test_name" "paged-store-helper"
     require_positive_invalidated_blocks "$out" "$test_name"
   fi
+
   rm -f "$out"
   trap - EXIT
 done

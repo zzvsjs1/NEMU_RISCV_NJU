@@ -45,10 +45,12 @@ static void write_pattern_file(const char *path, size_t size)
     FILE *file = fopen(path, "wb");
 
     assert(file != 0);
+
     for (size_t i = 0; i < size; i++)
     {
         assert(fputc((int)(i & 0xffu), file) != EOF);
     }
+
     assert(fclose(file) == 0);
 }
 
@@ -62,11 +64,13 @@ static void write_sparse_file(const char *path, size_t size)
     FILE *file = fopen(path, "wb");
 
     assert(file != 0);
+
     if (size > 0)
     {
         assert(fseek(file, (long)(size - 1u), SEEK_SET) == 0);
         assert(fputc(0, file) != EOF);
     }
+
     assert(fclose(file) == 0);
 }
 
@@ -343,10 +347,12 @@ static void test_truncate_shrinks_and_extends_with_zero_fill(void)
 
     memset(buf, 0xa5, sizeof(buf));
     assert(fat32_backend_read(&file, 0, buf, sizeof(buf)) == sizeof(buf));
+
     for (size_t i = 0; i < 100; i++)
     {
         assert(buf[i] == (uint8_t)(i & 0xffu));
     }
+
     assert_range_is_zero(&buf[100], 600);
     assert(fat32_backend_close(&file) == 0);
     fat32_test_disk_close();

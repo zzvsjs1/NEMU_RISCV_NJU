@@ -14,12 +14,14 @@ long long ans[] = {0x19d29ab9db1a18e4LL, 0xea15986d3ac3088eLL, 0x2649e980fc0db23
 int main()
 {
     int i, j, ans_idx = 0;
+
     for (i = 0; i < NR_DATA; i++)
     {
         for (j = i; j < NR_DATA; j++)
         {
             check(ans[ans_idx++] == mul(test_data[i], test_data[j]));
         }
+
         check(j == NR_DATA);
     }
 

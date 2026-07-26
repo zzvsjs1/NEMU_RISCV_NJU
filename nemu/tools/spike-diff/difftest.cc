@@ -84,6 +84,7 @@ void sim_t::diff_step(uint64_t n)
 void sim_t::diff_get_regs(void *diff_context)
 {
     riscv_difftest_state_t *ctx = (riscv_difftest_state_t *)diff_context;
+
     for (int i = 0; i < RISCV_GPR_NUM; i++)
     {
         ctx->gpr[i] = state->XPR[i];
@@ -112,6 +113,7 @@ void sim_t::diff_get_regs(void *diff_context)
          */
         ctx->fpr[i] = state->FPR[i].v[0];
     }
+
     ctx->fcsr = diff_read_csr(CSR_FCSR) & 0xffu;
 #endif
 }
@@ -119,10 +121,12 @@ void sim_t::diff_get_regs(void *diff_context)
 void sim_t::diff_set_regs(void *diff_context)
 {
     riscv_difftest_state_t *ctx = (riscv_difftest_state_t *)diff_context;
+
     for (int i = 0; i < RISCV_GPR_NUM; i++)
     {
         state->XPR.write(i, (sword_t)ctx->gpr[i]);
     }
+
     state->pc = ctx->pc;
 
     diff_write_csr(CSR_SATP, ctx->csr.satp);
@@ -140,10 +144,12 @@ void sim_t::diff_set_regs(void *diff_context)
      */
     reg_t target_mstatus = ctx->csr.mstatus;
     reg_t fp_restore_mstatus = target_mstatus;
+
     if ((fp_restore_mstatus & MSTATUS_FS) == 0)
     {
         fp_restore_mstatus |= (reg_t)1 << 13;
     }
+
     diff_write_csr(CSR_MSTATUS, fp_restore_mstatus);
 #else
     diff_write_csr(CSR_MSTATUS, ctx->csr.mstatus);
@@ -163,6 +169,7 @@ void sim_t::diff_set_regs(void *diff_context)
         value.v[1] = UINT64_MAX;
         state->FPR.write(i, value);
     }
+
     diff_write_csr(CSR_FCSR, ctx->fcsr & 0xffu);
     diff_write_csr(CSR_MSTATUS, target_mstatus);
 #endif
@@ -171,6 +178,7 @@ void sim_t::diff_set_regs(void *diff_context)
 void sim_t::diff_memcpy(reg_t dest, void *src, size_t n)
 {
     mmu_t *mmu = p->get_mmu();
+
     for (size_t i = 0; i < n; i++)
     {
         mmu->store<uint8_t>(dest + i, *((uint8_t *)src + i));

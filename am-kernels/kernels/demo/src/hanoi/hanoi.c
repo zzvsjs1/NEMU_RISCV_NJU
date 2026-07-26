@@ -24,6 +24,7 @@ static void text(int y, int i, int d, const char *s)
 {
     int yy = H - y + 1;
     int xx = (H + 1) * (2 * i + 1) - d;
+
     while (d--)
     {
         for (const char *p = s; *p; p++)
@@ -63,8 +64,10 @@ void hanoi()
     screen_clear();
 
     int c;
+
     for (c = 0; c < 3; c++)
         init_tower(&t[c]);
+
     for (c = H; c; c--)
         add_disk(0, c);
 

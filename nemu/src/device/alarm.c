@@ -28,6 +28,7 @@ static void alarm_sig_handler(int signum)
      * than wall-clock sleep, which is the contract timer.c relies on.
      */
     int i;
+
     for (i = 0; i < idx; i++)
     {
         handler[i]();

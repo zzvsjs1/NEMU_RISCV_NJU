@@ -69,6 +69,7 @@ static inline uintptr_t get_satp()
 {
     uintptr_t satp;
     asm volatile("csrr %0, satp" : "=r"(satp));
+
     // Keep the CTE contract unchanged: Context.pdir stores the root page-table
     // pointer, not the raw satp value. Masking with the active XLEN's PPN field
     // discards MODE and ASID before rebuilding the identity-mapped pointer.
@@ -87,9 +88,11 @@ bool vme_init(void *(*pgalloc_f)(int), void (*pgfree_f)(void *))
     // AM and the simple kernels rely on physical addresses also being valid C
     // pointers while they build page tables and touch device buffers.
     size_t i;
+
     for (i = 0; i < LENGTH(segments); i++)
     {
         void *va = segments[i].start;
+
         for (; va < segments[i].end; va += PGSIZE)
         {
             map(&kas, va, va, 0);
@@ -108,6 +111,7 @@ void protect(AddrSpace *as)
     as->ptr = updir;
     as->area = USER_SPACE;
     as->pgsize = PGSIZE;
+
     // map kernel space
     // Copying the kernel root table gives every user address space the same
     // machine-mode mappings. User leaf entries are added later with PTE_U.
@@ -245,6 +249,7 @@ Context *ucontext(AddrSpace *as, Area kstack, void *entry)
     // and enter the requested entry address with satp set to as->ptr.
     // Allocate the Context at the top of the kernel stack.
     uintptr_t sp = (uintptr_t)kstack.end;
+
     // 16-byte alignment is a good ABI habit
     sp &= ~((uintptr_t)0xF);
 
@@ -272,6 +277,7 @@ Context *ucontext(AddrSpace *as, Area kstack, void *entry)
 
     c->pdir = as->ptr; // Use this address space's page table root
     c->ksp = kstack.end;
+
     // np is consumed only by trap.S. It says the next mret enters user mode,
     // therefore mscratch must be armed with this context's kernel stack top.
     c->np = 1;

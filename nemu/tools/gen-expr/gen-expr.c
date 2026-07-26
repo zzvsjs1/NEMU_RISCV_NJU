@@ -41,11 +41,14 @@ int main(int argc, char *argv[])
     int seed = time(0);
     srand(seed);
     int loop = 1;
+
     if (argc > 1)
     {
         sscanf(argv[1], "%d", &loop);
     }
+
     int i;
+
     for (i = 0; i < loop; i++)
     {
         gen_rand_expr();
@@ -58,6 +61,7 @@ int main(int argc, char *argv[])
         fclose(fp);
 
         int ret = system("gcc /tmp/.code.c -o /tmp/.expr");
+
         if (ret != 0)
             continue;
 
@@ -70,5 +74,6 @@ int main(int argc, char *argv[])
 
         printf("%u %s\n", result, buf);
     }
+
     return 0;
 }

@@ -202,6 +202,7 @@ void isa_jit_flush_all(void)
     {
         rv64_jit_arena_reset();
     }
+
     rv64_jit_data_tlb_flush();
 }
 
@@ -276,6 +277,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
     }
 
     JIT_STAT_INC(source_full_invalidation_scans);
+
     for (size_t i = 0; i < RV64_JIT_CACHE_SIZE; i++)
     {
         rv64_jit_block_t *block = &rv64_jit_cache[i];
@@ -343,6 +345,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
             {
                 break;
             }
+
             JIT_STAT_INC(cache_hits);
         }
         else
@@ -369,6 +372,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
         rv64_jit_entry_budget = remaining_budget;
         rv64_jit_loop_extra = 0;
         const uint32_t ran = block->entry();
+
         if (ran == 0)
         {
             JIT_STAT_INC(zero_side_exits);

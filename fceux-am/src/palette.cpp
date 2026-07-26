@@ -90,8 +90,6 @@ static void ApplyDeemphasisBisqwit(int entry, u8& r, u8& g, u8& b)
     float lo_and_hi[2] = { levels[level + 4 * (color == 0x0)],
         levels[level + 4 * (color <  0xD)] };
 
-
-
     //fceux alteration: two passes
     //1st pass calculates bisqwit's base color
     //2nd pass calculates it with deemph
@@ -143,9 +141,6 @@ static void ApplyDeemphasisBisqwit(int entry, u8& r, u8& g, u8& b)
             if(myb!=0) b = (u8)(BCLAMP(b*bscale));
         }
     }
-
-
-
 }
 
 static void ApplyDeemphasisComplete(pal* pal512)

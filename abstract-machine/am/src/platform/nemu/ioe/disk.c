@@ -55,6 +55,7 @@ void __am_disk_blkio(AM_DISK_BLKIO_T *io)
     outl(DISK_REG(reg_buf), (uintptr_t)io->buf);
     outl(DISK_REG(reg_blkno), (uint32_t)io->blkno);
     outl(DISK_REG(reg_io_blkcnt), (uint32_t)io->blkcnt);
+
     /*
      * blkcnt is part of the request, not a loop hint for AM.  Letting NEMU copy
      * several adjacent blocks per command is what makes the Nanos bounce-buffer

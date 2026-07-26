@@ -40,6 +40,7 @@ static inline void putch2(char c)
             print_char(c, y, x / 2);
             screen_refresh();
         }
+
         x++;
     }
 }
@@ -64,6 +65,7 @@ void bf()
      *  over at the end they are not valid BF commands and so are ignored.
      */
     const char *s = prog;
+
     while ((ch = *(s++)) != '\0')
     {
         if (ch == '<' || ch == '>' || ch == '+' || ch == '-' ||
@@ -74,6 +76,7 @@ void bf()
                 printf("malloc failed! exiting...\n");
                 halt(1);
             }
+
             memset(n, 0, sizeof(*n));
 
             if (p)
@@ -147,9 +150,11 @@ void bf()
                     printf("malloc failed! exiting...\n");
                     halt(1);
                 }
+
                 memset(m->next, 0, sizeof(*m));
                 m->next->prev = m;
             }
+
             m = m->next;
             break;
         }
@@ -161,6 +166,7 @@ void bf()
         mhead = mhead->next;
         free(m);
     }
+
     while (pgm != NULL)
     {
         n = pgm;

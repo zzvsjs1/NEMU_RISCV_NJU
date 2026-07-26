@@ -1,6 +1,7 @@
 import os, sys, pathlib, subprocess
 
 f = pathlib.Path(sys.argv[1])
+
 try:
     objcopy = os.getenv('CROSS_COMPILE', '') + 'objcopy'
     data = subprocess.run(

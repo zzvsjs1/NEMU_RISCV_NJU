@@ -6,9 +6,11 @@
 void BDF_Font::create(uint32_t ch, int *bbx, uint32_t *bitmap, int count)
 {
     font[ch] = new uint32_t[h];
+
     for (int y = 0; y < h; y++)
     {
         uint32_t row = 0;
+
         for (int x = 0; x < w; x++)
         {
             int x1 = x - bbx[2];
@@ -24,6 +26,7 @@ void BDF_Font::create(uint32_t ch, int *bbx, uint32_t *bitmap, int count)
                 }
             }
         }
+
         font[ch][y] = row;
     }
 }
@@ -81,6 +84,7 @@ BDF_Font::BDF_Font(const char *fname)
         {
             int idx = 0;
             bm[bm_idx] = 0;
+
             for (const char *p = buf; *p != '\n'; p++)
             {
                 int val;
@@ -89,6 +93,7 @@ BDF_Font::BDF_Font(const char *fname)
                     val = *p - '0';
                 else
                     val = *p - 'A' + 10;
+
                 for (int i = 0; i < 4; i++)
                 {
                     if ((val >> (3 - i)) & 1)
@@ -98,6 +103,7 @@ BDF_Font::BDF_Font(const char *fname)
                     idx++;
                 }
             }
+
             bm_idx++;
         }
 

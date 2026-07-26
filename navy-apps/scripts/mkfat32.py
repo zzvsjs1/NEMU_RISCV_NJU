@@ -89,6 +89,7 @@ def scan_tree(root: Path) -> Node:
     def scan(path: Path, ancestors: set[Path]) -> Node:
         validate_name(path.name)
         real_path = resolve_existing(path)
+
         if real_path.is_dir():
             if real_path in ancestors:
                 die(f"directory symlink loop: {path}")
@@ -97,6 +98,7 @@ def scan_tree(root: Path) -> Node:
             # target while keeping the link name as the on-disk directory name.
             children = [scan(child, ancestors | {real_path}) for child in sorted(path.iterdir(), key=path_sort_key)]
             return Node(path=path, name=path.name, is_dir=True, children=children)
+
         if real_path.is_file():
             return Node(path=path, name=path.name, is_dir=False, size=real_path.stat().st_size)
         die(f"unsupported file type: {path}")
@@ -109,6 +111,7 @@ def scan_tree(root: Path) -> Node:
 def cleaned_short_part(text: str) -> str:
     allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$%'-_@~`!(){}^#&")
     out = []
+
     for ch in text.upper():
         out.append(ch if ch in allowed else "_")
     return "".join(out)
@@ -152,6 +155,7 @@ def short_alias(name: str, used: set[bytes]) -> bytes:
 
 def assign_short_names(directory: Node) -> None:
     used: set[bytes] = set()
+
     for child in directory.children:
         child.short_name = short_alias(child.name, used)
         child.needs_lfn = child.name != render_short_name(child.short_name)
@@ -165,6 +169,7 @@ def lfn_entry_count(name: str) -> int:
 
 def directory_entry_count(node: Node, is_root: bool) -> int:
     entries = 0 if is_root else 2
+
     for child in node.children:
         entries += 1 + (lfn_entry_count(child.name) if child.needs_lfn else 0)
     return entries
@@ -203,6 +208,7 @@ def allocate_clusters(root: Node) -> int:
 
 def lfn_checksum(short_name: bytes) -> int:
     total = 0
+
     for byte in short_name:
         total = (((total & 1) << 7) + (total >> 1) + byte) & 0xFF
     return total
@@ -225,6 +231,7 @@ def make_lfn_entries(name: str, short_name: bytes) -> bytes:
         entry[12] = 0
         entry[13] = checksum
         entry[26:28] = b"\x00\x00"
+
         for i, unit in enumerate(units[:5]):
             struct.pack_into("<H", entry, 1 + i * 2, unit)
         for i, unit in enumerate(units[5:11]):
@@ -256,6 +263,7 @@ def dot_short_name(name: str) -> bytes:
 
 def serialise_directory(node: Node, parent: Node | None) -> bytes:
     out = bytearray()
+
     if parent is not None:
         # FAT represents the root directory as cluster 0 in a root child's
         # ".." entry, while nested directories point to their real parent.
@@ -334,6 +342,7 @@ def build_fat(fat_size_sectors: int, nodes: list[Node]) -> bytes:
 
 def flatten_nodes(root: Node) -> list[Node]:
     out = [root]
+
     for child in root.children:
         out.extend(flatten_nodes(child))
     return out
@@ -374,6 +383,7 @@ def write_image(root: Node, output: Path) -> None:
     fsinfo = build_fsinfo(data_clusters - used_clusters, next_free if next_free <= data_clusters + 1 else EOC)
 
     output.parent.mkdir(parents=True, exist_ok=True)
+
     with output.open("wb") as image:
         image.truncate(total_sectors * BYTES_PER_SECTOR)
         image.seek(0)
@@ -384,12 +394,14 @@ def write_image(root: Node, output: Path) -> None:
         image.write(boot)
         image.seek(sector_offset(7))
         image.write(fsinfo)
+
         for fat_index in range(FAT_COUNT):
             image.seek(sector_offset(RESERVED_SECTORS + fat_index * fat_size_sectors))
             image.write(fat)
 
         def write_dirs(node: Node, parent: Node | None) -> None:
             write_cluster_chain(image, first_data_sector, node.clusters, serialise_directory(node, parent))
+
             for child in node.children:
                 if child.is_dir:
                     write_dirs(child, node)

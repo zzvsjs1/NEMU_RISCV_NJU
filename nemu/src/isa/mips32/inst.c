@@ -366,15 +366,18 @@ static int decode_exec(Decode *s)
             {
                 if (rs == 31)
                     ftrace_ret(s->pc);
+
                 mips32_finish_control_transfer(s, src1);
             });
     INSTPAT("000000 ????? 00000 ????? 00000 001001", jalr, R,
             {
                 const vaddr_t target = src1;
+
                 if (rd == 0 && rs == 31)
                     ftrace_ret(s->pc);
                 else if (rd != 0)
                     ftrace_call(s->pc, target);
+
                 R(rd) = s->pc + 8;
                 mips32_finish_control_transfer(s, target);
             });
@@ -383,15 +386,18 @@ static int decode_exec(Decode *s)
             {
                 if (rs == 31)
                     ftrace_ret(s->pc);
+
                 mips32_finish_control_transfer(s, src1);
             });
     INSTPAT("000000 ????? 00000 ????? 10000 001001", jalr_hb, R,
             {
                 const vaddr_t target = src1;
+
                 if (rd == 0 && rs == 31)
                     ftrace_ret(s->pc);
                 else if (rd != 0)
                     ftrace_call(s->pc, target);
+
                 R(rd) = s->pc + 8;
                 mips32_finish_control_transfer(s, target);
             });
@@ -425,6 +431,7 @@ static int decode_exec(Decode *s)
     INSTPAT("000000 ????? ????? ????? 00000 100000", add, R,
             {
                 word_t result = 0;
+
                 if (mips32_signed_add_overflows(src1, src2, &result))
                     s->dnpc = isa_raise_intr(MIPS32_EXC_OV, s->pc);
                 else
@@ -434,6 +441,7 @@ static int decode_exec(Decode *s)
     INSTPAT("000000 ????? ????? ????? 00000 100010", sub, R,
             {
                 word_t result = 0;
+
                 if (mips32_signed_sub_overflows(src1, src2, &result))
                     s->dnpc = isa_raise_intr(MIPS32_EXC_OV, s->pc);
                 else
@@ -479,23 +487,27 @@ static int decode_exec(Decode *s)
     INSTPAT("000001 ????? 10000 ????? ????? ??????", bltzal, B,
             {
                 const bool taken = (sword_t)src1 < 0;
+
                 if (taken)
                 {
                     const vaddr_t target = s->snpc + imm;
                     R(31) = s->pc + 8;
                     ftrace_call(s->pc, target);
                 }
+
                 mips32_branch(s, taken, imm);
             });
     INSTPAT("000001 ????? 10001 ????? ????? ??????", bgezal, B,
             {
                 const bool taken = (sword_t)src1 >= 0;
+
                 if (taken)
                 {
                     const vaddr_t target = s->snpc + imm;
                     R(31) = s->pc + 8;
                     ftrace_call(s->pc, target);
                 }
+
                 mips32_branch(s, taken, imm);
             });
 
@@ -520,6 +532,7 @@ static int decode_exec(Decode *s)
     INSTPAT("001000 ????? ????? ????? ????? ??????", addi, I,
             {
                 word_t result = 0;
+
                 if (mips32_signed_add_overflows(src1, imm, &result))
                     s->dnpc = isa_raise_intr(MIPS32_EXC_OV, s->pc);
                 else
@@ -557,6 +570,7 @@ static int decode_exec(Decode *s)
 
     /* SPECIAL2 integer operations and the architectural SDBBP test trap. */
     INSTPAT("011100 ????? ????? ????? 00000 000010", mul, R, R(rd) = src1 * src2);
+
     /* Pre-Release-6 CLZ/CLO duplicate rd in rt; keep that encoded field matchable. */
     INSTPAT("011100 ????? ????? ????? 00000 100000", clz, R,
             R(rd) = src1 == 0 ? 32 : (word_t)__builtin_clz(src1));

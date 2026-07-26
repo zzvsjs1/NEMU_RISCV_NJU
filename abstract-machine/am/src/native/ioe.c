@@ -73,6 +73,7 @@ void __am_ioe_init()
     for (int i = 0; i < LENGTH(lut); i++)
         if (!lut[i])
             lut[i] = fail;
+
     __am_timer_init();
     __am_gpu_init();
     __am_input_init();
@@ -88,6 +89,7 @@ static void do_io(int reg, void *buf)
     {
         __am_ioe_init();
     }
+
     ((handler_t)lut[reg])(buf);
 }
 

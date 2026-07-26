@@ -43,6 +43,7 @@ void prev(int rep)
 
     if (cur < 0)
         cur = 0;
+
     render();
 }
 
@@ -54,6 +55,7 @@ void next(int rep)
 
     if (cur >= N)
         cur = N - 1;
+
     render();
 }
 

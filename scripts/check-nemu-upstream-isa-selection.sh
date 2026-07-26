@@ -8,10 +8,12 @@ TEMP_CONFIGS=()
 
 cleanup() {
     local cfg
+
     for cfg in "${TEMP_CONFIGS[@]}"; do
         rm -f "$cfg"
     done
 }
+
 trap cleanup EXIT
 
 fail() {
@@ -21,6 +23,7 @@ fail() {
 
 check_config_value() {
     local pattern=$1
+
     if ! grep -q "$pattern" "$NEMU_HOME/.config"; then
         sed -n '1,80p' "$NEMU_HOME/.config" >&2
         fail "missing expected config pattern: $pattern"

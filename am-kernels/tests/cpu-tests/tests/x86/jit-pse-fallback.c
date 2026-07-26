@@ -48,20 +48,24 @@ static void write_cr4(uint32_t value)
 static uint32_t expected_work(uint32_t seed)
 {
     uint32_t acc = seed;
+
     for (uint32_t i = 0; i < 64u; i++)
     {
         acc = (acc << 5) ^ (acc >> 2) ^ (0x9e3779b9u + i * 17u);
     }
+
     return acc;
 }
 
 static uint32_t large_page_work(uint32_t seed)
 {
     uint32_t acc = seed;
+
     for (uint32_t i = 0; i < 64u; i++)
     {
         acc = (acc << 5) ^ (acc >> 2) ^ (0x9e3779b9u + i * 17u);
     }
+
     large_page_sink = acc;
     return acc;
 }

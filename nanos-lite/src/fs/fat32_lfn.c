@@ -106,6 +106,7 @@ int fat32_lfn_entry_to_ascii(const Fat32LfnEntry *entry, char *out, size_t out_s
                 out[0] = '\0';
                 return -1;
             }
+
             out[pos] = '\0';
             return (int)pos;
         }
@@ -122,10 +123,12 @@ void fat32_test_fill_lfn_entry(Fat32LfnEntry *entry, const uint16_t chars[13])
     {
         entry->name1[i] = chars[i];
     }
+
     for (int i = 0; i < 6; i++)
     {
         entry->name2[i] = chars[5 + i];
     }
+
     for (int i = 0; i < 2; i++)
     {
         entry->name3[i] = chars[11 + i];

@@ -117,6 +117,7 @@ int main(void)
     {
         return 1;
     }
+
     puts("nanos_syscall_abi tests passed");
     return 0;
 }

@@ -149,11 +149,13 @@ static size_t find_root_entry_offset(const Fat32Volume *vol, const char short_na
     uint32_t root_sector;
 
     assert(fat32_first_sector_of_cluster(vol, vol->root_cluster, &root_sector) == 0);
+
     for (uint32_t sector_index = 0; sector_index < vol->sectors_per_cluster; sector_index++)
     {
         const size_t sector_offset = ((size_t)root_sector + sector_index) * 512u;
 
         image_read_at(sector_offset, sector, sizeof(sector));
+
         for (size_t entry_index = 0; entry_index < 512u / 32u; entry_index++)
         {
             const size_t entry_offset = entry_index * 32u;

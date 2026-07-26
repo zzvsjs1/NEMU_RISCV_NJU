@@ -25,6 +25,7 @@ static void __check_fromhost()
 
     // this should be from the console
     assert(FROMHOST_DEV(fh) == 1);
+
     switch (FROMHOST_CMD(fh))
     {
     case 0:
@@ -41,6 +42,7 @@ static void __set_tohost(uintptr_t dev, uintptr_t cmd, uintptr_t data)
 {
     while (tohost)
         __check_fromhost();
+
     tohost = TOHOST_CMD(dev, cmd, data);
 }
 
@@ -54,11 +56,13 @@ int htif_console_getchar()
     spinlock_lock(&htif_lock);
     __check_fromhost();
     int ch = htif_console_buf;
+
     if (ch >= 0)
     {
         htif_console_buf = -1;
         __set_tohost(1, 0, 0);
     }
+
     spinlock_unlock(&htif_lock);
 
     return ch - 1;
@@ -72,6 +76,7 @@ static void do_tohost_fromhost(uintptr_t dev, uintptr_t cmd, uintptr_t data)
     while (1)
     {
         uint64_t fh = fromhost;
+
         if (fh)
         {
             if (FROMHOST_DEV(fh) == dev && FROMHOST_CMD(fh) == cmd)
@@ -79,9 +84,11 @@ static void do_tohost_fromhost(uintptr_t dev, uintptr_t cmd, uintptr_t data)
                 fromhost = 0;
                 break;
             }
+
             __check_fromhost();
         }
     }
+
     spinlock_unlock(&htif_lock);
 }
 

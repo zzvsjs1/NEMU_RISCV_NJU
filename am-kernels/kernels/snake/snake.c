@@ -56,6 +56,7 @@ static void draw_tile(int y, int x, uint32_t color)
             buf[i] = color;
         }
     }
+
     io_write(AM_GPU_FBDRAW, x * TILE_W, y * TILE_W, buf, TILE_W, TILE_W, false);
 }
 
@@ -81,6 +82,7 @@ static point_t create_food(dim_t game_size)
 static void print_board(rect_t board)
 {
     uint32_t color = 0x0000ff00;
+
     for (int i = board.left; i <= board.right; i++)
     {
         draw_tile(board.top, i, color);
@@ -113,6 +115,7 @@ static void clear_tail(snake_t *snake, rect_t board)
     {
         t += MAX_LENGTH;
     }
+
     draw_tile(snake->body[t].y + board.top + 1, snake->body[t].x + board.left + 1, 0);
 }
 
@@ -136,6 +139,7 @@ static dir_t get_dir(int c)
 static void move_snake(snake_t *snake, dir_t dir)
 {
     point_t p = snake->body[snake->index];
+
     switch (dir)
     {
     case LEFT:
@@ -153,12 +157,14 @@ static void move_snake(snake_t *snake, dir_t dir)
     default:
         break;
     }
+
     snake->index++;
 
     if (snake->index == MAX_LENGTH)
     {
         snake->index = 0;
     }
+
     snake->body[snake->index] = p;
 }
 
@@ -192,6 +198,7 @@ static int is_dead(snake_t *snake, dim_t game_size)
             return 1;
         }
     }
+
     return 0;
 }
 
@@ -236,6 +243,7 @@ int main()
         clear_tail(&snake, board);
 
         dir_t move_dir = get_dir(read_key());
+
         switch (move_dir)
         {
         case UP:
@@ -267,16 +275,20 @@ int main()
             food = create_food(game_size);
             print_food(food, board);
         }
+
         refresh();
 
         uint64_t sleep = 100000 - snake.length * 5000 < 5000 ? 5000 : 100000 - snake.length * 5000;
         uint64_t next_us = io_read(AM_TIMER_UPTIME).us + sleep;
+
         while (io_read(AM_TIMER_UPTIME).us < next_us)
             ;
     } while (!snake.dead);
 
     printf("GAME OVER\nPress Q to Exit\n");
+
     while (read_key() != AM_KEY_Q)
         ;
+
     return 0;
 }

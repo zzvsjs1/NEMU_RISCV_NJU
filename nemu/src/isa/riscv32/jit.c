@@ -479,6 +479,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
         {
             return false;
         }
+
         *paddr = direct;
         return true;
     }
@@ -502,6 +503,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
         {
             return false;
         }
+
         *paddr = translated;
         return true;
     }
@@ -1520,6 +1522,7 @@ static uint8_t jit_hreg_x86_reg(rv32_jit_hreg_t hreg)
     default:
         Assert(0, "jit: invalid host register slot %d", hreg);
     }
+
     return 3;
 }
 
@@ -1651,6 +1654,7 @@ static void jit_reg_cache_init(rv32_jit_reg_cache_t *regs)
 {
     regs->next_age = 1;
     regs->source_refs_loaded = false;
+
     for (uint32_t i = 0; i < RV32_JIT_HREG_COUNT; i++)
     {
         regs->slots[i] = (rv32_jit_reg_slot_t){
@@ -1759,6 +1763,7 @@ static void jit_reg_invalidate_all(rv32_jit_reg_cache_t *regs)
 static rv32_jit_reg_slot_t *jit_reg_choose_slot(rv32_jit_reg_cache_t *regs)
 {
     rv32_jit_reg_slot_t *oldest = &regs->slots[0];
+
     for (uint32_t i = 0; i < RV32_JIT_HREG_COUNT; i++)
     {
         rv32_jit_reg_slot_t *slot = &regs->slots[i];
@@ -1826,6 +1831,7 @@ static bool jit_reg_read_eax(rv32_jit_writer_t *w,
         {
             return false;
         }
+
         slot->loaded = true;
     }
 
@@ -1855,6 +1861,7 @@ static bool jit_reg_read_ecx(rv32_jit_writer_t *w,
         {
             return false;
         }
+
         slot->loaded = true;
     }
 
@@ -1933,6 +1940,7 @@ static rv32_jit_reg_slot_t *jit_reg_loaded_slot(rv32_jit_writer_t *w,
         {
             return NULL;
         }
+
         slot->loaded = true;
     }
 
@@ -2481,6 +2489,7 @@ static void patch_direct_pmem_guard(const rv32_jit_pmem_guard_patch_t *patch,
     {
         patch_rel32(patch->satp_slow_disp, slow_path);
     }
+
     patch_rel32(patch->range_slow_disp, slow_path);
 }
 
@@ -2820,6 +2829,7 @@ static bool emit_load_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
 
     uintptr_t helper = 0;
     uint32_t len = 0;
+
     switch (funct3)
     {
     case 0x0:
@@ -2945,6 +2955,7 @@ static bool emit_store_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
     uintptr_t helper = 0;
     uintptr_t continue_helper = 0;
     uint32_t len = 0;
+
     switch (funct3)
     {
     case 0x0:
@@ -3249,6 +3260,7 @@ static bool emit_branch_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
         {
             return false;
         }
+
         *branch_chained = true;
     }
     else if (!jit_reg_emit_flush_all_dirty(w, regs) ||
@@ -3367,6 +3379,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return false;
                 }
+
                 return jit_reg_write_imm(w, regs, rd, 0);
             case 0x2:
                 return jit_reg_write_imm(w, regs, rd, (int32_t)0 < imm_i(instr));
@@ -3379,6 +3392,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return jit_reg_write_imm(w, regs, rd, 0);
                 }
+
                 return false;
             case 0x6:
                 return jit_reg_write_imm(w, regs, rd, imm);
@@ -3400,6 +3414,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return false;
                 }
+
                 return jit_reg_apply_shift_imm(w, regs, rd, 4,
                                                (uint8_t)bits(instr, 24, 20));
             case 0x4:
@@ -3416,6 +3431,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                     return jit_reg_apply_shift_imm(w, regs, rd, 7,
                                                    (uint8_t)bits(instr, 24, 20));
                 }
+
                 return false;
             case 0x6:
                 return imm == 0 ? true : jit_reg_apply_imm(w, regs, rd, 1, imm);
@@ -3446,6 +3462,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return false;
                 }
+
                 return jit_reg_copy(w, regs, rd, rs1) &&
                        (shamt == 0 || jit_reg_apply_shift_imm(w, regs, rd, 4, shamt));
             case 0x4:
@@ -3465,6 +3482,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                            (shamt == 0 ||
                             jit_reg_apply_shift_imm(w, regs, rd, 7, shamt));
                 }
+
                 return false;
             case 0x6:
                 return jit_reg_copy(w, regs, rd, rs1) &&
@@ -3474,6 +3492,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
                 {
                     return jit_reg_write_imm(w, regs, rd, 0);
                 }
+
                 return jit_reg_copy(w, regs, rd, rs1) &&
                        (imm == UINT32_MAX || jit_reg_apply_imm(w, regs, rd, 4, imm));
             default:
@@ -3495,6 +3514,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
             {
                 return false;
             }
+
             return emit_u8(w, 0xc1) && emit_u8(w, 0xe0) && emit_u8(w, bits(instr, 24, 20)) && jit_reg_write_eax(w, regs, rd);
         case 0x2:
             return emit_cmp_eax_imm(w, imm) && emit_setcc_eax(w, 0x9c) && jit_reg_write_eax(w, regs, rd);
@@ -3512,6 +3532,7 @@ static bool emit_alu_instr(rv32_jit_writer_t *w, rv32_jit_reg_cache_t *regs,
             {
                 return emit_u8(w, 0xc1) && emit_u8(w, 0xf8) && emit_u8(w, bits(instr, 24, 20)) && jit_reg_write_eax(w, regs, rd);
             }
+
             return false;
         case 0x6:
             return emit_u8(w, 0x0d) && emit_u32(w, imm) && jit_reg_write_eax(w, regs, rd);
@@ -3811,6 +3832,7 @@ void isa_jit_flush_all(void)
     {
         jit_arena_reset();
     }
+
     jit_tlb_flush();
 }
 
@@ -3853,6 +3875,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
     }
 
     const paddr_t end = addr + (paddr_t)len;
+
     for (size_t i = 0; i < RV32_JIT_CACHE_SIZE; i++)
     {
         rv32_jit_block_t *block = &jit_cache[i];
@@ -4000,6 +4023,7 @@ static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
     while (count < max_insns && count < RV32_JIT_BLOCK_MAX_INSNS)
     {
         paddr_t cur_paddr = 0;
+
         if (!jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr) ||
             cur_paddr != first_paddr + (paddr_t)source_len)
         {
@@ -4048,6 +4072,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     {
         jit_arena_reset();
     }
+
     jit_code_used = jit_align_up(jit_code_used, RV32_JIT_CODE_ALIGN);
 
     paddr_t first_paddr = 0;
@@ -4126,6 +4151,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
                 jit_reg_cache_restore(&regs, &regs_start);
                 break;
             }
+
             if (branch_chained)
             {
                 chained_loop = true;
@@ -4140,6 +4166,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
                 jit_reg_cache_restore(&regs, &regs_start);
                 break;
             }
+
             block_sets_pc = true;
             end_block = true;
         }
@@ -4251,6 +4278,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
     }
 
     uint32_t total = 0;
+
     while (total < batch_budget)
     {
         /*
@@ -4280,6 +4308,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
             {
                 break;
             }
+
             JIT_STAT_INC(cache_hits);
         }
         else
@@ -4319,6 +4348,7 @@ static uint64_t jit_ratio_x100(uint64_t numerator, uint64_t denominator)
     {
         return 0;
     }
+
     return (numerator * 100u + denominator / 2u) / denominator;
 }
 
@@ -4329,6 +4359,7 @@ static uint64_t jit_percent_x100(uint64_t numerator, uint64_t denominator)
     {
         return 0;
     }
+
     return (numerator * 10000u + denominator / 2u) / denominator;
 }
 #endif

@@ -93,6 +93,7 @@ static Context *do_event(Event e, Context *c)
         {
             panic("priv-test #PF committed EFLAGS before the fault: eflags = 0x%x", (unsigned)c->eflags);
         }
+
         Log("priv-test page fault at %p, cause = 0x%x", (void *)e.ref, (unsigned)e.cause);
         halt(0);
 #else

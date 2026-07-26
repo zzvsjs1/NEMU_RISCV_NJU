@@ -156,6 +156,7 @@ static SDL_mutex *key_queue_lock = NULL;
 static int event_thread(void *args)
 {
     SDL_Event event;
+
     while (1)
     {
         SDL_WaitEvent(&event);
@@ -175,6 +176,7 @@ static int event_thread(void *args)
             break;
         }
     }
+
     return 0;
 }
 
@@ -250,6 +252,7 @@ static const char *redirect_path(char *newpath, const char *path)
         fprintf(stderr, "Redirecting file open: %s -> %s\n", path, newpath);
         return newpath;
     }
+
     return path;
 }
 
@@ -268,6 +271,7 @@ FILE *fopen(const char *path, const char *mode)
         glibc_fopen = (FILE * (*)(const char *, const char *)) dlsym(RTLD_NEXT, "fopen");
         assert(glibc_fopen != NULL);
     }
+
     return glibc_fopen(redirect_path(newpath, path), mode);
 }
 
@@ -334,6 +338,7 @@ ssize_t read(int fd, void *buf, size_t count)
             if (name)
                 return snprintf((char *)buf, count, "k%c %s\n", keydown ? 'd' : 'u', name);
         }
+
         return 0;
     }
     else if (fd == sbctl_fd)
@@ -344,6 +349,7 @@ ssize_t read(int fd, void *buf, size_t count)
         int free = pipe_size - used;
         return snprintf((char *)buf, count, "%d", free);
     }
+
     return glibc_read(fd, buf, count);
 }
 
@@ -365,6 +371,7 @@ ssize_t write(int fd, const void *buf, size_t count)
         SDL_PauseAudio(0);
         return count;
     }
+
     return glibc_write(fd, buf, count);
 }
 
@@ -414,6 +421,7 @@ struct Init
         {
             open_display();
         }
+
         open_event();
         open_audio();
     }

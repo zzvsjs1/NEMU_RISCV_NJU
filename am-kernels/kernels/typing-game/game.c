@@ -61,6 +61,7 @@ void game_logic_update(int frame)
 {
     if (frame % (FPS / CPS) == 0)
         new_char();
+
     for (int i = 0; i < LENGTH(chars); i++)
     {
         struct character *c = &chars[i];
@@ -105,6 +106,7 @@ void render()
     }
 
     n = 0;
+
     for (int i = 0; i < LENGTH(chars); i++)
     {
         struct character *c = &chars[i];
@@ -118,15 +120,19 @@ void render()
             io_write(AM_GPU_FBDRAW, c->x, c->y, texture[col][c->ch - 'A'], CHAR_W, CHAR_H, false);
         }
     }
+
     io_write(AM_GPU_FBDRAW, 0, 0, NULL, 0, 0, true);
+
     for (int i = 0; i < 40; i++)
         putch('\b');
+
     printf("Hit: %d; Miss: %d; Wrong: %d", hit, miss, wrong);
 }
 
 void check_hit(char ch)
 {
     int m = -1;
+
     for (int i = 0; i < LENGTH(chars); i++)
     {
         struct character *c = &chars[i];
@@ -154,6 +160,7 @@ void video_init()
     screen_h = io_read(AM_GPU_CONFIG).height;
 
     extern char font[];
+
     for (int i = 0; i < CHAR_W * CHAR_H; i++)
         blank[i] = COL_PURPLE;
 
@@ -166,6 +173,7 @@ void video_init()
     for (int ch = 0; ch < 26; ch++)
     {
         char *c = &font[CHAR_H * ch];
+
         for (int i = 0, y = 0; y < CHAR_H; y++)
             for (int x = 0; x < CHAR_W; x++, i++)
             {
@@ -218,6 +226,7 @@ int main()
 
     int current = 0, rendered = 0;
     uint64_t t0 = io_read(AM_TIMER_UPTIME).us;
+
     while (1)
     {
         int frames = (io_read(AM_TIMER_UPTIME).us - t0) / (1000000 / FPS);

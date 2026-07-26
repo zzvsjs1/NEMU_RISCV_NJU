@@ -199,11 +199,13 @@ static word_t x86_inst_fetch(Decode *s, int len)
     word_t ret_save = ret;
     int i;
     assert(s->snpc - s->pc < sizeof(s->isa.inst));
+
     for (i = 0; i < len; i++)
     {
         p[i] = ret & X86_BYTE_MASK;
         ret >>= 8;
     }
+
     return ret_save;
 #else
     word_t ret = vaddr_ifetch(seg_linear(X86_SREG_CS, s->snpc, len, "ifetch"), len);
@@ -317,6 +319,7 @@ static uint32_t desc_limit(uint32_t lo, uint32_t hi)
     {
         limit = (limit << X86_PAGE_SHIFT) | X86_PAGE_OFFSET_MASK;
     }
+
     return limit;
 }
 
@@ -414,6 +417,7 @@ static void sreg_write(Decode *s, int idx, word_t data)
     if ((selector & ~X86_SELECTOR_RPL_MASK) == 0)
     {
         Assert(idx != X86_SREG_SS, "x86 loads a null SS selector at pc = " FMT_WORD, s->pc);
+
         if (idx == X86_SREG_ES || idx == X86_SREG_DS)
         {
             *sreg_visible_ptr(idx) = 0;
@@ -580,6 +584,7 @@ static word_t eflags_write_protected_width(word_t requested, int width)
     {
         requested = (old & ~X86_WORD_MASK) | (requested & X86_WORD_MASK);
     }
+
     requested |= X86_EFLAGS_FIXED_ONE;
 
     /*
@@ -591,6 +596,7 @@ static word_t eflags_write_protected_width(word_t requested, int width)
     {
         requested = (requested & ~FLAG_IOPL) | (old & FLAG_IOPL);
     }
+
     if (cpl > x86_iopl(old))
     {
         requested = (requested & ~FLAG_IF) | (old & FLAG_IF);
@@ -864,6 +870,7 @@ static void load_addr32(Decode *s, ModR_M *m, word_t *rm_addr,
     if (disp_size != 0)
     { /* has disp */
         disp = x86_inst_fetch(s, disp_size);
+
         if (disp_size == X86_WIDTH_BYTE)
         {
             disp = (int8_t)disp;
@@ -871,6 +878,7 @@ static void load_addr32(Decode *s, ModR_M *m, word_t *rm_addr,
     }
 
     word_t addr = disp;
+
     if (base_reg != -1)
         addr += reg_l(base_reg);
     if (index_reg != -1)
@@ -937,6 +945,7 @@ static void load_addr16(Decode *s, ModR_M *m, word_t *rm_addr, int *rm_seg)
     if (disp_size != 0)
     {
         disp = x86_inst_fetch(s, disp_size);
+
         if (disp_size == X86_WIDTH_BYTE)
         {
             disp = (int8_t)disp;
@@ -970,6 +979,7 @@ static void decode_rm(Decode *s, int *rm_reg, word_t *rm_addr, int *rm_seg,
 {
     ModR_M m;
     m.val = x86_inst_fetch(s, X86_WIDTH_BYTE);
+
     if (reg != NULL)
         *reg = m.reg;
     if (m.mod == 3)
@@ -1169,6 +1179,7 @@ static void decode_operand(Decode *s, uint8_t opcode, int *rd_, word_t *src1,
         break;
     case TYPE_GP3:
         decode_rm(s, rd_, addr, seg, addr_uses_esp, gp_idx, w, addr_size_16);
+
         if (*gp_idx == 0)
             imm();
         break;
@@ -1287,6 +1298,7 @@ static void gp1(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w, word
     word_t lhs = RMr(rd, w);
     word_t old_eflags = cpu.eflags;
     word_t result = alu_exec(gp_idx, lhs, imm, w);
+
     if (gp_idx != ALU_CMP)
     {
         word_t new_eflags = cpu.eflags;
@@ -1300,6 +1312,7 @@ static void alu_rm_reg(int op, int rd, word_t addr, int seg, int w, word_t src)
     word_t lhs = RMr(rd, w);
     word_t old_eflags = cpu.eflags;
     word_t result = alu_exec(op, lhs, src, w);
+
     if (op != ALU_CMP)
     {
         word_t new_eflags = cpu.eflags;
@@ -1313,6 +1326,7 @@ static void alu_reg_rm(int op, int rd, int rs, word_t addr, int seg, int w)
     word_t lhs = Rr(rd, w);
     word_t rhs = RMr(rs, w);
     word_t result = alu_exec(op, lhs, rhs, w);
+
     if (op != ALU_CMP)
         Rw(rd, w, result);
 }
@@ -1341,6 +1355,7 @@ static void incdec_rm(int is_dec, int rd, word_t addr, int seg, int w)
 static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w, word_t count)
 {
     count &= X86_SHIFT_COUNT_MASK;
+
     if (count == 0)
         return;
 
@@ -1353,6 +1368,7 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w,
     if (gp_idx == 2 || gp_idx == 3)
     {
         word_t rotate_count = (bits == X86_DWORD_BITS) ? count : (count % (bits + 1));
+
         if (rotate_count == 0)
             return;
 
@@ -1374,6 +1390,7 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w,
         cf = ((ring >> bits) & 1u) != 0;
         rm_write(rd, addr, seg, w, result);
         flag_set(FLAG_CF, cf);
+
         if (rotate_count == 1)
         {
             if (gp_idx == 2)
@@ -1385,20 +1402,24 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w,
                 flag_set(FLAG_OF, ((result ^ (result << 1)) & sign_bit(w)) != 0);
             }
         }
+
         return;
     }
 
     if (gp_idx == 0 || gp_idx == 1)
     {
         word_t rotate_count = count % bits;
+
         if (rotate_count == 0)
             return;
 
         lhs = mask_width(lhs, w);
+
         if (gp_idx == 0)
         {
             result = mask_width((lhs << rotate_count) | (lhs >> (bits - rotate_count)), w);
             cf = (result & 1) != 0;
+
             if (rotate_count == 1)
                 of = (((result & sign_bit(w)) != 0) != cf);
         }
@@ -1406,12 +1427,14 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w,
         {
             result = mask_width((lhs >> rotate_count) | (lhs << (bits - rotate_count)), w);
             cf = (result & sign_bit(w)) != 0;
+
             if (rotate_count == 1)
                 of = ((result ^ (result << 1)) & sign_bit(w)) != 0;
         }
 
         rm_write(rd, addr, seg, w, result);
         flag_set(FLAG_CF, cf);
+
         if (rotate_count == 1)
             flag_set(FLAG_OF, of);
         return;
@@ -1422,6 +1445,7 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w,
     case 4:
     case 6:
         result = mask_width(lhs << count, w);
+
         if (count <= (word_t)bits)
             cf = ((lhs >> (bits - count)) & 1) != 0;
         if (count == 1)
@@ -1430,6 +1454,7 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w,
     case 5:
         result = mask_width(lhs, w) >> count;
         cf = ((lhs >> (count - 1)) & 1) != 0;
+
         if (count == 1)
             of = (lhs & sign_bit(w)) != 0;
         break;
@@ -1446,6 +1471,7 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w,
     rm_write(rd, addr, seg, w, result);
     set_zsp_flags(result, w);
     flag_set(FLAG_CF, cf);
+
     if (count == 1)
         flag_set(FLAG_OF, of);
 }
@@ -1458,13 +1484,16 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w,
 static void double_shift_rm(int is_right, int rd, word_t addr, int seg, int w, word_t src, word_t count)
 {
     count &= X86_SHIFT_COUNT_MASK;
+
     if (count == 0)
         return;
 
     int bits = w * X86_BITS_PER_BYTE;
+
     if (count > (word_t)bits)
     {
         count %= bits;
+
         if (count == 0)
             return;
     }
@@ -1474,6 +1503,7 @@ static void double_shift_rm(int is_right, int rd, word_t addr, int seg, int w, w
 
     word_t result;
     bool cf;
+
     if (is_right)
     {
         result = count == (word_t)bits ? src : ((dest >> count) | (src << (bits - count)));
@@ -1484,11 +1514,13 @@ static void double_shift_rm(int is_right, int rd, word_t addr, int seg, int w, w
         result = count == (word_t)bits ? src : ((dest << count) | (src >> (bits - count)));
         cf = ((dest >> (bits - count)) & 1) != 0;
     }
+
     result = mask_width(result, w);
 
     rm_write(rd, addr, seg, w, result);
     set_zsp_flags(result, w);
     flag_set(FLAG_CF, cf);
+
     if (count == 1)
     {
         flag_set(FLAG_OF, ((dest ^ result) & sign_bit(w)) != 0);
@@ -1502,6 +1534,7 @@ static void movs(int w, int src_seg, bool addr_size_16)
     word_t dst = addr_size_16 ? reg_w(R_DI) : cpu.edi;
     word_t data = Mr(src, src_seg, w);
     Mw(dst, X86_SREG_ES, w, data);
+
     if (flag_get(FLAG_DF))
     {
         if (addr_size_16)
@@ -1644,6 +1677,7 @@ static void cr_write(Decode *s, int cr_idx, word_t data)
                "x86 mov to CR0 sets PG while PE is clear at pc = " FMT_WORD, s->pc);
         const uint32_t old_cr0_translation = cr0_translation_bits(cpu.cr0);
         cpu.cr0 = data;
+
         if (cr0_translation_bits(cpu.cr0) != old_cr0_translation)
         {
             isa_jit_flush_data_tlb();
@@ -1673,6 +1707,7 @@ static void cr_write(Decode *s, int cr_idx, word_t data)
     {
         const uint32_t old_cr4_translation = cr4_translation_bits(cpu.cr4);
         cpu.cr4 = data;
+
         if (cr4_translation_bits(cpu.cr4) != old_cr4_translation)
         {
             isa_jit_flush_data_tlb();
@@ -1798,6 +1833,7 @@ static void ltr(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w)
 static void gp3(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w, word_t imm)
 {
     word_t lhs = RMr(rd, w);
+
     switch (gp_idx)
     {
     case 0: // /0 TEST r/m, imm: updates flags only.
@@ -2027,6 +2063,7 @@ static void gp4(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w)
 static int bsr_index(word_t value, int width)
 {
     value = mask_width(value, width);
+
     for (int bit = width * X86_BITS_PER_BYTE - 1; bit >= 0; bit--)
     {
         if ((value & (1u << bit)) != 0)
@@ -2034,6 +2071,7 @@ static int bsr_index(word_t value, int width)
             return bit;
         }
     }
+
     return -1;
 }
 
@@ -2041,6 +2079,7 @@ static int bsr_index(word_t value, int width)
 static int bsf_index(word_t value, int width)
 {
     value = mask_width(value, width);
+
     for (int bit = 0; bit < width * X86_BITS_PER_BYTE; bit++)
     {
         if ((value & (1u << bit)) != 0)
@@ -2048,6 +2087,7 @@ static int bsf_index(word_t value, int width)
             return bit;
         }
     }
+
     return -1;
 }
 
@@ -2138,6 +2178,7 @@ void _2byte_esc(Decode *s, bool is_operand_size_16, bool is_addr_size_16, int se
     INSTPAT("1011 1101", bsr, E2G, 0, {
         int index = bsr_index(RMr(rs, w), w);
         flag_set(FLAG_ZF, index < 0);
+
         if (index >= 0)
         {
             Rw(rd, w, index);
@@ -2146,6 +2187,7 @@ void _2byte_esc(Decode *s, bool is_operand_size_16, bool is_addr_size_16, int se
     INSTPAT("1011 1100", bsf, E2G, 0, {
         int index = bsf_index(RMr(rs, w), w);
         flag_set(FLAG_ZF, index < 0);
+
         if (index >= 0)
         {
             Rw(rd, w, index);
@@ -2344,6 +2386,7 @@ again:
         bool was_enabled = flag_get(FLAG_IF);
         require_interrupt_flag_privilege(s, "sti");
         flag_set(FLAG_IF, true);
+
         if (!was_enabled)
         {
             cpu.sti_shadow = 1;

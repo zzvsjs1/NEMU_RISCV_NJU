@@ -33,6 +33,7 @@ void trace_iringbuf_dump()
     printf("Recent instructions:\n");
     /* Print oldest to newest; mark the most recent instruction as the fault site. */
     int start = (iringbuf_next - iringbuf_count + CONFIG_IRINGBUF_SIZE) % CONFIG_IRINGBUF_SIZE;
+
     for (int i = 0; i < iringbuf_count; i++)
     {
         int idx = (start + i) % CONFIG_IRINGBUF_SIZE;

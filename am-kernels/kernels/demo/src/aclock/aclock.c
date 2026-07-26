@@ -164,6 +164,7 @@ static void draw_point(int x, int y, int c)
 static void draw_circle(void)
 {
     int n;
+
     for (n = 0; n < 60; n++)
         draw_point(circle[n][0], circle[n][1], circle[n][2]);
 }
@@ -171,6 +172,7 @@ static void draw_circle(void)
 static void draw_hour(int n)
 {
     int m;
+
     for (m = 0; m < 6; m++)
         draw_point(hour[n][m][0], hour[n][m][1], 'h');
 }
@@ -178,6 +180,7 @@ static void draw_hour(int n)
 static void draw_minute(int n)
 {
     int m;
+
     for (m = 0; m < 8; m++)
         draw_point(minute[n][m][0], minute[n][m][1], 'M');
 }
@@ -185,6 +188,7 @@ static void draw_minute(int n)
 static void draw_seconds(int n)
 {
     int m;
+
     for (m = 0; m < 8; m++)
         draw_point(minute[n][m][0], minute[n][m][1], '.');
 }

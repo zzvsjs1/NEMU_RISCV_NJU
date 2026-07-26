@@ -148,6 +148,7 @@ static inline def_rtl(lms, rtlreg_t *dest, const rtlreg_t *addr, word_t offset, 
      * then widened through the host signed type that matches the access width.
      */
     word_t val = vaddr_read(*addr + offset, len);
+
     switch (len)
     {
     case 4:

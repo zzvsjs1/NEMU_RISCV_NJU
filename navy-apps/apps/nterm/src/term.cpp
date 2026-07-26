@@ -101,12 +101,14 @@ void Terminal::esc_clear(int *args)
         {
             putch(i, j, EMPTY);
         }
+
     cursor = {.x = 0, .y = 0};
 }
 
 void Terminal::esc_setattr1(int *args)
 {
     int attr = args[0];
+
     switch (attr)
     {
     case 0:
@@ -238,6 +240,7 @@ void Terminal::backspace()
         if (cursor.y < 0)
             cursor.x = cursor.y = 0;
     }
+
     buf[cursor.y * w + cursor.x] = EMPTY;
     dirty[cursor.y * w + cursor.x] = true;
 }
@@ -266,10 +269,12 @@ void Terminal::scroll_up()
 {
     memmove(buf, buf + w, w * (h - 1));
     memmove(color, color + w, w * (h - 1));
+
     for (int i = 0; i < w; i++)
     {
         putch(i, h - 1, EMPTY);
     }
+
     for (int i = 0; i < w * h; i++)
     {
         dirty[i] = true;
@@ -306,10 +311,12 @@ size_t Terminal::write_escape(const char *str, size_t count)
             else
             {
                 int data = 0;
+
                 for (; *s >= '0' && *s <= '9' && s - str < count; s++, len++)
                 {
                     data = data * 10 + *s - '0';
                 }
+
                 args[narg++] = data;
             }
         }
@@ -322,6 +329,7 @@ size_t Terminal::write_escape(const char *str, size_t count)
             return len;
         }
     }
+
     return 1;
 }
 
@@ -385,6 +393,7 @@ const char *Terminal::keypress(char ch)
         // backspace, and newline submission so the shell can run without a real
         // TTY line discipline in nanos-lite.
         const char *ret = nullptr;
+
         switch (ch)
         {
         case '\033':
@@ -410,9 +419,11 @@ const char *Terminal::keypress(char ch)
                 write(&ch, 1);
             }
         }
+
         input[inp_len] = '\0';
         return ret;
     }
+
     return nullptr;
 }
 
@@ -447,6 +458,7 @@ void Terminal::clear()
 {
     for (int i = 0; i < w * h; i++)
         dirty[i] = false;
+
     dirty[cursor.x + cursor.y * w] = true;
 }
 
@@ -457,5 +469,6 @@ void Terminal::clear_screen()
         {
             putch(i, j, EMPTY);
         }
+
     cursor = {.x = 0, .y = 0};
 }

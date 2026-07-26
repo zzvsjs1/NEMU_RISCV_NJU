@@ -192,6 +192,7 @@ static void test_lock_audio_defers_cooperative_callbacks(void)
 static void write_all(int fd, const void *buf, size_t len)
 {
     const uint8_t *p = (const uint8_t *)buf;
+
     while (len > 0)
     {
         ssize_t written = write(fd, p, len);

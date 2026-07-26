@@ -306,6 +306,7 @@ static bool handle_foreground_hotkey(AM_INPUT_KEYBRD_T *keyboard)
             if (switch_fg_pcb(0))
                 syscall_request_resched();
         }
+
         return true;
     case AM_KEY_F2:
         if (keyboard->keydown)
@@ -313,6 +314,7 @@ static bool handle_foreground_hotkey(AM_INPUT_KEYBRD_T *keyboard)
             if (switch_fg_pcb(1))
                 syscall_request_resched();
         }
+
         return true;
     case AM_KEY_F3:
         if (keyboard->keydown)
@@ -320,6 +322,7 @@ static bool handle_foreground_hotkey(AM_INPUT_KEYBRD_T *keyboard)
             if (switch_fg_pcb(2))
                 syscall_request_resched();
         }
+
         return true;
     default:
         return false;
@@ -441,6 +444,7 @@ static size_t read_mouse_event(void *buf, size_t len)
 size_t serial_write(const void *buf, size_t offset, size_t len)
 {
     const char *buff = (const char *)buf;
+
     for (size_t i = 0; i < len; i++)
     {
         putch(buff[i]);
@@ -548,6 +552,7 @@ static void draw_scheduled_foreground(const void *buf, size_t pixel_offset,
             /* Finish the current linear row before advancing to the next one. */
             const size_t row_remaining = (size_t)fb_screen_w - (size_t)col;
             copied_pixels = remaining < row_remaining ? remaining : row_remaining;
+
             if (copied_pixels > capacity)
                 copied_pixels = capacity;
 
@@ -596,6 +601,7 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
     int col = (int)(pixelOffset % screenW); // remainder → column
 
     size_t pixelCount = len / sizeof(uint32_t); // len is bytes → divide to get pixel count
+
     if (pixelCount == 0)
     {
         return len;

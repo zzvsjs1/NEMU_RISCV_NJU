@@ -40,11 +40,13 @@ static void drain_keys()
 void keyboard_test()
 {
     printf("Try to press any key (uart or keyboard)...\n");
+
     // Query presence once at startup. Some AM platforms do not provide both input
     // devices, and repeatedly probing config registers would obscure the actual
     // event stream this test is meant to display.
     has_uart = io_read(AM_UART_CONFIG).present;
     has_kbd = io_read(AM_INPUT_CONFIG).present;
+
     while (1)
     {
         drain_keys();

@@ -53,6 +53,7 @@ void cmatrix()
     screen_clear();
 
     x = rand();
+
     for (i = 0; i < W; i++)
     {
         t[i] = -rand() % 50;

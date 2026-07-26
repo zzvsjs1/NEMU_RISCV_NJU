@@ -89,6 +89,7 @@ static int reg_name_to_index(const char *name)
             }
 
             idx = idx * 10 + (*p - '0');
+
             if (idx >= RISCV_GPR_NUM)
             {
                 return -1;

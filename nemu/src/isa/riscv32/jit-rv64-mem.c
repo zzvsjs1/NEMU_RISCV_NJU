@@ -455,6 +455,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
         {
             return false;
         }
+
         *paddr = direct;
         return true;
     }
@@ -472,6 +473,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
         {
             return false;
         }
+
         *paddr = direct;
         return true;
     }

@@ -125,6 +125,7 @@ int main(void)
             fprintf(stderr, "TTF_GlyphMetrics failed for U+%04x\n", ch);
             assert(0);
         }
+
         assert(advance > 0);
 
         SDL_Color fg = {.r = 0xff, .g = 0xff, .b = 0xff, .a = 0xff};
@@ -148,6 +149,7 @@ int main(void)
             assert(surface->w == 0);
             assert(surface->h == 0);
         }
+
         SDL_FreeSurface(surface);
     }
 

@@ -21,6 +21,7 @@ writeline('')
 writeline('asm ("\\')
 writeasmline('.section .rodata.disk, \\"a\\"')
 fp_filelist = open(argv[2], 'r')
+
 while True:
   filepath = fp_filelist.readline().strip()
   if not filepath:
@@ -35,6 +36,7 @@ while True:
 writeline('");')
 
 writeline('')
+
 for f in filelist:
   varname = filelist[f]
   writeline('extern uint8_t __am_%s;' % varname)
@@ -46,6 +48,7 @@ writeline('  uint8_t *base;')
 writeline('  uint32_t size;')
 writeline('};')
 writeline('static struct file filelist [] = {')
+
 for f in filelist:
   varname = filelist[f]
   writeline('  { .name = "%s", .base = &__am_%s, .size = %d },' % (f, varname, os.path.getsize(f)))

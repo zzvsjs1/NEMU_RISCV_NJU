@@ -52,9 +52,11 @@ if grep -q 'offsetof(x86_jit_dtlb_entry_t, valid)' \
     "$ROOT/nemu/src/isa/x86/jit.c"; then
   fail "inline paged DTLB hits still test a redundant valid byte"
 fi
+
 if grep -q 'X86_ALU_XOR, state' "$ROOT/nemu/src/isa/x86/jit.c"; then
   fail "inline paged DTLB hits still hash permission state after flush-based invalidation"
 fi
+
 if grep -q 'cr3_key >> PAGE_SHIFT' "$ROOT/nemu/src/isa/x86/jit.c"; then
   fail "inline paged DTLB hits still hash CR3 after flush-based invalidation"
 fi
@@ -79,6 +81,7 @@ if printf '%s\n' "$link_target_body" |
     grep -q 'for (uint32_t i = 0; i < X86_JIT_CACHE_SIZE'; then
   fail "target linking must use the incoming-edge index instead of a full cache scan"
 fi
+
 incoming_ways=$(sed -n 's/^#define X86_JIT_INCOMING_EDGE_WAYS \([0-9][0-9]*\)u$/\1/p' \
   "$ROOT/nemu/src/isa/x86/jit.c")
 [ -n "$incoming_ways" ] || fail "missing x86 incoming-edge bucket way count"
@@ -89,6 +92,7 @@ if printf '%s\n' "$compile_body" |
     grep -q 'jit_edge_accepts_chain(guarded_block'; then
   fail "x86 static successors should emit patchable edges without compile-time target acceptance"
 fi
+
 test_imm_body=$(sed -n '/static bool emit_paged_dtlb_test_imm_rm/,/^}/p' \
   "$ROOT/nemu/src/isa/x86/jit.c")
 printf '%s\n' "$test_imm_body" |

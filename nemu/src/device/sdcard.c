@@ -68,6 +68,7 @@ static void prepare_rw(int is_write)
 {
     blk_addr = base[SDARG];
     addr = 0;
+
     if (fp)
         fseek(fp, blk_addr << 9, SEEK_SET);
     write_cmd = is_write;
@@ -131,6 +132,7 @@ static void sdcard_handle_cmd(int cmd)
 static void sdcard_io_handler(uint32_t offset, int len, bool is_write)
 {
     int idx = offset / 4;
+
     switch (idx)
     {
     case SDCMD:
@@ -147,6 +149,7 @@ static void sdcard_io_handler(uint32_t offset, int len, bool is_write)
         {
             // See section 8.1 JEDEC Standard JED84-A441
             uint32_t data;
+
             switch (addr)
             {
             case 192:
@@ -158,13 +161,16 @@ static void sdcard_io_handler(uint32_t offset, int len, bool is_write)
             default:
                 data = 0;
             }
+
             base[SDDATA] = data;
+
             if (addr == 512 - 4)
                 read_ext_csd = false;
         }
         else if (fp)
         {
             __attribute__((unused)) int ret;
+
             if (!write_cmd)
             {
                 ret = fread(&base[SDDATA], 4, 1, fp);
@@ -174,6 +180,7 @@ static void sdcard_io_handler(uint32_t offset, int len, bool is_write)
                 ret = fwrite(&base[SDDATA], 4, 1, fp);
             }
         }
+
         addr += 4;
         break;
     default:
@@ -191,6 +198,7 @@ void init_sdcard()
 
     const char *img = CONFIG_SDCARD_IMG_PATH;
     fp = fopen(img, "r+");
+
     if (fp == NULL)
         Log("Can not find sdcard image: %s", img);
 }

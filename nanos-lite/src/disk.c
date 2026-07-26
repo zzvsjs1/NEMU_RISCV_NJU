@@ -20,12 +20,14 @@ size_t get_ramdisk_size(void);
  * is translated through disk_cfg.blksz and disk_cfg.blkcnt.
  */
 static AM_DISK_CONFIG_T disk_cfg;
+
 /*
  * True only when NEMU exposes a usable disk.  If false, the same disk_read()
  * and disk_write() API falls back to the embedded ramdisk symbols, keeping old
  * images and host tests compatible with the disk-backed filesystem path.
  */
 static bool disk_present = false;
+
 /*
  * Kernel-owned physical bounce buffer used for all AM disk transfers.  It is
  * aligned for the device contract and deliberately static so user virtual
@@ -184,6 +186,7 @@ void init_disk(void)
     }
 
     assert(disk_cfg.blksz <= DISK_BLOCK_BUF_SIZE);
+
     /*
      * The buffer-size assertion is also a performance contract: if a future device
      * uses larger blocks than the bounce buffer, batching would silently collapse

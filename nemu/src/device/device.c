@@ -38,12 +38,14 @@ void device_update()
     {
         return;
     }
+
     last = now;
 
     IFDEF(CONFIG_HAS_VGA, vga_update_screen());
 
 #ifndef CONFIG_TARGET_AM
     SDL_Event event;
+
     while (SDL_PollEvent(&event))
     {
         switch (event.type)
@@ -62,6 +64,7 @@ void device_update()
             break;
         }
 #endif
+
 #ifdef CONFIG_HAS_MOUSE
         case SDL_MOUSEMOTION:
         {
@@ -116,6 +119,7 @@ void sdl_clear_event_queue()
 {
 #ifndef CONFIG_TARGET_AM
     SDL_Event event;
+
     while (SDL_PollEvent(&event))
         ;
 #endif

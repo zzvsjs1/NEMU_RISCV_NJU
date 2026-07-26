@@ -23,6 +23,7 @@ static void fork_child(const char *nterm_proc)
         nterm_proc,
         NULL,
     };
+
     // Child apps only learn the terminal size through environment variables;
     // there is no termios/ioctl path in this Navy stack.  Keep these values tied
     // to the live Terminal grid so external apps follow the current display mode.
@@ -84,6 +85,7 @@ void extern_app_run(const char *app_path)
     {
         poll_terminal();
         char buf[256], *p = buf, ch;
+
         while ((ch = getc(stdin)) != -1)
         {
             *p++ = ch;
@@ -91,6 +93,7 @@ void extern_app_run(const char *app_path)
             if (ch == '\n')
                 break;
         }
+
         *p = '\0';
 
         if (buf[0] == 'k')

@@ -115,10 +115,12 @@ static void install_page_tables(void)
 
     clear_page_table(root_pt);
     clear_page_table(identity_l1);
+
     for (uint64_t i = 0; i < IDENTITY_L1_ENTRIES; i++)
     {
         clear_page_table(identity_l0[i]);
     }
+
     clear_page_table(alias_l0);
     map_identity_window();
 
@@ -184,11 +186,13 @@ static void enter_supervisor_mode(void)
 static void prepare_generated_code(void)
 {
     code_pair_a[WORDS_PER_PAGE - 1u] = addi_a0_zero_imm(1);
+
     for (uint32_t i = 0; i < GENERATED_INCREMENTS; i++)
     {
         code_pair_a[WORDS_PER_PAGE + i] = addi_a0_a0_imm(1);
         code_second_b[i] = addi_a0_a0_imm(2);
     }
+
     code_pair_a[WORDS_PER_PAGE + GENERATED_INCREMENTS] = 0x00008067u;
     code_second_b[GENERATED_INCREMENTS] = 0x00008067u;
 }
@@ -218,10 +222,12 @@ int main(void)
     check(second == 1 + (int)GENERATED_INCREMENTS * 2);
 
     volatile int total = 0;
+
     for (uint32_t i = 0; i < HOT_CALLS; i++)
     {
         total += fn();
     }
+
     check(total == (int)(HOT_CALLS * (1u + GENERATED_INCREMENTS * 2u)));
 #endif
 

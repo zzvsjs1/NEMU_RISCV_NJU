@@ -26,6 +26,7 @@ static void irq_handle(Context *c)
                thiscpu->ev.msg, AM_REG_PC(&c->uc), thiscpu->ev.ref, thiscpu->ev.cause);
         assert(0);
     }
+
     c = user_handler(thiscpu->ev, c);
     assert(c != NULL);
 
@@ -68,6 +69,7 @@ static void setup_stack(uintptr_t event, ucontext_t *uc)
     {
         pc += SYSCALL_INSTR_LEN;
     }
+
     AM_REG_PC(uc) = (uintptr_t)pc;
 
     // switch to kernel stack if we were previously in user space
@@ -95,9 +97,11 @@ static void setup_stack(uintptr_t event, ucontext_t *uc)
 static void iret(ucontext_t *uc)
 {
     Context *c = (void *)AM_REG_GPR1(uc);
+
     // restore the context
     *uc = c->uc;
     thiscpu->ksp = c->ksp;
+
     if (__am_in_userspace((void *)AM_REG_PC(uc)))
         __am_pmem_protect();
 }
@@ -106,6 +110,7 @@ static void sig_handler(int sig, siginfo_t *info, void *ucontext)
 {
     thiscpu->ev = (Event){0};
     thiscpu->ev.event = EVENT_ERROR;
+
     switch (sig)
     {
     case SIGUSR1:
@@ -130,10 +135,12 @@ static void sig_handler(int sig, siginfo_t *info, void *ucontext)
                 return;
             }
         }
+
         if (__am_in_userspace(info->si_addr))
         {
             assert(thiscpu->ev.event == EVENT_ERROR);
             thiscpu->ev.event = EVENT_PAGEFAULT;
+
             switch (info->si_code)
             {
             case SEGV_MAPERR:
@@ -146,8 +153,10 @@ static void sig_handler(int sig, siginfo_t *info, void *ucontext)
             default:
                 assert(0);
             }
+
             thiscpu->ev.ref = (uintptr_t)info->si_addr;
         }
+
         break;
     }
 
@@ -157,6 +166,7 @@ static void sig_handler(int sig, siginfo_t *info, void *ucontext)
         thiscpu->ev.cause = (uintptr_t)info->si_code;
         thiscpu->ev.msg = strsignal(sig);
     }
+
     setup_stack(thiscpu->ev.event, ucontext);
 }
 
@@ -235,6 +245,7 @@ bool ienabled()
 void iset(bool enable)
 {
     extern sigset_t __am_intr_sigmask;
+
     // NOTE: sigprocmask does not supported in multithreading
     int ret = sigprocmask(enable ? SIG_UNBLOCK : SIG_BLOCK, &__am_intr_sigmask, NULL);
     assert(ret == 0);

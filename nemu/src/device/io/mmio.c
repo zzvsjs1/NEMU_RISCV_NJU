@@ -42,6 +42,7 @@ void add_mmio_map(const char *name, paddr_t addr, void *space, uint32_t len,
 
     const paddr_t pmem_left = (paddr_t)CONFIG_MBASE;
     const paddr_t pmem_right = (paddr_t)CONFIG_MBASE + CONFIG_MSIZE;
+
     if (in_pmem(left) || in_pmem(right) || in_pmem_range(left, len) ||
         (left < pmem_left && right >= pmem_right))
     {

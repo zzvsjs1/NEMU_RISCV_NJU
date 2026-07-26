@@ -14,6 +14,7 @@ int fact(int n)
 int main()
 {
     int i;
+
     for (i = 0; i < 13; i++)
     {
         f[i] = fact(i);

@@ -30,6 +30,7 @@ __attribute__((noinline)) static uint32_t store_hot_loop(uint32_t iters)
     }
 
     uint64_t folded = acc;
+
     for (uint32_t i = 0; i < STOREMARK_WORDS; i++)
     {
         folded ^= storemark_buf[i] + ((uint64_t)i << 32);

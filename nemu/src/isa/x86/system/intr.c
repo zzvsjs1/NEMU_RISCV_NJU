@@ -187,6 +187,7 @@ static word_t raise_intr(word_t NO, vaddr_t ret_addr, bool software,
     push32(old_eflags);
     push32(old_cs);
     push32(ret_addr);
+
     if (has_error_code)
     {
         push32(error_code);
@@ -194,10 +195,12 @@ static word_t raise_intr(word_t NO, vaddr_t ret_addr, bool software,
 
     x86_seg_load_from_descriptor(X86_SREG_CS, selector, cs_lo, cs_hi);
     cpu.eflags &= ~(FLAG_TF | FLAG_NT | FLAG_RF | FLAG_VM);
+
     if (type == 0xe)
     {
         cpu.eflags &= ~FLAG_IF;
     }
+
     cpu.eflags |= 0x2;
 
     return target;

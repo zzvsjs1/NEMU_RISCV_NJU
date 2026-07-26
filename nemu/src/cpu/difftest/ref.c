@@ -48,6 +48,7 @@ __EXPORT void difftest_memcpy(paddr_t addr, void *buf, size_t n, bool direction)
     }
 
     assert(buf != NULL);
+
     if (direction == DIFFTEST_TO_REF)
     {
         memcpy(guest_to_host(addr), buf, n);
@@ -62,6 +63,7 @@ __EXPORT void difftest_memcpy(paddr_t addr, void *buf, size_t n, bool direction)
 __EXPORT void difftest_regcpy(void *dut, bool direction)
 {
     assert(dut != NULL);
+
     if (direction == DIFFTEST_TO_REF)
     {
         memcpy(&cpu, dut, sizeof(cpu));
@@ -87,6 +89,7 @@ __EXPORT void difftest_init(int port)
 {
     void init_mem();
     init_mem();
+
     /* Perform ISA dependent initialization. */
     init_isa();
 }

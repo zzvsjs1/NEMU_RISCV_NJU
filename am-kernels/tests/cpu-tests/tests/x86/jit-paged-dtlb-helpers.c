@@ -79,10 +79,12 @@ static void init_operands(void)
     paged_mem[9] = 0x00010001u;
     paged_mem[10] = 37u;
     paged_mem[11] = (uint32_t)(0u - 37u);
+
     for (uint32_t i = 0; i < 6u; i++)
     {
         result_words[i] = 0;
     }
+
     result_bytes[0] = 0;
     result_bytes[1] = 0;
     result_bytes[2] = 0;
@@ -102,22 +104,27 @@ static void init_operands(void)
     shift_words[6] = 0x1234u;
     imul16_src[0] = 7u;
     imul16_src[1] = 4u;
+
     for (uint32_t i = 0; i < 2u; i++)
     {
         imul16_out[i] = 0;
     }
+
     for (uint32_t i = 0; i < 4u; i++)
     {
         imul16_flags[i] = 0;
     }
+
     mul_acc_src[0] = 7u;
     mul_acc_src[1] = 0x0010u;
     mul_acc_src[2] = 7u;
     mul_acc_src[3] = 4u;
+
     for (uint32_t i = 0; i < 4u; i++)
     {
         mul_acc_out[i] = 0;
     }
+
     for (uint32_t i = 0; i < 8u; i++)
     {
         mul_acc_flags[i] = 0;

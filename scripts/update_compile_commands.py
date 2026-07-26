@@ -34,6 +34,7 @@ def repo_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy()
     if extra:
         env.update(extra)
+
     return env
 
 
@@ -44,10 +45,12 @@ def mkdirs() -> None:
 def load_entries(path: Path) -> list[dict]:
     if not path.exists():
         return []
+
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, list):
         raise ValueError(f"{path} does not contain a JSON array")
+
     return data
 
 
@@ -57,12 +60,14 @@ def write_entries(path: Path, entries: list[dict]) -> None:
     with tmp.open("w", encoding="utf-8") as f:
         json.dump(entries, f, indent=2)
         f.write("\n")
+
     tmp.replace(path)
 
 
 def normalise_optional_path(value: object) -> str:
     if not isinstance(value, str) or value == "":
         return ""
+
     return os.path.normpath(value)
 
 
@@ -76,8 +81,10 @@ def entry_key(entry: dict) -> tuple[str, str, str]:
 
 def merge_entries(existing: Iterable[dict], incoming: Iterable[dict]) -> list[dict]:
     merged: dict[tuple[str, str, str], dict] = {}
+
     for entry in existing:
         merged[entry_key(entry)] = entry
+
     for entry in incoming:
         merged[entry_key(entry)] = entry
     return list(merged.values())
@@ -92,6 +99,7 @@ def fragment_name(label: str) -> str:
 
 def merge_database(fragment_paths: list[Path]) -> int:
     entries = load_entries(DB_PATH)
+
     if fragment_paths:
         fragments = fragment_paths
     else:
@@ -257,6 +265,7 @@ def navy_specs() -> list[CaptureSpec]:
     )
 
     specs: list[CaptureSpec] = []
+
     for lib in libs:
         specs.append(
             CaptureSpec(
@@ -299,6 +308,7 @@ def nanos_ramdisk_setup() -> tuple[tuple[str, ...], ...]:
     ramdisk = REPO_ROOT / "nanos-lite" / "build" / "ramdisk.img"
     if ramdisk.exists():
         return ()
+
     return (("make", "-C", "nanos-lite", "ARCH=riscv64-nemu", "FS_MODE=fat32", "update"),)
 
 
@@ -327,6 +337,7 @@ def nanos_specs() -> list[CaptureSpec]:
 
 def specs_for_profiles(profiles: list[str]) -> list[CaptureSpec]:
     selected = set()
+
     for profile in profiles:
         if profile == "all":
             selected.update(("nemu", "am", "navy", "nanos"))
@@ -334,12 +345,16 @@ def specs_for_profiles(profiles: list[str]) -> list[CaptureSpec]:
             selected.add(profile)
 
     specs: list[CaptureSpec] = []
+
     if "nemu" in selected:
         specs.extend(nemu_specs())
+
     if "am" in selected:
         specs.extend(am_specs())
+
     if "navy" in selected:
         specs.extend(navy_specs())
+
     if "nanos" in selected:
         specs.extend(nanos_specs())
     return specs
@@ -354,6 +369,7 @@ def run_baseline(args: argparse.Namespace) -> int:
 
     fragments: list[Path] = []
     failures: list[str] = []
+
     for index, spec in enumerate(specs, start=1):
         print(f"\n[{index}/{len(specs)}] {spec.label}", flush=True)
         try:
@@ -370,11 +386,13 @@ def run_baseline(args: argparse.Namespace) -> int:
                 raise
 
     merge_database(fragments)
+
     if failures:
         print("\nBaseline completed with failures:", file=sys.stderr)
         for failure in failures:
             print(f"  {failure}", file=sys.stderr)
         return 1
+
     return 0
 
 
@@ -382,21 +400,26 @@ def run_add(args: argparse.Namespace) -> int:
     command = args.arguments
     if command[:1] == ["--"]:
         command = command[1:]
+
     if not command:
         raise SystemExit("add mode needs compiler arguments after --")
+
     entry = {
         "directory": str(Path(args.directory).resolve()),
         "file": str(Path(args.file).resolve()),
         "arguments": command,
     }
+
     if args.output:
         entry["output"] = str(Path(args.output).resolve())
+
     return add_entry(entry)
 
 
 def run_capture(args: argparse.Namespace) -> int:
     if not args.command:
         raise SystemExit("capture mode needs a command after --")
+
     label = args.label or " ".join(args.command)
     return capture_and_merge(label, tuple(args.command), project_env())
 
@@ -446,10 +469,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
     if getattr(args, "profile", None) is None:
         args.profile = ["all"]
+
     if getattr(args, "command", None) and args.command[:1] == ["--"]:
         args.command = args.command[1:]
+
     return args.func(args)
 
 

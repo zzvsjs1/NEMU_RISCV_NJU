@@ -31,6 +31,7 @@ static char *dup_name(const char *s)
     {
         memcpy(ret, s, len);
     }
+
     return ret;
 }
 
@@ -40,6 +41,7 @@ static void clear_symbols()
     {
         free(funcs[i].name);
     }
+
     free(funcs);
     funcs = NULL;
     nr_func = 0;
@@ -66,6 +68,7 @@ static bool add_symbol(vaddr_t start, vaddr_t size, const char *name)
     {
         return false;
     }
+
     nr_func++;
     return true;
 }
@@ -80,6 +83,7 @@ static const char *find_func(vaddr_t addr, vaddr_t *entry)
             {
                 *entry = funcs[i].start;
             }
+
             return funcs[i].name;
         }
     }
@@ -88,6 +92,7 @@ static const char *find_func(vaddr_t addr, vaddr_t *entry)
     {
         *entry = addr;
     }
+
     return "???";
 }
 
@@ -101,6 +106,7 @@ static bool load_elf32(FILE *fp, const Elf32_Ehdr *eh)
     }
 
     bool ok = read_at(fp, eh->e_shoff, shdrs, eh->e_shnum * sizeof(*shdrs));
+
     for (int i = 0; ok && i < eh->e_shnum; i++)
     {
         /* .symtab points at its string table through sh_link. */
@@ -119,6 +125,7 @@ static bool load_elf32(FILE *fp, const Elf32_Ehdr *eh)
              read_at(fp, symtab.sh_offset, syms, symtab.sh_size);
 
         size_t n = symtab.sh_size / sizeof(Elf32_Sym);
+
         for (size_t j = 0; ok && j < n; j++)
         {
             /* ftrace only needs named function ranges, not objects or section symbols. */
@@ -149,6 +156,7 @@ static bool load_elf64(FILE *fp, const Elf64_Ehdr *eh)
     }
 
     bool ok = read_at(fp, eh->e_shoff, shdrs, eh->e_shnum * sizeof(*shdrs));
+
     for (int i = 0; ok && i < eh->e_shnum; i++)
     {
         /* .symtab points at its string table through sh_link. */
@@ -167,6 +175,7 @@ static bool load_elf64(FILE *fp, const Elf64_Ehdr *eh)
              read_at(fp, symtab.sh_offset, syms, symtab.sh_size);
 
         size_t n = symtab.sh_size / sizeof(Elf64_Sym);
+
         for (size_t j = 0; ok && j < n; j++)
         {
             /* ftrace only needs named function ranges, not objects or section symbols. */

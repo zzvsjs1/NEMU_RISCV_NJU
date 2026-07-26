@@ -11,9 +11,11 @@ static FILE *fp = NULL;
 void __am_disk_init()
 {
     const char *diskimg = getenv("diskimg");
+
     if (diskimg)
     {
         fp = fopen(diskimg, "r+");
+
         if (fp)
         {
             fseek(fp, 0, SEEK_END);
@@ -41,6 +43,7 @@ void __am_disk_blkio(AM_DISK_BLKIO_T *io)
     {
         fseek(fp, io->blkno * BLKSZ, SEEK_SET);
         int ret;
+
         if (io->write)
             ret = fwrite(io->buf, io->blkcnt * BLKSZ, 1, fp);
         else

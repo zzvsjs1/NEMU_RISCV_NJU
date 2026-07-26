@@ -34,6 +34,7 @@ void WindowManager::evt_timer(const char *evt)
         if (w)
             w->update();
     }
+
     render();
 }
 
@@ -151,8 +152,10 @@ void WindowManager::evt_switch_window(const char *evt)
         display_appfinder = false;
         appfinder->draw();
     }
+
     while (windows[i] != focus)
         i++;
+
     while (1)
     {
         i++;
@@ -163,6 +166,7 @@ void WindowManager::evt_switch_window(const char *evt)
         if (windows[i])
             break;
     }
+
     set_focus(windows[i]);
 }
 

@@ -126,6 +126,7 @@ int exclude(type t, char *op, int x, int y)
             }
         }
     }
+
     return 0;
 }
 

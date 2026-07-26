@@ -107,10 +107,12 @@ static inline int uptime_ms()
 void wait_for_frame()
 {
     int cur = uptime_ms();
+
     while (cur - gtime < 1000 / FPS)
     {
         cur = uptime_ms();
     }
+
     gtime = cur;
 }
 
@@ -121,6 +123,7 @@ void fce_run()
     gtime = uptime_ms();
     int nr_draw = 0;
     uint32_t last = gtime;
+
     while (1)
     {
         wait_for_frame();

@@ -30,6 +30,7 @@ void redraw()
     assert((uint32_t)block_size <= LENGTH(color_buf));
 
     int x, y, k;
+
     for (y = 0; y < N; y++)
     {
         for (x = 0; x < N; x++)
@@ -38,9 +39,11 @@ void redraw()
             {
                 color_buf[k] = canvas[y][x];
             }
+
             io_write(AM_GPU_FBDRAW, x * w, y * h, color_buf, w, h, false);
         }
     }
+
     io_write(AM_GPU_FBDRAW, 0, 0, NULL, 0, 0, true);
 }
 
@@ -71,6 +74,7 @@ void update()
     canvas[0][0] = p(init);
     used[0][0] = 1;
     int x = 0, y = 0, d = 0;
+
     for (int step = 1; step < N * N; step++)
     {
         for (int t = 0; t < 4; t++)
@@ -85,6 +89,7 @@ void update()
                 canvas[x][y] = p(init + step / 2);
                 break;
             }
+
             d = (d + 1) % 4;
         }
     }

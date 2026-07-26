@@ -6,9 +6,11 @@ int main()
 {
     int m, i, n = 0;
     int prime;
+
     for (m = 101; m <= 150; m += 2)
     {
         prime = 1;
+
         for (i = 2; i < m; i++)
         {
             if (m % i == 0)

@@ -39,6 +39,7 @@ void func(void *arg)
         lock();
         printf("Thread-%s on CPU #%d\n", arg, cpu_current());
         unlock();
+
         for (int volatile i = 0; i < 100000; i++)
             ;
     }
@@ -62,10 +63,12 @@ Context *on_interrupt(Event ev, Context *ctx)
         current = &tasks[0];
     else
         current->context = ctx;
+
     do
     {
         current = current->next;
     } while ((current - tasks) % cpu_count() != cpu_current());
+
     return current->context;
 }
 
@@ -86,5 +89,6 @@ int main()
         task->context = kcontext(stack, task->entry, (void *)task->name);
         task->next = &tasks[(i + 1) % LENGTH(tasks)];
     }
+
     mpe_init(mp_entry);
 }

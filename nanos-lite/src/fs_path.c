@@ -14,6 +14,7 @@ static size_t local_strlen(const char *s)
     {
         len++;
     }
+
     return len;
 }
 
@@ -65,6 +66,7 @@ const char *fs_normalise_path(const char *pathname, char *buf, size_t buf_size)
      * this helper is only a cwd-rooting shim, not a full POSIX path resolver.
      */
     relative = pathname;
+
     while (relative[0] == '.' && (relative[1] == '/' || relative[1] == '\0'))
     {
         /*
@@ -79,6 +81,7 @@ const char *fs_normalise_path(const char *pathname, char *buf, size_t buf_size)
         }
 
         relative += 2;
+
         /*
          * Collapse extra separators after a stripped "./".  For example,
          * ".///tmp" becomes "/tmp", matching the backend's absolute-path style.
@@ -107,6 +110,7 @@ const char *fs_normalise_path(const char *pathname, char *buf, size_t buf_size)
      * be worse than returning an ordinary open failure.
      */
     len = local_strlen(relative);
+
     if (len + 2 > buf_size)
     {
         return 0;
@@ -117,9 +121,11 @@ const char *fs_normalise_path(const char *pathname, char *buf, size_t buf_size)
      * host tests.  The loop copies the trailing NUL too, hence i <= len.
      */
     buf[0] = '/';
+
     for (size_t i = 0; i <= len; i++)
     {
         buf[i + 1] = relative[i];
     }
+
     return buf;
 }

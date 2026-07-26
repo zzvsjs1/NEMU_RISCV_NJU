@@ -3,12 +3,14 @@
 #include <stdio.h>
 
 static FILE *disk_file;
+
 /*
  * Number of disk_read() calls since the last reset.  Performance-sensitive
  * tests use this to ensure the FAT32 backend batches contiguous data instead of
  * issuing one host read per 512-byte cluster.
  */
 static size_t disk_read_calls;
+
 /*
  * Total bytes returned by disk_read() since the last reset.  This catches
  * hidden over-reading of data sectors while still allowing small FAT-sector

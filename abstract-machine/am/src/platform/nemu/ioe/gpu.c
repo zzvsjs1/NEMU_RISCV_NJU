@@ -112,6 +112,7 @@ static void gpu_accel_render_canvas(struct gpu_canvas *cv,
         assert(dst_y >= 0 && dst_y < parent->h);
 
         const int src_y = y * local_h / cv->h1;
+
         for (int x = 0; x < cv->w1; x++)
         {
             const int dst_x = cv->x1 + x;
@@ -127,6 +128,7 @@ static void gpu_accel_render_canvas(struct gpu_canvas *cv,
 void __am_gpu_init()
 {
     const uint32_t vgainfo = inl(vgactl_reg_addr(NEMU_VGACTL_INFO));
+
     /* VGACTL packs width in the high half-word and height in the low half-word.
      * Cache both values because the guest-visible display mode is fixed after
      * NEMU starts, and later config reads should not pay another MMIO access.
@@ -162,6 +164,7 @@ void __am_gpu_fbdraw(AM_GPU_FBDRAW_T *ctl)
          * copy command is written.
          */
         outl(vgactl_reg_addr(NEMU_VGACTL_BLIT_SRC), (uintptr_t)pixel);
+
         /* Position and size are packed as y:x and h:w.  Width/x are masked to
          * 16 bits to match the device register layout used by NEMU.
          */

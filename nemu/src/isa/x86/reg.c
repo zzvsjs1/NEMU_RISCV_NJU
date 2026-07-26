@@ -27,6 +27,7 @@ void reg_test()
     cpu.pc = pc_sample;
 
     int i;
+
     for (i = R_EAX; i <= R_EDI; i++)
     {
         sample[i] = rand();
@@ -61,6 +62,7 @@ void isa_reg_display()
     {
         printf("%-3s " FMT_WORD "\n", regsl[i], reg_l(i));
     }
+
     printf("%-6s " FMT_WORD "\n", "eflags", cpu.eflags);
     printf("%-6s " FMT_WORD "\n", "eip", cpu.pc);
     printf("%-6s " FMT_WORD "\n", "cs", cpu.cs);

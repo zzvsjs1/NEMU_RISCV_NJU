@@ -156,6 +156,7 @@ int main(void)
      * be zero, proving that protect() made a clean 1024-entry directory.
      */
     uintptr_t *const page_directory = address_space.ptr;
+
     for (unsigned i = 0; i < PAGE_WORDS; i++)
     {
         check(page_directory[i] == 0u);

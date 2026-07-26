@@ -28,6 +28,7 @@ int main(void)
     assert(surface != NULL);
 
     SDL_Color full[256];
+
     for (int i = 0; i < 256; i++)
     {
         full[i].r = (uint8_t)i;
