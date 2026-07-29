@@ -43,7 +43,7 @@ config RV64_FPU
   select RISCV_D
   help
     Implement the scalar RV64 F and D extensions in the interpreter using
-    Berkeley SoftFloat. The RV64 JIT continues to fall back to the interpreter
-    for floating-point opcodes that it does not translate.
+    Berkeley SoftFloat. The RV64 JIT calls the same executor for configured
+    floating-point opcodes, without using host floating-point arithmetic.
 
 endmenu

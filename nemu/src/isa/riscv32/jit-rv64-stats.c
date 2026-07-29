@@ -38,14 +38,13 @@ typedef struct
 typedef unsigned __int128 rv64_jit_wide_count_t;
 #define RV64_JIT_WIDE_COUNT_BUFFER_SIZE 40u
 
-static const rv64_jit_reason_name_t
-    jit_block_end_reason_names[RV64_JIT_BLOCK_END_COUNT] = {
-        [RV64_JIT_BLOCK_END_BUDGET] = {
-            "budget", "instruction budget or trace limit"},
-        [RV64_JIT_BLOCK_END_JUMP] = {"jump", "JAL or JALR ended the native region"},
-        [RV64_JIT_BLOCK_END_CHAINED_LOOP] = {"chained-loop", "a native backedge ended the region"},
-        [RV64_JIT_BLOCK_END_SOURCE_BOUNDARY] = {"source-boundary", "fetch/source metadata could not be extended"},
-        [RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX] = {"unsupported-after-prefix", "the next instruction needs fallback"},
+static const rv64_jit_reason_name_t jit_block_end_reason_names[RV64_JIT_BLOCK_END_COUNT] = {
+    [RV64_JIT_BLOCK_END_BUDGET] = {"budget", "instruction budget or trace limit"},
+    [RV64_JIT_BLOCK_END_JUMP] = {"jump", "JAL or JALR ended the native region"},
+    [RV64_JIT_BLOCK_END_CHAINED_LOOP] = {"chained-loop", "a native backedge ended the region"},
+    [RV64_JIT_BLOCK_END_FP_MEMORY] = {"fp-memory", "an FP memory helper ended the region"},
+    [RV64_JIT_BLOCK_END_SOURCE_BOUNDARY] = {"source-boundary", "fetch/source metadata could not be extended"},
+    [RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX] = {"unsupported-after-prefix", "the next instruction needs fallback"},
 };
 
 static const rv64_jit_reason_name_t
@@ -421,6 +420,16 @@ static void jit_dump_compilation_stats(void)
     jit_dump_block_end_stats();
 }
 
+/* Keep the shared RV32/RV64 FP summary stable for correctness-gate parsing. */
+static void jit_dump_fp_helper_stats(void)
+{
+    jit_log_section("Floating-point helper sites and execution");
+    Log("jit: FP helper sites = %" PRIu64 ", calls = %" PRIu64 ", continuations = %" PRIu64 ", trap exits = %" PRIu64
+        ", memory exits = %" PRIu64,
+        rv64_jit_stats.fp_helper_sites, rv64_jit_stats.fp_helper_calls, rv64_jit_stats.fp_helper_continuations,
+        rv64_jit_stats.fp_helper_trap_exits, rv64_jit_stats.fp_helper_memory_exits);
+}
+
 /* Memory summary: these counters measure helper and generated-code activity. */
 static void jit_dump_memory_stats(void)
 {
@@ -551,6 +560,7 @@ void rv64_jit_dump_stats_report(void)
 
     jit_dump_dispatch_stats();
     jit_dump_compilation_stats();
+    jit_dump_fp_helper_stats();
     jit_dump_memory_stats();
     jit_dump_link_and_validation_stats();
     jit_dump_invalidation_stats();

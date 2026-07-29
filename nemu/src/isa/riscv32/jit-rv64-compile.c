@@ -8,6 +8,26 @@
  * RV64 JIT compile layer: RISC-V instruction scanning, block construction,
  * unsupported-instruction fallback and publication of compiled blocks.
  */
+#ifdef CONFIG_RISCV_FPU
+/* Recognise every scalar F/D major opcode handled by the shared executor. */
+static bool jit_opcode_is_fp(uint32_t opcode)
+{
+    switch (opcode)
+    {
+    case RV64_FP_OPCODE_LOAD:
+    case RV64_FP_OPCODE_STORE:
+    case RV64_FP_OPCODE_FMADD:
+    case RV64_FP_OPCODE_FMSUB:
+    case RV64_FP_OPCODE_FNMSUB:
+    case RV64_FP_OPCODE_FNMADD:
+    case RV64_FP_OPCODE_OP:
+        return true;
+    default:
+        return false;
+    }
+}
+#endif
+
 /*
  * Return whether an opcode class is worth following during the cheap loop
  * pre-scan.  This is only a hint: the real emitter still validates funct fields,
@@ -101,6 +121,7 @@ typedef struct
     uint64_t native_paged_stores;
     uint64_t inline_paged_loads;
     uint64_t inline_paged_stores;
+    uint64_t fp_helper_sites;
 } rv64_jit_emitted_site_stats_t;
 
 static rv64_jit_emitted_site_stats_t jit_snapshot_emitted_site_stats(void)
@@ -111,12 +132,12 @@ static rv64_jit_emitted_site_stats_t jit_snapshot_emitted_site_stats(void)
         .native_jumps = rv64_jit_stats.native_jumps,
         .native_m_ops = rv64_jit_stats.native_m_ops,
         .reg_cache_spills = rv64_jit_stats.reg_cache_spills,
-        .native_store_continuations =
-            rv64_jit_stats.native_store_continuations,
+        .native_store_continuations = rv64_jit_stats.native_store_continuations,
         .native_paged_loads = rv64_jit_stats.native_paged_loads,
         .native_paged_stores = rv64_jit_stats.native_paged_stores,
         .inline_paged_loads = rv64_jit_stats.inline_paged_loads,
         .inline_paged_stores = rv64_jit_stats.inline_paged_stores,
+        .fp_helper_sites = rv64_jit_stats.fp_helper_sites,
     };
 }
 
@@ -134,6 +155,7 @@ static void jit_restore_emitted_site_stats(
     rv64_jit_stats.native_paged_stores = snapshot->native_paged_stores;
     rv64_jit_stats.inline_paged_loads = snapshot->inline_paged_loads;
     rv64_jit_stats.inline_paged_stores = snapshot->inline_paged_stores;
+    rv64_jit_stats.fp_helper_sites = snapshot->fp_helper_sites;
 }
 #else
 /* Keep call sites uniform; the optimiser removes this one-byte no-op snapshot. */
@@ -425,8 +447,31 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
             break;
         }
 
-        if (opcode == RV64_OPCODE_JAL ||
-            opcode == RV64_OPCODE_JALR)
+#ifdef CONFIG_RISCV_FPU
+        if (jit_opcode_is_fp(opcode))
+        {
+            bool fp_ends_block = false;
+
+            if (!rv64_jit_emit_fp_instr(&w, &regs, instr, guest_pc, compiled_insn_count, &fp_ends_block))
+            {
+                if (!jit_handle_emit_failure(&w, &regs, &source, &ifetch_refs, &instr_snapshot, instr, &block_end_reason, arena_overflowed))
+                {
+                    jit_restore_emitted_site_stats(&attempt_site_stats);
+                    return NULL;
+                }
+                break;
+            }
+
+            if (fp_ends_block)
+            {
+                block_end_reason = RV64_JIT_BLOCK_END_FP_MEMORY;
+                exit_state = RV64_JIT_COMPILE_HAS_TERMINAL_EXIT;
+                stop_after_instruction = true;
+            }
+        }
+        else
+#endif
+            if (opcode == RV64_OPCODE_JAL || opcode == RV64_OPCODE_JALR)
         {
             if (!rv64_jit_emit_jump_instr(
                     &w, &regs, instr, guest_pc, compiled_insn_count,

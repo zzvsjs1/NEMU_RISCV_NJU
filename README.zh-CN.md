@@ -551,56 +551,91 @@ illegal instruction、breakpoint 或 misaligned address。
 
 ## 性能测量
 
-当前性能矩阵以脚本为准。下面的数字是 2026-05-27 在当前 checkout 上使用 dummy
-SDL video/audio driver 跑出的本地样本。它们适合看趋势，但你应该在自己的 CPU 上
-重新测量，因为 host 频率调节、系统负载、温度限制，以及大小核调度都会影响结果。
+当前 RISC-V 性能矩阵以脚本为准。每个 ISA 配置都在采样前构建；每项 benchmark
+随后 warm-up 一次，再使用 dummy SDL video/audio driver 测量五次。MicroBench
+使用 `ref` 数据集，JITBench 和 BranchMark 使用各自固定的内建 workload。表格
+给出中位数和实测 min-max 范围。结果会受运行环境影响，因此在比较其他系统或
+checkout 时应重新测量。
+
+| 范围 | Benchmark | 模式 | 中位数结果 | 实测 min-max |
+|------|-----------|------|------------|--------------|
+| RV32 | MicroBench | JIT 开启 | `21358 Marks`, `2,202,897,617 instr/s` | `19426-21945 Marks`, `2,014,072,761-2,236,660,654 instr/s` |
+| RV32 | MicroBench | 同一构建，`NEMU_DISABLE_JIT=1` | `1383 Marks`, `117,205,313 instr/s` | `1371-1396 Marks`, `115,743,322-117,939,968 instr/s` |
+| RV32 | JITBench | JIT 开启 | `ALU 7.698 ms`, `Memory 3.657 ms`, `4,342,105,601 instr/s` | `ALU 7.422-8.019 ms`, `Memory 3.610-3.959 ms`, `3,870,430,315-4,588,149,835 instr/s` |
+| RV32 | JITBench | 同一构建，`NEMU_DISABLE_JIT=1` | `ALU 412.333 ms`, `Memory 182.690 ms`, `119,325,465 instr/s` | `ALU 403.590-422.094 ms`, `Memory 177.990-191.186 ms`, `116,053,164-122,062,239 instr/s` |
+| RV64 | BranchMark | direct interpreter，无 JIT counter | `guest_us=118747`, `checksum=0x67c146ec` | `guest_us=114080-120964` |
+| RV64 | BranchMark | JIT 开启，无 JIT counter | `guest_us=1083`, `checksum=0x67c146ec`, `speedup=109.65x` | `guest_us=1036-1131` |
+
+每个 MicroBench component validator 都通过。每个 JITBench 样本都打印
+checksum `0x5d10403f` 和 `JITBench PASS`；每个 BranchMark 样本也都打印
+表中的 checksum 和 `BranchMark PASS`。
+
+RV32 使用 `riscv32-am-headless-jit_defconfig`。这个标准 gate defconfig 会编译
+`CONFIG_RV32_JIT_STATS=y`，所以即使没有设置 `NEMU_JIT_STATS`、也没有打印
+统计报告，表中的时间仍然包含 counter 开销。`NEMU_DISABLE_JIT=1` 行使用同一
+二进制，仍可能走 RV32 fast executor，因此不是 pure-interpreter 测量。RV64
+分别使用 `riscv64-am-headless_defconfig` 测 direct interpreter，并使用
+`riscv64-am-headless-jit_defconfig` 测不带统计 counter 的 JIT。
+
+另外还把 RV64 statistics gate 独立运行了五次。每次都通过
+`0x67c146ec` checksum，并报告 `avg_jit_entry_insns=20413.95`。该 gate
+带 counter 的时间没有混入上面的 statistics-free JIT 行。
+
+有数值阈值的性能 gate：
+
+```bash
+bash scripts/check-rv32-jit-performance.sh
+bash scripts/check-rv64-jit-performance.sh
+```
+
+下面的 x86 JIT 检查用于行为和 profile 健康检查，不设置 throughput 分数阈值：
+
+```bash
+bash scripts/check-x86-jit-smoke.sh
+bash scripts/check-x86-jit-helper-profile.sh
+bash scripts/check-x86-jit-paged-memory-fastpath.sh
+```
+
+历史参考数据只作为固定对比点保留。不要把这些行理解成当前版本的测量。
 
 | 范围 | Benchmark | 模式 | 结果 |
 |------|-----------|------|------|
-| RV32 JIT | MicroBench | JIT 开启 | `25374 Marks`, `2,615,873,637 instr/s` |
-| RV32 JIT | MicroBench | `NEMU_DISABLE_JIT=1` | `1531 Marks`, `130,571,528 instr/s` |
-| RV32 JIT | JITBench | JIT 开启 | `ALU 7.052 ms`, `Memory 3.559 ms` |
-| RV32 JIT | JITBench | `NEMU_DISABLE_JIT=1` | `ALU 367.962 ms`, `Memory 164.339 ms` |
-| RV64 JIT | BranchMark | interpreter | `guest_us=99327`, `checksum=0x67c146ec` |
-| RV64 JIT | BranchMark | JIT 开启 | `guest_us=1037`, `avg_jit_entry_insns=20413.95`, `speedup=95.78x` |
-| x86 JIT | MicroBench | JIT 开启 | `18246 Marks`, `2,123,334,697 instr/s` |
-| x86 JIT | MicroBench | `NEMU_DISABLE_JIT=1` | `336 Marks`, `31,123,524 instr/s` |
+| Previous RV32 sample | MicroBench | JIT 开启 | `25374 Marks`, `2,615,873,637 instr/s` |
+| Previous RV32 sample | MicroBench | `NEMU_DISABLE_JIT=1` | `1531 Marks`, `130,571,528 instr/s` |
+| Previous RV32 sample | JITBench | JIT 开启 | `ALU 7.052 ms`, `Memory 3.559 ms` |
+| Previous RV32 sample | JITBench | `NEMU_DISABLE_JIT=1` | `ALU 367.962 ms`, `Memory 164.339 ms` |
+| Previous RV64 sample | BranchMark | interpreter | `guest_us=99327`, `checksum=0x67c146ec` |
+| Previous RV64 sample | BranchMark | statistics-enabled JIT | `guest_us=1037`, `avg_jit_entry_insns=20413.95`, `speedup=95.78x` |
+| Previous x86 sample | MicroBench | JIT 开启 | `18246 Marks`, `2,123,334,697 instr/s` |
+| Previous x86 sample | MicroBench | `NEMU_DISABLE_JIT=1` | `336 Marks`, `31,123,524 instr/s` |
+| RV32 JIT reference | MicroBench | JIT 开启 | `27098 Marks`, `2,860,733,499 instr/s` |
+| RV32 JIT reference | JITBench | JIT 开启 | `ALU 8.436 ms`, `Memory 3.528 ms`, `4,049,658,568 instr/s` |
+| RV32 JIT reference | MicroBench | `NEMU_DISABLE_JIT=1` | `3322 Marks`, `275,864,060 instr/s` |
+| RV32 JIT reference | JITBench | `NEMU_DISABLE_JIT=1` | `ALU 157.041 ms`, `Memory 77.442 ms`, `302,722,837 instr/s` |
+| RV32 non-strict export | MicroBench | JIT 开启 | `25041 Marks`, `2,480,000,000 instr/s` |
+| RV32 non-strict export | JITBench | JIT 开启 | `ALU 7.304 ms`, `Memory 4.352 ms`, `4,520,000,000 instr/s` |
+| RV32 non-JIT reference | MicroBench | non-JIT | `3141 Marks`, `271,000,633 instr/s` |
+| RV32 baseline reference | MicroBench | interpreter | `694 Marks`, `58,319,798 instr/s` |
+| RV32/RV64 interpreter reference | CoreMark | RV32 pure interpreter | `586 Marks`, `4980 ms`, `62,912,314 instr/s` |
+| RV32/RV64 interpreter reference | CoreMark | RV64 direct interpreter | `1259 Marks`, `2319 ms`, `154,708,727 instr/s` |
 
-当前性能 gate：
+历史 CoreMark 行只是快速本地对比，不是可正式报告的 CoreMark 结果：两次运行
+都短于 CoreMark 规则要求的十秒。
 
-```bash
-scripts/check-rv32-jit-performance.sh
-scripts/check-rv64-jit-performance.sh
-scripts/check-x86-jit-smoke.sh
-scripts/check-x86-jit-helper-profile.sh
-scripts/check-x86-jit-paged-memory-fastpath.sh
-```
-
-历史本地参考数据只作为固定对比点保留。不要把这些行理解成当前 `master` 的测量。
-
-| 范围 | 来源 / 日期 | Benchmark | 模式 | 结果 |
-|------|-------------|-----------|------|------|
-| RV32 JIT reference | `71c4588`，测于 2026-05-16 | MicroBench | JIT 开启 | `27098 Marks`, `2,860,733,499 instr/s` |
-| RV32 JIT reference | `71c4588`，测于 2026-05-16 | JITBench | JIT 开启 | `ALU 8.436 ms`, `Memory 3.528 ms`, `4,049,658,568 instr/s` |
-| RV32 JIT reference | `71c4588`，测于 2026-05-16 | MicroBench | `NEMU_DISABLE_JIT=1` | `3322 Marks`, `275,864,060 instr/s` |
-| RV32 JIT reference | `71c4588`，测于 2026-05-16 | JITBench | `NEMU_DISABLE_JIT=1` | `ALU 157.041 ms`, `Memory 77.442 ms`, `302,722,837 instr/s` |
-| RV32 non-strict export | `6d946ee`，测于 2026-05-16 | MicroBench | JIT 开启 | `25041 Marks`, `2,480,000,000 instr/s` |
-| RV32 non-strict export | `6d946ee`，测于 2026-05-16 | JITBench | JIT 开启 | `ALU 7.304 ms`, `Memory 4.352 ms`, `4,520,000,000 instr/s` |
-| RV32 non-JIT reference | `performance_improve`，测于 2026-05-16 | MicroBench | non-JIT | `3141 Marks`, `271,000,633 instr/s` |
-| RV32 baseline reference | `legacy/baseline-master`，测于 2026-05-16 | MicroBench | interpreter | `694 Marks`, `58,319,798 instr/s` |
-| RV32/RV64 interpreter reference | `c0d33ae`，测于 2026-05-17 | CoreMark | RV32 pure interpreter | `586 Marks`, `4980 ms`, `62,912,314 instr/s` |
-| RV32/RV64 interpreter reference | `c0d33ae`，测于 2026-05-17 | CoreMark | RV64 direct interpreter | `1259 Marks`, `2319 ms`, `154,708,727 instr/s` |
-
-性能提升用简单除法计算：
+对于越低越好的 elapsed time，用较慢的中位数除以较快的中位数：
 
 ```text
-speed-up = 更快结果 / 更慢结果
+time speed-up = non-JIT 中位时间 / JIT 中位时间
+              = 118747 us / 1083 us
+              = 109.65x
 ```
 
-例如当前本地 x86 MicroBench 样本：
+对于越高越好的 throughput 分数，交换除数和被除数：
 
 ```text
-18246 / 336 = 54.30x，按 Marks 计算
+score speed-up = JIT 中位分数 / non-JIT 中位分数
+               = 21358 Marks / 1383 Marks
+               = 15.44x
 ```
 
 ### 当前 JIT 性能改进
@@ -626,41 +661,61 @@ Memory fast path 仍然有意保持很窄。只有地址是普通 guest RAM，�
 运行 bare-metal AM 测试、Nanos-lite、Navy 应用和从磁盘加载的代码，同时让普
 通 RAM-heavy loop 得到加速。
 
+RV32 compilation-unit 拆分只改变 source 组织，所以当前 integer benchmark
+主要用来检查它是否引入明显性能回退。配置的 floating-point 操作现在会从生成
+代码调用共享 SoftFloat executor；成功的 non-memory 操作可以在同一个 native
+block 中继续。当前矩阵没有单独测 floating-point workload，因此不能把表中结果
+理解成已测得的 floating-point speed-up。
+
 常规 pass/fail 性能检查使用：
 
 ```bash
-scripts/check-rv32-jit-performance.sh
+bash scripts/check-rv32-jit-performance.sh
 ```
 
 该脚本会设置 `SDL_VIDEODRIVER=dummy` 和 `SDL_AUDIODRIVER=dummy`，然后检查当前
-`JITBENCH_ALU_MAX_US` 和 `MICROBENCH_MIN_MARKS` 阈值。手动收集可比原始数据时，
-也建议使用同样的 dummy driver 环境：
+`JITBENCH_ALU_MAX_US` 和 `MICROBENCH_MIN_MARKS` 阈值。收集可比原始数据时，
+先构建一次，把每条命令运行一次作为 warm-up，再测五次。只有 guest benchmark
+同时打印 PASS 时，该样本才有效。
 
 ```bash
-source scripts/setup-env.sh
+# RV32 gate 配置。
+make -C nemu riscv32-am-headless-jit_defconfig
+make -C nemu -j2
 
-# 当前 JIT 路径。
+# RV32 JIT 开启的 MicroBench 和 JITBench。
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+  make -C am-kernels/benchmarks/microbench \
+  ARCH=riscv32-nemu NEMU_DEFCONFIG=riscv32-am-headless-jit_defconfig \
+  mainargs=ref run
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-  make -C am-kernels/benchmarks/jitbench ARCH=riscv32-nemu run
+  make -C am-kernels/benchmarks/jitbench \
+  ARCH=riscv32-nemu NEMU_DEFCONFIG=riscv32-am-headless-jit_defconfig run
 
-# 当前分支运行时关闭 JIT。
+# 同一 RV32 binary，关闭 JIT runtime gate。
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
-  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu \
+  NEMU_DEFCONFIG=riscv32-am-headless-jit_defconfig mainargs=ref run
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
+  make -C am-kernels/benchmarks/jitbench ARCH=riscv32-nemu \
+  NEMU_DEFCONFIG=riscv32-am-headless-jit_defconfig run
 
-# 非 JIT 性能分支。
-git checkout performance_improve
-source scripts/setup-env.sh
+# RV64 direct-interpreter 测量。
+make -C nemu riscv64-am-headless_defconfig
+make -C nemu -j2
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+  make -C am-kernels/benchmarks/branchmark ARCH=riscv64-nemu \
+  NEMU_DEFCONFIG=riscv64-am-headless_defconfig run
 
-# 原始 baseline 分支。
-git checkout legacy/baseline-master
-source scripts/setup-env.sh
+# RV64 statistics-free JIT 测量。
+make -C nemu riscv64-am-headless-jit_defconfig
+make -C nemu -j2
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+  make -C am-kernels/benchmarks/branchmark ARCH=riscv64-nemu \
+  NEMU_DEFCONFIG=riscv64-am-headless-jit_defconfig run
 ```
+
+历史分支应放在独立 worktree 中测量，以保持当前 checkout 不变。
 
 ## Nanos-lite GUI 流程
 

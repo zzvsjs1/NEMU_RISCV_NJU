@@ -43,13 +43,51 @@ asm(
 
 extern void rv64_fpu_trap_handler(void);
 
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
     ".option arch, +f\n"
     ".option arch, +d\n"
+
+    /*
+     * Keep mtvec equal to the sequential PC so the JIT must consume the
+     * executor's explicit trap result instead of comparing PC values.
+     */
+    ".globl rv64_fpu_sequential_mtvec_probe\n"
+    ".type rv64_fpu_sequential_mtvec_probe, @function\n"
+    "rv64_fpu_sequential_mtvec_probe:\n"
+    ".globl rv64_fpu_sequential_mtvec_insn\n"
+    "rv64_fpu_sequential_mtvec_insn:\n"
+    "  .word 0xf0050053\n" /* FMV.W.X f0, a0 */
+    ".globl rv64_fpu_sequential_mtvec_vector\n"
+    "rv64_fpu_sequential_mtvec_vector:\n"
+    "  j rv64_fpu_sequential_mtvec_handler\n"
+    "rv64_fpu_sequential_mtvec_resume:\n"
+    "  ret\n"
+    ".size rv64_fpu_sequential_mtvec_probe, "
+    ".-rv64_fpu_sequential_mtvec_probe\n"
+
+    ".type rv64_fpu_sequential_mtvec_handler, @function\n"
+    "rv64_fpu_sequential_mtvec_handler:\n"
+    "  la t0, rv64_fpu_trap_count\n"
+    "  ld t1, 0(t0)\n"
+    "  addi t1, t1, 1\n"
+    "  sd t1, 0(t0)\n"
+    "  csrr t1, mcause\n"
+    "  la t0, rv64_fpu_trap_mcause\n"
+    "  sd t1, 0(t0)\n"
+    "  csrr t1, mepc\n"
+    "  la t0, rv64_fpu_trap_mepc\n"
+    "  sd t1, 0(t0)\n"
+    "  csrr t1, mtval\n"
+    "  la t0, rv64_fpu_trap_mtval\n"
+    "  sd t1, 0(t0)\n"
+    "  la t1, rv64_fpu_sequential_mtvec_resume\n"
+    "  csrw mepc, t1\n"
+    "  mret\n"
+    ".size rv64_fpu_sequential_mtvec_handler, "
+    ".-rv64_fpu_sequential_mtvec_handler\n"
 
     ".globl rv64_fpu_fs_off_probe\n"
     ".type rv64_fpu_fs_off_probe, @function\n"
@@ -130,6 +168,9 @@ asm(
 
     ".option pop\n");
 
+extern void rv64_fpu_sequential_mtvec_probe(uint32_t);
+extern char rv64_fpu_sequential_mtvec_insn[];
+extern char rv64_fpu_sequential_mtvec_vector[];
 extern void rv64_fpu_fs_off_probe(uint32_t);
 extern char rv64_fpu_fs_off_insn[];
 extern uint64_t rv64_fpu_bad_static_rm(uint32_t, uint32_t, uint32_t);
@@ -199,6 +240,12 @@ static void test_fs_off_and_reserved_rounding(uintptr_t base_mstatus)
     write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_OFF);
     rv64_fpu_fs_off_probe(UINT32_C(0x3f800000));
     check_trap(2, rv64_fpu_fs_off_insn, 0);
+
+    reset_trap();
+    write_mtvec((uintptr_t)rv64_fpu_sequential_mtvec_vector);
+    rv64_fpu_sequential_mtvec_probe(UINT32_C(0x3f800000));
+    check_trap(2, rv64_fpu_sequential_mtvec_insn, 0);
+    write_mtvec((uintptr_t)rv64_fpu_trap_handler);
 
     write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
     reset_trap();

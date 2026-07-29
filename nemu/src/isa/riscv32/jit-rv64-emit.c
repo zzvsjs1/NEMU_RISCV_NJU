@@ -4,6 +4,10 @@
 
 #include "jit-rv64-internal.h"
 
+#ifdef CONFIG_RISCV_FPU
+#include "local-include/fpu.h"
+#endif
+
 /*
  * RV64 JIT emitter layer: x86-64 byte writing, generated-code ABI helpers,
  * register-cache emission, direct-link exits and instruction emitters.
@@ -57,6 +61,7 @@ typedef enum
     HOST_REG_RDX = 2,
     HOST_REG_RBX = 3,
     HOST_REG_RBP = 5,
+    HOST_REG_RSI = 6,
     HOST_REG_R8 = 8,
     HOST_REG_R10 = 10,
     HOST_REG_R11 = 11,
@@ -65,6 +70,30 @@ typedef enum
     HOST_REG_R14 = 14,
     HOST_REG_R15 = 15,
 } host_reg_t;
+
+#ifdef CONFIG_RISCV_FPU
+/* FP memory helpers always form a conservative native-block boundary. */
+static bool rv64_jit_fp_opcode_is_memory(uint32_t opcode) { return opcode == RV64_FP_OPCODE_LOAD || opcode == RV64_FP_OPCODE_STORE; }
+
+/*
+ * Keep helper-entry and trap accounting beside the shared FP executor.
+ * Successful outcomes are counted on their generated native edges below, so
+ * the profile describes executed control flow rather than wrapper-side opcode
+ * classification.
+ */
+static uint32_t rv64_jit_exec_fpu(uint32_t instr, vaddr_t pc)
+{
+    JIT_STAT_INC(fp_helper_calls);
+    const uint32_t completed = riscv_fpu_jit_exec(instr, pc);
+
+    if (completed == 0)
+    {
+        JIT_STAT_INC(fp_helper_trap_exits);
+    }
+
+    return completed;
+}
+#endif
 
 enum
 {
@@ -327,6 +356,11 @@ static bool emit_movabs_r10(rv64_jit_writer_t *w, uint64_t value)
 {
     return emit_movabs_reg(w, HOST_REG_R10, value);
 }
+
+#ifdef CONFIG_RISCV_FPU
+/* Emit `movabs rsi, imm64`, preserving a full-width RV64 helper argument. */
+static bool emit_movabs_rsi(rv64_jit_writer_t *w, uint64_t value) { return emit_movabs_reg(w, HOST_REG_RSI, value); }
+#endif
 
 /* Emit `mov eax, [rdx]`, loading one 32-bit JIT loop counter. */
 static bool emit_mov_eax_m32_rdx(rv64_jit_writer_t *w)
@@ -624,6 +658,11 @@ static bool emit_mov_esi_imm32(rv64_jit_writer_t *w, uint32_t imm)
 {
     return emit_u8(w, 0xbe) && emit_u32(w, imm);
 }
+
+#ifdef CONFIG_RISCV_FPU
+/* Emit `mov edi, imm32`, preparing the first helper argument. */
+static bool emit_mov_edi_imm32(rv64_jit_writer_t *w, uint32_t imm) { return emit_u8(w, 0xbf) && emit_u32(w, imm); }
+#endif
 
 /* Emit `mov edx, imm32`, preparing the third helper argument. */
 static bool emit_mov_edx_imm32(rv64_jit_writer_t *w, uint32_t imm)
@@ -1353,6 +1392,89 @@ static void patch_rel32(uint8_t *disp, const uint8_t *target)
     int32_t rel32 = (int32_t)rel;
     memcpy(disp, &rel32, sizeof(rel32));
 }
+
+#ifdef CONFIG_RISCV_FPU
+/*
+ * Emit one scalar F/D instruction through the shared SoftFloat executor.
+ *
+ * Dirty integer registers must reach CPU_state before the call because FP
+ * conversions and moves can consume or produce GPRs.  A successful arithmetic
+ * instruction reloads the caller-saved JIT bases and invalidates every cached
+ * GPR mapping before native execution continues.  FP memory instructions end
+ * the block even after success so MMIO, faults, page-table effects, and source
+ * invalidation remain ordered exactly as they are in the interpreter.
+ */
+bool rv64_jit_emit_fp_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs, uint32_t instr, vaddr_t pc, uint32_t completed_count,
+                            bool *ends_block)
+{
+    const uint32_t opcode = instr & RV64_OPCODE_MASK;
+    const bool is_memory = rv64_jit_fp_opcode_is_memory(opcode);
+    uint8_t *continue_disp = NULL;
+
+    *ends_block = false;
+
+    /*
+     * System V passes the raw instruction in EDI and the full guest PC in RSI.
+     * The helper returns one in EAX on normal completion and zero on a trap.
+     */
+    if (!jit_reg_flush_all_dirty(w, regs) || !emit_mov_edi_imm32(w, instr) || !emit_movabs_rsi(w, pc) ||
+        !emit_call_abs(w, (uintptr_t)rv64_jit_exec_fpu))
+    {
+        return false;
+    }
+
+    if (is_memory)
+    {
+#if RV64_JIT_STATS
+        uint8_t *skip_memory_exit_stat_disp = NULL;
+
+        /*
+         * A zero helper result is the trap edge. Only normal FP memory
+         * completion reaches the native increment before both outcomes join
+         * the terminal return path.
+         */
+        if (!emit_test_eax_eax(w) || !emit_jcc_rel32_placeholder(w, HOST_JCC_E, &skip_memory_exit_stat_disp) ||
+            !emit_inc_jit_stat_counter(w, &rv64_jit_stats.fp_helper_memory_exits))
+        {
+            return false;
+        }
+
+        patch_rel32(skip_memory_exit_stat_disp, w->cur);
+#endif
+
+        if (!emit_return_total_retired(w, completed_count + 1u))
+        {
+            return false;
+        }
+
+        *ends_block = true;
+    }
+    else
+    {
+        /*
+         * A non-zero result skips the trap-return stub.  The trap path already
+         * has its architectural PC in cpu.pc and retires this instruction.
+         */
+        if (!emit_test_eax_eax(w) || !emit_jcc_rel32_placeholder(w, HOST_JCC_NE, &continue_disp) ||
+            !emit_return_total_retired(w, completed_count + 1u))
+        {
+            return false;
+        }
+
+        patch_rel32(continue_disp, w->cur);
+
+        if (!emit_inc_jit_stat_counter(w, &rv64_jit_stats.fp_helper_continuations) || !emit_load_jit_bases(w))
+        {
+            return false;
+        }
+
+        rv64_jit_reg_cache_init(regs);
+    }
+
+    JIT_STAT_INC(fp_helper_sites);
+    return true;
+}
+#endif
 
 /*
  * Block exits and direct links.

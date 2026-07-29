@@ -13,11 +13,111 @@ export SDL_VIDEODRIVER=dummy
 
 DEFAULT_DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit_defconfig"
 DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit-stats_defconfig"
-TESTS=(riscv64-jit-strict riscv64-jit-smc riscv64-jit-negative-cache riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-direct-link riscv64-jit-trace riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-sv39-cross-page riscv64-jit-mprv-ifetch riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data riscv64-jit-sv39-dtlb)
+RV64_FPU_JIT_TEST=riscv64-fpu-jit-fallback
+RV64_FPU_TRAP_TEST=riscv64-fpu-traps
+TESTS=(
+  "$RV64_FPU_JIT_TEST" "$RV64_FPU_TRAP_TEST" riscv64-jit-strict riscv64-jit-smc riscv64-jit-negative-cache
+  riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-direct-link riscv64-jit-trace
+  riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-sv39-cross-page riscv64-jit-mprv-ifetch
+  riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data riscv64-jit-sv39-dtlb
+)
 
 fail() {
   echo "RISC-V64 JIT correctness check failed: $*" >&2
   exit 1
+}
+
+require_good_trap() {
+  local log=$1
+  local test_name=$2
+
+  # A normal process exit is not proof that the CPU test reached its
+  # architectural success trap. An early quit can occur after plausible JIT
+  # statistics have already accumulated.
+  if ! grep -q 'HIT GOOD TRAP' "$log"; then
+    echo "Expected $test_name to reach HIT GOOD TRAP" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_count_expectation() {
+  local actual=$1
+  local expectation=$2
+  local counter_name=$3
+  local test_name=$4
+  local log=$5
+
+  case "$expectation" in
+    any)
+      return
+      ;;
+    positive)
+      if [ "$actual" -gt 0 ]; then
+        return
+      fi
+      ;;
+    zero)
+      if [ "$actual" -eq 0 ]; then
+        return
+      fi
+      ;;
+    *)
+      if [[ "$expectation" =~ ^[0-9]+$ ]] && [ "$actual" -eq "$expectation" ]; then
+        return
+      fi
+      ;;
+  esac
+
+  echo "Expected FP $counter_name for $test_name to be $expectation, got $actual" >&2
+  cat "$log" >&2
+  exit 1
+}
+
+require_fp_helper_stats() {
+  local log=$1
+  local test_name=$2
+  local expected_sites=$3
+  local expected_calls=$4
+  local expected_continuations=$5
+  local expected_trap_exits=$6
+  local expected_memory_exits=$7
+  local summary
+  local sites
+  local calls
+  local continuations
+  local trap_exits
+  local memory_exits
+  local classified_calls
+
+  summary=$(sed -n \
+    's/.*jit: FP helper sites = \([0-9][0-9]*\), calls = \([0-9][0-9]*\), continuations = \([0-9][0-9]*\), trap exits = \([0-9][0-9]*\), memory exits = \([0-9][0-9]*\).*/\1 \2 \3 \4 \5/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$summary" ]; then
+    echo "Failed to find exact FP helper stats summary for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  read -r sites calls continuations trap_exits memory_exits <<<"$summary"
+
+  classified_calls=$((continuations + trap_exits + memory_exits))
+  if [ "$calls" -ne "$classified_calls" ]; then
+    echo "FP helper calls for $test_name were not fully classified: calls=$calls" \
+      "continuations=$continuations trap_exits=$trap_exits memory_exits=$memory_exits" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+
+  # Exact integer expectations are the hook for a focused guest whose stable
+  # instruction mix covers all seven FP major-opcode families. Aggregate
+  # positive counts alone cannot prove per-family coverage.
+  require_count_expectation "$sites" "$expected_sites" "helper sites" "$test_name" "$log"
+  require_count_expectation "$calls" "$expected_calls" "helper calls" "$test_name" "$log"
+  require_count_expectation "$continuations" "$expected_continuations" "helper continuations" "$test_name" "$log"
+  require_count_expectation "$trap_exits" "$expected_trap_exits" "helper trap exits" "$test_name" "$log"
+  require_count_expectation "$memory_exits" "$expected_memory_exits" "helper memory exits" "$test_name" "$log"
 }
 
 require_positive_jit_instructions() {
@@ -732,7 +832,16 @@ for test_name in "${TESTS[@]}"; do
     exit 2
   fi
 
+  require_good_trap "$out" "$test_name"
   require_positive_jit_instructions "$out" "$test_name"
+
+  if [ "$test_name" = "$RV64_FPU_JIT_TEST" ]; then
+    require_fp_helper_stats "$out" "$test_name" positive 40 23 zero 17
+  fi
+
+  if [ "$test_name" = "$RV64_FPU_TRAP_TEST" ]; then
+    require_fp_helper_stats "$out" "$test_name" positive 22 14 8 zero
+  fi
 
   if [ "$test_name" = "riscv64-jit-load-fast" ]; then
     require_positive_native_loads "$out" "$test_name"

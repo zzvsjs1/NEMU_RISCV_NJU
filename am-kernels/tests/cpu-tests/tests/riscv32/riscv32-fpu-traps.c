@@ -53,12 +53,51 @@ extern void rv32_fpu_trap_handler(void);
  * explicit F instructions, while raw words cover encodings that a correct
  * RV32F assembler refuses because they require D or RV64.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
     ".option arch, +f\n"
+
+    /*
+     * The vector label is exactly four bytes after the trapping instruction.
+     * A JIT must therefore use the executor's explicit result rather than
+     * deciding that dnpc == pc + 4 means normal completion.
+     */
+    ".globl rv32_fpu_sequential_mtvec_probe\n"
+    ".type rv32_fpu_sequential_mtvec_probe, @function\n"
+    "rv32_fpu_sequential_mtvec_probe:\n"
+    ".globl rv32_fpu_sequential_mtvec_insn\n"
+    "rv32_fpu_sequential_mtvec_insn:\n"
+    "  .word 0xf0050053\n" /* FMV.W.X f0, a0 */
+    ".globl rv32_fpu_sequential_mtvec_vector\n"
+    "rv32_fpu_sequential_mtvec_vector:\n"
+    "  j rv32_fpu_sequential_mtvec_handler\n"
+    "rv32_fpu_sequential_mtvec_resume:\n"
+    "  ret\n"
+    ".size rv32_fpu_sequential_mtvec_probe, "
+    ".-rv32_fpu_sequential_mtvec_probe\n"
+
+    ".type rv32_fpu_sequential_mtvec_handler, @function\n"
+    "rv32_fpu_sequential_mtvec_handler:\n"
+    "  la t0, rv32_fpu_trap_count\n"
+    "  lw t1, 0(t0)\n"
+    "  addi t1, t1, 1\n"
+    "  sw t1, 0(t0)\n"
+    "  csrr t1, mcause\n"
+    "  la t0, rv32_fpu_trap_mcause\n"
+    "  sw t1, 0(t0)\n"
+    "  csrr t1, mepc\n"
+    "  la t0, rv32_fpu_trap_mepc\n"
+    "  sw t1, 0(t0)\n"
+    "  csrr t1, mtval\n"
+    "  la t0, rv32_fpu_trap_mtval\n"
+    "  sw t1, 0(t0)\n"
+    "  la t1, rv32_fpu_sequential_mtvec_resume\n"
+    "  csrw mepc, t1\n"
+    "  mret\n"
+    ".size rv32_fpu_sequential_mtvec_handler, "
+    ".-rv32_fpu_sequential_mtvec_handler\n"
 
     ".globl rv32_fpu_fs_off_probe\n"
     ".type rv32_fpu_fs_off_probe, @function\n"
@@ -210,6 +249,9 @@ asm(
 
     ".option pop\n");
 
+extern void rv32_fpu_sequential_mtvec_probe(uint32_t);
+extern char rv32_fpu_sequential_mtvec_insn[];
+extern char rv32_fpu_sequential_mtvec_vector[];
 extern void rv32_fpu_fs_off_probe(uint32_t);
 extern char rv32_fpu_fs_off_insn[];
 extern uint32_t rv32_fpu_bad_static_rm(uint32_t, uint32_t, uint32_t);
@@ -291,6 +333,12 @@ static void test_fs_off_and_reserved_rounding(uintptr_t base_mstatus)
     write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_OFF);
     rv32_fpu_fs_off_probe(UINT32_C(0x3f800000));
     check_trap(2, rv32_fpu_fs_off_insn, 0);
+
+    reset_trap();
+    write_mtvec((uintptr_t)rv32_fpu_sequential_mtvec_vector);
+    rv32_fpu_sequential_mtvec_probe(UINT32_C(0x3f800000));
+    check_trap(2, rv32_fpu_sequential_mtvec_insn, 0);
+    write_mtvec((uintptr_t)rv32_fpu_trap_handler);
 
     write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
     reset_trap();

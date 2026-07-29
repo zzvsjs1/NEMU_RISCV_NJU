@@ -24,10 +24,14 @@ The main features of NEMU include
     * RV32IM, RV32IMF, or RV32IMFD according to configuration
     * scalar F/D Version 2.2 uses Berkeley SoftFloat; D is optional and
       depends on F
+    * the JIT calls the shared SoftFloat executor for all seven configured F/D
+      major opcodes instead of using host floating-point arithmetic
   * riscv64
     * RV64IM or RV64IMFD according to configuration
-    * floating-point instructions use the shared interpreter when the JIT is
-      enabled
+    * successful non-memory F/D helper calls can continue in the current JIT
+      block; floating-point loads and stores complete through architectural
+      memory helpers and then end the block for fault, MMIO, page-table, and
+      source-invalidation safety
 * memory
 * paging
   * TLB is optional (but necessary for mips32)

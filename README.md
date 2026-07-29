@@ -140,11 +140,16 @@ arithmetic, fused operations, comparisons, classification, conversions, and
 `FLD`/`FSD` are available without incorrectly enabling operations that require
 a 64-bit integer register.
 
-The RV32 and RV64 x86-64 JITs do not lower floating-point instructions to host
-floating-point code. They end the native block before an F/D instruction and
-resume in the interpreter, preserving SoftFloat and trap semantics. Focused JIT
-tests and counters check both a floating-point instruction at block entry and a
-native integer prefix immediately followed by floating point.
+When F/D is configured, the RV32 and RV64 x86-64 JITs emit calls to the shared
+SoftFloat executor for all seven floating-point major opcodes: `LOAD-FP`,
+`STORE-FP`, `FMADD`, `FMSUB`, `FNMSUB`, `FNMADD`, and `OP-FP`. They do not emit
+host floating-point arithmetic, so rounding, exception, NaN-boxing, and trap
+semantics remain shared with the reference path. A successful non-memory
+floating-point instruction can continue in the same native block. `LOAD-FP`
+and `STORE-FP` complete through the architectural memory helpers and then end
+the block, preserving MMIO, fault, page-table, and translated-source
+invalidation ordering. Focused JIT tests and counters cover helper calls,
+continuations, traps, and these conservative memory exits.
 
 ## x86 JIT Design
 
@@ -609,10 +614,12 @@ that the interpreter would raise.
 - RV64 support is implemented for the local NEMU/Nanos-lite app workflow. It
   uses the direct interpreter, including scalar F/D when configured, as the
   reference path and can optionally use the RV64 x86-64 JIT for supported
-  native ELF runs. Floating-point instructions leave the JIT before execution.
-  The detailed Sv32 limitations below are RV32-specific unless they say
-  otherwise; RV64 translated memory uses separate Sv39 checks in the RV64
-  interpreter and JIT.
+  native ELF runs. Configured floating-point instructions execute through the
+  shared SoftFloat JIT helper; successful non-memory operations may continue
+  natively, while floating-point loads and stores end the block after the
+  helper completes. The detailed Sv32 limitations below are RV32-specific
+  unless they say otherwise; RV64 translated memory uses separate Sv39 checks
+  in the RV64 interpreter and JIT.
 - Machine-mode trap handling is the main target. U-mode entry, U-mode ecall,
   CSR privilege checks, `mret`, and Sv32 paths are implemented for the local
   Nanos-lite workflow, but this is not a full supervisor-mode or hypervisor
@@ -647,9 +654,10 @@ here so tests and workloads can choose the right execution path deliberately.
   all mandatory arithmetic, fused, sign-injection, minimum/maximum, comparison,
   classification, conversion, load/store, move, rounding-mode, and accrued
   exception-flag behaviour. D depends on F. Compressed floating point, Q, Zfa,
-  vector floating point, hard-float user-space ABIs, and native JIT
-  floating-point lowering are separate extensions or integration work and are
-  not provided.
+  vector floating point, hard-float user-space ABIs, and direct host
+  floating-point arithmetic in generated JIT code are separate extensions or
+  integration work and are not provided. JIT floating-point helper sites use
+  the shared SoftFloat executor instead.
 - RV32 correctly rejects the XLEN=64-only `FCVT.L[U].S`, `FCVT.S.L[U]`,
   `FCVT.L[U].D`, `FCVT.D.L[U]`, `FMV.X.D`, and `FMV.D.X` instructions. The
   `FMVH.X.D` and `FMVP.D.X` pair moves belong to optional Zfa and are not part
@@ -704,59 +712,99 @@ here so tests and workloads can choose the right execution path deliberately.
 
 ## Performance Measurements
 
-The current matrix is script-driven. The numbers below are local samples from
-this checkout on 2026-05-27 with dummy SDL video/audio drivers. They are useful
-for checking trend direction, but re-measure on your own CPU because host
-frequency scaling, scheduler load, thermal limits, and performance-core /
-efficiency-core placement can change the result.
+The current RISC-V matrix is script-driven. Each ISA configuration was built
+before sampling, and each benchmark was run once as a warm-up and then five
+times with dummy SDL video/audio drivers. MicroBench used its `ref` data set;
+JITBench and BranchMark used their fixed built-in workloads. The table reports
+the median and the observed minimum-to-maximum range. Results are
+environment-dependent, so re-measure them when comparing another system or
+checkout.
+
+| Scope | Benchmark | Mode | Median result | Observed min-max |
+|-------|-----------|------|---------------|------------------|
+| RV32 | MicroBench | JIT enabled | `21358 Marks`, `2,202,897,617 instr/s` | `19426-21945 Marks`, `2,014,072,761-2,236,660,654 instr/s` |
+| RV32 | MicroBench | same build, `NEMU_DISABLE_JIT=1` | `1383 Marks`, `117,205,313 instr/s` | `1371-1396 Marks`, `115,743,322-117,939,968 instr/s` |
+| RV32 | JITBench | JIT enabled | `ALU 7.698 ms`, `Memory 3.657 ms`, `4,342,105,601 instr/s` | `ALU 7.422-8.019 ms`, `Memory 3.610-3.959 ms`, `3,870,430,315-4,588,149,835 instr/s` |
+| RV32 | JITBench | same build, `NEMU_DISABLE_JIT=1` | `ALU 412.333 ms`, `Memory 182.690 ms`, `119,325,465 instr/s` | `ALU 403.590-422.094 ms`, `Memory 177.990-191.186 ms`, `116,053,164-122,062,239 instr/s` |
+| RV64 | BranchMark | direct interpreter, no JIT counters | `guest_us=118747`, `checksum=0x67c146ec` | `guest_us=114080-120964` |
+| RV64 | BranchMark | JIT enabled, no JIT counters | `guest_us=1083`, `checksum=0x67c146ec`, `speedup=109.65x` | `guest_us=1036-1131` |
+
+Every MicroBench component validator passed. Every JITBench sample printed
+checksum `0x5d10403f` and `JITBench PASS`, and every BranchMark sample printed
+the checksum shown above and `BranchMark PASS`.
+
+RV32 used `riscv32-am-headless-jit_defconfig`. That standard gate defconfig
+compiles `CONFIG_RV32_JIT_STATS=y`, so its counter overhead is included even
+though `NEMU_JIT_STATS` was unset and no report was printed. Its
+`NEMU_DISABLE_JIT=1` rows use the same binary and may still use the RV32 fast
+executor; they are not pure-interpreter measurements. RV64 used
+`riscv64-am-headless_defconfig` for the direct interpreter and
+`riscv64-am-headless-jit_defconfig` for the statistics-free JIT timing.
+
+The separate statistics-enabled RV64 gate was also run five times. Every run
+passed checksum `0x67c146ec` and reported
+`avg_jit_entry_insns=20413.95`. Its counter-enabled timing is deliberately not
+mixed into the statistics-free headline row.
+
+Numeric performance gates:
+
+```bash
+bash scripts/check-rv32-jit-performance.sh
+bash scripts/check-rv64-jit-performance.sh
+```
+
+Related x86 JIT health checks exercise behaviour and profiling, but do not
+enforce a throughput score:
+
+```bash
+bash scripts/check-x86-jit-smoke.sh
+bash scripts/check-x86-jit-helper-profile.sh
+bash scripts/check-x86-jit-paged-memory-fastpath.sh
+```
+
+Historical reference data is kept only as fixed comparison points. Do not read
+these rows as current measurements.
 
 | Scope | Benchmark | Mode | Result |
 |-------|-----------|------|--------|
-| RV32 JIT | MicroBench | JIT enabled | `25374 Marks`, `2,615,873,637 instr/s` |
-| RV32 JIT | MicroBench | `NEMU_DISABLE_JIT=1` | `1531 Marks`, `130,571,528 instr/s` |
-| RV32 JIT | JITBench | JIT enabled | `ALU 7.052 ms`, `Memory 3.559 ms` |
-| RV32 JIT | JITBench | `NEMU_DISABLE_JIT=1` | `ALU 367.962 ms`, `Memory 164.339 ms` |
-| RV64 JIT | BranchMark | interpreter | `guest_us=99327`, `checksum=0x67c146ec` |
-| RV64 JIT | BranchMark | JIT enabled | `guest_us=1037`, `avg_jit_entry_insns=20413.95`, `speedup=95.78x` |
-| x86 JIT | MicroBench | JIT enabled | `18246 Marks`, `2,123,334,697 instr/s` |
-| x86 JIT | MicroBench | `NEMU_DISABLE_JIT=1` | `336 Marks`, `31,123,524 instr/s` |
+| Previous RV32 sample | MicroBench | JIT enabled | `25374 Marks`, `2,615,873,637 instr/s` |
+| Previous RV32 sample | MicroBench | `NEMU_DISABLE_JIT=1` | `1531 Marks`, `130,571,528 instr/s` |
+| Previous RV32 sample | JITBench | JIT enabled | `ALU 7.052 ms`, `Memory 3.559 ms` |
+| Previous RV32 sample | JITBench | `NEMU_DISABLE_JIT=1` | `ALU 367.962 ms`, `Memory 164.339 ms` |
+| Previous RV64 sample | BranchMark | interpreter | `guest_us=99327`, `checksum=0x67c146ec` |
+| Previous RV64 sample | BranchMark | statistics-enabled JIT | `guest_us=1037`, `avg_jit_entry_insns=20413.95`, `speedup=95.78x` |
+| Previous x86 sample | MicroBench | JIT enabled | `18246 Marks`, `2,123,334,697 instr/s` |
+| Previous x86 sample | MicroBench | `NEMU_DISABLE_JIT=1` | `336 Marks`, `31,123,524 instr/s` |
+| RV32 JIT reference | MicroBench | JIT enabled | `27098 Marks`, `2,860,733,499 instr/s` |
+| RV32 JIT reference | JITBench | JIT enabled | `ALU 8.436 ms`, `Memory 3.528 ms`, `4,049,658,568 instr/s` |
+| RV32 JIT reference | MicroBench | `NEMU_DISABLE_JIT=1` | `3322 Marks`, `275,864,060 instr/s` |
+| RV32 JIT reference | JITBench | `NEMU_DISABLE_JIT=1` | `ALU 157.041 ms`, `Memory 77.442 ms`, `302,722,837 instr/s` |
+| RV32 non-strict export | MicroBench | JIT enabled | `25041 Marks`, `2,480,000,000 instr/s` |
+| RV32 non-strict export | JITBench | JIT enabled | `ALU 7.304 ms`, `Memory 4.352 ms`, `4,520,000,000 instr/s` |
+| RV32 non-JIT reference | MicroBench | non-JIT | `3141 Marks`, `271,000,633 instr/s` |
+| RV32 baseline reference | MicroBench | interpreter | `694 Marks`, `58,319,798 instr/s` |
+| RV32/RV64 interpreter reference | CoreMark | RV32 pure interpreter | `586 Marks`, `4980 ms`, `62,912,314 instr/s` |
+| RV32/RV64 interpreter reference | CoreMark | RV64 direct interpreter | `1259 Marks`, `2319 ms`, `154,708,727 instr/s` |
 
-Current performance gates:
+The historical CoreMark rows are quick local comparisons, not reportable
+CoreMark results: both ran for less than the ten seconds required by the
+CoreMark reporting rules.
 
-```bash
-scripts/check-rv32-jit-performance.sh
-scripts/check-rv64-jit-performance.sh
-scripts/check-x86-jit-smoke.sh
-scripts/check-x86-jit-helper-profile.sh
-scripts/check-x86-jit-paged-memory-fastpath.sh
-```
-
-Historical local reference data is kept only as fixed comparison points. Do not
-read these rows as current `master` measurements.
-
-| Scope | Source / date | Benchmark | Mode | Result |
-|-------|---------------|-----------|------|--------|
-| RV32 JIT reference | `71c4588`, measured 2026-05-16 | MicroBench | JIT enabled | `27098 Marks`, `2,860,733,499 instr/s` |
-| RV32 JIT reference | `71c4588`, measured 2026-05-16 | JITBench | JIT enabled | `ALU 8.436 ms`, `Memory 3.528 ms`, `4,049,658,568 instr/s` |
-| RV32 JIT reference | `71c4588`, measured 2026-05-16 | MicroBench | `NEMU_DISABLE_JIT=1` | `3322 Marks`, `275,864,060 instr/s` |
-| RV32 JIT reference | `71c4588`, measured 2026-05-16 | JITBench | `NEMU_DISABLE_JIT=1` | `ALU 157.041 ms`, `Memory 77.442 ms`, `302,722,837 instr/s` |
-| RV32 non-strict export | `6d946ee`, measured 2026-05-16 | MicroBench | JIT enabled | `25041 Marks`, `2,480,000,000 instr/s` |
-| RV32 non-strict export | `6d946ee`, measured 2026-05-16 | JITBench | JIT enabled | `ALU 7.304 ms`, `Memory 4.352 ms`, `4,520,000,000 instr/s` |
-| RV32 non-JIT reference | `performance_improve`, measured 2026-05-16 | MicroBench | non-JIT | `3141 Marks`, `271,000,633 instr/s` |
-| RV32 baseline reference | `legacy/baseline-master`, measured 2026-05-16 | MicroBench | interpreter | `694 Marks`, `58,319,798 instr/s` |
-| RV32/RV64 interpreter reference | `c0d33ae`, measured 2026-05-17 | CoreMark | RV32 pure interpreter | `586 Marks`, `4980 ms`, `62,912,314 instr/s` |
-| RV32/RV64 interpreter reference | `c0d33ae`, measured 2026-05-17 | CoreMark | RV64 direct interpreter | `1259 Marks`, `2319 ms`, `154,708,727 instr/s` |
-
-The speed-up calculation is simple division:
+For a lower-is-better elapsed time, divide the slower median by the faster
+median:
 
 ```text
-speed-up = faster result / slower result
+time speed-up = non-JIT median time / JIT median time
+              = 118747 us / 1083 us
+              = 109.65x
 ```
 
-For example, the current local x86 MicroBench sample is:
+For a higher-is-better throughput score, reverse the operands:
 
 ```text
-18246 / 336 = 54.30x by Marks
+score speed-up = JIT median score / non-JIT median score
+               = 21358 Marks / 1383 Marks
+               = 15.44x
 ```
 
 ### Current JIT Performance Improvements
@@ -797,40 +845,56 @@ bounded while memory-heavy loops avoid repeated dispatcher returns. Larger nativ
 blocks also reduce dispatch overhead for straight-line code without changing the
 strict trap-ordering rule.
 
+The RV32 compilation-unit split is a source-organisation change, so the current
+integer benchmarks mainly check that it did not introduce a large performance
+regression. Configured floating-point operations now call the shared SoftFloat
+executor from generated code, and successful non-memory operations can continue
+within the same native block. The current matrix does not isolate floating-point
+work, so it must not be read as a measured floating-point speed-up.
+
 For the normal pass/fail performance check, run:
 
 ```bash
-scripts/check-rv32-jit-performance.sh
+bash scripts/check-rv32-jit-performance.sh
 ```
 
 That script sets `SDL_VIDEODRIVER=dummy` and `SDL_AUDIODRIVER=dummy`, then checks
 the current `JITBENCH_ALU_MAX_US` and `MICROBENCH_MIN_MARKS` thresholds. To
-collect comparable raw numbers manually, use the same dummy-driver environment:
+collect comparable raw numbers, build once, run each command once as a warm-up,
+then collect five measured runs. Accept the sample only when the guest
+benchmark also prints PASS.
 
-```bash
-source scripts/setup-env.sh
 
-# Current JIT path.
+# RV32 JIT-enabled MicroBench and JITBench.
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+  make -C am-kernels/benchmarks/microbench \
+  ARCH=riscv32-nemu NEMU_DEFCONFIG=riscv32-am-headless-jit_defconfig \
+  mainargs=ref run
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-  make -C am-kernels/benchmarks/jitbench ARCH=riscv32-nemu run
+  make -C am-kernels/benchmarks/jitbench \
+  ARCH=riscv32-nemu NEMU_DEFCONFIG=riscv32-am-headless-jit_defconfig run
 
-# Current branch with JIT disabled at runtime.
+# The same RV32 binary with the JIT runtime gate disabled.
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
-  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu \
+  NEMU_DEFCONFIG=riscv32-am-headless-jit_defconfig mainargs=ref run
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy NEMU_DISABLE_JIT=1 \
+  make -C am-kernels/benchmarks/jitbench ARCH=riscv32-nemu \
+  NEMU_DEFCONFIG=riscv32-am-headless-jit_defconfig run
 
-# Non-JIT performance branch.
-git checkout performance_improve
-source scripts/setup-env.sh
+# RV64 direct-interpreter timing.
+make -C nemu riscv64-am-headless_defconfig
+make -C nemu -j2
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+  make -C am-kernels/benchmarks/branchmark ARCH=riscv64-nemu \
+  NEMU_DEFCONFIG=riscv64-am-headless_defconfig run
 
-# Original baseline branch.
-git checkout legacy/baseline-master
-source scripts/setup-env.sh
+# RV64 statistics-free JIT timing.
+make -C nemu riscv64-am-headless-jit_defconfig
+make -C nemu -j2
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-  make -C am-kernels/benchmarks/microbench ARCH=riscv32-nemu run
+  make -C am-kernels/benchmarks/branchmark ARCH=riscv64-nemu \
+  NEMU_DEFCONFIG=riscv64-am-headless-jit_defconfig run
 ```
 
 ## Nanos-lite GUI Flow

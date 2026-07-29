@@ -62,6 +62,15 @@
 #define RV64_OPCODE_JALR RISCV_OPCODE_JALR
 #define RV64_OPCODE_JAL RISCV_OPCODE_JAL
 
+/* Floating-point major opcodes lowered through the shared SoftFloat helper. */
+#define RV64_FP_OPCODE_LOAD RISCV_FP_OPCODE_LOAD
+#define RV64_FP_OPCODE_STORE RISCV_FP_OPCODE_STORE
+#define RV64_FP_OPCODE_FMADD RISCV_FP_OPCODE_FMADD
+#define RV64_FP_OPCODE_FMSUB RISCV_FP_OPCODE_FMSUB
+#define RV64_FP_OPCODE_FNMSUB RISCV_FP_OPCODE_FNMSUB
+#define RV64_FP_OPCODE_FNMADD RISCV_FP_OPCODE_FNMADD
+#define RV64_FP_OPCODE_OP RISCV_FP_OPCODE_OP
+
 /* Architectural register and JALR values used by generic emitter logic. */
 #define RV64_GPR_ZERO RISCV_GPR_ZERO
 #define RV64_FUNCT3_JALR RISCV_JALR_FUNCT3
@@ -373,6 +382,7 @@ typedef enum
     RV64_JIT_BLOCK_END_BUDGET,
     RV64_JIT_BLOCK_END_JUMP,
     RV64_JIT_BLOCK_END_CHAINED_LOOP,
+    RV64_JIT_BLOCK_END_FP_MEMORY,
     RV64_JIT_BLOCK_END_SOURCE_BOUNDARY,
     RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX,
     RV64_JIT_BLOCK_END_COUNT,
@@ -431,6 +441,7 @@ typedef struct
     uint64_t native_paged_stores;
     uint64_t inline_paged_loads;
     uint64_t inline_paged_stores;
+    uint64_t fp_helper_sites;
 
     /* Run-time side exits, helper calls, and Sv39 data-TLB activity. */
     uint64_t side_exit_by_reason[RV64_JIT_SIDE_EXIT_COUNT];
@@ -445,6 +456,10 @@ typedef struct
     uint64_t inline_paged_store_hits;
     uint64_t helper_load_count;
     uint64_t helper_store_count;
+    uint64_t fp_helper_calls;
+    uint64_t fp_helper_continuations;
+    uint64_t fp_helper_trap_exits;
+    uint64_t fp_helper_memory_exits;
 
     /* Direct-link outcomes are incremented by the running generated code. */
     uint64_t direct_link_taken_count;
@@ -719,6 +734,10 @@ bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w,
                                uint32_t instr, vaddr_t pc,
                                vaddr_t next_pc,
                                uint32_t completed_count);
+#ifdef CONFIG_RISCV_FPU
+bool rv64_jit_emit_fp_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs, uint32_t instr, vaddr_t pc, uint32_t completed_count,
+                            bool *ends_block);
+#endif
 bool rv64_jit_emit_branch(rv64_jit_writer_t *w,
                           rv64_jit_reg_cache_t *regs,
                           uint32_t instr, vaddr_t pc,

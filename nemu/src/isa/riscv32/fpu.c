@@ -8,6 +8,13 @@
 #include <softfloat.h>
 
 /*
+ * NEMU currently executes one hart on one host thread.  Keeping the current
+ * instruction's trap result here lets the existing leaf executors retain their
+ * simple void interfaces while giving generated code an unambiguous outcome.
+ */
+static bool fp_instruction_trapped;
+
+/*
  * All supported instructions use one of the standard 32-bit floating-point
  * layouts from the unprivileged ISA:
  *
@@ -292,6 +299,7 @@ static inline word_t fp_imm_s(uint32_t inst)
  */
 static void fp_raise_trap(Decode *s, word_t cause, word_t tval)
 {
+    fp_instruction_trapped = true;
     s->dnpc = isa_raise_intr_tval(cause, s->pc, tval);
     difftest_skip_ref();
 }
@@ -1471,14 +1479,9 @@ static void fp_exec_op(Decode *s, uint32_t inst)
     }
 }
 
-void riscv_fpu_exec(Decode *s)
+static void fp_exec_dispatch(Decode *s)
 {
     const uint32_t inst = s->isa.inst;
-
-    if (!fp_require_enabled(s))
-    {
-        return;
-    }
 
     switch (fp_opcode(inst))
     {
@@ -1501,6 +1504,46 @@ void riscv_fpu_exec(Decode *s)
         fp_raise_illegal(s);
         return;
     }
+}
+
+riscv_fpu_exec_result_t riscv_fpu_exec(Decode *s)
+{
+    fp_instruction_trapped = false;
+
+    if (fp_require_enabled(s))
+    {
+        fp_exec_dispatch(s);
+    }
+
+    return fp_instruction_trapped ? RISCV_FPU_EXEC_TRAP : RISCV_FPU_EXEC_OK;
+}
+
+uint32_t riscv_fpu_jit_exec(uint32_t instr, vaddr_t pc)
+{
+    /*
+     * The native block has already fetched the instruction, so construct only
+     * the execution state that the shared FPU path observes.  Initialising
+     * dnpc to the sequential address is important: successful FP instructions
+     * do not otherwise write it, while trap helpers replace it explicitly.
+     */
+    Decode s = {
+        .pc = pc,
+        .snpc = pc + RISCV_BASE_INSN_BYTES,
+        .dnpc = pc + RISCV_BASE_INSN_BYTES,
+    };
+    s.isa.inst = instr;
+
+    cpu.pc = pc;
+    const riscv_fpu_exec_result_t result = riscv_fpu_exec(&s);
+
+    /*
+     * Some FP moves and conversions name an integer destination.  The direct
+     * interpreter repairs x0 after every decoded instruction; helper execution
+     * must preserve that architectural invariant itself.
+     */
+    gpr(RISCV_GPR_ZERO) = 0;
+    cpu.pc = s.dnpc;
+    return result == RISCV_FPU_EXEC_OK;
 }
 
 #endif
