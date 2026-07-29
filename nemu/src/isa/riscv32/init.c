@@ -49,7 +49,7 @@ static void restart()
     cpu.prvi = RISCV_PRIV_M;
     cpu.INTR = false;
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     /*
      * The privileged architecture requires reset to enter M-mode with MIE and
      * MPRV clear and every WARL field legal; most other hart state is

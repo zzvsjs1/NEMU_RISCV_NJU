@@ -18,14 +18,14 @@ typedef struct
 } csr_disp_t;
 
 static const csr_disp_t csr_list[] = {
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     {RISCV_CSR_FFLAGS, "fflags"},
     {RISCV_CSR_FRM, "frm"},
     {RISCV_CSR_FCSR, "fcsr"},
 #endif
     {RISCV_CSR_SATP, "satp"},
     {RISCV_CSR_MSTATUS, "mstatus"},
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     {RISCV_CSR_MISA, "misa"},
 #endif
     {RISCV_CSR_MTVEC, "mtvec"},
@@ -136,7 +136,7 @@ static bool csr_name_to_address(const char *name, word_t *addr)
  */
 word_t getCSRValue(const word_t address)
 {
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     switch (address)
     {
     case RISCV_CSR_FFLAGS:
@@ -146,19 +146,26 @@ word_t getCSRValue(const word_t address)
     case RISCV_CSR_FCSR:
         return cpu.fcsr & RISCV_FCSR_MASK;
     case RISCV_CSR_MISA:
+    {
         /*
-         * RV64 MXL=2 plus the implemented base, multiply/divide, FP, and
-         * privilege-mode extension bits. Zicsr/Zifencei are not represented in
-         * misa's single-letter bitmap.
+         * MXL identifies the configured integer width.  Both floating-point
+         * targets expose the base, multiply/divide, F, and privilege-mode
+         * extension bits; D is added whenever the configured FLEN is 64.
+         * Zicsr/Zifencei are not represented in misa's single-letter bitmap.
          */
-        return ((word_t)RISCV64_MISA_MXL_ENCODING
-                << RISCV64_MISA_MXL_SHIFT) |
-               ((word_t)1u << ('I' - 'A')) |
-               ((word_t)1u << ('M' - 'A')) |
-               ((word_t)1u << ('F' - 'A')) |
-               ((word_t)1u << ('D' - 'A')) |
-               ((word_t)1u << ('S' - 'A')) |
-               ((word_t)1u << ('U' - 'A'));
+        word_t misa =
+            ((word_t)RISCV_MISA_MXL_ENCODING << RISCV_MISA_MXL_SHIFT) |
+            ((word_t)1u << ('I' - 'A')) |
+            ((word_t)1u << ('M' - 'A')) |
+            ((word_t)1u << ('F' - 'A')) |
+            ((word_t)1u << ('S' - 'A')) |
+            ((word_t)1u << ('U' - 'A'));
+
+#ifdef CONFIG_RISCV_D
+        misa |= (word_t)1u << ('D' - 'A');
+#endif
+        return misa;
+    }
     default:
         break;
     }
@@ -174,7 +181,7 @@ word_t getCSRValue(const word_t address)
  */
 void setCSRValue(const word_t address, word_t value)
 {
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     switch (address)
     {
     case RISCV_CSR_FFLAGS:
@@ -198,7 +205,7 @@ void setCSRValue(const word_t address, word_t value)
     case RISCV_CSR_MISA:
         /*
          * This implementation exposes a fixed maximal ISA set.  Treat writes
-         * as WARL attempts that leave the supported F/D dependency intact.
+         * as WARL attempts that leave the configured F or F/D set intact.
          */
         return;
     default:

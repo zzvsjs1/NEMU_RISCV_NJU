@@ -248,6 +248,10 @@ typedef struct
     uint64_t compiled_insns;
     /* Number of negative-cache markers created for unsupported instructions. */
     uint64_t blocks_unsupported;
+    /* Unsupported markers whose first instruction has an FP major opcode. */
+    uint64_t fp_blocks_unsupported;
+    /* Native integer prefixes that stop immediately before an FP instruction. */
+    uint64_t native_prefixes_before_fp;
     /* Number of times the executable arena was cleared and reused. */
     uint64_t arena_resets;
 
@@ -4011,10 +4015,44 @@ static rv32_jit_block_t *jit_cache_slot(vaddr_t pc)
     return &jit_cache[jit_hash(pc, cpu.csr.satp)];
 }
 
+#if RV32_JIT_STATS
+/*
+ * Floating-point loads, stores, fused operations, and ordinary OP-FP use seven
+ * distinct major opcodes. The RV32 JIT deliberately leaves all of them to the
+ * shared interpreter, so this family check can make fallback tests specific to
+ * FP rather than relying on aggregate unsupported-instruction counts.
+ */
+static bool jit_opcode_is_fp(uint32_t opcode)
+{
+    switch (opcode)
+    {
+    case RISCV_FP_OPCODE_LOAD:
+    case RISCV_FP_OPCODE_STORE:
+    case RISCV_FP_OPCODE_FMADD:
+    case RISCV_FP_OPCODE_FMSUB:
+    case RISCV_FP_OPCODE_FNMSUB:
+    case RISCV_FP_OPCODE_FNMADD:
+    case RISCV_FP_OPCODE_OP:
+        return true;
+    default:
+        return false;
+    }
+}
+#endif
+
 /* Publish a negative cache entry for an instruction this JIT cannot translate. */
-static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, uint32_t source_len)
+static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr,
+                                 uint32_t source_len, uint32_t instr)
 {
     JIT_STAT_INC(blocks_unsupported);
+#if RV32_JIT_STATS
+    if (jit_opcode_is_fp(instr & RISCV_OPCODE_MASK))
+    {
+        JIT_STAT_INC(fp_blocks_unsupported);
+    }
+#else
+    (void)instr;
+#endif
 
     /*
      * Negative cache entries still include satp and the first physical source
@@ -4130,9 +4168,13 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     vaddr_t cur_pc = pc;
     uint32_t count = 0;
     uint32_t source_len = 0;
+    uint32_t unsupported_instr = 0;
     bool block_sets_pc = false;
     bool chain_safe = loop_count_needed;
     bool chained_loop = false;
+#if RV32_JIT_STATS
+    bool stopped_before_fp = false;
+#endif
 
     while (count < max_insns && count < RV32_JIT_BLOCK_MAX_INSNS)
     {
@@ -4179,6 +4221,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
             {
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
+                unsupported_instr = instr;
                 break;
             }
 
@@ -4194,6 +4237,7 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
             {
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
+                unsupported_instr = instr;
                 break;
             }
 
@@ -4214,6 +4258,10 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
                  */
                 w.cur = instr_start;
                 jit_reg_cache_restore(&regs, &regs_start);
+                unsupported_instr = instr;
+#if RV32_JIT_STATS
+                stopped_before_fp = jit_opcode_is_fp(opcode);
+#endif
                 break;
             }
         }
@@ -4230,7 +4278,8 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
     if (count == 0)
     {
-        jit_mark_unsupported(pc, first_paddr, RISCV_BASE_INSN_BYTES);
+        jit_mark_unsupported(pc, first_paddr, RISCV_BASE_INSN_BYTES,
+                             unsupported_instr);
         return NULL;
     }
 
@@ -4254,6 +4303,12 @@ static rv32_jit_block_t *jit_compile_block(vaddr_t pc, uint32_t max_insns)
     jit_source_chunks_ref(first_paddr, source_len);
     JIT_STAT_INC(blocks_compiled);
     JIT_STAT_ADD(compiled_insns, count);
+#if RV32_JIT_STATS
+    if (stopped_before_fp)
+    {
+        JIT_STAT_INC(native_prefixes_before_fp);
+    }
+#endif
     *block = (rv32_jit_block_t){
         .valid = true,
         .pc = pc,
@@ -4435,9 +4490,13 @@ void isa_jit_dump_stats(void)
         cache_hit_pct % 100u);
     Log("jit: compiled blocks = %" PRIu64
         ", unsupported blocks = %" PRIu64
+        ", unsupported FP blocks = %" PRIu64
+        ", native prefixes before FP = %" PRIu64
         ", avg compiled length = %" PRIu64 ".%02" PRIu64 " insn",
         jit_stats.blocks_compiled,
         jit_stats.blocks_unsupported,
+        jit_stats.fp_blocks_unsupported,
+        jit_stats.native_prefixes_before_fp,
         avg_compile_len / 100u,
         avg_compile_len % 100u);
     Log("jit: executed blocks = %" PRIu64

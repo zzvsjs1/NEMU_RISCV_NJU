@@ -4,18 +4,46 @@ config RV64
   bool
   default y if ISA_riscv64
 
-config RV64_FPU
-  bool "Enable RV64 F and D floating-point extensions"
-  depends on ISA_riscv64
-  default y
-  help
-    Implement the scalar RV64 F and D extensions in the interpreter using
-    Berkeley SoftFloat. The RV64 JIT continues to fall back to the interpreter
-    for floating-point opcodes that it does not translate.
+config RISCV_FPU
+  bool
+
+config RISCV_D
+  bool
+  depends on RISCV_FPU
 
 config RVE
   bool "Use E extension"
   depends on ISA_riscv32
   default n
+
+config RV32_FPU
+  bool "Enable RV32 F floating-point extension"
+  depends on ISA_riscv32 && !RVE
+  default y
+  select RISCV_FPU
+  help
+    Provide the architectural RV32 single-precision floating-point state used
+    by the interpreter and Berkeley SoftFloat implementation.
+
+config RV32_D
+  bool "Enable RV32 D double-precision floating-point extension"
+  depends on RV32_FPU
+  default n
+  select RISCV_D
+  help
+    Widen the RV32 floating-point register file to 64 bits and implement the
+    scalar D extension. Operations whose integer operands require XLEN=64
+    remain unavailable, as required by the unprivileged ISA.
+
+config RV64_FPU
+  bool "Enable RV64 F and D floating-point extensions"
+  depends on ISA_riscv64
+  default y
+  select RISCV_FPU
+  select RISCV_D
+  help
+    Implement the scalar RV64 F and D extensions in the interpreter using
+    Berkeley SoftFloat. The RV64 JIT continues to fall back to the interpreter
+    for floating-point opcodes that it does not translate.
 
 endmenu

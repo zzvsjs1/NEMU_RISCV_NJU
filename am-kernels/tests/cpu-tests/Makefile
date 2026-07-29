@@ -23,6 +23,15 @@ endif
 
 ARCH_TEST_SRCS = $(foreach dir,$(ARCH_TEST_DIRS),$(wildcard tests/$(dir)/*.c))
 ARCH_TESTS = $(basename $(notdir $(ARCH_TEST_SRCS)))
+
+# RV32D is an optional configuration layered on the default RV32F target.
+# Its conformance tests deliberately require misa.D and therefore belong to
+# the explicit RV32D matrix rather than the generic architecture test list.
+# Naming one of them through ALL still selects it normally.
+ifneq ($(filter riscv32 riscv32e,$(ARCH_ISA)),)
+ARCH_TESTS := $(filter-out riscv32-d-%,$(ARCH_TESTS))
+endif
+
 ALL ?= $(ARCH_TESTS)
 
 all: $(addprefix Makefile., $(ALL))

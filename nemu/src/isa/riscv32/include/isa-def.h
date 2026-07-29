@@ -69,8 +69,8 @@ enum
  * A standard CSR address is twelve bits.  Address bits [11:10] encode its
  * access class, with 0b11 denoting read-only, while bits [9:8] encode the
  * lowest privilege allowed to access it.  The addresses below are the CSRs
- * backed by this simplified NEMU CPU state, plus misa when the RV64 FPU target
- * exposes its fixed extension set; they are not a complete CSR catalogue.
+ * backed by this simplified NEMU CPU state, plus misa when a floating-point
+ * target exposes its fixed extension set; they are not a complete CSR catalogue.
  */
 enum
 {
@@ -146,8 +146,19 @@ enum
     RISCV_FP_OPCODE_OP = 0x53,
 };
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
 #define RISCV_FPR_NUM 32
+
+/*
+ * RV32F has FLEN=32, while RV32D and RV64D have FLEN=64.  Select raw register
+ * storage from FLEN rather than XLEN: RV32D is the important case where those
+ * widths differ, and its single-precision values require 64-bit NaN boxes.
+ */
+#ifdef CONFIG_RISCV_D
+typedef uint64_t riscv_fpr_t;
+#else
+typedef uint32_t riscv_fpr_t;
+#endif
 
 /*
  * RISC-V assigns three consecutive unprivileged CSR addresses to floating-point
@@ -189,14 +200,22 @@ enum
 #define RISCV_FCSR_MASK (RISCV_FFLAGS_MASK | RISCV_FRM_MASK)
 
 /*
- * RV64 places the two-bit MXL field at misa[63:62].  Encoding 2 means XLEN=64;
- * the remaining low bits are the alphabetically indexed extension bitmap.
+ * misa places its two-bit MXL field at the top of XLEN.  RV32 uses encoding 1
+ * in bits [31:30], while RV64 uses encoding 2 in bits [63:62].  The remaining
+ * low bits are the alphabetically indexed extension bitmap.
  */
 enum
 {
+    RISCV32_MISA_MXL_SHIFT = 30,
+    RISCV32_MISA_MXL_ENCODING = 1,
     RISCV64_MISA_MXL_SHIFT = 62,
     RISCV64_MISA_MXL_ENCODING = 2,
 };
+
+#define RISCV_MISA_MXL_SHIFT \
+    MUXDEF(CONFIG_RV64, RISCV64_MISA_MXL_SHIFT, RISCV32_MISA_MXL_SHIFT)
+#define RISCV_MISA_MXL_ENCODING \
+    MUXDEF(CONFIG_RV64, RISCV64_MISA_MXL_ENCODING, RISCV32_MISA_MXL_ENCODING)
 #endif
 
 typedef struct riscv_CPU_state
@@ -226,16 +245,16 @@ typedef struct riscv_CPU_state
     rtlreg_t prvi;
     bool INTR;
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     /*
-     * RV64D sets FLEN=64, so one raw 64-bit slot represents each architectural
-     * FPR.  Keeping fcsr as one value makes fflags and frm true aliases instead
-     * of three independent storage locations that could drift apart.
+     * One raw FLEN-wide slot represents each architectural FPR.  Keeping fcsr
+     * as one value makes fflags and frm true aliases instead of three
+     * independent storage locations that could drift apart.
      *
-     * These fields are conditional and placed at the end so RV32, RV32E, and
-     * non-FPU RV64 state layouts remain byte-for-byte unchanged.
+     * These fields are conditional and placed at the end so RV32E and
+     * non-floating-point state layouts remain byte-for-byte unchanged.
      */
-    uint64_t fpr[RISCV_FPR_NUM];
+    riscv_fpr_t fpr[RISCV_FPR_NUM];
     uint32_t fcsr;
 #endif
 } riscv_CPU_state;
@@ -470,11 +489,12 @@ enum
 #define RISCV64_CAUSE_LOAD_PAGE_FAULT RISCV_CAUSE_LOAD_PAGE_FAULT
 #define RISCV64_CAUSE_STORE_PAGE_FAULT RISCV_CAUSE_STORE_PAGE_FAULT
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
 /*
  * VS, FS, and XS use the same two-bit state encoding: Off=0, Initial=1,
  * Clean=2, and Dirty=3.  This target implements floating-point state only, so
- * VS and XS are forced to Off and SD is derived solely from FS=Dirty.
+ * VS and XS are forced to Off and SD is derived solely from FS=Dirty.  SD is
+ * the most-significant mstatus bit: bit 31 for RV32 and bit 63 for RV64.
  */
 enum
 {
@@ -486,6 +506,7 @@ enum
     RISCV_MSTATUS_VS_SHIFT = 9,
     RISCV_MSTATUS_FS_SHIFT = 13,
     RISCV_MSTATUS_XS_SHIFT = 15,
+    RISCV32_MSTATUS_SD_BIT = 31,
     RISCV64_MSTATUS_SD_BIT = 63,
 };
 
@@ -505,7 +526,10 @@ enum
     ((word_t)RISCV_MSTATUS_EXT_STATE_DIRTY << RISCV_MSTATUS_FS_SHIFT)
 #define RISCV_MSTATUS_XS_MASK \
     (RISCV_MSTATUS_EXT_STATE_VALUE_MASK << RISCV_MSTATUS_XS_SHIFT)
+#define RISCV32_MSTATUS_SD ((word_t)1u << RISCV32_MSTATUS_SD_BIT)
 #define RISCV64_MSTATUS_SD ((word_t)1ull << RISCV64_MSTATUS_SD_BIT)
+#define RISCV_MSTATUS_SD \
+    MUXDEF(CONFIG_RV64, RISCV64_MSTATUS_SD, RISCV32_MSTATUS_SD)
 #endif
 
 /*
@@ -525,23 +549,23 @@ static inline word_t riscv_mstatus_normalise(word_t value)
         value &= ~RISCV_MSTATUS_MPP_MASK;
     }
 
-#ifdef CONFIG_RV64
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     /*
-     * SD is a derived, read-only summary bit.  This RV64 model has no vector
-     * or custom extension state, so VS and XS are read-only zero and only
-     * FS=Dirty contributes to the summary.
+     * SD is a derived, read-only summary bit.  This model has no vector or
+     * custom extension state, so VS and XS are read-only zero and only
+     * FS=Dirty contributes to the summary at the XLEN-specific SD position.
      */
-    value &= ~(RISCV64_MSTATUS_SD |
+    value &= ~(RISCV_MSTATUS_SD |
                RISCV_MSTATUS_VS_MASK |
                RISCV_MSTATUS_XS_MASK);
 
     if ((value & RISCV_MSTATUS_FS_MASK) == RISCV_MSTATUS_FS_DIRTY)
     {
-        value |= RISCV64_MSTATUS_SD;
+        value |= RISCV_MSTATUS_SD;
     }
 #endif
 
+#ifdef CONFIG_RV64
     /*
      * UXL and SXL are WARL rather than ordinary writable bits.  Clear both
      * fields before inserting encoding 2 so guest values 1 and 3 cannot leave
@@ -556,7 +580,7 @@ static inline word_t riscv_mstatus_normalise(word_t value)
 
 #define riscv64_mstatus_normalise(value) riscv_mstatus_normalise(value)
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
 /* FP instructions and FP CSR accesses are illegal only while FS is Off. */
 static inline bool riscv_mstatus_fp_enabled(word_t mstatus)
 {

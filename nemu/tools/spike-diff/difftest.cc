@@ -20,7 +20,13 @@
 
 #ifdef CONFIG_ISA_riscv32
 #undef DEFAULT_ISA
+#ifdef CONFIG_RISCV_D
+#define DEFAULT_ISA "RV32IMFD_Zicsr_Zifencei"
+#elif defined(CONFIG_RISCV_FPU)
+#define DEFAULT_ISA "RV32IMF_Zicsr_Zifencei"
+#else
 #define DEFAULT_ISA MUXDEF(CONFIG_RVE, "RV32EM_Zicsr_Zifencei", "RV32IM_Zicsr_Zifencei")
+#endif
 #endif
 
 #ifdef CONFIG_ISA_riscv64
@@ -32,7 +38,7 @@
 #endif
 #endif
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
 /*
  * The privileged architecture places the two-bit FS state in mstatus[14:13].
  * Encoding 01 means Initial, so only the field's low bit (mstatus[13]) is set.
@@ -117,15 +123,20 @@ void sim_t::diff_get_regs(void *diff_context)
     ctx->prvi = state->prv;
     ctx->INTR = false;
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     for (int i = 0; i < RISCV_DIFFTEST_FPR_NUM; i++)
     {
         /*
          * Spike stores FPRs in a 128-bit container so it can also model Q.
-         * RV64D's architectural FLEN is 64; the low lane is the complete raw
-         * value transferred through NEMU's public DiffTest state.
+         * DiffTest exposes only the architectural FLEN-width value: RV32F
+         * takes the low 32 bits, while RV32D and RV64D use the complete low
+         * 64-bit lane.
          */
+#ifdef CONFIG_RISCV_D
         ctx->fpr[i] = state->FPR[i].v[0];
+#else
+        ctx->fpr[i] = (uint32_t)state->FPR[i].v[0];
+#endif
     }
 
     ctx->fcsr =
@@ -145,7 +156,7 @@ void sim_t::diff_set_regs(void *diff_context)
     state->pc = ctx->pc;
 
     diff_write_csr(CSR_SATP, ctx->csr.satp);
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     /*
      * Spike treats an fcsr write as architectural FP use: it marks
      * mstatus.FS Dirty and deliberately aborts if FS is Off.  DiffTest state
@@ -176,11 +187,19 @@ void sim_t::diff_set_regs(void *diff_context)
     diff_write_csr(CSR_MTVAL, ctx->csr.mtval);
     state->prv = ctx->prvi;
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     for (int i = 0; i < RISCV_DIFFTEST_FPR_NUM; i++)
     {
         freg_t value;
+#ifdef CONFIG_RISCV_D
         value.v[0] = ctx->fpr[i];
+#else
+        /*
+         * Spike's internal freg_t is 128 bits.  A valid binary32 value must
+         * therefore be NaN-boxed with every bit above the payload set to one.
+         */
+        value.v[0] = UINT64_C(0xffffffff00000000) | ctx->fpr[i];
+#endif
         value.v[1] = UINT64_MAX;
         state->FPR.write(i, value);
     }

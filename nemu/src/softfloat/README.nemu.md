@@ -1,4 +1,4 @@
-# SoftFloat integration for RV64 F/D
+# SoftFloat integration for RV32F, RV32D, and RV64F/D
 
 The arithmetic sources are not vendored in the parent repository. They come
 from the pristine checkout managed by `tools/softfloat/Makefile`:
@@ -11,6 +11,9 @@ from the pristine checkout managed by `tools/softfloat/Makefile`:
 Run `make -C tools/softfloat prepare` from the NEMU directory to initialise or
 verify the checkout.
 
-`filelist.mk` selects only the F32/F64 dependency closure required by RV64 F/D.
-FCLASS is implemented in NEMU because it is an architectural RISC-V operation,
-not part of the upstream SoftFloat interface.
+`filelist.mk` selects the F32/F64 dependency closure required by the shared
+RV32F, RV32D, and RV64F/D executor. RV32F uses the F32 paths. Both D
+configurations additionally use the F64 and cross-precision paths; XLEN does
+not change that arithmetic dependency. FCLASS is implemented in NEMU because
+it is an architectural RISC-V operation, not part of the upstream SoftFloat
+interface.

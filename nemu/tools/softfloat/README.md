@@ -1,6 +1,7 @@
 # Berkeley SoftFloat dependency
 
-NEMU's RV64 F/D interpreter uses Berkeley SoftFloat Release 3e from:
+NEMU's RV32F, RV32D, and RV64F/D interpreters use Berkeley SoftFloat Release
+3e from:
 
 - repository: `https://github.com/ucb-bar/berkeley-softfloat-3.git`
 - commit: `f74b1e48110ac3a27dd49b787d164e55e42d81d1`

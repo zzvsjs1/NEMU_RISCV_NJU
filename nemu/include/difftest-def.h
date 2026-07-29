@@ -42,11 +42,11 @@ enum
 #define RISCV_GPR_NUM MUXDEF(CONFIG_RVE, 16, 32)
 #endif
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
 /*
- * The architectural F/D register file always contains f0-f31.  This public
- * count names the corresponding DiffTest wire-layout array and is checked
- * against NEMU's private CPU-state count by the RISC-V DiffTest adapter.
+ * The architectural floating-point register file always contains f0-f31.  This
+ * public count names the corresponding DiffTest wire-layout array and is
+ * checked against NEMU's private CPU-state count by the RISC-V DiffTest adapter.
  *
  * The DiffTest fcsr value carries the two implemented architectural fields:
  * fflags occupies bits [4:0] and frm occupies bits [7:5].  Bits [31:8] are
@@ -54,6 +54,8 @@ enum
  * documents exactly which state a reference model may exchange with the DUT.
  */
 #define RISCV_DIFFTEST_FPR_NUM 32
+#define RISCV_DIFFTEST_FPR_TYPE \
+    MUXDEF(CONFIG_RISCV_D, uint64_t, uint32_t)
 #define RISCV_DIFFTEST_FCSR_IMPLEMENTED_WIDTH 8
 #define RISCV_DIFFTEST_FCSR_MASK \
     ((UINT32_C(1) << RISCV_DIFFTEST_FCSR_IMPLEMENTED_WIDTH) - 1)
@@ -89,12 +91,13 @@ typedef struct
     RISCV_GPR_TYPE prvi;
     bool INTR;
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     /*
-     * This tail exactly mirrors the conditional RV64 NEMU CPU state.  RV32 and
-     * every non-RISC-V DiffTest ABI remain unchanged when the feature is absent.
+     * This tail exactly mirrors the conditional NEMU floating-point CPU state.
+     * RV32F transfers raw 32-bit FPRs, while RV32D and RV64D transfer raw
+     * 64-bit FPRs; every non-floating-point DiffTest ABI remains unchanged.
      */
-    uint64_t fpr[RISCV_DIFFTEST_FPR_NUM];
+    RISCV_DIFFTEST_FPR_TYPE fpr[RISCV_DIFFTEST_FPR_NUM];
     uint32_t fcsr;
 #endif
 } riscv_difftest_state_t;

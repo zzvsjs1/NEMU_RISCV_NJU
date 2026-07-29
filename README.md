@@ -10,10 +10,10 @@ support several guest ISAs and provides a monitor, register and memory
 inspection, expression evaluation, watchpoints, snapshotting, differential
 testing, paging, interrupts, exceptions, and a small set of emulated devices.
 
-This repository focuses on RV32IM and RV64IM system-mode execution, the x86
-Nanos-lite path, and the local performance experiments around RISC-V and IA-32
-execution. It adds practical work needed by this local full-system emulation
-project:
+This repository focuses on RV32IM, RV32IMF, RV32IMFD, RV64IM, and RV64IMFD
+system-mode execution, the x86 Nanos-lite path, and the local performance
+experiments around RISC-V and IA-32 execution. It adds practical work needed by
+this local full-system emulation project:
 
 - `nemu`: the emulator core, RISC-V32/RISC-V64 executors, device models, and
   optional RISC-V and x86 JIT acceleration.
@@ -110,6 +110,41 @@ The RV64 JIT has three important safety mechanisms:
   block only if the target cache slot still matches PC, `satp`, fetch privilege,
   data privilege state when needed, and instruction-fetch generation. A miss
   returns to the C dispatcher for full validation.
+
+### Floating-Point Execution
+
+The shared RISC-V interpreter implements the mandatory scalar instruction
+families in the RISC-V `F` and `D` extensions, Version 2.2. Arithmetic uses the
+RISC-V specialisation of Berkeley SoftFloat Release 3e rather than host
+floating-point operations, so guest rounding modes, accrued exception flags,
+NaNs, infinities, subnormal values, and fused operations do not depend on the
+host floating-point environment.
+
+| Configuration | XLEN | FLEN | Advertised floating-point extensions |
+|---------------|------|------|----------------------------------------|
+| `CONFIG_RV32_FPU=y`, `CONFIG_RV32_D` unset | 32 | 32 | `F` |
+| `CONFIG_RV32_D=y` | 32 | 64 | `F`, `D` |
+| `CONFIG_RV64_FPU=y` | 64 | 64 | `F`, `D` |
+
+`RV32_D` depends on `RV32_FPU`; it cannot create a D-without-F configuration.
+The interpreter exposes the configured extensions through a fixed `misa` view,
+implements `fflags`, `frm`, and `fcsr`, rejects floating-point instructions when
+`mstatus.FS=Off`, and marks floating-point state Dirty after an architectural
+write.
+
+RV32D is deliberately modelled as XLEN=32 with FLEN=64. Single-precision values
+written into its 64-bit floating-point registers are NaN-boxed, and a malformed
+box is treated as canonical binary32 NaN by computational instructions. Raw
+loads, stores, and move instructions preserve their payload bits. D-format
+arithmetic, fused operations, comparisons, classification, conversions, and
+`FLD`/`FSD` are available without incorrectly enabling operations that require
+a 64-bit integer register.
+
+The RV32 and RV64 x86-64 JITs do not lower floating-point instructions to host
+floating-point code. They end the native block before an F/D instruction and
+resume in the interpreter, preserving SoftFloat and trap semantics. Focused JIT
+tests and counters check both a floating-point instruction at block entry and a
+native integer prefix immediately followed by floating point.
 
 ## x86 JIT Design
 
@@ -411,18 +446,35 @@ make -B -C nemu ISA=riscv32
 
 Useful dependencies include a RISC-V toolchain that can emit RV32IM with Zicsr
 using `-march=rv32im_zicsr -mabi=ilp32` and RV64IM with Zicsr/Zifencei using
-`-march=rv64im_zicsr_zifencei -mabi=lp64`, plus readline, ncurses, flex, and
+`-march=rv64im_zicsr_zifencei -mabi=lp64`. The assembler must also accept
+per-file `.option arch, +f` and `.option arch, +d` directives for the focused
+floating-point tests. Other dependencies include readline, ncurses, flex, and
 bison. Instruction tracing and instruction-queue disassembly now use the
 Capstone path under `nemu/tools/capstone`; the old LLVM disassembler path was
-removed when `8dc8207 Share RISC-V interpreter and sync upstream files` replaced
-`nemu/src/utils/disasm.cc` with the current C implementation.
+removed when `8dc8207 Share RISC-V interpreter and sync upstream files`
+replaced `nemu/src/utils/disasm.cc` with the current C implementation.
+
+### RISC-V Floating-Point Support
+
+The first floating-point build prepares a pinned Berkeley SoftFloat Release 3e
+checkout with the RISC-V specialisation:
+
+```bash
+make -C nemu/tools/softfloat prepare
+```
+
+The normal AM and Nanos-lite ABIs remain `ilp32`/`lp64` soft float. The focused
+tests place F/D instructions in local assembly blocks, so enabling the emulator
+extension does not require a hard-float C library or change the process ABI.
+Full `ilp32d` user-space libraries and floating-point process-context switching
+are outside the current integration.
 
 ### RISC-V64 Nanos-lite
 
-The RV64 path currently targets `RV64IM_Zicsr_Zifencei` with the `lp64` ABI and
-soft-float userspace libraries. `compiler-rt` is part of the RV64 build because
-some toolchain-generated helper routines are needed even when no floating-point
-hardware ABI is used.
+The RV64 emulator can expose `RV64IMFD_Zicsr_Zifencei`, while the current
+Nanos-lite path retains the `lp64` soft-float userspace ABI. `compiler-rt` is
+part of the RV64 build because some toolchain-generated helper routines are
+needed even when no floating-point hardware ABI is used.
 
 For the current RV64 path, configure and build NEMU, then rebuild the
 Nanos-lite disk image and run it under `riscv64-nemu`:
@@ -464,22 +516,6 @@ RISC-V64 execution acceleration
 
 Normal performance runs should keep JIT enabled and JIT statistics disabled.
 Statistics are useful for diagnosis, but the extra counters add overhead.
-
-Common defconfigs:
-
-```bash
-# IA-32 guest with x86 JIT and counters enabled by the defconfig.
-make -C nemu x86-am-jit_defconfig
-
-# Direct-interpreter RV64 headless run.
-make -C nemu riscv64-am-headless_defconfig
-
-# RV64 JIT without counters.
-make -C nemu riscv64-am-headless-jit_defconfig
-
-# RV64 JIT with counters for diagnostics.
-make -C nemu riscv64-am-headless-jit-stats_defconfig
-```
 
 Runtime controls:
 
@@ -566,14 +602,17 @@ that the interpreter would raise.
 
 ### Exception and JIT Limitations
 
-- The RISC-V support is focused on the RV32IM and RV64IM NEMU/Nanos-lite
-  workflows used by this tree. It is not a complete privileged-platform model
-  for every RISC-V extension.
+- The RISC-V support is focused on the RV32IM, RV32IMF, RV32IMFD, RV64IM, and
+  RV64IMFD NEMU/Nanos-lite workflows used by this tree. Scalar F/D support does
+  not make this a complete privileged-platform model for every RISC-V
+  extension.
 - RV64 support is implemented for the local NEMU/Nanos-lite app workflow. It
-  uses the direct interpreter as the reference path and can optionally use the
-  RV64 x86-64 JIT for supported native ELF runs. The detailed Sv32 limitations
-  below are RV32-specific unless they say otherwise; RV64 translated memory uses
-  separate Sv39 checks in the RV64 interpreter and JIT.
+  uses the direct interpreter, including scalar F/D when configured, as the
+  reference path and can optionally use the RV64 x86-64 JIT for supported
+  native ELF runs. Floating-point instructions leave the JIT before execution.
+  The detailed Sv32 limitations below are RV32-specific unless they say
+  otherwise; RV64 translated memory uses separate Sv39 checks in the RV64
+  interpreter and JIT.
 - Machine-mode trap handling is the main target. U-mode entry, U-mode ecall,
   CSR privilege checks, `mret`, and Sv32 paths are implemented for the local
   Nanos-lite workflow, but this is not a full supervisor-mode or hypervisor
@@ -592,25 +631,42 @@ that the interpreter would raise.
 - Device timing is bounded by instruction-count polling, but it is not a
   cycle-accurate hardware timing model.
 
-### Current RISC-V Spec Differences
+### Current RISC-V Spec Boundaries and Differences
 
 The current RISC-V32/RISC-V64 interpreters and JITs do not implement every
-behaviour required by the RISC-V unprivileged and privileged specifications.
-The important differences are listed here so tests and workloads can choose the
-right execution path deliberately.
+extension and platform facility described by the RISC-V unprivileged and
+privileged specifications. The important boundaries and differences are listed
+here so tests and workloads can choose the right execution path deliberately.
 
-- The interpreter decodes RV32IM integer, multiply/divide, CSR, `ecall`,
-  `ebreak`, `mret`, and the private `nemu_trap` stop instruction. It does not
-  decode the base `FENCE` instruction, Zifencei `FENCE.I`, `WFI`, `SRET`, or
-  `SFENCE.VMA`; those encodings currently reach the illegal-instruction path.
-- The RV64 direct interpreter decodes RV64IM, W-form integer operations, CSR,
-  `ecall`, `ebreak`, `mret`, `wfi`, `sfence.vma`, `fence`, `fence.i`, and the
-  private `nemu_trap` stop instruction. It does not implement compressed,
-  floating-point, vector, atomic, supervisor-return, or hypervisor instructions.
+- The shared direct interpreter decodes RV32IM or RV64IM, the RV64 W-form
+  operations, configured scalar F/D instructions, CSR operations, `ecall`,
+  `ebreak`, `mret`, `wfi`, `sfence.vma`, `fence`, `fence.i`, and the private
+  `nemu_trap` stop instruction. It does not implement compressed, atomic,
+  vector, supervisor-return, or hypervisor instructions.
+- The configured scalar F and D instruction sets follow Version 2.2, including
+  all mandatory arithmetic, fused, sign-injection, minimum/maximum, comparison,
+  classification, conversion, load/store, move, rounding-mode, and accrued
+  exception-flag behaviour. D depends on F. Compressed floating point, Q, Zfa,
+  vector floating point, hard-float user-space ABIs, and native JIT
+  floating-point lowering are separate extensions or integration work and are
+  not provided.
+- RV32 correctly rejects the XLEN=64-only `FCVT.L[U].S`, `FCVT.S.L[U]`,
+  `FCVT.L[U].D`, `FCVT.D.L[U]`, `FMV.X.D`, and `FMV.D.X` instructions. The
+  `FMVH.X.D` and `FMVP.D.X` pair moves belong to optional Zfa and are not part
+  of base RV32D. RV64F/D retains the XLEN=64 conversions and whole-register
+  doubleword moves.
+- RV32D implements `FLD` and `FSD` as two little-endian 32-bit transfers after
+  checking the architectural eight-byte alignment. Base D does not guarantee
+  an atomic 64-bit memory operation when XLEN is less than 64, so software must
+  not use an RV32D load or store as an inter-hart atomic primitive.
+- This EEI raises load/store-address-misaligned exceptions for misaligned
+  `FLW`, `FSW`, `FLD`, and `FSD`; no register or memory result is committed.
 - The CSR model is a small machine-level subset: `satp`, `mstatus`, `mtvec`,
-  `mscratch`, `mepc`, `mcause`, and `mtval`. Standard CSRs such as `misa`,
-  `mie`, `mip`, `medeleg`, `mideleg`, `sstatus`, `stvec`, `sepc`, `scause`,
-  and `stval` are not modelled.
+  `mscratch`, `mepc`, `mcause`, and `mtval`, plus `misa`, `fflags`, `frm`, and
+  `fcsr` in floating-point builds. `misa` is a fixed WARL view of the configured
+  extensions; writes leave that set unchanged. Standard CSRs such as `mie`,
+  `mip`, `medeleg`, `mideleg`, `sstatus`, `stvec`, `sepc`, `scause`, and
+  `stval` are not modelled.
 - CSR writes mostly store raw values after implemented/writeable/privilege
   checks. Full WARL/WPRI behaviour is not applied for fields such as
   `mstatus.MPP`, `mtvec.MODE`, `mepc[1:0]`, or unsupported `satp` encodings.

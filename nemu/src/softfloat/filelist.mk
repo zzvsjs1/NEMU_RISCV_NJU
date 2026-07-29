@@ -1,9 +1,10 @@
-ifeq ($(CONFIG_RV64_FPU),y)
+ifeq ($(CONFIG_RISCV_FPU),y)
 
 # Keep the upstream checkout outside src/ so NEMU never discovers unrelated
 # ARM, x86, binary16, extended, or binary128 implementations recursively.
-# This explicit closure contains only the binary32/binary64 operations used by
-# RV64 F/D and the helpers they reference with the platform options below.
+# This explicit closure contains the binary32/binary64 operations used by the
+# shared RV32F, RV32D, and RV64F/D executor, plus the helpers they reference
+# with the platform options below.
 SOFTFLOAT_REPO := tools/softfloat/repo
 SOFTFLOAT_SOURCE := $(SOFTFLOAT_REPO)/source
 

@@ -1,5 +1,5 @@
 #include "local-include/reg.h"
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
 #include "local-include/fpu.h"
 #endif
 
@@ -375,7 +375,7 @@ static inline bool riscv_csr_access_ok(Decode *s, word_t addr, bool will_write)
         return false;
     }
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     /*
      * FP control CSR addresses are unprivileged, but the privileged ISA adds a
      * separate FS gate: any read or write is illegal while mstatus.FS is Off.
@@ -727,27 +727,27 @@ static int decode_exec(Decode *s)
                 Mw(src1 + imm, 8, src2));
 #endif
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     /*
-     * RV64 floating-point decoding is isolated in fpu.c.  These major-opcode
-     * routes carry no integer decode type because FPR operand roles differ
-     * from the base I/R/S formats.  The executor performs every finer encoding
-     * check and raises illegal instruction for unsupported/reserved forms.
+     * Floating-point decoding is isolated in fpu.c. These major-opcode routes
+     * carry no integer decode type because FPR operand roles differ from the
+     * base I/R/S formats. The executor performs every finer encoding check and
+     * raises illegal instruction for unsupported or reserved forms.
      */
     INSTPAT("??????? ????? ????? ??? ????? 00001 11", fp_load, N,
-            riscv64_fpu_exec(s));
+            riscv_fpu_exec(s));
     INSTPAT("??????? ????? ????? ??? ????? 01001 11", fp_store, N,
-            riscv64_fpu_exec(s));
+            riscv_fpu_exec(s));
     INSTPAT("??????? ????? ????? ??? ????? 10000 11", fp_fmadd, N,
-            riscv64_fpu_exec(s));
+            riscv_fpu_exec(s));
     INSTPAT("??????? ????? ????? ??? ????? 10001 11", fp_fmsub, N,
-            riscv64_fpu_exec(s));
+            riscv_fpu_exec(s));
     INSTPAT("??????? ????? ????? ??? ????? 10010 11", fp_fnmsub, N,
-            riscv64_fpu_exec(s));
+            riscv_fpu_exec(s));
     INSTPAT("??????? ????? ????? ??? ????? 10011 11", fp_fnmadd, N,
-            riscv64_fpu_exec(s));
+            riscv_fpu_exec(s));
     INSTPAT("??????? ????? ????? ??? ????? 10100 11", fp_op, N,
-            riscv64_fpu_exec(s));
+            riscv_fpu_exec(s));
 #endif
 
     /*

@@ -1,6 +1,7 @@
 #include <isa.h>
 #include <cpu/difftest.h>
 #include "../local-include/reg.h"
+#include <inttypes.h>
 #include <stddef.h>
 
 _Static_assert(sizeof(CPU_state) == DIFFTEST_REG_SIZE,
@@ -18,11 +19,14 @@ _Static_assert(offsetof(CPU_state, prvi) == offsetof(riscv_difftest_state_t, prv
 _Static_assert(offsetof(CPU_state, INTR) == offsetof(riscv_difftest_state_t, INTR),
                "RISC-V DiffTest interrupt-pending offset drifted");
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
 _Static_assert(RISCV_FPR_NUM == RISCV_DIFFTEST_FPR_NUM,
                "RISC-V DiffTest FPR count drifted");
 _Static_assert(RISCV_FCSR_MASK == RISCV_DIFFTEST_FCSR_MASK,
                "RISC-V DiffTest fcsr mask drifted");
+_Static_assert(sizeof(((CPU_state *)0)->fpr[0]) ==
+                   sizeof(((riscv_difftest_state_t *)0)->fpr[0]),
+               "RISC-V DiffTest FPR width drifted");
 _Static_assert(offsetof(CPU_state, fpr) == offsetof(riscv_difftest_state_t, fpr),
                "RISC-V DiffTest FPR offset drifted");
 _Static_assert(offsetof(CPU_state, fcsr) == offsetof(riscv_difftest_state_t, fcsr),
@@ -32,8 +36,8 @@ _Static_assert(offsetof(CPU_state, fcsr) == offsetof(riscv_difftest_state_t, fcs
 #ifdef CONFIG_RV64
 #define RISCV_DIFF_GPR(state, idx) ((state)->gpr[idx]._64)
 #define RISCV_DIFF_REG_NAME_LEN 8
-#ifdef CONFIG_RV64_FPU
-#define RISCV_DIFF_FP_MSTATUS_MASK (RISCV_MSTATUS_FS_MASK | RISCV64_MSTATUS_SD)
+#ifdef CONFIG_RISCV_FPU
+#define RISCV_DIFF_FP_MSTATUS_MASK (RISCV_MSTATUS_FS_MASK | RISCV_MSTATUS_SD)
 #else
 #define RISCV_DIFF_FP_MSTATUS_MASK 0
 #endif
@@ -77,7 +81,7 @@ static bool riscv_difftest_same_state(CPU_state *ref_r)
         }
     }
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     for (size_t i = 0; i < RISCV_FPR_NUM; i++)
     {
         if (ref_r->fpr[i] != cpu.fpr[i])
@@ -142,6 +146,40 @@ static void riscv_difftest_print_named(const char *name, word_t ref, word_t dut)
     }
 }
 
+#ifdef CONFIG_RISCV_FPU
+#ifdef CONFIG_RISCV_D
+/*
+ * RV32D has 64-bit FPRs but 32-bit integer words.  Keep its diagnostics on a
+ * dedicated FLEN-wide path so a mismatch in bits 63:32 is never truncated by
+ * the ordinary XLEN-wide register printer.
+ */
+static void riscv_difftest_print_fpr(const char *name,
+                                     uint64_t ref,
+                                     uint64_t dut)
+{
+    if (ref == dut)
+    {
+        printf("%-10s 0x%016" PRIx64 "%-10s%" PRIu64
+               "%-10s%" PRId64 "     DUT: 0x%016" PRIx64 "\n",
+               name, ref, " ", ref, " ", (int64_t)ref, dut);
+    }
+    else
+    {
+        PRI_ERR("%-10s 0x%016" PRIx64 "%-10s%" PRIu64
+                "%-10s%" PRId64 "     DUT: 0x%016" PRIx64 "\n",
+                name, ref, " ", ref, " ", (int64_t)ref, dut);
+    }
+}
+#else
+static void riscv_difftest_print_fpr(const char *name,
+                                     uint32_t ref,
+                                     uint32_t dut)
+{
+    riscv_difftest_print_named(name, (word_t)ref, (word_t)dut);
+}
+#endif
+#endif
+
 bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
 {
     (void)pc;
@@ -160,12 +198,12 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
         riscv_difftest_print_reg(i, RISCV_DIFF_GPR(ref_r, i), gpr(i));
     }
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
     for (size_t i = 0; i < RISCV_FPR_NUM; i++)
     {
         char name[RISCV_DIFF_REG_NAME_LEN];
         snprintf(name, sizeof(name), "f%zu", i);
-        riscv_difftest_print_named(name, ref_r->fpr[i], cpu.fpr[i]);
+        riscv_difftest_print_fpr(name, ref_r->fpr[i], cpu.fpr[i]);
     }
 
     riscv_difftest_print_named("fcsr",

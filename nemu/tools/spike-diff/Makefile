@@ -20,15 +20,17 @@ endif
 
 REPO_BUILD_PATH = $(REPO_PATH)/build
 REPO_MAKEFILE = $(REPO_BUILD_PATH)/Makefile
-RV64_FD_PATCH = patches/rv64-fd.patch
-RV64_FD_PATCH_STAMP = $(REPO_PATH)/.nemu-rv64-fd-patched
+# The legacy-named patch enables Spike's F/D instruction sources and complete
+# SoftFloat build for RV32F, RV32D, and RV64FD DiffTest configurations.
+SPIKE_FP_PATCH = patches/rv64-fd.patch
+SPIKE_FP_PATCH_STAMP = $(REPO_PATH)/.nemu-rv64-fd-patched
 
-$(RV64_FD_PATCH_STAMP): $(RV64_FD_PATCH)
+$(SPIKE_FP_PATCH_STAMP): $(SPIKE_FP_PATCH)
 	@mkdir -p $(REPO_BUILD_PATH)
-	TMPDIR=$(abspath $(REPO_BUILD_PATH)) patch -d $(REPO_PATH) -p1 --forward < $(abspath $(RV64_FD_PATCH))
+	TMPDIR=$(abspath $(REPO_BUILD_PATH)) patch -d $(REPO_PATH) -p1 --forward < $(abspath $(SPIKE_FP_PATCH))
 	touch $@
 
-$(REPO_MAKEFILE): $(RV64_FD_PATCH_STAMP)
+$(REPO_MAKEFILE): $(SPIKE_FP_PATCH_STAMP)
 	@mkdir -p $(@D)
 	cd $(@D) && $(abspath $(REPO_PATH))/configure
 	sed -i -e 's/-g -O2/-O2/' $@
@@ -52,7 +54,7 @@ NAME = $(GUEST_ISA)-spike-so
 BINARY = $(BUILD_DIR)/$(NAME)
 SRCS = difftest.cc
 
-# difftest-def.h changes its public context layout with CONFIG_RV64_FPU.
+# difftest-def.h changes its public context layout with CONFIG_RISCV_FPU.
 # Rebuild after every NEMU configuration update so an old shared object can
 # never read or write an ABI-incompatible DiffTest state.
 $(BINARY): $(SPIKE) $(SRCS) $(NEMU_AUTOCONF) $(NEMU_DIFFTEST_DEF)

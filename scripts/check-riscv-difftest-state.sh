@@ -43,7 +43,10 @@ _Static_assert(offsetof(CPU_state, prvi) == offsetof(riscv_difftest_state_t, prv
 _Static_assert(offsetof(CPU_state, INTR) == offsetof(riscv_difftest_state_t, INTR),
                "RISC-V DiffTest interrupt-pending offset drifted");
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
+_Static_assert(sizeof(((CPU_state *)0)->fpr[0]) ==
+                   sizeof(((riscv_difftest_state_t *)0)->fpr[0]),
+               "RISC-V DiffTest FPR width drifted");
 _Static_assert(offsetof(CPU_state, fpr) == offsetof(riscv_difftest_state_t, fpr),
                "RISC-V DiffTest FPR offset drifted");
 _Static_assert(offsetof(CPU_state, fcsr) == offsetof(riscv_difftest_state_t, fcsr),
@@ -56,17 +59,32 @@ PROBE
 compile_probe() {
     local isa=$1
     local defconfig=$2
+    local variant=$3
+    local disabled_symbol=${4:-}
 
     make -C "$NEMU_HOME" "$defconfig" >/dev/null
+
+    if [[ -n "$disabled_symbol" ]]; then
+        sed -i \
+            "s/^CONFIG_${disabled_symbol}=y$/# CONFIG_${disabled_symbol} is not set/" \
+            "$NEMU_HOME/.config"
+        make -C "$NEMU_HOME" syncconfig >/dev/null
+    fi
+
     gcc -std=gnu11 \
         -I"$NEMU_HOME/include" \
         -I"$NEMU_HOME/src/isa/$isa/include" \
         -D__GUEST_ISA__="$isa" \
         -c "$PROBE" \
-        -o "$TMPDIR/$isa.o" || fail "$isa DiffTest state ABI probe failed"
+        -o "$TMPDIR/$variant.o" ||
+        fail "$variant DiffTest state ABI probe failed"
 }
 
-compile_probe riscv32 riscv32-am-headless-jit_defconfig
-compile_probe riscv64 riscv64-am-headless_defconfig
+compile_probe riscv32 riscv32-am-headless-jit_defconfig riscv32-fpu
+compile_probe riscv32 riscv32-am-headless-d_defconfig riscv32-d
+compile_probe riscv32 riscv32-am-headless-jit_defconfig riscv32-no-fpu RV32_FPU
+compile_probe riscv32 riscv32e-am-headless_defconfig riscv32e
+compile_probe riscv64 riscv64-am-headless_defconfig riscv64-fpu
+compile_probe riscv64 riscv64-am-headless_defconfig riscv64-no-fpu RV64_FPU
 
 echo "RISC-V DiffTest state ABI check passed"

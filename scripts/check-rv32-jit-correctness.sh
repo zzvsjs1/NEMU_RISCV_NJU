@@ -12,6 +12,8 @@ export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
 
 DEFCONFIG="$NEMU_HOME/configs/riscv32-am-headless-jit_defconfig"
+RV32D_DEFCONFIG=riscv32-am-headless-d_defconfig
+RV32D_FALLBACK_TEST=riscv32-d-jit-fallback
 TESTS=(
   riscv32-jit-system-fence
   jit-ldst-signext-asm
@@ -86,6 +88,48 @@ require_positive_unsupported_hits() {
   fi
 }
 
+require_positive_unsupported_fp_blocks() {
+  local log=$1
+  local test_name=$2
+  local unsupported_fp_blocks
+
+  unsupported_fp_blocks=$(extract_last_stat \
+    's/.*unsupported FP blocks = \([0-9][0-9]*\).*/\1/p' "$log")
+
+  if [ -z "$unsupported_fp_blocks" ]; then
+    echo "Failed to find unsupported-FP-block stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$unsupported_fp_blocks" -le 0 ]; then
+    echo "Expected positive unsupported FP block count for $test_name, got $unsupported_fp_blocks" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_native_prefixes_before_fp() {
+  local log=$1
+  local test_name=$2
+  local native_prefixes
+
+  native_prefixes=$(extract_last_stat \
+    's/.*native prefixes before FP = \([0-9][0-9]*\).*/\1/p' "$log")
+
+  if [ -z "$native_prefixes" ]; then
+    echo "Failed to find native-prefix-before-FP stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$native_prefixes" -le 0 ]; then
+    echo "Expected a native prefix before FP for $test_name, got $native_prefixes" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 require_positive_invalidated_blocks() {
   local log=$1
   local test_name=$2
@@ -132,6 +176,24 @@ for test_name in "${TESTS[@]}"; do
   fi
 done
 
+rv32d_out=$(mktemp)
+tmp_files+=("$rv32d_out")
+
+# The guest-level counters verify exact fallback resumption, while these host
+# statistics prove the run actually compiled an integer prefix and reached a
+# cached unsupported D instruction instead of executing wholly interpreted.
+if ! NEMU_JIT_STATS=1 make -C am-kernels/tests/cpu-tests ARCH="$ARCH" \
+    NEMU_DEFCONFIG="$RV32D_DEFCONFIG" ALL="$RV32D_FALLBACK_TEST" run \
+    >"$rv32d_out" 2>&1; then
+  echo "$RV32D_FALLBACK_TEST failed" >&2
+  cat "$rv32d_out" >&2
+  exit 2
+fi
+
+require_positive_jit_instructions "$rv32d_out" "$RV32D_FALLBACK_TEST"
+require_positive_unsupported_fp_blocks "$rv32d_out" "$RV32D_FALLBACK_TEST"
+require_positive_native_prefixes_before_fp "$rv32d_out" "$RV32D_FALLBACK_TEST"
+
 scripts/check-rv32-jit-branch-chain.sh
 
-echo "RISC-V32 JIT correctness gate passed: ${TESTS[*]}"
+echo "RISC-V32 JIT correctness gate passed: ${TESTS[*]} $RV32D_FALLBACK_TEST"

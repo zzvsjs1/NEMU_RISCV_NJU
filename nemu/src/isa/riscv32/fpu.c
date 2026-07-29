@@ -1,6 +1,6 @@
 #include "local-include/fpu.h"
 
-#ifdef CONFIG_RV64_FPU
+#ifdef CONFIG_RISCV_FPU
 
 #include "local-include/reg.h"
 #include <cpu/difftest.h>
@@ -47,9 +47,10 @@ enum
 };
 
 /*
- * Table 26 encodes precision in two bits.  This target implements F and D, so
- * S and D are legal; naming H and Q as well documents why values above D are
- * rejected rather than leaving the supported-format boundary as a bare integer.
+ * Table 26 encodes precision in two bits.  An F-only configuration accepts S,
+ * while any D configuration accepts S and D independently of XLEN. Naming H
+ * and Q documents the complete encoding and keeps the capability check out of
+ * unexplained integer literals.
  */
 enum riscv_fp_format
 {
@@ -343,18 +344,65 @@ static bool fp_check_store_alignment(Decode *s, word_t address, int length)
     return true;
 }
 
+#ifdef CONFIG_RISCV_D
+/*
+ * The generic virtual-memory interface carries one `word_t`.  A single
+ * eight-byte transfer therefore preserves all bits only when XLEN is 64.
+ * RV32D assembles the little-endian doubleword from two word transfers.  The
+ * caller performs the architectural eight-byte alignment check first.
+ *
+ * Chapter 22.3 guarantees atomic FLD/FSD execution only when XLEN is at least
+ * 64, so the two RV32 accesses are a permitted implementation choice.
+ */
+static uint64_t fp_load_doubleword(word_t address)
+{
+#ifdef CONFIG_RV64
+    return (uint64_t)vaddr_read(address, RISCV_FP64_BYTES);
+#else
+    const uint64_t low =
+        (uint32_t)vaddr_read(address, RISCV_FP32_BYTES);
+    const uint64_t high =
+        (uint32_t)vaddr_read(address + RISCV_FP32_BYTES,
+                             RISCV_FP32_BYTES);
+
+    return low | (high << 32);
+#endif
+}
+
+static void fp_store_doubleword(word_t address, uint64_t value)
+{
+#ifdef CONFIG_RV64
+    vaddr_write(address, RISCV_FP64_BYTES, value);
+#else
+    vaddr_write(address, RISCV_FP32_BYTES, (uint32_t)value);
+    vaddr_write(address + RISCV_FP32_BYTES,
+                RISCV_FP32_BYTES,
+                (uint32_t)(value >> 32));
+#endif
+}
+#endif
+
 static inline void fp_mark_dirty(void)
 {
     cpu.csr.mstatus = riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
 }
 
-static inline uint64_t fp_box_s(uint32_t value)
+static inline riscv_fpr_t fp_box_s(uint32_t value)
 {
+#ifdef CONFIG_RISCV_D
     return RISCV_FP32_BOX_MASK | value;
+#else
+    /*
+     * RV32F has FLEN=32, so the binary32 payload occupies the complete
+     * architectural register and no NaN-boxing bits exist.
+     */
+    return value;
+#endif
 }
 
-static inline uint32_t fp_unbox_s(uint64_t value)
+static inline uint32_t fp_unbox_s(riscv_fpr_t value)
 {
+#ifdef CONFIG_RISCV_D
     /*
      * Checking the upper-half mask directly is the D-extension rule: every bit
      * above the 32-bit payload must be one.  A malformed box is a computational
@@ -364,6 +412,9 @@ static inline uint32_t fp_unbox_s(uint64_t value)
     return (value & RISCV_FP32_BOX_MASK) == RISCV_FP32_BOX_MASK
                ? (uint32_t)value
                : RISCV_FP32_CANONICAL_NAN;
+#else
+    return value;
+#endif
 }
 
 static inline bool fp_is_nan_s(uint32_t value)
@@ -469,16 +520,18 @@ static void fp_exec_load(Decode *s, uint32_t inst)
         }
 
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_WIDTH_DOUBLEWORD: /* FLD */
         if (fp_check_load_alignment(s, address, RISCV_FP64_BYTES))
         {
             const float64_t value = {
-                .v = (uint64_t)vaddr_read(address, RISCV_FP64_BYTES),
+                .v = fp_load_doubleword(address),
             };
             fp_write_d(rd, value);
         }
 
         return;
+#endif
     default:
         fp_raise_illegal(s);
         return;
@@ -489,7 +542,7 @@ static void fp_exec_store(Decode *s, uint32_t inst)
 {
     const uint32_t funct3 = fp_rm(inst);
     const word_t address = gpr(fp_rs1(inst)) + fp_imm_s(inst);
-    const uint64_t value = cpu.fpr[fp_rs2(inst)];
+    const riscv_fpr_t value = cpu.fpr[fp_rs2(inst)];
 
     switch (funct3)
     {
@@ -501,14 +554,16 @@ static void fp_exec_store(Decode *s, uint32_t inst)
         }
 
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_WIDTH_DOUBLEWORD:
         /* FSD transfers every raw bit. */
         if (fp_check_store_alignment(s, address, RISCV_FP64_BYTES))
         {
-            vaddr_write(address, RISCV_FP64_BYTES, value);
+            fp_store_doubleword(address, (uint64_t)value);
         }
 
         return;
+#endif
     default:
         fp_raise_illegal(s);
         return;
@@ -893,10 +948,11 @@ static word_t fp_classify_s(float32_t value)
              : RISCV_FP_CLASS_POSITIVE_NORMAL);
 }
 
+#ifdef CONFIG_RISCV_D
 /*
- * The binary64 layout follows the same decision tree.  Bit 51 is the NaN
- * quiet bit; a clear bit therefore selects signalling NaN without invoking a
- * helper that might accrue an invalid-operation exception.
+ * The binary64 layout follows the same decision tree. Bit 51 is the NaN quiet
+ * bit; a clear bit therefore selects signalling NaN without invoking a helper
+ * that might accrue an invalid-operation exception.
  */
 static word_t fp_classify_d(float64_t value)
 {
@@ -938,6 +994,7 @@ static word_t fp_classify_d(float64_t value)
         sign ? RISCV_FP_CLASS_NEGATIVE_NORMAL
              : RISCV_FP_CLASS_POSITIVE_NORMAL);
 }
+#endif
 
 static void fp_exec_move_or_class(Decode *s, uint32_t inst)
 {
@@ -956,7 +1013,10 @@ static void fp_exec_move_or_class(Decode *s, uint32_t inst)
     switch (funct7)
     {
     case RISCV_FP_FUNCT7_FMV_X_W_FCLASS_S:
-        /* FMV.X.W sign-extends the raw low word. */
+        /*
+         * FMV.X.W returns the complete raw RV32 word. RV64 observes the same
+         * low bits sign-extended to XLEN, as required by the F extension.
+         */
         if (funct3 == RISCV_FP_MOVE)
         {
             gpr(rd) = (word_t)(int64_t)(int32_t)cpu.fpr[rs1];
@@ -972,11 +1032,16 @@ static void fp_exec_move_or_class(Decode *s, uint32_t inst)
         }
 
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FMV_X_D_FCLASS_D:
-        /* FMV.X.D is a raw RV64 transfer. */
         if (funct3 == RISCV_FP_MOVE)
         {
+#ifdef CONFIG_RV64
+            /* A whole-double GPR move exists only when XLEN is at least 64. */
             gpr(rd) = cpu.fpr[rs1];
+#else
+            fp_raise_illegal(s);
+#endif
         }
         else if (funct3 == RISCV_FP_CLASSIFY)
         {
@@ -988,8 +1053,9 @@ static void fp_exec_move_or_class(Decode *s, uint32_t inst)
         }
 
         return;
+#endif
     case RISCV_FP_FUNCT7_FMV_W_X:
-        /* FMV.W.X boxes the raw low integer word. */
+        /* FMV.W.X writes the raw low integer word, boxing only when FLEN=64. */
         {
             if (funct3 != RISCV_FP_MOVE)
             {
@@ -1001,6 +1067,7 @@ static void fp_exec_move_or_class(Decode *s, uint32_t inst)
             fp_write_s(rd, value);
             return;
         }
+#if defined(CONFIG_RISCV_D) && defined(CONFIG_RV64)
     case RISCV_FP_FUNCT7_FMV_D_X:
         /* FMV.D.X transfers all XLEN bits. */
         {
@@ -1014,6 +1081,7 @@ static void fp_exec_move_or_class(Decode *s, uint32_t inst)
             fp_write_d(rd, value);
             return;
         }
+#endif
     default:
         fp_raise_illegal(s);
         return;
@@ -1031,11 +1099,15 @@ static void fp_exec_float_to_integer(Decode *s, uint32_t inst,
     uint_fast8_t rm = 0;
     word_t result = 0;
     const uint32_t destination_type = fp_rs2(inst);
+    const uint32_t maximum_type =
+        MUXDEF(CONFIG_RV64,
+               RISCV_FP_INT_TYPE_LU,
+               RISCV_FP_INT_TYPE_WU);
 
-    if (destination_type > RISCV_FP_INT_TYPE_LU ||
+    if (destination_type > maximum_type ||
         !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
     {
-        if (destination_type > RISCV_FP_INT_TYPE_LU)
+        if (destination_type > maximum_type)
         {
             fp_raise_illegal(s);
         }
@@ -1104,11 +1176,15 @@ static void fp_exec_integer_to_float(Decode *s, uint32_t inst,
     uint_fast8_t rm = 0;
     const uint32_t source_type = fp_rs2(inst);
     const word_t source = gpr(fp_rs1(inst));
+    const uint32_t maximum_type =
+        MUXDEF(CONFIG_RV64,
+               RISCV_FP_INT_TYPE_LU,
+               RISCV_FP_INT_TYPE_WU);
 
-    if (source_type > RISCV_FP_INT_TYPE_LU ||
+    if (source_type > maximum_type ||
         !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
     {
-        if (source_type > RISCV_FP_INT_TYPE_LU)
+        if (source_type > maximum_type)
         {
             fp_raise_illegal(s);
         }
@@ -1166,6 +1242,7 @@ static void fp_exec_integer_to_float(Decode *s, uint32_t inst,
     }
 }
 
+#ifdef CONFIG_RISCV_D
 static void fp_exec_cross_precision(Decode *s, uint32_t inst,
                                     bool destination_double)
 {
@@ -1205,6 +1282,7 @@ static void fp_exec_cross_precision(Decode *s, uint32_t inst,
         fp_write_s(fp_rd(inst), result);
     }
 }
+#endif
 
 static void fp_exec_fused(Decode *s, uint32_t inst)
 {
@@ -1225,11 +1303,15 @@ static void fp_exec_fused(Decode *s, uint32_t inst)
     const bool negate_addend =
         opcode == RISCV_FP_OPCODE_FMSUB ||
         opcode == RISCV_FP_OPCODE_FNMADD;
+    const uint32_t maximum_format =
+        MUXDEF(CONFIG_RISCV_D,
+               RISCV_FP_FORMAT_DOUBLE,
+               RISCV_FP_FORMAT_SINGLE);
 
-    if (format > RISCV_FP_FORMAT_DOUBLE ||
+    if (format > maximum_format ||
         !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
     {
-        if (format > RISCV_FP_FORMAT_DOUBLE)
+        if (format > maximum_format)
         {
             fp_raise_illegal(s);
         }
@@ -1290,36 +1372,47 @@ static void fp_exec_op(Decode *s, uint32_t inst)
     case RISCV_FP_FUNCT7_FADD_S:
         fp_exec_add(s, inst, false);
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FADD_D:
         fp_exec_add(s, inst, true);
         return;
+#endif
     case RISCV_FP_FUNCT7_FSUB_S:
         fp_exec_binary_arithmetic(s, inst, false, FP_BINARY_SUB);
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FSUB_D:
         fp_exec_binary_arithmetic(s, inst, true, FP_BINARY_SUB);
         return;
+#endif
     case RISCV_FP_FUNCT7_FMUL_S:
         fp_exec_binary_arithmetic(s, inst, false, FP_BINARY_MUL);
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FMUL_D:
         fp_exec_binary_arithmetic(s, inst, true, FP_BINARY_MUL);
         return;
+#endif
     case RISCV_FP_FUNCT7_FDIV_S:
         fp_exec_binary_arithmetic(s, inst, false, FP_BINARY_DIV);
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FDIV_D:
         fp_exec_binary_arithmetic(s, inst, true, FP_BINARY_DIV);
         return;
+#endif
     case RISCV_FP_FUNCT7_FSGNJ_S:
         fp_exec_sign_injection(s, inst, false);
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FSGNJ_D:
         fp_exec_sign_injection(s, inst, true);
         return;
+#endif
     case RISCV_FP_FUNCT7_FMIN_MAX_S:
         fp_exec_min_max(s, inst, false);
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FMIN_MAX_D:
         fp_exec_min_max(s, inst, true);
         return;
@@ -1329,34 +1422,47 @@ static void fp_exec_op(Decode *s, uint32_t inst)
     case RISCV_FP_FUNCT7_FCVT_D_S:
         fp_exec_cross_precision(s, inst, true);
         return;
+#endif
     case RISCV_FP_FUNCT7_FSQRT_S:
         fp_exec_sqrt(s, inst, false);
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FSQRT_D:
         fp_exec_sqrt(s, inst, true);
         return;
+#endif
     case RISCV_FP_FUNCT7_FCOMPARE_S:
         fp_exec_compare(s, inst, false);
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FCOMPARE_D:
         fp_exec_compare(s, inst, true);
         return;
+#endif
     case RISCV_FP_FUNCT7_FCVT_INT_S:
         fp_exec_float_to_integer(s, inst, false);
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FCVT_INT_D:
         fp_exec_float_to_integer(s, inst, true);
         return;
+#endif
     case RISCV_FP_FUNCT7_FCVT_S_INT:
         fp_exec_integer_to_float(s, inst, false);
         return;
+#ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FCVT_D_INT:
         fp_exec_integer_to_float(s, inst, true);
         return;
+#endif
     case RISCV_FP_FUNCT7_FMV_X_W_FCLASS_S:
-    case RISCV_FP_FUNCT7_FMV_X_D_FCLASS_D:
     case RISCV_FP_FUNCT7_FMV_W_X:
+#ifdef CONFIG_RISCV_D
+    case RISCV_FP_FUNCT7_FMV_X_D_FCLASS_D:
+#if defined(CONFIG_RISCV_D) && defined(CONFIG_RV64)
     case RISCV_FP_FUNCT7_FMV_D_X:
+#endif
+#endif
         fp_exec_move_or_class(s, inst);
         return;
     default:
@@ -1365,7 +1471,7 @@ static void fp_exec_op(Decode *s, uint32_t inst)
     }
 }
 
-void riscv64_fpu_exec(Decode *s)
+void riscv_fpu_exec(Decode *s)
 {
     const uint32_t inst = s->isa.inst;
 
