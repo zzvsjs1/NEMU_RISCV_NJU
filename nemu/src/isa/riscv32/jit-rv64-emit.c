@@ -30,8 +30,8 @@
  * guest-instruction count in EAX.  The prologue saves RBX, RBP and R12-R15 so
  * they can cache guest registers for the whole block.  R11 always points at the
  * global `CPU_state`, and R10 holds the PMEM host base for direct memory
- * operations.  RAX, RCX, RDX and R8 are scratch unless a helper-specific comment
- * says otherwise.
+ * operations. RAX, RCX and RDX are scratch. R8 is normally scratch, but a
+ * proven helper-free self-loop may use it as one extra stable cache slot.
  *
  * The extra 8-byte stack adjustment keeps the System V stack aligned before
  * helper calls.  Dirty cached guest registers are flushed before any helper
@@ -165,7 +165,7 @@ static bool emit_u64(rv64_jit_writer_t *w, uint64_t value)
     return true;
 }
 
-/* Return the x86 register number backing one callee-saved cache slot. */
+/* Return the x86 register number backing one guest-register cache slot. */
 static uint8_t jit_hreg_x86_reg(rv64_jit_hreg_t hreg)
 {
     switch (hreg)
@@ -182,6 +182,8 @@ static uint8_t jit_hreg_x86_reg(rv64_jit_hreg_t hreg)
         return HOST_REG_R14;
     case RV64_JIT_HREG_R15:
         return HOST_REG_R15;
+    case RV64_JIT_HREG_R8:
+        return HOST_REG_R8;
     default:
         Assert(0, "jit: invalid RV64 host register slot %d", hreg);
     }
@@ -380,10 +382,71 @@ static bool emit_mov_m32_rdx_eax(rv64_jit_writer_t *w)
     return emit_u8(w, 0x89) && emit_u8(w, 0x02);
 }
 
+/* Emit `mov r9d, [rdx]`, preloading the completed-lap count. */
+static bool emit_mov_r9d_m32_rdx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x44) && emit_u8(w, 0x8b) && emit_u8(w, 0x0a);
+}
+
+/* Emit `mov esi, [rdx]`, preloading the current native-entry budget. */
+static bool emit_mov_esi_m32_rdx(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x8b) && emit_u8(w, 0x32);
+}
+
+/* Emit `mov [rdx], r9d`, synchronising completed laps before fall-through. */
+static bool emit_mov_m32_rdx_r9d(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x44) && emit_u8(w, 0x89) && emit_u8(w, 0x0a);
+}
+
 /* Emit `mov ecx, eax`, copying the loop count for the budget look-ahead. */
 static bool emit_mov_ecx_eax(rv64_jit_writer_t *w)
 {
     return emit_u8(w, 0x89) && emit_u8(w, 0xc1);
+}
+
+/* Emit `mov eax, r9d`, preparing the completed count for a possible return. */
+static bool emit_mov_eax_r9d(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x44) && emit_u8(w, 0x89) && emit_u8(w, 0xc8);
+}
+
+/* Emit `mov r9, rax`, preserving a dynamic return target across scratch work. */
+static bool emit_mov_r9_rax(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x49) && emit_u8(w, 0x89) && emit_u8(w, 0xc1);
+}
+
+/* Emit `mov rdx, r9`, copying the preserved return target for cache hashing. */
+static bool emit_mov_rdx_r9(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x4c) && emit_u8(w, 0x89) && emit_u8(w, 0xca);
+}
+
+/* Emit `mov rax, r9`, restoring the dynamic target for a committed miss. */
+static bool emit_mov_rax_r9(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x4c) && emit_u8(w, 0x89) && emit_u8(w, 0xc8);
+}
+
+/* Emit `sub esi, r9d`, removing earlier completed work from the budget. */
+static bool emit_sub_esi_r9d(rv64_jit_writer_t *w)
+{
+    return emit_u8(w, 0x44) && emit_u8(w, 0x29) && emit_u8(w, 0xce);
+}
+
+/* Emit `add r9d, imm32`, accounting for one completed native loop lap. */
+static bool emit_add_r9d_imm32(rv64_jit_writer_t *w, uint32_t value)
+{
+    return emit_u8(w, 0x41) && emit_u8(w, 0x81) &&
+           emit_u8(w, 0xc1) && emit_u32(w, value);
+}
+
+/* Emit `sub esi, imm32`, reserving budget for one more native loop lap. */
+static bool emit_sub_esi_imm32(rv64_jit_writer_t *w, uint32_t value)
+{
+    return emit_u8(w, 0x81) && emit_u8(w, 0xee) && emit_u32(w, value);
 }
 
 /* Emit `mov eax, ecx`, restoring a saved dynamic return count. */
@@ -500,6 +563,26 @@ static bool emit_shr_rdx_imm(rv64_jit_writer_t *w, uint8_t value)
     return emit_u8(w, 0x48) && emit_u8(w, 0xc1) && emit_u8(w, 0xea) && emit_u8(w, value);
 }
 
+/* XOR a 32-bit immediate into EDX, which also clears the upper half of RDX. */
+static bool emit_xor_edx_imm32(rv64_jit_writer_t *w, uint32_t value)
+{
+    return emit_u8(w, 0x81) && emit_u8(w, 0xf2) && emit_u32(w, value);
+}
+
+/* Mask EDX with an immediate to form a bounded direct-cache index. */
+static bool emit_and_edx_imm32(rv64_jit_writer_t *w, uint32_t value)
+{
+    return emit_u8(w, 0x81) && emit_u8(w, 0xe2) && emit_u32(w, value);
+}
+
+/* Multiply RDX by a positive 32-bit structure size. */
+static bool emit_imul_rdx_imm32(rv64_jit_writer_t *w, uint32_t value)
+{
+    Assert(value <= INT32_MAX, "jit: RV64 cache-slot stride is too large");
+    return emit_u8(w, 0x48) && emit_u8(w, 0x69) &&
+           emit_u8(w, 0xd2) && emit_u32(w, value);
+}
+
 /* Shift R8 left by an immediate count; DTLB entries are power-of-two sized. */
 static bool emit_shl_r8_imm(rv64_jit_writer_t *w, uint8_t value)
 {
@@ -560,6 +643,22 @@ static bool emit_cmp_r8q_field_rdx(rv64_jit_writer_t *w, uint32_t offset)
            emit_u8(w, 0x50) && emit_u8(w, (uint8_t)offset);
 }
 
+/* Compare a qword field in an R8-pointed block-cache slot with R9. */
+static bool emit_cmp_r8q_field_r9(rv64_jit_writer_t *w, uint32_t offset)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 block qword field offset is too large");
+    return emit_u8(w, 0x4d) && emit_u8(w, 0x39) &&
+           emit_u8(w, 0x48) && emit_u8(w, (uint8_t)offset);
+}
+
+/* Compare a qword field in an R8-pointed block-cache slot with RAX. */
+static bool emit_cmp_r8q_field_rax(rv64_jit_writer_t *w, uint32_t offset)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 block qword field offset is too large");
+    return emit_u8(w, 0x49) && emit_u8(w, 0x39) &&
+           emit_u8(w, 0x40) && emit_u8(w, (uint8_t)offset);
+}
+
 /* Compare a dword field in the R8-pointed DTLB entry with an immediate. */
 static bool emit_cmp_r8d_field_imm32(rv64_jit_writer_t *w, uint32_t offset,
                                      uint32_t value)
@@ -567,6 +666,32 @@ static bool emit_cmp_r8d_field_imm32(rv64_jit_writer_t *w, uint32_t offset,
     Assert(offset <= INT8_MAX, "jit: RV64 DTLB dword field offset is too large");
     return emit_u8(w, 0x41) && emit_u8(w, 0x81) &&
            emit_u8(w, 0x78) && emit_u8(w, (uint8_t)offset) && emit_u32(w, value);
+}
+
+/* Compare a qword field in an R8-pointed block-cache slot with signed imm8. */
+static bool emit_cmp_r8q_field_imm8(rv64_jit_writer_t *w, uint32_t offset,
+                                    uint8_t value)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 block qword field offset is too large");
+    return emit_u8(w, 0x49) && emit_u8(w, 0x83) &&
+           emit_u8(w, 0x78) && emit_u8(w, (uint8_t)offset) &&
+           emit_u8(w, value);
+}
+
+/* Load a qword field from an R8-pointed block-cache slot into RAX. */
+static bool emit_mov_rax_r8q_field(rv64_jit_writer_t *w, uint32_t offset)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 block qword field offset is too large");
+    return emit_u8(w, 0x49) && emit_u8(w, 0x8b) &&
+           emit_u8(w, 0x40) && emit_u8(w, (uint8_t)offset);
+}
+
+/* Add a dword field from an R8-pointed block-cache slot into ECX. */
+static bool emit_add_ecx_r8d_field(rv64_jit_writer_t *w, uint32_t offset)
+{
+    Assert(offset <= INT8_MAX, "jit: RV64 block dword field offset is too large");
+    return emit_u8(w, 0x41) && emit_u8(w, 0x03) &&
+           emit_u8(w, 0x48) && emit_u8(w, (uint8_t)offset);
 }
 
 /* Compare a byte field in the RDX-pointed direct-link block with an immediate. */
@@ -811,6 +936,63 @@ static bool emit_hreg_hreg_alu64(rv64_jit_writer_t *w, rv64_jit_hreg_t dst,
            emit_u8(w, jit_modrm(3, src_reg, dst_reg));
 }
 
+/* Compare two cached 64-bit values directly without scratch-register moves. */
+static bool emit_cmp_hreg_hreg(rv64_jit_writer_t *w,
+                               rv64_jit_hreg_t lhs,
+                               rv64_jit_hreg_t rhs)
+{
+    const uint8_t lhs_reg = jit_hreg_x86_reg(lhs);
+    const uint8_t rhs_reg = jit_hreg_x86_reg(rhs);
+
+    return emit_rex64(w, rhs_reg, lhs_reg) &&
+           emit_u8(w, 0x39) &&
+           emit_u8(w, jit_modrm(3, rhs_reg, lhs_reg));
+}
+
+/* Set equality flags by testing one cached 64-bit value against itself. */
+static bool emit_test_hreg_hreg(rv64_jit_writer_t *w,
+                                rv64_jit_hreg_t hreg)
+{
+    const uint8_t reg = jit_hreg_x86_reg(hreg);
+
+    return emit_rex64(w, reg, reg) &&
+           emit_u8(w, 0x85) &&
+           emit_u8(w, jit_modrm(3, reg, reg));
+}
+
+/* Materialise one condition-code result directly in a cached host register. */
+static bool emit_setcc_hreg(rv64_jit_writer_t *w,
+                            rv64_jit_hreg_t hreg,
+                            uint8_t setcc_opcode)
+{
+    const uint8_t reg = jit_hreg_x86_reg(hreg);
+    const bool needs_byte_rex =
+        (reg & 7u) >= 4u || (reg & HOST_REG_EXT_BIT) != 0;
+
+    /*
+     * A REX prefix selects BPL and the other modern low-byte names instead of
+     * AH-CH-DH-BH. Extended registers additionally need B for SETcc, then both
+     * R and B while MOVZX widens the result into the same 32-bit register.
+     */
+    uint8_t setcc_rex = HOST_REX_BASE;
+    uint8_t movzx_rex = HOST_REX_BASE;
+
+    if ((reg & HOST_REG_EXT_BIT) != 0)
+    {
+        setcc_rex |= HOST_REX_B;
+        movzx_rex |= HOST_REX_R | HOST_REX_B;
+    }
+
+    return (!needs_byte_rex || emit_u8(w, setcc_rex)) &&
+           emit_u8(w, 0x0f) &&
+           emit_u8(w, setcc_opcode) &&
+           emit_u8(w, jit_modrm(3, 0, reg)) &&
+           (!needs_byte_rex || emit_u8(w, movzx_rex)) &&
+           emit_u8(w, 0x0f) &&
+           emit_u8(w, 0xb6) &&
+           emit_u8(w, jit_modrm(3, reg, reg));
+}
+
 /* Emit `dst32 op src32` directly between cached host registers. */
 static bool emit_hreg_hreg_alu32(rv64_jit_writer_t *w, rv64_jit_hreg_t dst,
                                  rv64_jit_hreg_t src, uint8_t opcode)
@@ -900,6 +1082,7 @@ static bool emit_mov_hreg_imm64(rv64_jit_writer_t *w, rv64_jit_hreg_t hreg,
 /* Initialise per-block guest-register cache metadata. */
 void rv64_jit_reg_cache_init(rv64_jit_reg_cache_t *regs)
 {
+    regs->slot_count = RV64_JIT_HREG_BASE_COUNT;
     regs->next_age = 1;
 
     for (uint32_t i = 0; i < RV64_JIT_HREG_COUNT; i++)
@@ -926,7 +1109,7 @@ void rv64_jit_reg_cache_restore(rv64_jit_reg_cache_t *regs,
 static rv64_jit_reg_slot_t *jit_reg_find(rv64_jit_reg_cache_t *regs,
                                          uint32_t reg)
 {
-    for (uint32_t i = 0; i < RV64_JIT_HREG_COUNT; i++)
+    for (uint32_t i = 0; i < regs->slot_count; i++)
     {
         rv64_jit_reg_slot_t *slot = &regs->slots[i];
 
@@ -968,7 +1151,7 @@ static bool jit_reg_flush_slot(rv64_jit_writer_t *w, rv64_jit_reg_slot_t *slot)
 static bool jit_reg_flush_all_dirty(rv64_jit_writer_t *w,
                                     rv64_jit_reg_cache_t *regs)
 {
-    for (uint32_t i = 0; i < RV64_JIT_HREG_COUNT; i++)
+    for (uint32_t i = 0; i < regs->slot_count; i++)
     {
         if (!jit_reg_flush_slot(w, &regs->slots[i]))
         {
@@ -983,7 +1166,7 @@ static bool jit_reg_flush_all_dirty(rv64_jit_writer_t *w,
 static bool jit_reg_emit_flush_all_dirty(rv64_jit_writer_t *w,
                                          const rv64_jit_reg_cache_t *regs)
 {
-    for (uint32_t i = 0; i < RV64_JIT_HREG_COUNT; i++)
+    for (uint32_t i = 0; i < regs->slot_count; i++)
     {
         if (!jit_reg_emit_flush_slot(w, &regs->slots[i]))
         {
@@ -999,7 +1182,7 @@ static rv64_jit_reg_slot_t *jit_reg_choose_slot(rv64_jit_reg_cache_t *regs)
 {
     rv64_jit_reg_slot_t *oldest = &regs->slots[0];
 
-    for (uint32_t i = 0; i < RV64_JIT_HREG_COUNT; i++)
+    for (uint32_t i = 0; i < regs->slot_count; i++)
     {
         rv64_jit_reg_slot_t *slot = &regs->slots[i];
 
@@ -1076,6 +1259,52 @@ static rv64_jit_reg_slot_t *jit_reg_loaded_slot(rv64_jit_writer_t *w,
 
     slot->age = regs->next_age++;
     return slot;
+}
+
+/*
+ * Materialise every loop-carried GPR once before the native loop header.
+ *
+ * The strict compile pre-scan guarantees that this block cannot call a C
+ * helper or use R8 as a memory scratch register before its self-backedge. With
+ * every referenced GPR already assigned, the loop body cannot spill or change
+ * the mapping, so a taken backedge can safely retain the host-register values.
+ *
+ * R9D and ESI are otherwise-unused caller-saved registers in this helper-free
+ * path. Keeping the completed-lap count and budget remaining after the current
+ * lap there avoids serial accesses to the tiny loop-ABI globals on every taken
+ * lap.
+ */
+bool rv64_jit_prepare_stable_loop_regs(rv64_jit_writer_t *w,
+                                       rv64_jit_reg_cache_t *regs,
+                                       uint32_t reg_mask,
+                                       uint32_t loop_insn_count)
+{
+    if ((reg_mask & 1u) != 0 ||
+        (uint32_t)__builtin_popcount(reg_mask) > RV64_JIT_HREG_COUNT ||
+        loop_insn_count == 0)
+    {
+        return false;
+    }
+
+    regs->slot_count = RV64_JIT_HREG_COUNT;
+
+    for (uint32_t reg = 1; reg < 32u; reg++)
+    {
+        if ((reg_mask & (1u << reg)) != 0 &&
+            jit_reg_loaded_slot(w, regs, reg) == NULL)
+        {
+            return false;
+        }
+    }
+
+    return emit_movabs_rdx(
+               w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) &&
+           emit_mov_r9d_m32_rdx(w) &&
+           emit_movabs_rdx(
+               w, (uint64_t)(uintptr_t)&rv64_jit_entry_budget) &&
+           emit_mov_esi_m32_rdx(w) &&
+           emit_sub_esi_r9d(w) &&
+           emit_sub_esi_imm32(w, loop_insn_count);
 }
 
 /* Materialise a guest register in RAX, treating x0 as constant zero. */
@@ -1159,6 +1388,53 @@ static bool jit_reg_write_imm(rv64_jit_writer_t *w,
     slot->loaded = true;
     slot->dirty = true;
     slot->age = regs->next_age++;
+    return true;
+}
+
+/*
+ * Lower SLT/SLTU entirely between existing cache slots.
+ *
+ * SETcc does not alter flags, so it is safe for the destination to alias either
+ * source: the comparison reads both old values before the low-byte result is
+ * written and zero-extended.
+ */
+static bool jit_reg_try_emit_cached_compare(
+    rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+    uint32_t rd, uint32_t rs1, uint32_t rs2,
+    uint8_t setcc_opcode, bool *handled)
+{
+    *handled = false;
+
+    if (rd == RV64_GPR_ZERO ||
+        rs1 == RV64_GPR_ZERO ||
+        rs2 == RV64_GPR_ZERO)
+    {
+        return true;
+    }
+
+    rv64_jit_reg_slot_t *dst = jit_reg_find(regs, rd);
+    rv64_jit_reg_slot_t *lhs = jit_reg_find(regs, rs1);
+    rv64_jit_reg_slot_t *rhs = jit_reg_find(regs, rs2);
+
+    if (dst == NULL || lhs == NULL || rhs == NULL ||
+        !dst->loaded || !lhs->loaded || !rhs->loaded)
+    {
+        return true;
+    }
+
+    *handled = true;
+
+    if (!emit_cmp_hreg_hreg(w, lhs->hreg, rhs->hreg) ||
+        !emit_setcc_hreg(w, dst->hreg, setcc_opcode))
+    {
+        return false;
+    }
+
+    lhs->age = regs->next_age++;
+    rhs->age = regs->next_age++;
+    dst->loaded = true;
+    dst->dirty = true;
+    dst->age = regs->next_age++;
     return true;
 }
 
@@ -1559,6 +1835,8 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
      * Direct links duplicate only the cheap part of that validation.  If a
      * translated target may need source-page revalidation, the generation guard
      * misses back to C so rv64_jit_block_matches() owns the full page walk.
+     * Keep this guard policy in lockstep with emit_return_link_exit(); the
+     * paired exact-count assertions catch additions made to only one path.
      */
     if (!jit_reg_emit_flush_all_dirty(w, regs) ||
         !emit_movabs_rdx(w, (uint64_t)(uintptr_t)target) ||
@@ -1622,6 +1900,9 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
         return false;
     }
 
+    Assert(miss_count == RV64_JIT_DIRECT_LINK_GUARD_COUNT,
+           "jit: known-target direct-link guard policy drifted");
+
 #if RV64_JIT_STATS
     uint8_t *guarded_taken_disp = NULL;
     uint8_t *guarded_done_disp = NULL;
@@ -1662,6 +1943,214 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
 
     return emit_store_pc_imm(w, target_pc) &&
            emit_inc_jit_stat_counter(w, &rv64_jit_stats.direct_link_miss_count) &&
+           emit_return_total_retired(w, completed_count);
+}
+
+/*
+ * Probe and enter the native block named by an aligned canonical RET target.
+ *
+ * Runtime register contract:
+ *   - RAX initially contains the full architectural target;
+ *   - R9 preserves that target until either the hit jump or miss PC store;
+ *   - R8 holds the computed live block-cache slot after dirty GPRs are flushed;
+ *   - RAX, RCX, and RDX remain ordinary scratch registers.
+ *
+ * This deliberately probes the authoritative block cache instead of keeping a
+ * second raw native-pointer cache.  Slot invalidation, collision replacement,
+ * arena reset, and translated-fetch generation changes can therefore only turn
+ * a former hit into the ordinary dispatcher miss path.
+ */
+static bool emit_return_link_exit(rv64_jit_writer_t *w,
+                                  rv64_jit_reg_cache_t *regs,
+                                  uint32_t completed_count,
+                                  bool source_uses_data_state)
+{
+    const word_t satp = cpu.csr.satp;
+    const uint32_t ifetch_state = rv64_jit_ifetch_state();
+    const uint32_t context_mix =
+        rv64_jit_cache_context_mix(satp, ifetch_state);
+    const uint32_t valid_off = (uint32_t)offsetof(rv64_jit_block_t, valid);
+    const uint32_t translated_off =
+        (uint32_t)offsetof(rv64_jit_block_t, translated);
+    const uint32_t uses_data_state_off =
+        (uint32_t)offsetof(rv64_jit_block_t, uses_data_state);
+    const uint32_t pc_off = (uint32_t)offsetof(rv64_jit_block_t, pc);
+    const uint32_t satp_off = (uint32_t)offsetof(rv64_jit_block_t, satp);
+    const uint32_t ifetch_state_off =
+        (uint32_t)offsetof(rv64_jit_block_t, ifetch_state);
+    const uint32_t data_state_off =
+        (uint32_t)offsetof(rv64_jit_block_t, data_state);
+    const uint32_t ifetch_generation_off =
+        (uint32_t)offsetof(rv64_jit_block_t, ifetch_generation);
+    const uint32_t insn_count_off =
+        (uint32_t)offsetof(rv64_jit_block_t, insn_count);
+    const uint32_t body_entry_off =
+        (uint32_t)offsetof(rv64_jit_block_t, body_entry);
+    const uint32_t data_state = rv64_jit_data_tlb_state(MEM_TYPE_READ);
+    uint8_t *miss_disps[RV64_JIT_DIRECT_LINK_MAX_MISS_PATCHES];
+    uint32_t miss_count = 0;
+    uint8_t *data_state_ok_disp = NULL;
+    uint8_t *ifetch_generation_ok_disp = NULL;
+
+    /*
+     * The emitted arithmetic exactly mirrors rv64_jit_cache_hash_context():
+     *   ((target >> 2) ^ context_mix) & (cache_size - 1).
+     * The 32-bit XOR and mask intentionally zero RDX's high half before the
+     * 64-bit structure-size multiply.
+     */
+    if (!emit_mov_r9_rax(w) ||
+        !jit_reg_flush_all_dirty(w, regs) ||
+        !emit_mov_rdx_r9(w) ||
+        !emit_shr_rdx_imm(w, RV64_JIT_CACHE_PC_SHIFT) ||
+        !emit_xor_edx_imm32(w, context_mix) ||
+        !emit_and_edx_imm32(w, RV64_JIT_CACHE_SIZE - 1u) ||
+        !emit_imul_rdx_imm32(w, (uint32_t)sizeof(rv64_jit_block_t)) ||
+        !emit_movabs_reg(w, HOST_REG_R8,
+                         (uint64_t)(uintptr_t)rv64_jit_cache) ||
+        !emit_add_r8_rdx(w) ||
+        !emit_cmp_r8b_field_imm8(w, valid_off, 1) ||
+        !emit_direct_link_miss_jcc(
+            w, HOST_JCC_NE, miss_disps, &miss_count) ||
+        !emit_cmp_r8q_field_r9(w, pc_off) ||
+        !emit_direct_link_miss_jcc(
+            w, HOST_JCC_NE, miss_disps, &miss_count) ||
+        !emit_movabs_rdx(w, satp) ||
+        !emit_cmp_r8q_field_rdx(w, satp_off) ||
+        !emit_direct_link_miss_jcc(
+            w, HOST_JCC_NE, miss_disps, &miss_count) ||
+        !emit_cmp_r8d_field_imm32(w, ifetch_state_off, ifetch_state) ||
+        !emit_direct_link_miss_jcc(
+            w, HOST_JCC_NE, miss_disps, &miss_count) ||
+        !emit_cmp_r8b_field_imm8(w, uses_data_state_off, 0))
+    {
+        return false;
+    }
+
+    /*
+     * Match the known-target policy exactly.  A source that itself captures
+     * data-translation state proves the current value for a data-sensitive
+     * target; a source without that dependency may link only to an insensitive
+     * target, because its own cache validity would survive a data-state change.
+     * Keep this sequence paired with rv64_jit_emit_direct_link_exit().
+     */
+    if (source_uses_data_state)
+    {
+        if (!emit_jcc_rel32_placeholder(
+                w, HOST_JCC_E, &data_state_ok_disp) ||
+            !emit_cmp_r8d_field_imm32(w, data_state_off, data_state) ||
+            !emit_direct_link_miss_jcc(
+                w, HOST_JCC_NE, miss_disps, &miss_count))
+        {
+            return false;
+        }
+
+        patch_rel32(data_state_ok_disp, w->cur);
+    }
+    else if (!emit_direct_link_miss_jcc(
+                 w, HOST_JCC_NE, miss_disps, &miss_count))
+    {
+        return false;
+    }
+
+    /*
+     * A changed translated-fetch generation returns to C, where
+     * rv64_jit_block_matches() owns the slower page-table and source proof.
+     */
+    if (!emit_cmp_r8b_field_imm8(w, translated_off, 0) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_E, &ifetch_generation_ok_disp) ||
+        !emit_movabs_rax(
+            w, (uint64_t)(uintptr_t)&rv64_jit_ifetch_generation) ||
+        !emit_mov_rax_m64_rax(w) ||
+        !emit_cmp_r8q_field_rax(w, ifetch_generation_off) ||
+        !emit_direct_link_miss_jcc(
+            w, HOST_JCC_NE, miss_disps, &miss_count))
+    {
+        return false;
+    }
+
+    patch_rel32(ifetch_generation_ok_disp, w->cur);
+
+    /*
+     * Reserve the complete target block before crossing the native boundary.
+     * EAX is the work completed before the target; storing it in loop_extra
+     * makes the target's eventual return include the entire linked chain.
+     */
+    if (!emit_cmp_r8q_field_imm8(w, body_entry_off, 0) ||
+        !emit_direct_link_miss_jcc(
+            w, HOST_JCC_E, miss_disps, &miss_count) ||
+        !emit_movabs_rdx(
+            w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
+        !emit_mov_eax_m32_rdx(w) ||
+        !emit_add_eax_imm32(w, completed_count) ||
+        !emit_mov_ecx_eax(w) ||
+        !emit_add_ecx_r8d_field(w, insn_count_off) ||
+        !emit_movabs_rdx(
+            w, (uint64_t)(uintptr_t)&rv64_jit_entry_budget) ||
+        !emit_cmp_ecx_m32_rdx(w) ||
+        !emit_direct_link_miss_jcc(
+            w, HOST_JCC_A, miss_disps, &miss_count) ||
+        !emit_movabs_rdx(
+            w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
+        !emit_mov_m32_rdx_eax(w))
+    {
+        return false;
+    }
+
+    Assert(miss_count == RV64_JIT_DIRECT_LINK_GUARD_COUNT,
+           "jit: runtime-return direct-link guard policy drifted");
+
+#if RV64_JIT_STATS
+    uint8_t *guarded_taken_disp = NULL;
+    uint8_t *guarded_done_disp = NULL;
+
+    if (!emit_cmp_r8b_field_imm8(w, translated_off, 0) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_NE, &guarded_taken_disp) ||
+        !emit_cmp_r8b_field_imm8(w, uses_data_state_off, 0) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_E, &guarded_done_disp))
+    {
+        return false;
+    }
+
+    patch_rel32(guarded_taken_disp, w->cur);
+
+    if (!emit_inc_jit_stat_counter(
+            w, &rv64_jit_stats.direct_guarded_link_taken_count))
+    {
+        return false;
+    }
+
+    patch_rel32(guarded_done_disp, w->cur);
+#endif
+
+    if (!emit_inc_jit_stat_counter(
+            w, &rv64_jit_stats.direct_link_taken_count) ||
+        !emit_inc_jit_stat_counter(
+            w, &rv64_jit_stats.direct_return_link_taken_count) ||
+        !emit_mov_rax_r8q_field(w, body_entry_off) ||
+        !emit_jmp_rax(w))
+    {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < miss_count; i++)
+    {
+        patch_rel32(miss_disps[i], w->cur);
+    }
+
+    /*
+     * RET has committed on every ordinary miss.  Publish its dynamic target and
+     * include it in the returned count so the dispatcher resumes at the target
+     * rather than re-executing the transfer.
+     */
+    return emit_mov_rax_r9(w) &&
+           emit_store_rax_pc(w) &&
+           emit_inc_jit_stat_counter(
+               w, &rv64_jit_stats.direct_link_miss_count) &&
+           emit_inc_jit_stat_counter(
+               w, &rv64_jit_stats.direct_return_link_miss_count) &&
            emit_return_total_retired(w, completed_count);
 }
 
@@ -2779,6 +3268,27 @@ static bool emit_op(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         break;
     }
 
+    if (key == RV64_OP_KEY(RV64_FUNCT7_BASE, RV64_FUNCT3_SLT) ||
+        key == RV64_OP_KEY(RV64_FUNCT7_BASE, RV64_FUNCT3_SLTU))
+    {
+        const uint8_t setcc_opcode =
+            key == RV64_OP_KEY(RV64_FUNCT7_BASE, RV64_FUNCT3_SLT)
+                ? HOST_SETCC_L
+                : HOST_SETCC_B;
+        bool handled = false;
+
+        if (!jit_reg_try_emit_cached_compare(
+                w, regs, rd, rs1, rs2, setcc_opcode, &handled))
+        {
+            return false;
+        }
+
+        if (handled)
+        {
+            return true;
+        }
+    }
+
     if (!jit_reg_read_rax(w, regs, rs1) || !jit_reg_read_rcx(w, regs, rs2))
     {
         return false;
@@ -2929,37 +3439,64 @@ static bool emit_op32(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
 static bool emit_branch_chain_backedge(rv64_jit_writer_t *w,
                                        rv64_jit_reg_cache_t *regs, vaddr_t target,
                                        uint32_t exit_count,
-                                       const uint8_t *target_native)
+                                       const uint8_t *target_native,
+                                       bool stable_register_mapping)
 {
     uint8_t *over_budget_disp = NULL;
     uint8_t *loop_disp = NULL;
 
     /*
      * The current lap has completed `exit_count` guest instructions at the
-     * branch.  EAX becomes the total completed count including this lap.  ECX
-     * then looks one more full lap ahead; only if that still fits
-     * `rv64_jit_entry_budget` do we store EAX in `rv64_jit_loop_extra` and jump back to
-     * the native loop body.  Otherwise, returning EAX keeps cpu_exec() budget
-     * accounting exact.
+     * branch. Stable-register loops keep the completed count in R9D and the
+     * budget remaining after the current lap in ESI. Subtracting one further
+     * lap from ESI both reserves that work and sets the carry flag: JAE
+     * re-enters the loop only when the reservation succeeded. Ordinary loops
+     * retain the memory-backed ABI. Returning the current completed count keeps
+     * cpu_exec() accounting exact.
      */
-    if (!emit_movabs_rdx(w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
-        !emit_mov_eax_m32_rdx(w) ||
-        !emit_add_eax_imm32(w, exit_count) ||
-        !emit_mov_ecx_eax(w) ||
-        !emit_add_ecx_imm32(w, exit_count) ||
-        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&rv64_jit_entry_budget) ||
-        !emit_cmp_ecx_m32_rdx(w) ||
-        !emit_jcc_rel32_placeholder(w, HOST_JCC_A, &over_budget_disp) ||
-        !jit_reg_emit_flush_all_dirty(w, regs) ||
-        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
-        !emit_mov_m32_rdx_eax(w) ||
-        !emit_jmp_rel32_placeholder(w, &loop_disp))
+    if (stable_register_mapping)
     {
-        return false;
+        if (!emit_add_r9d_imm32(w, exit_count) ||
+            !emit_sub_esi_imm32(w, exit_count) ||
+            !emit_jcc_rel32_placeholder(
+                w, HOST_JCC_AE, &loop_disp))
+        {
+            return false;
+        }
+
+        patch_rel32(loop_disp, target_native);
+
+        if (!emit_mov_eax_r9d(w))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        if (!emit_movabs_rdx(
+                w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
+            !emit_mov_eax_m32_rdx(w) ||
+            !emit_add_eax_imm32(w, exit_count) ||
+            !emit_mov_ecx_eax(w) ||
+            !emit_add_ecx_imm32(w, exit_count) ||
+            !emit_movabs_rdx(
+                w, (uint64_t)(uintptr_t)&rv64_jit_entry_budget) ||
+            !emit_cmp_ecx_m32_rdx(w) ||
+            !emit_jcc_rel32_placeholder(
+                w, HOST_JCC_A, &over_budget_disp) ||
+            !jit_reg_emit_flush_all_dirty(w, regs) ||
+            !emit_movabs_rdx(
+                w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
+            !emit_mov_m32_rdx_eax(w) ||
+            !emit_jmp_rel32_placeholder(w, &loop_disp))
+        {
+            return false;
+        }
+
+        patch_rel32(loop_disp, target_native);
+        patch_rel32(over_budget_disp, w->cur);
     }
 
-    patch_rel32(loop_disp, target_native);
-    patch_rel32(over_budget_disp, w->cur);
     /*
      * EAX contains the completed count, but emit_store_pc_imm() uses RAX as its
      * immediate scratch register. Preserve the count in ECX across the PC store
@@ -2980,6 +3517,7 @@ bool rv64_jit_emit_branch(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
                           vaddr_t block_start_pc,
                           const uint8_t *native_body_entry,
                           bool can_chain_self_backedge,
+                          bool stable_self_backedge,
                           bool *emitted_native_backedge,
                           uint32_t retired_including_current,
                           bool current_block_uses_data_translation_state)
@@ -3026,10 +3564,31 @@ bool rv64_jit_emit_branch(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         return false;
     }
 
-    if (!jit_reg_read_rax(w, regs, rs1) ||
-        !jit_reg_read_rcx(w, regs, rs2) ||
-        !emit_cmp_rax_rcx(w) ||
-        !emit_jcc_rel32_placeholder(w, inverse_jcc, &fallthrough_disp))
+    const bool equality_against_zero =
+        (funct3 == RV64_FUNCT3_BEQ || funct3 == RV64_FUNCT3_BNE) &&
+        ((rs1 == RV64_GPR_ZERO) != (rs2 == RV64_GPR_ZERO));
+
+    if (equality_against_zero)
+    {
+        const uint32_t nonzero_reg =
+            rs1 == RV64_GPR_ZERO ? rs2 : rs1;
+        rv64_jit_reg_slot_t *slot =
+            jit_reg_loaded_slot(w, regs, nonzero_reg);
+
+        if (slot == NULL || !emit_test_hreg_hreg(w, slot->hreg))
+        {
+            return false;
+        }
+    }
+    else if (!jit_reg_read_rax(w, regs, rs1) ||
+             !jit_reg_read_rcx(w, regs, rs2) ||
+             !emit_cmp_rax_rcx(w))
+    {
+        return false;
+    }
+
+    if (!emit_jcc_rel32_placeholder(
+            w, inverse_jcc, &fallthrough_disp))
     {
         return false;
     }
@@ -3038,7 +3597,8 @@ bool rv64_jit_emit_branch(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     {
         if (!emit_branch_chain_backedge(w, regs, target,
                                         retired_including_current,
-                                        native_body_entry))
+                                        native_body_entry,
+                                        stable_self_backedge))
         {
             return false;
         }
@@ -3062,6 +3622,20 @@ bool rv64_jit_emit_branch(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     }
 
     patch_rel32(fallthrough_disp, w->cur);
+
+    /*
+     * A not-taken final lap bypasses the backedge counter update. Publish the
+     * earlier completed-lap count once so the ordinary direct-link or return
+     * path can add this block's final instruction count exactly as before.
+     */
+    if (stable_self_backedge && can_chain_self_backedge &&
+        target == block_start_pc)
+    {
+        return emit_movabs_rdx(
+                   w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) &&
+               emit_mov_m32_rdx_r9d(w);
+    }
+
     return true;
 }
 
@@ -3109,13 +3683,21 @@ bool rv64_jit_emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         return false;
     }
 
+    const uint32_t rs1 = rv64_instr_rs1(instr);
+    const int64_t immediate = imm_i(instr);
+    const bool can_link_canonical_return =
+        rd == RV64_GPR_ZERO &&
+        rs1 == RV64_GPR_LINK &&
+        immediate == 0 &&
+        rv64_jit_return_link_enabled();
+
     /*
      * JALR computes `(rs1 + imm) & ~1`, then checks instruction alignment after
      * clearing bit zero.  The misaligned case returns before JALR executes so
      * the interpreter raises the same trap and does not write the link register.
      */
-    if (!jit_reg_read_rax(w, regs, rv64_instr_rs1(instr)) ||
-        !emit_add_rax_imm32(w, (int32_t)imm_i(instr)) ||
+    if (!jit_reg_read_rax(w, regs, rs1) ||
+        !emit_add_rax_imm32(w, (int32_t)immediate) ||
         !emit_and_rax_imm32(w, (int32_t)~RV64_JALR_TARGET_LSB_MASK) ||
         !emit_test_al_imm8(w, RV64_IALIGN_MASK) ||
         !emit_jcc_rel32_placeholder(w, HOST_JCC_NE, &misaligned_disp))
@@ -3125,13 +3707,26 @@ bool rv64_jit_emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
 
     side_exit_regs = *regs;
 
-    if (!emit_mov_rcx_rax(w) ||
-        !emit_movabs_rax(w, link) ||
-        !jit_reg_write_rax(w, regs, rd) ||
-        !jit_reg_flush_all_dirty(w, regs) ||
-        !emit_mov_rax_rcx(w) ||
-        !emit_store_rax_pc(w) ||
-        !emit_return_total_retired(w, completed_count + 1u))
+    /*
+     * Only canonical RET receives the runtime cache probe in this first stage.
+     * Other JALR forms retain the established target-preservation and link-write
+     * ordering, including the rd==rs1 alias case.
+     */
+    if (can_link_canonical_return)
+    {
+        if (!emit_return_link_exit(
+                w, regs, completed_count + 1u, source_uses_data_state))
+        {
+            return false;
+        }
+    }
+    else if (!emit_mov_rcx_rax(w) ||
+             !emit_movabs_rax(w, link) ||
+             !jit_reg_write_rax(w, regs, rd) ||
+             !jit_reg_flush_all_dirty(w, regs) ||
+             !emit_mov_rax_rcx(w) ||
+             !emit_store_rax_pc(w) ||
+             !emit_return_total_retired(w, completed_count + 1u))
     {
         return false;
     }

@@ -166,9 +166,38 @@ $(ARCHIVE): $(LINKAGE)
 
 ## 6. Miscellaneous
 
-### Pull newlib from github if it does not exist
+### Prepare the pinned generated newlib checkout for non-native Navy builds
+ifneq ($(ISA),native)
+LIBC_UPSTREAM_REVISION := d14546936d65f79f8f67661b9f1cfa44b21829cc
+LIBC_MT_PATCH := $(NAVY_HOME)/libs/libc-nanos-mt.patch
+
 ifeq ($(wildcard $(NAVY_HOME)/libs/libc/Makefile),)
-  $(shell cd $(NAVY_HOME)/libs && git clone git@github.com:zzvsjs1/newlib-navy.git libc)
+  LIBC_CLONED := $(shell cd $(NAVY_HOME)/libs && git clone git@github.com:zzvsjs1/newlib-navy.git libc >/dev/null 2>&1 && git -C libc checkout --detach $(LIBC_UPSTREAM_REVISION) >/dev/null 2>&1 && echo yes)
+  ifneq ($(LIBC_CLONED),yes)
+    $(error failed to clone the pinned Navy newlib revision $(LIBC_UPSTREAM_REVISION))
+  endif
+endif
+
+LIBC_CURRENT_REVISION := $(shell git -C $(NAVY_HOME)/libs/libc rev-parse HEAD 2>/dev/null)
+ifneq ($(LIBC_CURRENT_REVISION),$(LIBC_UPSTREAM_REVISION))
+  $(error generated newlib is at $(LIBC_CURRENT_REVISION), expected $(LIBC_UPSTREAM_REVISION))
+endif
+
+### Apply Navy's maintained MT integration to the generated checkout
+ifneq ($(wildcard $(NAVY_HOME)/libs/libc/Makefile),)
+  LIBC_MT_PATCHED := $(shell cd $(NAVY_HOME)/libs/libc && git apply --reverse --check $(LIBC_MT_PATCH) >/dev/null 2>&1 && echo yes)
+  ifneq ($(LIBC_MT_PATCHED),yes)
+    LIBC_MT_PATCHABLE := $(shell cd $(NAVY_HOME)/libs/libc && git apply --check $(LIBC_MT_PATCH) >/dev/null 2>&1 && echo yes)
+    ifeq ($(LIBC_MT_PATCHABLE),yes)
+      LIBC_MT_PATCH_APPLIED := $(shell cd $(NAVY_HOME)/libs/libc && git apply $(LIBC_MT_PATCH) >/dev/null 2>&1 && echo yes)
+      ifneq ($(LIBC_MT_PATCH_APPLIED),yes)
+        $(error failed to apply the Navy newlib MT patch: $(LIBC_MT_PATCH))
+      endif
+    else
+      $(error the generated newlib checkout cannot accept $(LIBC_MT_PATCH))
+    endif
+  endif
+endif
 endif
 
 ### Build order control

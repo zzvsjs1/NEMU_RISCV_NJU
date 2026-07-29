@@ -73,6 +73,7 @@
 
 /* Architectural register and JALR values used by generic emitter logic. */
 #define RV64_GPR_ZERO RISCV_GPR_ZERO
+#define RV64_GPR_LINK RISCV_GPR_LINK
 #define RV64_FUNCT3_JALR RISCV_JALR_FUNCT3
 #define RV64_JALR_TARGET_LSB_MASK RISCV_JALR_TARGET_LSB_MASK
 
@@ -119,6 +120,9 @@
 #define RV64_JIT_BATCH_MAX_INSNS 65536u
 /* Power-of-two direct-mapped cache size, so `(size - 1)` is a valid index mask. */
 #define RV64_JIT_CACHE_SIZE 262144u
+/* Shared shifts keep the C lookup and emitted runtime return lookup identical. */
+#define RV64_JIT_CACHE_PC_SHIFT 2u
+#define RV64_JIT_CACHE_SATP_MIX_SHIFT 12u
 /* Keep the RV64 arena in parity with RV32 so long-running workloads reset less. */
 #define RV64_JIT_CODE_SIZE (256u * 1024u * 1024u)
 /* 16-byte alignment is the normal x86-64 code-entry alignment. */
@@ -167,7 +171,9 @@
  * independent maxima prevents a new guard in one path from silently borrowing
  * spare capacity that happened to belong to the other.
  */
-#define RV64_JIT_DIRECT_LINK_MAX_MISS_PATCHES 8u
+#define RV64_JIT_DIRECT_LINK_GUARD_COUNT 8u
+#define RV64_JIT_DIRECT_LINK_MAX_MISS_PATCHES \
+    RV64_JIT_DIRECT_LINK_GUARD_COUNT
 #define RV64_JIT_DTLB_MAX_SLOW_PATCHES 6u
 /*
  * Keep the helper data TLB intentionally small: 256 direct-mapped entries cover
@@ -291,6 +297,13 @@ typedef enum
     RV64_JIT_HREG_R13,
     RV64_JIT_HREG_R14,
     RV64_JIT_HREG_R15,
+    /* Ordinary blocks use only the six callee-saved slots above. */
+    RV64_JIT_HREG_BASE_COUNT,
+    /*
+     * A proven helper-free self-loop may additionally dedicate caller-saved R8
+     * to one loop-carried guest register. No C helper can observe this mapping.
+     */
+    RV64_JIT_HREG_R8 = RV64_JIT_HREG_BASE_COUNT,
     RV64_JIT_HREG_COUNT,
 } rv64_jit_hreg_t;
 
@@ -307,6 +320,8 @@ typedef struct
 typedef struct
 {
     rv64_jit_reg_slot_t slots[RV64_JIT_HREG_COUNT];
+    /* Active slots: six normally, seven only for a preloaded stable self-loop. */
+    uint32_t slot_count;
     uint32_t next_age;
 } rv64_jit_reg_cache_t;
 
@@ -436,6 +451,8 @@ typedef struct
     uint64_t native_jumps;
     uint64_t native_m_ops;
     uint64_t reg_cache_spills;
+    uint64_t stable_loop_blocks;
+    uint64_t stable_loop_preloaded_regs;
     uint64_t native_store_continuations;
     uint64_t native_paged_loads;
     uint64_t native_paged_stores;
@@ -466,6 +483,8 @@ typedef struct
     uint64_t direct_link_miss_count;
     uint64_t direct_branch_link_taken_count;
     uint64_t direct_guarded_link_taken_count;
+    uint64_t direct_return_link_taken_count;
+    uint64_t direct_return_link_miss_count;
 
     /* Validation and invalidation maintenance performed while NEMU runs. */
     uint64_t ifetch_generation_fast_hits;
@@ -623,6 +642,29 @@ static inline uint32_t jit_pc_offset(void)
     return (uint32_t)offsetof(CPU_state, pc);
 }
 
+/*
+ * Fold the fetch context into the low 32 bits used by the direct-mapped cache.
+ * Only the low log2(cache-size) bits survive the final mask, so truncating this
+ * context term before XORing the shifted PC is exactly equivalent to the
+ * original full-width expression.
+ */
+static inline uint32_t rv64_jit_cache_context_mix(word_t satp,
+                                                   uint32_t ifetch_state)
+{
+    return (uint32_t)(satp ^
+                      (satp >> RV64_JIT_CACHE_SATP_MIX_SHIFT) ^
+                      ifetch_state);
+}
+
+/* Return the existing cache index for one full guest fetch context. */
+static inline uint32_t rv64_jit_cache_hash_context(vaddr_t pc, word_t satp,
+                                                    uint32_t ifetch_state)
+{
+    return (uint32_t)(((pc >> RV64_JIT_CACHE_PC_SHIFT) ^
+                       rv64_jit_cache_context_mix(satp, ifetch_state)) &
+                      (RV64_JIT_CACHE_SIZE - 1u));
+}
+
 extern rv64_jit_block_t rv64_jit_cache[RV64_JIT_CACHE_SIZE];
 extern rv64_jit_data_tlb_entry_t rv64_jit_data_tlb[RV64_JIT_DATA_TLB_SIZE];
 extern uint16_t rv64_jit_data_tlb_pt_page_refs[RV64_JIT_PMEM_PAGE_COUNT];
@@ -665,6 +707,7 @@ void rv64_jit_stat_unsupported_opcode(uint32_t instr);
 void rv64_jit_stat_block_end(rv64_jit_block_end_reason_t reason);
 void rv64_jit_dump_stats_report(void);
 bool rv64_jit_direct_link_enabled(void);
+bool rv64_jit_return_link_enabled(void);
 void rv64_jit_ifetch_generation_bump(void);
 void rv64_jit_data_tlb_flush(void);
 bool rv64_jit_write_may_touch_data_tlb_page_table(paddr_t addr, int len);
@@ -709,6 +752,10 @@ bool rv64_jit_translate_ifetch_ex(vaddr_t pc, paddr_t *paddr,
 void rv64_jit_reg_cache_init(rv64_jit_reg_cache_t *regs);
 void rv64_jit_reg_cache_restore(rv64_jit_reg_cache_t *regs,
                                 const rv64_jit_reg_cache_t *snapshot);
+bool rv64_jit_prepare_stable_loop_regs(rv64_jit_writer_t *w,
+                                       rv64_jit_reg_cache_t *regs,
+                                       uint32_t reg_mask,
+                                       uint32_t loop_insn_count);
 bool rv64_jit_emit_prologue(rv64_jit_writer_t *w);
 bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w,
                                     rv64_jit_reg_cache_t *regs,
@@ -744,6 +791,7 @@ bool rv64_jit_emit_branch(rv64_jit_writer_t *w,
                           vaddr_t block_start_pc,
                           const uint8_t *native_body_entry,
                           bool can_chain_self_backedge,
+                          bool stable_self_backedge,
                           bool *emitted_native_backedge,
                           uint32_t retired_including_current,
                           bool current_block_uses_data_translation_state);

@@ -41,6 +41,15 @@ static void replace_current_image(const char *filename, char *const argv[], char
 {
     context_uload(current, filename, argv, envp);
 
+#ifdef NANOS_LITE_MT
+    /*
+     * execve() replaces the whole process, not merely the calling task.  The MT
+     * scheduler discards sibling contexts from the old address space and binds
+     * the freshly loaded PCB Context as the replacement main task.
+     */
+    mt_process_context_replaced(current->cp);
+#endif
+
     /*
      * Return through the freshly built user context instead of the old syscall
      * frame, which belongs to the image being replaced.  This flag is consumed
@@ -226,6 +235,21 @@ void do_syscall(Context *c)
     const uintptr_t arg1 = c->GPR2;
     const uintptr_t arg2 = c->GPR3;
     const uintptr_t arg3 = c->GPR4;
+
+#ifdef NANOS_LITE_MT
+    /*
+     * Keep the original syscall switch unchanged for the single-thread target.
+     * The MT sibling recognises only its appended ABI range here and delegates
+     * every established service to the shared implementation below.
+     */
+    if (mt_handle_syscall(c, num, arg1, arg2, arg3))
+    {
+#ifdef STRACE
+        strace_log(num, arg1, arg2, arg3, c->GPRx);
+#endif
+        return;
+    }
+#endif
 
     switch (num)
     {

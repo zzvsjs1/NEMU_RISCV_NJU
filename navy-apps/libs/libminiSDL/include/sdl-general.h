@@ -43,24 +43,6 @@ int SDL_SetError(const char *fmt, ...);
 int SDL_ShowCursor(int toggle);
 void SDL_WM_SetCaption(const char *title, const char *icon);
 
-typedef struct SDL_mutex
-{
-} SDL_mutex;
-
-static inline SDL_mutex *SDL_CreateMutex() { return NULL; }
-
-static inline void SDL_DestroyMutex(SDL_mutex *mutex) { (void)mutex; }
-
-static inline int SDL_mutexP(SDL_mutex *mutex)
-{
-    (void)mutex;
-    return 0;
-}
-
-static inline int SDL_mutexV(SDL_mutex *mutex)
-{
-    (void)mutex;
-    return 0;
-}
+#include "sdl-mutex.h"
 
 #endif

@@ -2,8 +2,13 @@
 #include <klib.h>
 #include <stdint.h>
 
+#ifndef BRANCHMARK_ITERS
 #define BRANCHMARK_ITERS 600000u
+#endif
+
+#ifndef BRANCHMARK_EXPECTED
 #define BRANCHMARK_EXPECTED 0x67c146ecu
+#endif
 
 /* Read AM uptime in microseconds for guest-visible benchmark timing. */
 static uint64_t uptime_us(void)

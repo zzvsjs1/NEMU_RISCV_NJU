@@ -39,6 +39,7 @@ static bool rv64_jit_disabled = false;
 #endif
 static bool rv64_jit_env_disable = false;
 static bool rv64_jit_env_disable_direct_link = false;
+static bool rv64_jit_env_disable_return_link = false;
 static bool rv64_jit_stats_enabled = false;
 static bool rv64_jit_runtime_options_ready = false;
 /* Current native-entry instruction budget, used by in-block chained loops. */
@@ -87,6 +88,8 @@ static void rv64_jit_init_runtime_options(void)
         rv64_jit_env_disable = jit_env_flag_enabled("NEMU_DISABLE_JIT");
         rv64_jit_env_disable_direct_link =
             jit_env_flag_enabled("NEMU_DISABLE_RV64_JIT_DIRECT_LINK");
+        rv64_jit_env_disable_return_link =
+            jit_env_flag_enabled("NEMU_DISABLE_RV64_JIT_RETURN_LINK");
         rv64_jit_stats_enabled = jit_env_flag_enabled("NEMU_JIT_STATS");
         rv64_jit_runtime_options_ready = true;
     }
@@ -106,6 +109,18 @@ bool rv64_jit_direct_link_enabled(void)
     return !rv64_jit_env_disable_direct_link;
 }
 
+/*
+ * Return links are a separately measurable subset of direct links.  Disabling
+ * all direct links necessarily disables them too, while their narrower switch
+ * leaves known-target JAL, branch, and fall-through links unchanged.
+ */
+bool rv64_jit_return_link_enabled(void)
+{
+    rv64_jit_init_runtime_options();
+    return !rv64_jit_env_disable_direct_link &&
+           !rv64_jit_env_disable_return_link;
+}
+
 /* Hash one fetch context and guest PC into the direct-mapped cache. */
 static uint32_t jit_hash_context(vaddr_t pc, word_t satp, uint32_t ifetch_state)
 {
@@ -114,8 +129,7 @@ static uint32_t jit_hash_context(vaddr_t pc, word_t satp, uint32_t ifetch_state)
      * mixes the PPN/ASID-like high bits with the raw CSR value.  Include the
      * fetch privilege so M/S/U entries for the same PC do not evict each other.
      */
-    return (uint32_t)(((pc >> 2) ^ satp ^ (satp >> 12) ^ ifetch_state) &
-                      (RV64_JIT_CACHE_SIZE - 1u));
+    return rv64_jit_cache_hash_context(pc, satp, ifetch_state);
 }
 
 /* Hash the current fetch context and guest PC into the direct-mapped cache. */

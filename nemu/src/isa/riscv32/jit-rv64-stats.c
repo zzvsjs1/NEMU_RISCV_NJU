@@ -416,6 +416,10 @@ static void jit_dump_compilation_stats(void)
         rv64_jit_stats.inline_paged_stores);
     Log("jit:   reg cache spills = %" PRIu64 " emitted spill sequences",
         rv64_jit_stats.reg_cache_spills);
+    Log("jit:   stable register loops = %" PRIu64
+        ", preloaded registers = %" PRIu64,
+        rv64_jit_stats.stable_loop_blocks,
+        rv64_jit_stats.stable_loop_preloaded_regs);
 
     jit_dump_block_end_stats();
 }
@@ -468,6 +472,9 @@ static void jit_dump_link_and_validation_stats(void)
     const rv64_jit_wide_count_t direct_link_attempts =
         (rv64_jit_wide_count_t)rv64_jit_stats.direct_link_taken_count +
         rv64_jit_stats.direct_link_miss_count;
+    const rv64_jit_wide_count_t direct_return_link_attempts =
+        (rv64_jit_wide_count_t)rv64_jit_stats.direct_return_link_taken_count +
+        rv64_jit_stats.direct_return_link_miss_count;
 
     jit_log_section("Run time: direct links and validation");
     jit_log_percentage("Direct-link success rate",
@@ -480,6 +487,12 @@ static void jit_dump_link_and_validation_stats(void)
         rv64_jit_stats.direct_branch_link_taken_count);
     Log("jit:   direct guarded links taken = %" PRIu64,
         rv64_jit_stats.direct_guarded_link_taken_count);
+    jit_log_percentage("Direct return-link success rate",
+                       rv64_jit_stats.direct_return_link_taken_count,
+                       direct_return_link_attempts);
+    Log("jit:   direct return links taken = %" PRIu64 ", misses = %" PRIu64,
+        rv64_jit_stats.direct_return_link_taken_count,
+        rv64_jit_stats.direct_return_link_miss_count);
     Log("jit:   ifetch generation fast hits = %" PRIu64
         ", revalidations = %" PRIu64 ", bumps = %" PRIu64,
         rv64_jit_stats.ifetch_generation_fast_hits,

@@ -16,8 +16,11 @@ DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit-stats_defconfig"
 RV64_FPU_JIT_TEST=riscv64-fpu-jit-fallback
 RV64_FPU_TRAP_TEST=riscv64-fpu-traps
 TESTS=(
-  "$RV64_FPU_JIT_TEST" "$RV64_FPU_TRAP_TEST" riscv64-jit-strict riscv64-jit-smc riscv64-jit-negative-cache
-  riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-direct-link riscv64-jit-trace
+  riscv64-jit-stable-loop riscv64-jit-multibranch-loop
+  "$RV64_FPU_JIT_TEST" "$RV64_FPU_TRAP_TEST" riscv64-jit-strict
+  riscv64-jit-smc riscv64-jit-negative-cache
+  riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-return-link
+  riscv64-jit-direct-link riscv64-jit-trace
   riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-sv39-cross-page riscv64-jit-mprv-ifetch
   riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data riscv64-jit-sv39-dtlb
 )
@@ -336,6 +339,62 @@ require_reg_cache_spills_at_most() {
 
   if [ "$reg_cache_spills" -gt "$max_spills" ]; then
     echo "Expected register-cache spill count for $test_name to be <= $max_spills, got $reg_cache_spills" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_stable_register_loops() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local stable_loops
+  local preloaded_registers
+
+  summary=$(sed -n \
+    's/.*stable register loops = \([0-9][0-9]*\), preloaded registers = \([0-9][0-9]*\).*/\1 \2/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$summary" ]; then
+    echo "Failed to find stable-register-loop stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  read -r stable_loops preloaded_registers <<<"$summary"
+
+  if [ "$stable_loops" -lt 2 ] ||
+    [ "$preloaded_registers" -ne $((stable_loops * 7)) ]; then
+    echo "Expected at least two seven-register stable loops for $test_name," \
+      "got loops=$stable_loops" \
+      "preloaded=$preloaded_registers" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_zero_stable_register_loops() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local stable_loops
+  local preloaded_registers
+
+  summary=$(sed -n \
+    's/.*stable register loops = \([0-9][0-9]*\), preloaded registers = \([0-9][0-9]*\).*/\1 \2/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$summary" ]; then
+    echo "Failed to find stable-register-loop stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  read -r stable_loops preloaded_registers <<<"$summary"
+
+  if [ "$stable_loops" -ne 0 ] || [ "$preloaded_registers" -ne 0 ]; then
+    echo "Expected the multi-branch loop to reject stable mapping," \
+      "got loops=$stable_loops preloaded=$preloaded_registers" >&2
     cat "$log" >&2
     exit 1
   fi
@@ -795,6 +854,42 @@ require_positive_direct_branch_links() {
   fi
 }
 
+require_positive_direct_return_links() {
+  local log=$1
+  local test_name=$2
+  local minimum_taken=4000
+  local summary
+  local taken
+  local misses
+  local attempts
+
+  summary=$(sed -n \
+    's/.*direct return links taken = \([0-9][0-9]*\), misses = \([0-9][0-9]*\).*/\1 \2/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$summary" ]; then
+    echo "Failed to find direct return-link stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  read -r taken misses <<<"$summary"
+  attempts=$((taken + misses))
+
+  # The focused guest executes 4,096 alternating returns. A substantial floor
+  # prevents unrelated startup or trap-handler returns from satisfying this
+  # check, while the ratio proves that the hot site normally stays linked.
+  if [ "$taken" -lt "$minimum_taken" ] ||
+    [ "$misses" -le 0 ] ||
+    [ $((taken * 100)) -lt $((attempts * 99)) ]; then
+    echo "Expected at least $minimum_taken direct return-link hits, positive" \
+      "misses, and a 99% hit rate for $test_name; got taken=$taken" \
+      "misses=$misses" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 require_positive_guarded_direct_links() {
   local log=$1
   local test_name=$2
@@ -835,6 +930,16 @@ for test_name in "${TESTS[@]}"; do
   require_good_trap "$out" "$test_name"
   require_positive_jit_instructions "$out" "$test_name"
 
+  if [ "$test_name" = "riscv64-jit-stable-loop" ]; then
+    require_positive_stable_register_loops "$out" "$test_name"
+    require_positive_side_exit_reason \
+      "$out" "$test_name" "chained-over-budget"
+  fi
+
+  if [ "$test_name" = "riscv64-jit-multibranch-loop" ]; then
+    require_zero_stable_register_loops "$out" "$test_name"
+  fi
+
   if [ "$test_name" = "$RV64_FPU_JIT_TEST" ]; then
     require_fp_helper_stats "$out" "$test_name" positive 40 23 zero 17
   fi
@@ -861,6 +966,11 @@ for test_name in "${TESTS[@]}"; do
   if [ "$test_name" = "riscv64-jit-jump-fast" ]; then
     require_positive_native_jumps "$out" "$test_name"
     require_positive_block_end_reason "$out" "$test_name" "jump"
+  fi
+
+  if [ "$test_name" = "riscv64-jit-return-link" ]; then
+    require_positive_native_jumps "$out" "$test_name"
+    require_positive_direct_return_links "$out" "$test_name"
   fi
 
   if [ "$test_name" = "riscv64-jit-direct-link" ]; then

@@ -5,6 +5,10 @@
 #include <proc.h>
 #include <stdint.h>
 
+#ifdef NANOS_LITE_MT
+#include "audio_policy.h"
+#endif
+
 void syscall_request_resched(void);
 
 #if defined(__ARCH_X86_NEMU) || defined(__ARCH_MIPS32_NEMU) || \
@@ -658,14 +662,37 @@ size_t fb_write(const void *buf, size_t offset, size_t len)
     return len;
 }
 
-// Semantics: write `len` bytes starting at (uint8_t*)buf + offset, block until all bytes are queued.
-// Note: offset applies to the user buffer, not the device, since a stream device has no seek position.
+/*
+ * offset applies to the user buffer, not the device, because /dev/sb is a
+ * stream.  Original Nanos-lite keeps its established blocking full-write
+ * contract.  nanos-lite-mt instead performs one bounded non-blocking chunk so a
+ * full audio ring cannot trap every worker inside the kernel.
+ */
 size_t sb_write(const void *buf, size_t offset, size_t len)
 {
     if (buf == NULL || len == 0)
         return 0;
 
     const uint8_t *p = (const uint8_t *)buf + offset;
+
+#ifdef NANOS_LITE_MT
+    const AM_AUDIO_STATUS_T status = io_read(AM_AUDIO_STATUS);
+    const AM_AUDIO_CONFIG_T config = io_read(AM_AUDIO_CONFIG);
+    const size_t write_count =
+        mt_audio_write_count((size_t)config.bufsize, (size_t)status.count, len);
+
+    if (write_count == 0)
+    {
+        return 0;
+    }
+
+    Area sbuf = {
+        .start = (void *)p,
+        .end = (void *)(p + write_count),
+    };
+    io_write(AM_AUDIO_PLAY, sbuf);
+    return write_count;
+#else
     size_t remain = len;
 
     while (remain > 0)
@@ -710,6 +737,7 @@ size_t sb_write(const void *buf, size_t offset, size_t len)
 
     // All requested bytes have been queued to the device
     return len;
+#endif
 }
 
 size_t sbctl_write(const void *buf, size_t offset, size_t len)

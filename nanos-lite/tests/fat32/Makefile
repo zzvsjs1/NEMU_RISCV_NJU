@@ -33,6 +33,8 @@ POSIX_SRCS := test_fat32_posix.c \
 	../../src/fs/fat32_bpb.c
 ABI_SRCS := test_nanos_syscall_abi.c ../../../navy-apps/libs/libos/src/nanos_abi.c
 ABI_CFLAGS := $(CFLAGS) -I../../../navy-apps/libs/libc/include -I../../../navy-apps/libs/libos/src
+SYSCALL_NUMBER_SRCS := test_nanos_syscall_numbers.c
+SYSCALL_NUMBER_CFLAGS := $(CFLAGS) -I../../../navy-apps/libs/libos/src
 PAGEWALK_SRCS := test_nanos_pagewalk.c ../../src/pagewalk.c
 PAGEWALK_CFLAGS := $(CFLAGS)
 PAGEWALK_LOW_CFLAGS := $(PAGEWALK_CFLAGS) -fno-pie -no-pie
@@ -62,6 +64,7 @@ all: test_fs_path \
 	test_fat32_write \
 	test_fat32_posix \
 	test_nanos_syscall_abi \
+	test_nanos_syscall_numbers \
 	test_nanos_pagewalk_sv39 \
 	test_nanos_pagewalk_sv32 \
 	test_nanos_pagewalk_mips32 \
@@ -80,6 +83,7 @@ test: all
 	./test_fat32_write
 	./test_fat32_posix
 	./test_nanos_syscall_abi
+	./test_nanos_syscall_numbers
 	./test_nanos_pagewalk_sv39
 	./test_nanos_pagewalk_sv32
 	./test_nanos_pagewalk_mips32
@@ -110,6 +114,9 @@ test_fat32_posix: $(POSIX_SRCS) ../../src/fs/fat32.h
 
 test_nanos_syscall_abi: $(ABI_SRCS)
 	$(CC) $(ABI_CFLAGS) -o $@ $(ABI_SRCS)
+
+test_nanos_syscall_numbers: $(SYSCALL_NUMBER_SRCS) ../../../navy-apps/libs/libos/src/syscall.h
+	$(CC) $(SYSCALL_NUMBER_CFLAGS) -o $@ $(SYSCALL_NUMBER_SRCS)
 
 test_nanos_pagewalk_sv39: $(PAGEWALK_SRCS)
 	$(CC) $(PAGEWALK_CFLAGS) -DNANOS_PAGEWALK_XLEN=64 -DPAGEWALK_TEST_MODE=64 -o $@ $(PAGEWALK_SRCS)
@@ -145,6 +152,7 @@ clean:
 		test_fat32_write \
 		test_fat32_posix \
 		test_nanos_syscall_abi \
+		test_nanos_syscall_numbers \
 		test_nanos_pagewalk_sv39 \
 		test_nanos_pagewalk_sv32 \
 		test_nanos_pagewalk_mips32 \
