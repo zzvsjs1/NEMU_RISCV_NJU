@@ -7,16 +7,6 @@
 #include <time.h>
 #include <fcntl.h>
 #include <assert.h>
-#include <limits.h>
-#include <sched.h>
-
-#include "audio_write.h"
-
-/*
- * Newlib hides this declaration unless its POSIX feature macros are enabled,
- * but Navy's libos always supplies the established SYS_yield wrapper.
- */
-int sched_yield(void);
 
 #ifndef CLOCK_MONOTONIC
 #define CLOCK_MONOTONIC ((clockid_t)4)
@@ -71,9 +61,6 @@ static uint32_t monotonic_ms(void)
 
 static int sbFd = -1;
 static int sbctlFd = -1;
-
-static int audio_write_once(int fd, const void *buffer, int length);
-static void audio_yield_once(void);
 
 uint32_t NDL_GetTicks()
 {
@@ -305,26 +292,23 @@ void NDL_CloseAudio()
 int NDL_PlayAudio(void *buf, int len)
 {
     assert(sbFd >= 0);
+    /*
+     * /dev/sb write is blocking until all bytes are accepted.  Looping here keeps
+     * miniSDL's audio pump simple: once it has queried enough free space, it can
+     * treat a short write as progress rather than rebuilding the callback buffer.
+     */
+    int written = 0;
 
-    return ndl_audio_write_all(sbFd, buf, len, audio_write_once,
-                               audio_yield_once);
-}
-
-static int audio_write_once(int fd, const void *buffer, int length)
-{
-    const ssize_t result = write(fd, buffer, (size_t)length);
-
-    if (result > INT_MAX)
+    while (written < len)
     {
-        return INT_MAX;
+        ssize_t w = write(sbFd, (uint8_t *)buf + written, len - written);
+
+        if (w <= 0)
+            return written; // should not happen, but be safe
+        written += (int)w;
     }
 
-    return (int)result;
-}
-
-static void audio_yield_once(void)
-{
-    (void)sched_yield();
+    return written;
 }
 
 int NDL_QueryAudio()

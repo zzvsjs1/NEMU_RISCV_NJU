@@ -1,3 +1,3 @@
 NAME = libndl
-SRCS = NDL.c audio_write.c
+SRCS = NDL.c
 include $(NAVY_HOME)/Makefile

@@ -166,10 +166,9 @@ $(ARCHIVE): $(LINKAGE)
 
 ## 6. Miscellaneous
 
-### Prepare the pinned generated newlib checkout for non-native Navy builds
+### Keep generated newlib on the last pre-MT revision
 ifneq ($(ISA),native)
 LIBC_UPSTREAM_REVISION := d14546936d65f79f8f67661b9f1cfa44b21829cc
-LIBC_MT_PATCH := $(NAVY_HOME)/libs/libc-nanos-mt.patch
 
 ifeq ($(wildcard $(NAVY_HOME)/libs/libc/Makefile),)
   LIBC_CLONED := $(shell cd $(NAVY_HOME)/libs && git clone git@github.com:zzvsjs1/newlib-navy.git libc >/dev/null 2>&1 && git -C libc checkout --detach $(LIBC_UPSTREAM_REVISION) >/dev/null 2>&1 && echo yes)
@@ -178,25 +177,15 @@ ifeq ($(wildcard $(NAVY_HOME)/libs/libc/Makefile),)
   endif
 endif
 
+### Reject a stale MT-enabled checkout instead of silently rebuilding it
 LIBC_CURRENT_REVISION := $(shell git -C $(NAVY_HOME)/libs/libc rev-parse HEAD 2>/dev/null)
 ifneq ($(LIBC_CURRENT_REVISION),$(LIBC_UPSTREAM_REVISION))
   $(error generated newlib is at $(LIBC_CURRENT_REVISION), expected $(LIBC_UPSTREAM_REVISION))
 endif
 
-### Apply Navy's maintained MT integration to the generated checkout
-ifneq ($(wildcard $(NAVY_HOME)/libs/libc/Makefile),)
-  LIBC_MT_PATCHED := $(shell cd $(NAVY_HOME)/libs/libc && git apply --reverse --check $(LIBC_MT_PATCH) >/dev/null 2>&1 && echo yes)
-  ifneq ($(LIBC_MT_PATCHED),yes)
-    LIBC_MT_PATCHABLE := $(shell cd $(NAVY_HOME)/libs/libc && git apply --check $(LIBC_MT_PATCH) >/dev/null 2>&1 && echo yes)
-    ifeq ($(LIBC_MT_PATCHABLE),yes)
-      LIBC_MT_PATCH_APPLIED := $(shell cd $(NAVY_HOME)/libs/libc && git apply $(LIBC_MT_PATCH) >/dev/null 2>&1 && echo yes)
-      ifneq ($(LIBC_MT_PATCH_APPLIED),yes)
-        $(error failed to apply the Navy newlib MT patch: $(LIBC_MT_PATCH))
-      endif
-    else
-      $(error the generated newlib checkout cannot accept $(LIBC_MT_PATCH))
-    endif
-  endif
+LIBC_TRACKED_CHANGES := $(shell git -C $(NAVY_HOME)/libs/libc diff --quiet HEAD -- >/dev/null 2>&1 || echo yes)
+ifneq ($(LIBC_TRACKED_CHANGES),)
+  $(error generated newlib has tracked changes; restore or regenerate it at $(LIBC_UPSTREAM_REVISION))
 endif
 endif
 

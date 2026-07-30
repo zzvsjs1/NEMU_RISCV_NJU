@@ -4,6 +4,22 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+#include "sdl-general.h"
+#include "sdl-event.h"
+#include "sdl-timer.h"
+#include "sdl-video.h"
+#include "sdl-audio.h"
+#include "sdl-file.h"
+
+#ifdef __cplusplus
+}
+#endif
+
 typedef bool SDL_bool;
 typedef uint8_t Uint8;
 typedef int16_t Sint16;
@@ -17,23 +33,6 @@ typedef uint64_t Uint64;
 #define SDL_TRUE 1
 
 #define SDLCALL
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif
-
-#include "sdl-general.h"
-#include "sdl-thread.h"
-#include "sdl-event.h"
-#include "sdl-timer.h"
-#include "sdl-video.h"
-#include "sdl-audio.h"
-#include "sdl-file.h"
-
-#ifdef __cplusplus
-}
-#endif
 
 // define correct SDL key names
 #define SDLK_a SDLK_A

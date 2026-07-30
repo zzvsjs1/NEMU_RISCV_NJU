@@ -30,20 +30,7 @@ enum
     SYS_rename,
     SYS_truncate,
     SYS_ftruncate,
-    SYS_clock_gettime,
-
-    /*
-     * Keep the original ABI numbers above unchanged.  These calls are
-     * deliberately appended so binaries built for the single-threaded kernel
-     * continue to use exactly the same syscall numbers.
-     */
-    SYS_thread_create = 28,
-    SYS_thread_exit = 29,
-    SYS_thread_join = 30,
-    SYS_thread_self = 31,
-    SYS_thread_kill = 32,
-    SYS_mutex_lock = 33,
-    SYS_mutex_unlock = 34
+    SYS_clock_gettime
 };
 
 #endif
