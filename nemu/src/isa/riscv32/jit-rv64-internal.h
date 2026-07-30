@@ -244,10 +244,10 @@
 #define RV64_JIT_DATA_TLB_STATE_MXR (1u << 3)
 
 /*
- * rv64_jit_store_pmem_continue() returns this one-bit ABI in EAX.  Zero asks
- * generated code to leave the current block because the store invalidated
- * compiled source or translation state; one proves that execution may continue
- * at the next guest instruction.
+ * The completed-store helpers return this one-bit ABI in EAX.  Zero asks
+ * generated code to leave the current block because the store reached a CPU
+ * boundary or invalidated compiled source or translation state; one proves
+ * that execution may continue at the next guest instruction.
  */
 enum
 {
@@ -408,6 +408,7 @@ typedef enum
     RV64_JIT_SIDE_EXIT_LOAD_GUARD,
     RV64_JIT_SIDE_EXIT_STORE_GUARD,
     RV64_JIT_SIDE_EXIT_STORE_SOURCE,
+    RV64_JIT_SIDE_EXIT_STORE_HELPER,
     RV64_JIT_SIDE_EXIT_PAGED_STORE_HELPER,
     RV64_JIT_SIDE_EXIT_BRANCH_TAKEN,
     RV64_JIT_SIDE_EXIT_CHAINED_OVER_BUDGET,
@@ -425,6 +426,7 @@ typedef struct
     uint64_t blocks_executed;
     uint64_t executed_insns;
     uint64_t zero_side_exits;
+    uint64_t cpu_boundary_breaks;
 
     /*
      * Compilation and negative-cache outcomes.  These count published native
@@ -473,6 +475,9 @@ typedef struct
     uint64_t inline_paged_store_hits;
     uint64_t helper_load_count;
     uint64_t helper_store_count;
+    uint64_t bare_mmio_store_calls;
+    uint64_t bare_mmio_store_continuations;
+    uint64_t bare_mmio_store_boundary_exits;
     uint64_t fp_helper_calls;
     uint64_t fp_helper_continuations;
     uint64_t fp_helper_trap_exits;
@@ -485,6 +490,8 @@ typedef struct
     uint64_t direct_guarded_link_taken_count;
     uint64_t direct_return_link_taken_count;
     uint64_t direct_return_link_miss_count;
+    uint64_t direct_jalr_link_taken_count;
+    uint64_t direct_jalr_link_miss_count;
 
     /* Validation and invalidation maintenance performed while NEMU runs. */
     uint64_t ifetch_generation_fast_hits;
@@ -679,6 +686,7 @@ extern rv64_jit_stats_t rv64_jit_stats;
 extern uint64_t rv64_jit_ifetch_generation;
 extern volatile uint32_t rv64_jit_entry_budget;
 extern volatile uint32_t rv64_jit_loop_extra;
+extern volatile bool rv64_jit_cpu_boundary_requested;
 
 #if RV64_JIT_STATS
 #define JIT_STAT_INC(field) \
@@ -722,6 +730,8 @@ uint64_t rv64_jit_load_u8(vaddr_t addr);
 uint64_t rv64_jit_load_u16(vaddr_t addr);
 uint64_t rv64_jit_load_u32(vaddr_t addr);
 void rv64_jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data);
+uint32_t rv64_jit_store_bare_continue(paddr_t addr, uint32_t len,
+                                      uint64_t data);
 uint32_t rv64_jit_store_pmem_continue(paddr_t addr, uint32_t len, uint64_t data);
 uint64_t rv64_jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr);
 size_t rv64_jit_align_up(size_t value, size_t align);

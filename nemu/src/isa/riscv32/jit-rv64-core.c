@@ -46,6 +46,11 @@ static bool rv64_jit_runtime_options_ready = false;
 volatile uint32_t rv64_jit_entry_budget = 0;
 /* Extra guest instructions completed by earlier chained loop laps. */
 volatile uint32_t rv64_jit_loop_extra = 0;
+/*
+ * A completed helper may need the outer CPU loop to observe a newly raised
+ * interrupt or emulator-state transition before another native block runs.
+ */
+volatile bool rv64_jit_cpu_boundary_requested = false;
 
 /*
  * Public write-side guard. It becomes true after the native arena exists, so
@@ -385,7 +390,11 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
          */
         rv64_jit_entry_budget = remaining_budget;
         rv64_jit_loop_extra = 0;
+        rv64_jit_cpu_boundary_requested = false;
         const uint32_t ran = block->entry();
+        const bool cpu_boundary_requested =
+            rv64_jit_cpu_boundary_requested;
+        rv64_jit_cpu_boundary_requested = false;
 
         if (ran == 0)
         {
@@ -398,6 +407,12 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
         JIT_STAT_INC(blocks_executed);
         JIT_STAT_ADD(executed_insns, ran);
         total += ran;
+
+        if (cpu_boundary_requested)
+        {
+            JIT_STAT_INC(cpu_boundary_breaks);
+            break;
+        }
     }
 
     *executed = total;

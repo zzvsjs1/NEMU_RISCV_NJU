@@ -22,6 +22,7 @@ typedef uint64_t (*entry_store_fn_t)(uint64_t *, uint64_t);
  * such as misaligned LD still side-exit before the interpreter raises the trap.
  */
 #define NEMU_RTC_MMIO 0xa0000048ull
+#define NEMU_SERIAL_MMIO 0xa00003f8ull
 
 static uint32_t entry_load_code[3] __attribute__((aligned(16))) = {
     0x00053503u, /* ld a0, 0(a0): block entry is the load itself. */
@@ -47,8 +48,8 @@ static uint32_t entry_misaligned_load_code[2] __attribute__((aligned(16))) = {
 };
 
 static uint32_t entry_mmio_store_code[3] __attribute__((aligned(16))) = {
-    0x00b50023u, /* sb a1, 0(a0): range guard fails before this executes. */
-    0x00500513u, /* addi a0, zero, 5 */
+    0x00b50023u, /* sb a1, 0(a0): aligned MMIO commits through the helper. */
+    0x00500513u, /* addi a0, zero, 5: must execute in the same native entry. */
     0x00008067u, /* ret is jalr zero, 0(ra). */
 };
 
@@ -118,10 +119,11 @@ static uint64_t entry_misaligned_load_sequence(uintptr_t bad)
     return ((entry_load_fn_t)(uintptr_t)entry_misaligned_load_code)((uint64_t *)bad);
 }
 
-/* Enter a generated block whose first SB must side-exit with zero retired work. */
-static uint64_t entry_mmio_store_sequence(uint64_t value)
+/* Enter a generated block whose first SB must commit exactly once. */
+static uint64_t entry_mmio_store_sequence(uintptr_t addr, uint64_t value)
 {
-    return ((entry_store_fn_t)(uintptr_t)entry_mmio_store_code)((uint64_t *)NEMU_RTC_MMIO, value);
+    return ((entry_store_fn_t)(uintptr_t)entry_mmio_store_code)(
+        (uint64_t *)addr, value);
 }
 
 /* Cover memory instructions at block entry and safe store continuation. */
@@ -134,7 +136,30 @@ static void test_memory_entry_and_store_continue(void)
     const uint64_t store_out = entry_store_sequence(&memory_entry_data[1], marker);
     const uint64_t mmio_load = entry_mmio_load_sequence();
     const uintptr_t bad_load = ((uintptr_t)&memory_entry_data[0]) + 1u;
-    const uint64_t mmio_store_out = entry_mmio_store_sequence(0x55u);
+    uint64_t mmio_store_out = 0;
+
+    /*
+     * Use several stores so a host timer signal arriving inside one helper call
+     * cannot turn this continuation test into a one-sample race. A genuine CPU
+     * boundary may consume one attempt; the remaining calls must still prove
+     * that ordinary MMIO returns to the following native instruction.
+     */
+    for (uint32_t attempt = 0; attempt < 16u; attempt++)
+    {
+        mmio_store_out =
+            entry_mmio_store_sequence(NEMU_RTC_MMIO, 0x55u);
+        check(mmio_store_out == 5);
+    }
+
+    /*
+     * Serial output is deliberately non-idempotent and host-visible. The gate
+     * counts this otherwise-unused marker, proving that one guest SB invokes
+     * the device callback exactly once rather than merely balancing JIT stats.
+     */
+    const uint64_t serial_store_out =
+        entry_mmio_store_sequence(NEMU_SERIAL_MMIO, '~');
+    const uint64_t serial_newline_out =
+        entry_mmio_store_sequence(NEMU_SERIAL_MMIO, '\n');
 
     memory_entry_saved_mcause = 0;
     memory_entry_saved_mtval = 0;
@@ -147,6 +172,8 @@ static void test_memory_entry_and_store_continue(void)
     check(store_out == ((marker + 3ull) ^ marker));
     check(mmio_load != 0xffffffffffffffffull);
     check(mmio_store_out == 5);
+    check(serial_store_out == 5);
+    check(serial_newline_out == 5);
     check(memory_entry_saved_mcause == 4u);
     check(memory_entry_saved_mtval == bad_load);
     check(misaligned_load == bad_load);

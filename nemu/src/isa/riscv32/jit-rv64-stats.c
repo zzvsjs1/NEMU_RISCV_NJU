@@ -53,6 +53,7 @@ static const rv64_jit_reason_name_t
             "load-guard", "load alignment, range, or translation guard"},
         [RV64_JIT_SIDE_EXIT_STORE_GUARD] = {"store-guard", "store alignment, range, or translation guard"},
         [RV64_JIT_SIDE_EXIT_STORE_SOURCE] = {"store-source", "store may modify compiled source bytes"},
+        [RV64_JIT_SIDE_EXIT_STORE_HELPER] = {"store-helper", "bare store completed through a helper"},
         [RV64_JIT_SIDE_EXIT_PAGED_STORE_HELPER] = {"paged-store-helper", "translated store completed through a helper"},
         [RV64_JIT_SIDE_EXIT_BRANCH_TAKEN] = {"branch-taken", "taken branch returned to the dispatcher"},
         [RV64_JIT_SIDE_EXIT_CHAINED_OVER_BUDGET] = {"chained-over-budget", "another native loop lap exceeded its budget"},
@@ -329,6 +330,8 @@ static void jit_dump_dispatch_stats(void)
 
     Log("jit:   zero side exits = %" PRIu64,
         rv64_jit_stats.zero_side_exits);
+    Log("jit:   CPU boundary breaks = %" PRIu64,
+        rv64_jit_stats.cpu_boundary_breaks);
 }
 
 /* Compile-stop reasons are normal compilation outcomes, not all fallbacks. */
@@ -464,6 +467,11 @@ static void jit_dump_memory_stats(void)
     Log("jit:   helper loads = %" PRIu64 ", helper stores = %" PRIu64,
         rv64_jit_stats.helper_load_count,
         rv64_jit_stats.helper_store_count);
+    Log("jit:   bare MMIO store calls = %" PRIu64
+        ", continuations = %" PRIu64 ", boundary exits = %" PRIu64,
+        rv64_jit_stats.bare_mmio_store_calls,
+        rv64_jit_stats.bare_mmio_store_continuations,
+        rv64_jit_stats.bare_mmio_store_boundary_exits);
 }
 
 /* Linking and validation counters are updated by running generated code or C. */
@@ -475,6 +483,9 @@ static void jit_dump_link_and_validation_stats(void)
     const rv64_jit_wide_count_t direct_return_link_attempts =
         (rv64_jit_wide_count_t)rv64_jit_stats.direct_return_link_taken_count +
         rv64_jit_stats.direct_return_link_miss_count;
+    const rv64_jit_wide_count_t direct_jalr_link_attempts =
+        (rv64_jit_wide_count_t)rv64_jit_stats.direct_jalr_link_taken_count +
+        rv64_jit_stats.direct_jalr_link_miss_count;
 
     jit_log_section("Run time: direct links and validation");
     jit_log_percentage("Direct-link success rate",
@@ -493,6 +504,12 @@ static void jit_dump_link_and_validation_stats(void)
     Log("jit:   direct return links taken = %" PRIu64 ", misses = %" PRIu64,
         rv64_jit_stats.direct_return_link_taken_count,
         rv64_jit_stats.direct_return_link_miss_count);
+    jit_log_percentage("Direct JALR-link success rate",
+                       rv64_jit_stats.direct_jalr_link_taken_count,
+                       direct_jalr_link_attempts);
+    Log("jit:   direct JALR links taken = %" PRIu64 ", misses = %" PRIu64,
+        rv64_jit_stats.direct_jalr_link_taken_count,
+        rv64_jit_stats.direct_jalr_link_miss_count);
     Log("jit:   ifetch generation fast hits = %" PRIu64
         ", revalidations = %" PRIu64 ", bumps = %" PRIu64,
         rv64_jit_stats.ifetch_generation_fast_hits,

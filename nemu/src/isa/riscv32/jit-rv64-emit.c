@@ -412,13 +412,13 @@ static bool emit_mov_eax_r9d(rv64_jit_writer_t *w)
     return emit_u8(w, 0x44) && emit_u8(w, 0x89) && emit_u8(w, 0xc8);
 }
 
-/* Emit `mov r9, rax`, preserving a dynamic return target across scratch work. */
+/* Emit `mov r9, rax`, preserving a dynamic JALR target across scratch work. */
 static bool emit_mov_r9_rax(rv64_jit_writer_t *w)
 {
     return emit_u8(w, 0x49) && emit_u8(w, 0x89) && emit_u8(w, 0xc1);
 }
 
-/* Emit `mov rdx, r9`, copying the preserved return target for cache hashing. */
+/* Emit `mov rdx, r9`, copying the preserved JALR target for cache hashing. */
 static bool emit_mov_rdx_r9(rv64_jit_writer_t *w)
 {
     return emit_u8(w, 0x4c) && emit_u8(w, 0x89) && emit_u8(w, 0xca);
@@ -1835,7 +1835,7 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
      * Direct links duplicate only the cheap part of that validation.  If a
      * translated target may need source-page revalidation, the generation guard
      * misses back to C so rv64_jit_block_matches() owns the full page walk.
-     * Keep this guard policy in lockstep with emit_return_link_exit(); the
+     * Keep this guard policy in lockstep with emit_indirect_link_exit(); the
      * paired exact-count assertions catch additions made to only one path.
      */
     if (!jit_reg_emit_flush_all_dirty(w, regs) ||
@@ -1947,7 +1947,7 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
 }
 
 /*
- * Probe and enter the native block named by an aligned canonical RET target.
+ * Probe and enter the native block named by an aligned runtime JALR target.
  *
  * Runtime register contract:
  *   - RAX initially contains the full architectural target;
@@ -1960,10 +1960,11 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *
  * arena reset, and translated-fetch generation changes can therefore only turn
  * a former hit into the ordinary dispatcher miss path.
  */
-static bool emit_return_link_exit(rv64_jit_writer_t *w,
-                                  rv64_jit_reg_cache_t *regs,
-                                  uint32_t completed_count,
-                                  bool source_uses_data_state)
+static bool emit_indirect_link_exit(
+    rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+    uint32_t rd, vaddr_t link_pc, uint32_t completed_count,
+    bool source_uses_data_state, uint64_t *subset_taken_counter,
+    uint64_t *subset_miss_counter)
 {
     const word_t satp = cpu.csr.satp;
     const uint32_t ifetch_state = rv64_jit_ifetch_state();
@@ -1999,6 +2000,7 @@ static bool emit_return_link_exit(rv64_jit_writer_t *w,
      * 64-bit structure-size multiply.
      */
     if (!emit_mov_r9_rax(w) ||
+        !jit_reg_write_imm(w, regs, rd, link_pc) ||
         !jit_reg_flush_all_dirty(w, regs) ||
         !emit_mov_rdx_r9(w) ||
         !emit_shr_rdx_imm(w, RV64_JIT_CACHE_PC_SHIFT) ||
@@ -2098,7 +2100,7 @@ static bool emit_return_link_exit(rv64_jit_writer_t *w,
     }
 
     Assert(miss_count == RV64_JIT_DIRECT_LINK_GUARD_COUNT,
-           "jit: runtime-return direct-link guard policy drifted");
+           "jit: runtime-target direct-link guard policy drifted");
 
 #if RV64_JIT_STATS
     uint8_t *guarded_taken_disp = NULL;
@@ -2127,8 +2129,8 @@ static bool emit_return_link_exit(rv64_jit_writer_t *w,
 
     if (!emit_inc_jit_stat_counter(
             w, &rv64_jit_stats.direct_link_taken_count) ||
-        !emit_inc_jit_stat_counter(
-            w, &rv64_jit_stats.direct_return_link_taken_count) ||
+        !(subset_taken_counter == NULL ||
+          emit_inc_jit_stat_counter(w, subset_taken_counter)) ||
         !emit_mov_rax_r8q_field(w, body_entry_off) ||
         !emit_jmp_rax(w))
     {
@@ -2141,7 +2143,7 @@ static bool emit_return_link_exit(rv64_jit_writer_t *w,
     }
 
     /*
-     * RET has committed on every ordinary miss.  Publish its dynamic target and
+     * JALR has committed on every ordinary miss. Publish its dynamic target and
      * include it in the returned count so the dispatcher resumes at the target
      * rather than re-executing the transfer.
      */
@@ -2149,8 +2151,8 @@ static bool emit_return_link_exit(rv64_jit_writer_t *w,
            emit_store_rax_pc(w) &&
            emit_inc_jit_stat_counter(
                w, &rv64_jit_stats.direct_link_miss_count) &&
-           emit_inc_jit_stat_counter(
-               w, &rv64_jit_stats.direct_return_link_miss_count) &&
+           (subset_miss_counter == NULL ||
+            emit_inc_jit_stat_counter(w, subset_miss_counter)) &&
            emit_return_total_retired(w, completed_count);
 }
 
@@ -2763,8 +2765,10 @@ bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     uint8_t *data_page_table_disp = NULL;
     uint8_t *ifetch_page_table_disp = NULL;
     uint8_t *exit_disp = NULL;
+    uint8_t *bare_helper_exit_disp = NULL;
     uint8_t *direct_done_disp = NULL;
     uint8_t *continue_disp = NULL;
+    uint8_t *bare_helper_continue_disp = NULL;
     rv64_jit_reg_cache_t side_exit_regs;
 
     switch (funct3)
@@ -2794,6 +2798,18 @@ bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
 
     if (!jit_reg_read_rax(w, regs, rs1) ||
         !emit_add_rax_imm32(w, imm))
+    {
+        return false;
+    }
+
+    /*
+     * Both sides of the PMEM range guard must agree on which host register
+     * contains rs2. Materialise it before the branch; otherwise the compiler
+     * could record a load emitted only on the PMEM path and the MMIO path would
+     * read an uninitialised cache slot.
+     */
+    if (rs2 != RV64_GPR_ZERO &&
+        jit_reg_loaded_slot(w, regs, rs2) == NULL)
     {
         return false;
     }
@@ -2869,18 +2885,51 @@ bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     if (align_slow_disp != NULL)
     {
         patch_rel32(align_slow_disp, w->cur);
+
+        if (!emit_interpreter_side_exit(
+                w, &side_exit_regs, pc, completed_count,
+                RV64_JIT_SIDE_EXIT_STORE_GUARD))
+        {
+            return false;
+        }
     }
 
     patch_rel32(range_slow_disp, w->cur);
 
-    if (!emit_interpreter_side_exit(w, &side_exit_regs, pc, completed_count,
-                                    RV64_JIT_SIDE_EXIT_STORE_GUARD))
+    /*
+     * The range guard leaves the original physical address in RAX. Commit the
+     * MMIO access exactly once through paddr_write(), then either rejoin the
+     * continuing native path or retire the completed store at a safe boundary.
+     */
+    if (!jit_reg_read_rcx(w, regs, rs2) ||
+        !jit_reg_emit_flush_all_dirty(w, regs) ||
+        !emit_mov_rdi_rax(w) ||
+        !emit_mov_rdx_rcx(w) ||
+        !emit_mov_esi_imm32(w, len) ||
+        !emit_store_pc_imm(w, pc) ||
+        !emit_call_abs(w, (uintptr_t)rv64_jit_store_bare_continue) ||
+        !emit_load_jit_bases(w) ||
+        !emit_test_eax_eax(w) ||
+        !emit_jcc_rel32_placeholder(w, HOST_JCC_E,
+                                    &bare_helper_exit_disp) ||
+        !emit_jmp_rel32_placeholder(w, &bare_helper_continue_disp))
+    {
+        return false;
+    }
+
+    patch_rel32(bare_helper_exit_disp, w->cur);
+
+    if (!emit_store_pc_imm(w, next_pc) ||
+        !emit_inc_jit_stat_counter(w,
+                                   &rv64_jit_stats.side_exit_by_reason[RV64_JIT_SIDE_EXIT_STORE_HELPER]) ||
+        !emit_return_total_retired(w, completed_count + 1u))
     {
         return false;
     }
 
     patch_rel32(direct_done_disp, w->cur);
     patch_rel32(continue_disp, w->cur);
+    patch_rel32(bare_helper_continue_disp, w->cur);
 
     JIT_STAT_INC(native_stores);
     JIT_STAT_INC(native_store_continuations);
@@ -3685,11 +3734,14 @@ bool rv64_jit_emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
 
     const uint32_t rs1 = rv64_instr_rs1(instr);
     const int64_t immediate = imm_i(instr);
-    const bool can_link_canonical_return =
+    const bool canonical_return =
         rd == RV64_GPR_ZERO &&
         rs1 == RV64_GPR_LINK &&
-        immediate == 0 &&
-        rv64_jit_return_link_enabled();
+        immediate == 0;
+    const bool can_link_indirect =
+        canonical_return
+            ? rv64_jit_return_link_enabled()
+            : rv64_jit_direct_link_enabled();
 
     /*
      * JALR computes `(rs1 + imm) & ~1`, then checks instruction alignment after
@@ -3708,14 +3760,25 @@ bool rv64_jit_emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     side_exit_regs = *regs;
 
     /*
-     * Only canonical RET receives the runtime cache probe in this first stage.
-     * Other JALR forms retain the established target-preservation and link-write
-     * ordering, including the rd==rs1 alias case.
+     * Preserve canonical RET's narrower runtime switch and disjoint counters.
+     * Every other JALR follows the ordinary direct-link switch, covering
+     * function pointers, jump tables, tail jumps, and aliased rd==rs1 calls.
      */
-    if (can_link_canonical_return)
+    if (can_link_indirect)
     {
-        if (!emit_return_link_exit(
-                w, regs, completed_count + 1u, source_uses_data_state))
+        uint64_t *subset_taken_counter =
+            canonical_return
+                ? &rv64_jit_stats.direct_return_link_taken_count
+                : &rv64_jit_stats.direct_jalr_link_taken_count;
+        uint64_t *subset_miss_counter =
+            canonical_return
+                ? &rv64_jit_stats.direct_return_link_miss_count
+                : &rv64_jit_stats.direct_jalr_link_miss_count;
+
+        if (!emit_indirect_link_exit(
+                w, regs, rd, link, completed_count + 1u,
+                source_uses_data_state, subset_taken_counter,
+                subset_miss_counter))
         {
             return false;
         }

@@ -19,7 +19,8 @@ TESTS=(
   riscv64-jit-stable-loop riscv64-jit-multibranch-loop
   "$RV64_FPU_JIT_TEST" "$RV64_FPU_TRAP_TEST" riscv64-jit-strict
   riscv64-jit-smc riscv64-jit-negative-cache
-  riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast riscv64-jit-return-link
+  riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast
+  riscv64-jit-return-link riscv64-jit-indirect-link
   riscv64-jit-direct-link riscv64-jit-trace
   riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-sv39-cross-page riscv64-jit-mprv-ifetch
   riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data riscv64-jit-sv39-dtlb
@@ -415,6 +416,78 @@ require_positive_store_continuations() {
 
   if [ "$store_continuations" -le 0 ]; then
     echo "Expected positive native store continuation count for $test_name, got $store_continuations" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_mmio_store_continuation_stats() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local calls
+  local continuations
+  local boundary_exits
+
+  summary=$(sed -n \
+    's/.*bare MMIO store calls = \([0-9][0-9]*\), continuations = \([0-9][0-9]*\), boundary exits = \([0-9][0-9]*\).*/\1 \2 \3/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$summary" ]; then
+    echo "Failed to find exact bare-MMIO store stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  read -r calls continuations boundary_exits <<<"$summary"
+
+  # Every helper call must have exactly one outcome. This fixture also proves
+  # that an ordinary RTC write can continue to the following native ADDI.
+  if [ "$calls" -lt 8 ] ||
+    [ "$continuations" -le 0 ] ||
+    [ "$boundary_exits" -lt 2 ] ||
+    [ "$calls" -ne $((continuations + boundary_exits)) ]; then
+    echo "Expected repeated, positive, and balanced bare-MMIO store stats for $test_name," \
+      "got calls=$calls continuations=$continuations" \
+      "boundary-exits=$boundary_exits" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_cpu_boundary_breaks() {
+  local log=$1
+  local test_name=$2
+  local boundary_breaks
+
+  boundary_breaks=$(sed -n \
+    's/.*CPU boundary breaks = \([0-9][0-9]*\).*/\1/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$boundary_breaks" ]; then
+    echo "Failed to find CPU-boundary-break stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$boundary_breaks" -le 0 ]; then
+    echo "Expected a positive CPU-boundary-break count for $test_name," \
+      "got $boundary_breaks" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_exact_serial_mmio_marker() {
+  local log=$1
+  local test_name=$2
+  local marker_count
+
+  marker_count=$(awk -F'~' '{ count += NF - 1 } END { print count + 0 }' "$log")
+
+  if [ "$marker_count" -ne 1 ]; then
+    echo "Expected exactly one serial MMIO marker for $test_name," \
+      "got $marker_count" >&2
     cat "$log" >&2
     exit 1
   fi
@@ -890,6 +963,43 @@ require_positive_direct_return_links() {
   fi
 }
 
+require_positive_direct_jalr_links() {
+  local log=$1
+  local test_name=$2
+  local minimum_taken=7000
+  local summary
+  local taken
+  local misses
+  local attempts
+
+  summary=$(sed -n \
+    's/.*direct JALR links taken = \([0-9][0-9]*\), misses = \([0-9][0-9]*\).*/\1 \2/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$summary" ]; then
+    echo "Failed to find direct-JALR-link stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  read -r taken misses <<<"$summary"
+  attempts=$((taken + misses))
+
+  # The focused guest executes 8,192 eligible non-canonical JALRs. Requiring
+  # 7,000 hits prevents only the alternating call or only its returns from
+  # satisfying the test; misses remain non-exact because cold targets and
+  # legitimate direct-map collisions can add more.
+  if [ "$taken" -lt "$minimum_taken" ] ||
+    [ "$misses" -lt 2 ] ||
+    [ $((taken * 100)) -lt $((attempts * 99)) ]; then
+    echo "Expected at least $minimum_taken direct JALR-link hits, at least two" \
+      "misses, and a 99% hit rate for $test_name; got taken=$taken" \
+      "misses=$misses" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 require_positive_guarded_direct_links() {
   local log=$1
   local test_name=$2
@@ -921,7 +1031,14 @@ for test_name in "${TESTS[@]}"; do
   out=$(mktemp)
   trap 'rm -f "$out"' EXIT
 
-  if ! NEMU_JIT_STATS=1 make -C am-kernels/tests/cpu-tests ARCH="$ARCH" ALL="$test_name" run >"$out" 2>&1; then
+  run_env=(NEMU_JIT_STATS=1)
+  if [ "$test_name" = "riscv64-jit-memory-entry" ]; then
+    # The statistics-only hook makes the first two bare MMIO stores exercise
+    # instruction-generation and outer CPU boundaries deterministically.
+    run_env+=(NEMU_RV64_JIT_TEST_MMIO_BOUNDARIES=1)
+  fi
+
+  if ! env "${run_env[@]}" make -C am-kernels/tests/cpu-tests ARCH="$ARCH" ALL="$test_name" run >"$out" 2>&1; then
     echo "$test_name failed" >&2
     cat "$out" >&2
     exit 2
@@ -973,6 +1090,13 @@ for test_name in "${TESTS[@]}"; do
     require_positive_direct_return_links "$out" "$test_name"
   fi
 
+  if [ "$test_name" = "riscv64-jit-indirect-link" ]; then
+    require_positive_native_jumps "$out" "$test_name"
+    require_positive_direct_jalr_links "$out" "$test_name"
+    require_positive_side_exit_reason \
+      "$out" "$test_name" "jalr-misaligned"
+  fi
+
   if [ "$test_name" = "riscv64-jit-direct-link" ]; then
     require_positive_native_jumps "$out" "$test_name"
     require_positive_direct_links "$out" "$test_name"
@@ -1013,8 +1137,10 @@ for test_name in "${TESTS[@]}"; do
     require_positive_zero_side_exits "$out" "$test_name"
     require_positive_helper_loads "$out" "$test_name"
     require_positive_helper_stores "$out" "$test_name"
+    require_mmio_store_continuation_stats "$out" "$test_name"
+    require_positive_cpu_boundary_breaks "$out" "$test_name"
+    require_exact_serial_mmio_marker "$out" "$test_name"
     require_positive_side_exit_reason "$out" "$test_name" "load-guard"
-    require_positive_side_exit_reason "$out" "$test_name" "store-guard"
     require_positive_side_exit_reason "$out" "$test_name" "store-source"
   fi
 

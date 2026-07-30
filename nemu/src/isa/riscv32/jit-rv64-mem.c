@@ -721,6 +721,102 @@ void rv64_jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data)
     vaddr_write(addr, (int)len, (word_t)data);
 }
 
+#if RV64_JIT_STATS
+/*
+ * Return two deterministic boundary phases for the focused statistics test.
+ *
+ * Production builds compile this hook out. The diagnostic build pays one
+ * cached environment lookup and injects only when explicitly requested:
+ * phase one changes the instruction-fetch generation, while phase two requests
+ * the same outer CPU boundary as a device which makes an interrupt pending.
+ */
+static uint32_t jit_test_mmio_boundary_phase(void)
+{
+    static bool initialised = false;
+    static bool enabled = false;
+    static uint32_t phase = 0;
+
+    if (!initialised)
+    {
+        const char *value =
+            getenv("NEMU_RV64_JIT_TEST_MMIO_BOUNDARIES");
+        enabled = value != NULL && value[0] != '\0' &&
+                  !(value[0] == '0' && value[1] == '\0');
+        initialised = true;
+    }
+
+    if (!enabled || phase >= 2u)
+    {
+        return 0;
+    }
+
+    phase++;
+    return phase;
+}
+#endif
+
+/*
+ * Commit one guarded bare-address store, then report whether native execution
+ * may continue. The generated range guard normally sends only MMIO here, but
+ * using paddr_write() preserves the complete architectural path if that guard
+ * is ever broadened.
+ */
+uint32_t rv64_jit_store_bare_continue(paddr_t addr, uint32_t len,
+                                      uint64_t data)
+{
+    const uint64_t ifetch_generation_before =
+        rv64_jit_ifetch_generation;
+    const bool interrupt_was_pending = cpu.INTR;
+
+    JIT_STAT_INC(helper_store_count);
+    JIT_STAT_INC(bare_mmio_store_calls);
+    paddr_write(addr, (int)len, (word_t)data);
+
+#if RV64_JIT_STATS
+    const uint32_t test_boundary_phase =
+        jit_test_mmio_boundary_phase();
+
+    if (test_boundary_phase == 1u)
+    {
+        rv64_jit_ifetch_generation_bump();
+    }
+
+    const bool test_cpu_boundary = test_boundary_phase == 2u;
+    if (test_cpu_boundary)
+    {
+        cpu.INTR = true;
+    }
+#else
+    const bool test_cpu_boundary = false;
+#endif
+
+    const bool cpu_boundary =
+        test_cpu_boundary ||
+        nemu_state.state != NEMU_RUNNING ||
+        (!interrupt_was_pending && cpu.INTR);
+    const bool invalidated_native_state =
+        rv64_jit_ifetch_generation != ifetch_generation_before;
+
+    if (cpu_boundary)
+    {
+        /*
+         * Returning from generated code is only a JIT-dispatch boundary.
+         * Request an outer CPU-loop boundary as well so interrupts and stop
+         * states are observed before another native block can execute.
+         */
+        rv64_jit_cpu_boundary_requested = true;
+    }
+
+    if (cpu_boundary || invalidated_native_state)
+    {
+        JIT_STAT_INC(bare_mmio_store_boundary_exits);
+        return RV64_JIT_STORE_MUST_EXIT;
+    }
+
+    JIT_STAT_INC(bare_mmio_store_continuations);
+    return RV64_JIT_STORE_MAY_CONTINUE;
+}
+
 /* Commit a guarded PMEM store and report whether native code may continue. */
 uint32_t rv64_jit_store_pmem_continue(paddr_t addr, uint32_t len, uint64_t data)
 {
