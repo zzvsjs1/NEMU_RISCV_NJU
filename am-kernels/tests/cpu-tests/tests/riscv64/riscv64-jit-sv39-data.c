@@ -3,6 +3,7 @@
 #if defined(__riscv) && __riscv_xlen == 64
 
 #include <stdint.h>
+#include <string.h>
 
 #define PAGE_SIZE 4096ull
 #define WORDS_PER_PAGE (PAGE_SIZE / sizeof(uint64_t))
@@ -515,15 +516,46 @@ static void clear_fp_page(uint64_t *page)
     }
 }
 
+/*
+ * The backing object is a uint64_t page, but several guest operations address
+ * individual 32-bit words within it. Copying their object representation
+ * avoids incompatible uint32_t lvalues while retaining the exact byte layout.
+ */
+static void store_u32_bytes(void *destination, uint32_t value)
+{
+    memcpy(destination, &value, sizeof(value));
+}
+
+static void store_u64_bytes(void *destination, uint64_t value)
+{
+    memcpy(destination, &value, sizeof(value));
+}
+
+static uint32_t load_u32_bytes(const void *source)
+{
+    uint32_t value;
+
+    memcpy(&value, source, sizeof(value));
+    return value;
+}
+
+static uint64_t load_u64_bytes(const void *source)
+{
+    uint64_t value;
+
+    memcpy(&value, source, sizeof(value));
+    return value;
+}
+
 static void seed_fp_page(uint64_t *page, uint32_t word,
                          uint64_t doubleword)
 {
     uint8_t *const raw = (uint8_t *)page;
 
-    *(uint32_t *)(void *)&raw[0] = word;
-    *(uint64_t *)(void *)&raw[8] = doubleword;
-    *(uint32_t *)(void *)&raw[40] = word;
-    *(uint64_t *)(void *)&raw[48] = doubleword;
+    store_u32_bytes(&raw[0], word);
+    store_u64_bytes(&raw[8], doubleword);
+    store_u32_bytes(&raw[40], word);
+    store_u64_bytes(&raw[48], doubleword);
 }
 
 static void check_eviction_values(const uint64_t *observed)
@@ -605,7 +637,8 @@ static void test_sv39_fp_memory(void)
 
     /*
      * The cold probe filled this VPN, so both loads now execute through the
-     * native paged body. Only successful loads may make FS Dirty and set SD.
+     * native paged body. Under NEMU's precise tracking policy, successful loads
+     * make FS Dirty and set SD; a pre-access probe does not.
      */
     write_fflags(UINT64_C(0x1f));
     set_machine_fp_state(MSTATUS_FS_INITIAL);
@@ -616,16 +649,16 @@ static void test_sv39_fp_memory(void)
 
     /*
      * Seed a deliberately malformed binary32 box, then restore FS Clean
-     * before the stores. FSW must copy its raw low word and neither store may
-     * make FS Dirty or change fflags.
+     * before the stores. FSW must copy its raw low word. NEMU's precise policy
+     * keeps these FPR-reading stores Clean and leaves fflags unchanged, although
+     * the ISA permits conservative imprecise Dirty tracking.
      */
     rv64_sv39_fp_seed_stores(malformed_box, raw_store_double);
     write_fflags(UINT64_C(0x1f));
     set_machine_fp_state(MSTATUS_FS_CLEAN);
     rv64_sv39_fp_store_state(alias);
-    check(*(uint32_t *)(void *)&raw_a[16] ==
-          (uint32_t)malformed_box);
-    check(*(uint64_t *)(void *)&raw_a[24] == raw_store_double);
+    check(load_u32_bytes(&raw_a[16]) == (uint32_t)malformed_box);
+    check(load_u64_bytes(&raw_a[24]) == raw_store_double);
     check_fp_clean_state();
 
     write_fflags(UINT64_C(0x1f));
@@ -633,8 +666,8 @@ static void test_sv39_fp_memory(void)
     const uint64_t checksum_a =
         rv64_sv39_fp_memory_loop(alias, 64);
     check(checksum_a == (boxed_word_a ^ double_a));
-    check(*(uint32_t *)(void *)&raw_a[56] == word_a);
-    check(*(uint64_t *)(void *)&raw_a[64] == double_a);
+    check(load_u32_bytes(&raw_a[56]) == word_a);
+    check(load_u64_bytes(&raw_a[64]) == double_a);
     check_fp_dirty_state();
 
     /*
@@ -675,12 +708,12 @@ static void test_sv39_fp_memory(void)
     const uint64_t checksum_b =
         rv64_sv39_fp_memory_loop(alias, 64);
     check(checksum_b == (boxed_word_b ^ double_b));
-    check(*(uint32_t *)(void *)&raw_b[56] == word_b);
-    check(*(uint64_t *)(void *)&raw_b[64] == double_b);
+    check(load_u32_bytes(&raw_b[56]) == word_b);
+    check(load_u64_bytes(&raw_b[64]) == double_b);
 
     /* Page A must remain unchanged after the remap and second loop. */
-    check(*(uint32_t *)(void *)&raw_a[56] == word_a);
-    check(*(uint64_t *)(void *)&raw_a[64] == double_a);
+    check(load_u32_bytes(&raw_a[56]) == word_a);
+    check(load_u64_bytes(&raw_a[64]) == double_a);
 }
 
 #endif

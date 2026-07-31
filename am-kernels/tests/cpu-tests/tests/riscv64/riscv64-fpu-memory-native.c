@@ -3,6 +3,7 @@
 #if defined(__riscv) && __riscv_xlen == 64
 
 #include <stdint.h>
+#include <string.h>
 
 #define MSTATUS_FS_MASK ((uintptr_t)3u << 13)
 #define MSTATUS_FS_INITIAL ((uintptr_t)1u << 13)
@@ -16,6 +17,37 @@ typedef struct
     uint32_t padding;
     uint64_t doubleword;
 } fp_memory_pair_t;
+
+/*
+ * Copy through character storage without forming an incompatible typed
+ * lvalue. This keeps the fixture valid under the optimiser's strict-aliasing
+ * rules while preserving the exact guest-memory byte representation.
+ */
+static void store_u32_bytes(void *destination, uint32_t value)
+{
+    memcpy(destination, &value, sizeof(value));
+}
+
+static void store_u64_bytes(void *destination, uint64_t value)
+{
+    memcpy(destination, &value, sizeof(value));
+}
+
+static uint32_t load_u32_bytes(const void *source)
+{
+    uint32_t value;
+
+    memcpy(&value, source, sizeof(value));
+    return value;
+}
+
+static uint64_t load_u64_bytes(const void *source)
+{
+    uint64_t value;
+
+    memcpy(&value, source, sizeof(value));
+    return value;
+}
 
 asm(
     ".section .text\n"
@@ -190,16 +222,16 @@ static void test_extreme_offsets_and_high_fprs(void)
     const uint64_t doubleword = UINT64_C(0xfff8000000000789);
     const uint64_t boxed_word = UINT64_C(0xffffffffff800321);
 
-    *(uint32_t *)(void *)&source[0] = word;
-    *(uint64_t *)(void *)&source[4088] = doubleword;
-    *(uint32_t *)(void *)&destination[0] = 0;
-    *(uint64_t *)(void *)&destination[4088] = 0;
+    store_u32_bytes(&source[0], word);
+    store_u64_bytes(&source[4088], doubleword);
+    store_u32_bytes(&destination[0], 0);
+    store_u64_bytes(&destination[4088], 0);
 
     check(rv64_fp_memory_extreme_offsets(&source[2048],
                                          &destination[2048]) ==
           (boxed_word ^ doubleword));
-    check(*(uint32_t *)(void *)&destination[0] == word);
-    check(*(uint64_t *)(void *)&destination[4088] == doubleword);
+    check(load_u32_bytes(&destination[0]) == word);
+    check(load_u64_bytes(&destination[4088]) == doubleword);
     check(read_fflags() == UINT64_C(0x1f));
 }
 
@@ -243,6 +275,11 @@ static void test_store_state_effects(void)
     check(destination.doubleword == doubleword);
     check(destination.padding == 0);
 
+    /*
+     * NEMU's precise FS policy leaves stores Clean because they only read FPRs.
+     * The ISA permits an implementation to report Dirty more conservatively;
+     * this assertion protects NEMU's chosen tracking behaviour.
+     */
     status = read_mstatus();
     check((status & MSTATUS_FS_MASK) == MSTATUS_FS_CLEAN);
     check((status & MSTATUS_SD) == 0);

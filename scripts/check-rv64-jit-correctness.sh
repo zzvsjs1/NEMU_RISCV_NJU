@@ -19,6 +19,7 @@ RV64_FPU_EXACT_TEST=riscv64-fpu-transfer
 RV64_FPU_MEMORY_NATIVE_TEST=riscv64-fpu-memory-native
 RV64_FPU_MMIO_BOUNDARY_TEST=riscv64-fpu-mmio-boundary
 RV64_MMIO_BOUNDARY_TEST=riscv64-jit-mmio-boundary
+RV64_MMIO_STORE_BOUNDARY_TEST=riscv64-jit-mmio-store-boundary
 TESTS=(
   riscv64-jit-stable-loop riscv64-jit-multibranch-loop
   "$RV64_FPU_JIT_TEST" "$RV64_FPU_TRAP_TEST" "$RV64_FPU_EXACT_TEST"
@@ -39,6 +40,8 @@ fail() {
 }
 
 require_mmio_cross_map_rejection() {
+  local test_name=$1
+  local access_kind=$2
   local out
   local run_status
 
@@ -50,20 +53,23 @@ require_mmio_cross_map_rejection() {
   # and may itself return success, so check the precise diagnostic as well as
   # ensuring that the guest never reached HIT GOOD TRAP.
   if NEMU_JIT_STATS=1 make -C am-kernels/tests/cpu-tests \
-      ARCH="$ARCH" ALL="$RV64_MMIO_BOUNDARY_TEST" run >"$out" 2>&1; then
+      ARCH="$ARCH" ALL="$test_name" run >"$out" 2>&1; then
     run_status=0
   else
     run_status=$?
   fi
 
-  if grep -q 'with len=8 is out of bound {audio}' "$out" &&
+  if grep -q \
+      "I/O $access_kind access at 0xa0000220 with len=8 is out of bound {audio}" \
+      "$out" &&
       ! grep -q 'HIT GOOD TRAP' "$out"; then
     rm -f "$out"
     trap - EXIT
     return
   fi
 
-  echo "Expected a whole-span MMIO boundary rejection; wrapper status=$run_status" >&2
+  echo "Expected a whole-span MMIO $access_kind rejection for" \
+    "$test_name; wrapper status=$run_status" >&2
   cat "$out" >&2
   exit 1
 }
@@ -750,10 +756,11 @@ require_bare_mmio_load_routing_stats() {
     exit 1
   fi
 
-  # The route fixture also switches between two contracted direct addresses,
-  # forcing two run-time refills after its compile-time seed.
-  if [ "$direct_hits" -ne 25 ]; then
-    echo "Expected exactly twenty-five inline direct-MMIO loads for $test_name, got $direct_hits" >&2
+  # The initial-reset assertion adds one uncached direct access. The route
+  # fixture also switches between two contracted direct addresses, forcing two
+  # run-time refills after its compile-time seed.
+  if [ "$direct_hits" -ne 26 ]; then
+    echo "Expected exactly twenty-six inline direct-MMIO loads for $test_name, got $direct_hits" >&2
     cat "$log" >&2
     exit 1
   fi
@@ -794,13 +801,13 @@ require_direct_mmio_route_cache_stats() {
   read -r store_hits store_misses store_fills <<<"$store_summary"
 
   # Every selected route starts with a valid exact compile-time seed. The
-  # forced direct-address change performs two refills, while seven other direct
-  # operations intentionally retain the uncached classifier.
+  # forced direct-address change performs two refills, while the reset-state
+  # read and eight other direct operations retain the uncached classifier.
   if [ "$load_hits" -ne 15 ] ||
     [ "$load_misses" -ne 6 ] ||
     [ "$load_fills" -ne 2 ] ||
-    [ "$direct_loads" -ne $((load_hits + load_fills + 8)) ]; then
-    echo "Expected load routes hits=15 misses=6 fills=2 and eight uncached directs" \
+    [ "$direct_loads" -ne $((load_hits + load_fills + 9)) ]; then
+    echo "Expected load routes hits=15 misses=6 fills=2 and nine uncached directs" \
       "for $test_name; got hits=$load_hits misses=$load_misses" \
       "fills=$load_fills direct=$direct_loads" >&2
     cat "$log" >&2
@@ -845,7 +852,18 @@ require_exact_serial_mmio_marker() {
   local test_name=$2
   local marker_count
 
-  marker_count=$(awk -F'~' '{ count += NF - 1 } END { print count + 0 }' "$log")
+  marker_count=$(
+    awk '{
+      line = $0
+      sub(/\r$/, "", line)
+      if (line == "~") {
+        count++
+      }
+    }
+    END {
+      print count + 0
+    }' "$log"
+  )
 
   if [ "$marker_count" -ne 1 ]; then
     echo "Expected exactly one serial MMIO marker for $test_name," \
@@ -1422,6 +1440,9 @@ for test_name in "${TESTS[@]}"; do
     # The statistics-only hook makes the first two bare MMIO stores exercise
     # instruction-generation and outer CPU boundaries deterministically.
     run_env+=(NEMU_RV64_JIT_TEST_MMIO_BOUNDARIES=1)
+    # Poison allocator storage so the initial VGACTL read proves that device
+    # reset state comes from explicit initialisation rather than fresh pages.
+    run_env+=(MALLOC_PERTURB_=165)
   fi
   if [ "$test_name" = "$RV64_FPU_MMIO_BOUNDARY_TEST" ]; then
     # The statistics-only hook makes the successful FP MMIO helper raise one
@@ -1471,7 +1492,9 @@ for test_name in "${TESTS[@]}"; do
 
   if [ "$test_name" = "$RV64_FPU_EXACT_TEST" ]; then
     require_fp_helper_stats "$out" "$test_name" positive 14 14 zero zero
-    require_all_native_fp_exact_executions "$out" "$test_name" 471
+    # The state-effect check includes one FMV.X.W readback after changing the
+    # self-aliased FSGNJN.S destination, making 472 exact native operations.
+    require_all_native_fp_exact_executions "$out" "$test_name" 472
     require_all_native_fp_memory_executions \
       "$out" "$test_name" 0 0 1 0
     require_native_fp_stable_loop "$out" "$test_name"
@@ -1615,7 +1638,9 @@ for test_name in "${TESTS[@]}"; do
   trap - EXIT
 done
 
-require_mmio_cross_map_rejection
+require_mmio_cross_map_rejection "$RV64_MMIO_BOUNDARY_TEST" load
+require_mmio_cross_map_rejection \
+  "$RV64_MMIO_STORE_BOUNDARY_TEST" store
 
 make -C "$NEMU_HOME" riscv64-am-headless-jit_defconfig >/dev/null
 echo "RISC-V64 JIT correctness gate passed: ${TESTS[*]}"

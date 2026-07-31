@@ -24,11 +24,12 @@ endif
 ARCH_TEST_SRCS = $(foreach dir,$(ARCH_TEST_DIRS),$(wildcard tests/$(dir)/*.c))
 ARCH_TESTS = $(basename $(notdir $(ARCH_TEST_SRCS)))
 
-# This guest intentionally makes NEMU reject a cross-map MMIO access.  Keep it
-# available through explicit ALL=... selection without making a normal RV64
-# sweep report its expected host abort as a failed architectural test.
+# These guests intentionally make NEMU reject cross-map MMIO accesses. Keep
+# them available through explicit ALL=... selection without making a normal
+# RV64 sweep report their expected host aborts as architectural test failures.
 ifeq ($(ARCH_ISA),riscv64)
-ARCH_TESTS := $(filter-out riscv64-jit-mmio-boundary,$(ARCH_TESTS))
+ARCH_TESTS := $(filter-out riscv64-jit-mmio-boundary \
+  riscv64-jit-mmio-store-boundary,$(ARCH_TESTS))
 endif
 
 # RV32D is an optional configuration layered on the default RV32F target.

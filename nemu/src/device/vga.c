@@ -710,6 +710,12 @@ void vga_update_screen()
 void init_vga()
 {
     vgactl_port_base = (uint32_t *)new_space(VGACTL_NR_REGS * sizeof(uint32_t));
+    /*
+     * Establish deterministic reset state before exposing direct reads. SYNC
+     * and the passive blit/capture staging words must not inherit allocator
+     * contents, which could otherwise trigger work or leak arbitrary bytes.
+     */
+    memset(vgactl_port_base, 0, VGACTL_NR_REGS * sizeof(uint32_t));
     vgactl_port_base[NEMU_VGACTL_INFO] = (screen_width() << 16) | screen_height();
 #ifdef CONFIG_HAS_PORT_IO
     add_pio_map("vgactl", CONFIG_VGA_CTL_PORT, vgactl_port_base,

@@ -204,13 +204,13 @@ asm(
     "  ret\n"
     ".size rv64_fp_class_s_only, .-rv64_fp_class_s_only\n"
 
-    ".globl rv64_fp_sgnj_s_alias_only\n"
-    ".type rv64_fp_sgnj_s_alias_only, @function\n"
-    "rv64_fp_sgnj_s_alias_only:\n"
-    "  fsgnj.s f0, f0, f0\n"
+    ".globl rv64_fp_sgnjn_s_alias_only\n"
+    ".type rv64_fp_sgnjn_s_alias_only, @function\n"
+    "rv64_fp_sgnjn_s_alias_only:\n"
+    "  fsgnjn.s f0, f0, f0\n"
     "  ret\n"
-    ".size rv64_fp_sgnj_s_alias_only, "
-    ".-rv64_fp_sgnj_s_alias_only\n"
+    ".size rv64_fp_sgnjn_s_alias_only, "
+    ".-rv64_fp_sgnjn_s_alias_only\n"
 
     /*
      * The entry is the real self-backedge target. The four GPRs are therefore
@@ -263,7 +263,7 @@ extern uint64_t rv64_fp_malformed_move_x_w(uint64_t);
 extern uint64_t rv64_fp_write_w_x_only(uint64_t);
 extern uint64_t rv64_fp_read_x_w_only(void);
 extern uint64_t rv64_fp_class_s_only(void);
-extern void rv64_fp_sgnj_s_alias_only(void);
+extern void rv64_fp_sgnjn_s_alias_only(void);
 extern uint64_t rv64_fp_exact_stable_loop(uint64_t, uint64_t, uint64_t);
 
 /*
@@ -507,7 +507,9 @@ static void test_exact_fp_state_effects(void)
 
     /*
      * Explicitly mark the already-populated state Clean. Raw moves from an FPR
-     * and classification are read-only and must not set FS or SD.
+     * and classification are read-only. NEMU deliberately tracks them
+     * precisely, so this implementation regression requires FS to remain Clean
+     * and SD clear; the ISA also permits conservative imprecise Dirty tracking.
      */
     write_mstatus((status & ~MSTATUS_FS_MASK) | MSTATUS_FS_CLEAN);
     check(rv64_fp_read_x_w_only() ==
@@ -520,11 +522,17 @@ static void test_exact_fp_state_effects(void)
     check((read_mstatus() & MSTATUS_SD) == 0);
     check(read_fflags() == UINT64_C(0x1f));
 
-    /* Even an aliased sign-injection destination is an architectural write. */
-    rv64_fp_sgnj_s_alias_only();
+    /*
+     * Self-aliased sign negation flips the seeded negative value's sign bit.
+     * Because the FPR contents really change, the specification requires the
+     * Clean-to-Dirty transition rather than leaving it implementation-defined.
+     */
+    rv64_fp_sgnjn_s_alias_only();
     status = read_mstatus();
     check((status & MSTATUS_FS_MASK) == MSTATUS_FS_DIRTY);
     check((status & MSTATUS_SD) != 0);
+    check(rv64_fp_read_x_w_only() ==
+          UINT64_C(0x0000000001234567));
 }
 
 static void test_exact_ops_ignore_reserved_frm(void)

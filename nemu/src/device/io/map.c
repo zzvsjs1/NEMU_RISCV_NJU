@@ -24,11 +24,16 @@ uint8_t *new_space(int size)
 }
 
 /* Reject any access whose complete byte span is not inside one map. */
-static void check_bound(IOMap *map, paddr_t addr, int len)
+static void check_bound(IOMap *map, paddr_t addr, int len, bool is_write)
 {
+    const char *const access_kind = is_write ? "store" : "load";
+
     if (map == NULL)
     {
-        Assert(map != NULL, "address (" FMT_PADDR ") is out of bound at pc = " FMT_WORD, addr, cpu.pc);
+        Assert(map != NULL,
+               "I/O %s access at " FMT_PADDR
+               " is out of bound at pc = " FMT_WORD,
+               access_kind, addr, cpu.pc);
     }
     else
     {
@@ -46,9 +51,11 @@ static void check_bound(IOMap *map, paddr_t addr, int len)
          * so an invalid device operation has no partial side effect.
          */
         Assert(whole_span_inside,
-               "MMIO access at " FMT_PADDR " with len=%d is out of bound "
+               "I/O %s access at " FMT_PADDR
+               " with len=%d is out of bound "
                "{%s} [" FMT_PADDR ", " FMT_PADDR "] at pc = " FMT_WORD,
-               addr, len, map->name, map->low, map->high, cpu.pc);
+               access_kind, addr, len, map->name,
+               map->low, map->high, cpu.pc);
     }
 }
 
@@ -70,7 +77,7 @@ void init_map()
 word_t map_read(paddr_t addr, int len, IOMap *map)
 {
     assert(len >= 1 && len <= 8);
-    check_bound(map, addr, len);
+    check_bound(map, addr, len, false);
     paddr_t offset = addr - map->low;
     /*
      * Read callbacks publish volatile device state into the mapped bytes before
@@ -87,7 +94,7 @@ word_t map_read(paddr_t addr, int len, IOMap *map)
 void map_write(paddr_t addr, int len, word_t data, IOMap *map)
 {
     assert(len >= 1 && len <= 8);
-    check_bound(map, addr, len);
+    check_bound(map, addr, len, true);
     paddr_t offset = addr - map->low;
     host_write(map->space + offset, len, data);
     /*

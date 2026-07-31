@@ -299,6 +299,14 @@ static void test_memory_entry_and_store_continue(void)
     uint64_t mmio_store_out = 0;
 
     /*
+     * Passive VGACTL staging registers have a defined zero reset state. Read
+     * them before this fixture writes its pattern so allocator contents cannot
+     * be mistaken for a valid device value.
+     */
+    const uint64_t mmio_initial_staging =
+        entry_mmio_load_sequence(NEMU_VGACTL_TEST_MMIO);
+
+    /*
      * This VGA control-map slot is ordinary backing storage unless a separate
      * command register is written. An eight-byte write at this offset therefore
      * provides stable bytes without asking the device to update the display.
@@ -381,6 +389,7 @@ static void test_memory_entry_and_store_continue(void)
     check(memory_entry_data[1] == marker);
     check(store_out == ((marker + 3ull) ^ marker));
     check(mmio_load != 0xffffffffffffffffull);
+    check(mmio_initial_staging == 0);
     check(mmio_shared_direct_load == mmio_width_pattern);
     /*
      * The scripted queue contains MOVE followed by WHEEL. No callback would
