@@ -162,7 +162,9 @@
      RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS)
 #define RV64_JIT_SOURCE_LINK_NULL 0u
 #define RV64_JIT_SOURCE_LINK_COUNT \
-    (RV64_JIT_CACHE_SIZE * RV64_JIT_BLOCK_MAX_SOURCE_CHUNKS + 1u)
+    ((size_t)RV64_JIT_CACHE_SIZE * \
+         (size_t)RV64_JIT_BLOCK_MAX_SOURCE_CHUNKS + \
+     1u)
 /*
  * One direct link can emit eight miss branches: valid, PC, satp, instruction
  * privilege, optional data privilege, translation generation, body entry, and
@@ -174,7 +176,48 @@
 #define RV64_JIT_DIRECT_LINK_GUARD_COUNT 8u
 #define RV64_JIT_DIRECT_LINK_MAX_MISS_PATCHES \
     RV64_JIT_DIRECT_LINK_GUARD_COUNT
+#define RV64_JIT_BLOCK_MAX_LINKS (RV64_JIT_TRACE_MAX_INSNS + 1u)
 #define RV64_JIT_DTLB_MAX_SLOW_PATCHES 6u
+/*
+ * A non-linking compiler jump table needs more retained targets than the
+ * mutable two-way call/return PIC below. Sixteen entries hold BF's measured
+ * eight-target working set while keeping each source-owned sidecar to four
+ * cache lines. The raw index consumes aligned instruction-address bits; every
+ * entry remains a hint because the live authoritative slot and its exact
+ * publication generation are validated before use.
+ */
+#define RV64_JIT_INDIRECT_JUMP_CACHE_ENTRIES 16u
+#define RV64_JIT_INDIRECT_JUMP_CACHE_INDEX_MASK \
+    (RV64_JIT_INDIRECT_JUMP_CACHE_ENTRIES - 1u)
+#define RV64_JIT_INDIRECT_JUMP_CACHE_ENTRY_SHIFT 4u
+#define RV64_JIT_INDIRECT_JUMP_CACHE_BYTE_MASK \
+    (RV64_JIT_INDIRECT_JUMP_CACHE_INDEX_MASK << RV64_JIT_CACHE_PC_SHIFT)
+#define RV64_JIT_INDIRECT_JUMP_CACHE_OFFSET_SHIFT \
+    (RV64_JIT_INDIRECT_JUMP_CACHE_ENTRY_SHIFT - RV64_JIT_CACHE_PC_SHIFT)
+#define RV64_JIT_INDIRECT_JUMP_CACHE_MAX_FIXUPS 1u
+#define RV64_JIT_INDIRECT_JUMP_CACHE_LINE_SIZE 64u
+#define RV64_JIT_INDIRECT_JUMP_CACHE_MAX_ALLOCATION \
+    ((RV64_JIT_INDIRECT_JUMP_CACHE_LINE_SIZE - 1u) + \
+     sizeof(rv64_jit_indirect_jump_cache_t))
+/*
+ * A JALR terminates its native block, so one block can own at most one dynamic
+ * target site. Two ways retain both targets of a common alternating return or
+ * function-pointer call without turning a megamorphic site into an unbounded
+ * code or metadata allocation.
+ */
+#define RV64_JIT_INDIRECT_PIC_WAYS 2u
+#define RV64_JIT_INDIRECT_PIC_MAX_FIXUPS 2u
+#define RV64_JIT_INDIRECT_PIC_LINE_SIZE 64u
+/*
+ * Preserve patching through occasional phase changes, but stop rewriting a
+ * source that repeatedly exceeds its two-way working set.  Eight occupied-way
+ * replacements bound the cold-path cost while leaving stable mono- and
+ * bimorphic sites permanently on their shortest native route.
+ */
+#define RV64_JIT_INDIRECT_PIC_PATCH_REPLACEMENT_LIMIT 8u
+#define RV64_JIT_INDIRECT_PIC_MAX_ALLOCATION \
+    ((RV64_JIT_INDIRECT_PIC_LINE_SIZE - 1u) + \
+     sizeof(rv64_jit_indirect_pic_t))
 /*
  * Each direct-MMIO candidate adds a range guard and a full native load arm to
  * every eligible Bare load site.  Bound that expansion; later maps simply keep
@@ -311,11 +354,155 @@ enum
  */
 typedef uint32_t (*rv64_jit_entry_t)(void);
 
+typedef struct rv64_jit_block rv64_jit_block_t;
+typedef struct rv64_jit_link rv64_jit_link_t;
+
+typedef enum
+{
+    RV64_JIT_INDIRECT_PIC_RETURN,
+    RV64_JIT_INDIRECT_PIC_JALR,
+    RV64_JIT_INDIRECT_PIC_KIND_COUNT,
+} rv64_jit_indirect_pic_kind_t;
+
+/*
+ * Store a stable authoritative slot rather than a native-code pointer. The
+ * slot's full-width PC is the target tag, while `target_generation` certifies
+ * the exact context-sensitive publication that passed the full lookup. Target
+ * invalidation clears the live slot generation before its arena bytes can be
+ * reused, so a stale source-side hint cannot authorise replacement code.
+ */
+typedef struct
+{
+    uint64_t target_generation;
+    rv64_jit_block_t *target_slot;
+} rv64_jit_indirect_jump_cache_entry_t;
+
+typedef struct
+{
+    rv64_jit_indirect_jump_cache_entry_t
+        entries[RV64_JIT_INDIRECT_JUMP_CACHE_ENTRIES];
+} rv64_jit_indirect_jump_cache_t;
+
+typedef struct
+{
+    uint8_t *address_immediates[
+        RV64_JIT_INDIRECT_JUMP_CACHE_MAX_FIXUPS];
+    uint8_t fixup_count;
+    bool used;
+} rv64_jit_indirect_jump_cache_builder_t;
+
+_Static_assert(
+    (RV64_JIT_INDIRECT_JUMP_CACHE_ENTRIES &
+     (RV64_JIT_INDIRECT_JUMP_CACHE_ENTRIES - 1u)) == 0,
+    "RV64 JIT indirect jump cache entry count must be a power of two");
+_Static_assert(RV64_JIT_INDIRECT_JUMP_CACHE_ENTRY_SHIFT >=
+                   RV64_JIT_CACHE_PC_SHIFT,
+               "RV64 JIT indirect jump cache entries are too small");
+_Static_assert(RV64_JIT_INDIRECT_JUMP_CACHE_BYTE_MASK <= INT8_MAX,
+               "RV64 JIT indirect jump cache byte mask exceeds imm8");
+_Static_assert(
+    sizeof(rv64_jit_indirect_jump_cache_entry_t) ==
+        (1u << RV64_JIT_INDIRECT_JUMP_CACHE_ENTRY_SHIFT),
+    "RV64 JIT indirect jump cache entry shift drifted");
+_Static_assert(sizeof(rv64_jit_indirect_jump_cache_t) == 256u,
+               "RV64 JIT indirect jump cache sidecar size drifted");
+
+/*
+ * A known-target exit owns one mutable link record in its source block's arena
+ * sidecar. Dynamic PIC records use the same incoming target-slot lists, but
+ * additionally require the exact publication generation learned by the slow
+ * path before their selector may reach a native chain entry.
+ */
+struct rv64_jit_link
+{
+    uint8_t *selector_disp;
+    uint8_t *target_disp;
+    const uint8_t *guarded_path;
+    const uint8_t *patched_path;
+    vaddr_t target_pc;
+    word_t target_satp;
+    uint64_t target_generation;
+    uint32_t target_ifetch_state;
+    uint32_t target_slot_index;
+    rv64_jit_block_t *source;
+    rv64_jit_link_t *slot_prev;
+    rv64_jit_link_t *slot_next;
+    uint8_t pic_kind;
+    uint8_t pic_way;
+    bool patch_eligible;
+    bool patched;
+    bool dynamic;
+};
+
+/*
+ * Cache the stable address of the authoritative direct-map slot, never a raw
+ * native-code address. `target_generation` identifies the exact publication
+ * whose complete guards authorised this entry; invalidation or slot collision
+ * clears/changes that value before another native body can be selected.
+ */
+typedef struct
+{
+    vaddr_t target_pc;
+    uint64_t target_generation;
+    rv64_jit_block_t *target_slot;
+} rv64_jit_indirect_pic_entry_t;
+
+typedef struct
+{
+    rv64_jit_indirect_pic_entry_t ways[RV64_JIT_INDIRECT_PIC_WAYS];
+    uint8_t next_victim;
+    uint8_t kind;
+    uint8_t patch_replacement_count;
+    uint8_t guarded_only;
+    uint8_t reserved[12];
+    /* Cold reverse-link ownership follows the one-cache-line probe header. */
+    rv64_jit_link_t links[RV64_JIT_INDIRECT_PIC_WAYS];
+} rv64_jit_indirect_pic_t;
+
+typedef struct
+{
+    uint8_t *address_immediates[RV64_JIT_INDIRECT_PIC_MAX_FIXUPS];
+    uint8_t *selector_disps[RV64_JIT_INDIRECT_PIC_WAYS];
+    uint8_t *target_disps[RV64_JIT_INDIRECT_PIC_WAYS];
+    const uint8_t *guarded_paths[RV64_JIT_INDIRECT_PIC_WAYS];
+    const uint8_t *patched_paths[RV64_JIT_INDIRECT_PIC_WAYS];
+    uint8_t fixup_count;
+    uint8_t kind;
+    bool used;
+} rv64_jit_indirect_pic_builder_t;
+
+_Static_assert(offsetof(rv64_jit_indirect_pic_t, links) ==
+                   RV64_JIT_INDIRECT_PIC_LINE_SIZE,
+               "RV64 JIT indirect PIC hot header must occupy one cache line");
+_Static_assert(sizeof(rv64_jit_indirect_pic_t) == 256u,
+               "RV64 JIT indirect PIC sidecar size drifted");
+
+typedef struct
+{
+    uint8_t *selector_disp;
+    uint8_t *target_disp;
+    const uint8_t *guarded_path;
+    const uint8_t *patched_path;
+    vaddr_t target_pc;
+    word_t target_satp;
+    uint32_t target_ifetch_state;
+    bool patch_eligible;
+} rv64_jit_link_build_record_t;
+
+typedef struct
+{
+    rv64_jit_link_build_record_t records[RV64_JIT_BLOCK_MAX_LINKS];
+    uint32_t count;
+} rv64_jit_link_builder_t;
+
 typedef struct
 {
     uint8_t *start;
     uint8_t *cur;
     uint8_t *end;
+    rv64_jit_link_builder_t *links;
+    rv64_jit_indirect_pic_builder_t *indirect_pic;
+    rv64_jit_indirect_jump_cache_builder_t *indirect_jump_cache;
     /* Distinguish arena exhaustion from an unsupported guest encoding. */
     bool overflowed;
 } rv64_jit_writer_t;
@@ -400,6 +587,9 @@ typedef struct
     /* Active slots: six normally, seven only for a preloaded stable self-loop. */
     uint32_t slot_count;
     uint32_t next_age;
+    /* Hints affect victim choice only; dirty values are always written back. */
+    uint32_t current_use_mask;
+    uint32_t live_after_mask;
 } rv64_jit_reg_cache_t;
 
 typedef struct
@@ -445,10 +635,12 @@ _Static_assert((uint64_t)CONFIG_MSIZE <= (uint64_t)UINT32_MAX + 1u,
                "RV64 JIT inline PMEM offsets must fit in 32 bits");
 _Static_assert(RV64_JIT_PMEM_CHUNK_COUNT <= UINT32_MAX,
                "RV64 JIT source chunk indexes must fit in 32 bits");
+_Static_assert(RV64_JIT_SOURCE_LINK_COUNT <= UINT32_MAX,
+               "RV64 JIT source-link frontier must fit in 32 bits");
 _Static_assert(RV64_JIT_DATA_TLB_SIZE *RV64_JIT_SV39_LEVELS < UINT16_MAX,
                "RV64 JIT data-TLB dependency refs must fit in 16 bits");
 
-typedef struct
+struct rv64_jit_block
 {
     bool valid;
     bool translated;
@@ -458,16 +650,23 @@ typedef struct
     uint32_t ifetch_state;
     uint32_t data_state;
     uint64_t ifetch_generation;
-    paddr_t paddr_start;
+    /* Non-zero identity of this exact native publication. */
+    uint64_t generation;
     uint32_t source_len;
     uint32_t source_segment_count;
     rv64_jit_source_segment_t source_segments[RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS];
     uint32_t insn_count;
     rv64_jit_entry_t entry;
     rv64_jit_entry_t body_entry;
+    rv64_jit_entry_t chain_entry;
+    /* Physical source metadata is cold and follows all emitted hot fields. */
+    paddr_t paddr_start;
     uint32_t ifetch_pt_page_count;
     paddr_t ifetch_pt_pages[RV64_JIT_BLOCK_MAX_IFETCH_PT_PAGES];
-} rv64_jit_block_t;
+    rv64_jit_link_t *outgoing_links;
+    uint32_t outgoing_link_count;
+    rv64_jit_indirect_pic_t *indirect_pic;
+};
 
 typedef enum
 {
@@ -595,7 +794,11 @@ typedef struct
     uint64_t native_m_ops;
     uint64_t native_fp_exact_sites;
     uint64_t native_fp_memory_sites;
+    uint64_t indirect_pic_sites;
+    uint64_t indirect_jump_cache_sites;
     uint64_t reg_cache_spills;
+    uint64_t reg_cache_dead_victims;
+    uint64_t reg_cache_live_lru_avoided;
     uint64_t stable_loop_blocks;
     uint64_t stable_loop_preloaded_regs;
     uint64_t native_store_continuations;
@@ -606,6 +809,12 @@ typedef struct
     uint64_t direct_mmio_load_sites;
     uint64_t direct_mmio_store_sites;
     uint64_t fp_helper_sites;
+    uint64_t fp_helper_gpr_effect_sites;
+    uint64_t fp_helper_gpr_mappings_preserved;
+    uint64_t fp_helper_gpr_selective_invalidations;
+    uint64_t fp_helper_gpr_input_flushes;
+    uint64_t fp_helper_gpr_dirty_mappings_preserved;
+    uint64_t fp_helper_gpr_trap_stores;
 
     /* Run-time side exits, helper calls, and Sv39 data-TLB activity. */
     uint64_t side_exit_by_reason[RV64_JIT_SIDE_EXIT_COUNT];
@@ -628,10 +837,12 @@ typedef struct
     uint64_t direct_mmio_store_route_fills;
     uint64_t helper_load_count;
     uint64_t helper_store_count;
+    uint64_t paged_store_helper_continuations;
     uint64_t bare_mmio_load_calls;
     uint64_t bare_mmio_store_calls;
     uint64_t bare_mmio_store_continuations;
     uint64_t bare_mmio_store_boundary_exits;
+    uint64_t bare_mmio_store_invalidation_exits;
     uint64_t fp_helper_calls;
     uint64_t fp_helper_continuations;
     uint64_t fp_helper_trap_exits;
@@ -645,17 +856,42 @@ typedef struct
     uint64_t direct_link_miss_count;
     uint64_t direct_branch_link_taken_count;
     uint64_t direct_guarded_link_taken_count;
+    uint64_t patched_direct_link_taken_count;
+    uint64_t direct_link_patch_resolutions;
+    uint64_t direct_link_patch_unlinks;
     uint64_t direct_return_link_taken_count;
     uint64_t direct_return_link_miss_count;
     uint64_t direct_jalr_link_taken_count;
     uint64_t direct_jalr_link_miss_count;
+    uint64_t indirect_jump_cache_hits;
+    uint64_t indirect_jump_cache_misses;
+    uint64_t indirect_jump_cache_fills;
+    uint64_t indirect_jump_cache_replacements;
+    uint64_t indirect_jump_cache_stale_rejections;
+    uint64_t indirect_jump_cache_budget_rejections;
+    uint64_t indirect_pic_hits[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
+    uint64_t indirect_pic_secondary_hits[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
+    uint64_t indirect_pic_misses[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
+    uint64_t indirect_pic_fills[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
+    uint64_t indirect_pic_replacements[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
+    uint64_t indirect_pic_stale_rejections[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
+    uint64_t indirect_pic_budget_rejections[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
+    uint64_t indirect_pic_patch_resolutions[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
+    uint64_t indirect_pic_patch_unlinks[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
+    uint64_t indirect_pic_source_detaches[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
+    uint64_t indirect_pic_target_detaches[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
+    uint64_t indirect_pic_patched_entries[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
+    uint64_t indirect_pic_patch_downgrades[RV64_JIT_INDIRECT_PIC_KIND_COUNT];
 
     /* Validation and invalidation maintenance performed while NEMU runs. */
     uint64_t ifetch_generation_fast_hits;
     uint64_t ifetch_generation_revalidations;
     uint64_t ifetch_generation_bumps;
+    uint64_t ifetch_generation_avoided_bumps;
     uint64_t source_reverse_invalidations;
     uint64_t source_full_invalidation_scans;
+    uint64_t source_link_sequential_allocations;
+    uint64_t source_link_recycled_allocations;
     uint64_t invalidation_requests;
     uint64_t invalidated_blocks;
     uint64_t arena_resets;
@@ -975,6 +1211,14 @@ extern uint8_t *rv64_jit_code;
 extern size_t rv64_jit_code_used;
 extern rv64_jit_stats_t rv64_jit_stats;
 extern uint64_t rv64_jit_ifetch_generation;
+/*
+ * Changes whenever native cache ownership is invalidated: either a physical
+ * source write actually discards at least one entry or the complete arena is
+ * reset. Callback-backed MMIO helpers snapshot this independently from the
+ * translated-ifetch generation so DMA and broad flushes cannot be hidden by
+ * the precise page-table generation policy.
+ */
+extern uint64_t rv64_jit_native_cache_epoch;
 extern volatile uint32_t rv64_jit_entry_budget;
 extern volatile uint32_t rv64_jit_loop_extra;
 extern volatile bool rv64_jit_cpu_boundary_requested;
@@ -1007,6 +1251,7 @@ void rv64_jit_stat_block_end(rv64_jit_block_end_reason_t reason);
 void rv64_jit_dump_stats_report(void);
 bool rv64_jit_direct_link_enabled(void);
 bool rv64_jit_return_link_enabled(void);
+bool rv64_jit_fp_gpr_effects_enabled(void);
 void rv64_jit_perf_map_init(bool requested);
 void rv64_jit_perf_map_reset(void);
 void rv64_jit_perf_map_publish(const rv64_jit_block_t *block,
@@ -1034,7 +1279,8 @@ uint64_t rv64_jit_load_bare_u64(paddr_t addr);
 uint64_t rv64_jit_load_bare_u8(paddr_t addr);
 uint64_t rv64_jit_load_bare_u16(paddr_t addr);
 uint64_t rv64_jit_load_bare_u32(paddr_t addr);
-void rv64_jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data);
+uint32_t rv64_jit_store_vaddr_continue(vaddr_t addr, uint32_t len,
+                                       uint64_t data);
 uint32_t rv64_jit_store_bare_continue(paddr_t addr, uint32_t len,
                                       uint64_t data);
 uint32_t rv64_jit_store_pmem_continue(paddr_t addr, uint32_t len, uint64_t data);
@@ -1044,11 +1290,20 @@ bool rv64_jit_source_chunk_range(paddr_t addr, uint32_t len,
 bool rv64_jit_source_builder_append(rv64_jit_source_builder_t *source,
                                     paddr_t paddr, uint32_t len);
 void rv64_jit_ifetch_refs_ref(const rv64_jit_block_t *block);
+void rv64_jit_source_reverse_map_init(void);
 void rv64_jit_source_reverse_map_reset(void);
 void rv64_jit_source_reverse_map_add(rv64_jit_block_t *block);
 void rv64_jit_source_chunks_ref(const rv64_jit_block_t *block);
 bool rv64_jit_write_may_touch_source_chunk(paddr_t addr, int len);
 void rv64_jit_block_discard(rv64_jit_block_t *block);
+void rv64_jit_links_reset(void);
+void rv64_jit_links_source_published(rv64_jit_block_t *block);
+void rv64_jit_links_target_published(rv64_jit_block_t *block);
+void rv64_jit_links_block_discard(rv64_jit_block_t *block);
+uint64_t rv64_jit_allocate_block_generation(void);
+rv64_jit_entry_t rv64_jit_indirect_pic_refill(
+    rv64_jit_indirect_pic_t *pic, vaddr_t target_pc,
+    rv64_jit_block_t *target_slot);
 bool rv64_jit_block_source_overlaps(const rv64_jit_block_t *block,
                                     paddr_t addr, int len);
 rv64_jit_block_t *rv64_jit_cache_slot_context(vaddr_t pc, word_t satp,
@@ -1066,11 +1321,24 @@ bool rv64_jit_translate_ifetch_ex(vaddr_t pc, paddr_t *paddr,
 void rv64_jit_reg_cache_init(rv64_jit_reg_cache_t *regs);
 void rv64_jit_reg_cache_restore(rv64_jit_reg_cache_t *regs,
                                 const rv64_jit_reg_cache_t *snapshot);
+void rv64_jit_reg_cache_set_liveness(rv64_jit_reg_cache_t *regs,
+                                     uint32_t current_use_mask,
+                                     uint32_t live_after_mask);
 bool rv64_jit_prepare_stable_loop_regs(rv64_jit_writer_t *w,
                                        rv64_jit_reg_cache_t *regs,
                                        uint32_t reg_mask,
                                        uint32_t loop_insn_count);
 bool rv64_jit_emit_prologue(rv64_jit_writer_t *w);
+bool rv64_jit_finalise_indirect_pic(
+    rv64_jit_writer_t *w, rv64_jit_indirect_pic_builder_t *builder,
+    rv64_jit_indirect_pic_t **pic);
+bool rv64_jit_finalise_indirect_jump_cache(
+    rv64_jit_writer_t *w,
+    rv64_jit_indirect_jump_cache_builder_t *builder);
+bool rv64_jit_emit_chain_entry(rv64_jit_writer_t *w, vaddr_t pc,
+                               uint32_t insn_count,
+                               const uint8_t *body_entry,
+                               const uint8_t **chain_entry);
 bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w,
                                     rv64_jit_reg_cache_t *regs,
                                     vaddr_t target_pc,

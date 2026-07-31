@@ -32,6 +32,33 @@ static uint64_t run_cross_block_loop(void)
     return out;
 }
 
+/*
+ * Cross the CPU loop's 65,536-instruction device-polling window while using
+ * the same terminating JAL shape as the ordinary direct-link case. A patched
+ * edge must enter the target's budget gate rather than retiring one complete
+ * extra block beyond the remaining allowance.
+ */
+static uint64_t run_budget_crossing_link_loop(void)
+{
+    uint64_t out = 0;
+    uint64_t laps = 1024;
+
+    asm volatile(
+        "1:\n"
+        ".rept 70\n"
+        "addi %[out], %[out], 1\n"
+        ".endr\n"
+        "addi %[laps], %[laps], -1\n"
+        "beqz %[laps], 2f\n"
+        "jal zero, 1b\n"
+        "2:\n"
+        : [out] "+r"(out), [laps] "+r"(laps)
+        :
+        : "memory");
+
+    return out;
+}
+
 /* Same cross-block shape, but the hot edge back to the loop head is a branch. */
 static uint64_t run_cross_block_branch_loop(void)
 {
@@ -83,6 +110,7 @@ static uint64_t run_cross_block_branch_fork(void)
 static void test_direct_block_links(void)
 {
     check(run_cross_block_loop() == 70u * 64u);
+    check(run_budget_crossing_link_loop() == 70u * 1024u);
     check(run_cross_block_branch_loop() == 70u * 64u);
     check(run_cross_block_branch_fork() == 70u * 64u);
 }

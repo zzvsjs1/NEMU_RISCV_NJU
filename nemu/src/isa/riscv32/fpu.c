@@ -1546,4 +1546,98 @@ uint32_t riscv_fpu_jit_exec(uint32_t instr, vaddr_t pc)
     return result == RISCV_FPU_EXEC_OK;
 }
 
+/* Return a mask bit only for a mutable architectural integer register. */
+static uint32_t fp_gpr_mask(uint32_t reg)
+{
+    return reg == RISCV_GPR_ZERO ? 0 : UINT32_C(1) << reg;
+}
+
+/*
+ * Classify every integer-register observation made by the shared FP helper.
+ *
+ * This table deliberately follows the architectural decoder above. Fine
+ * sub-encoding validation remains in each executor: a malformed instruction
+ * may trap, but its broad family still conservatively describes every GPR read
+ * that can occur before validation. In particular, integer-to-FP conversion
+ * reads rs1 before validating its type selector and rounding mode.
+ *
+ * Recognised non-memory helpers do not modify a GPR on a trap. A JIT may
+ * therefore defer unrelated dirty stores to its terminal trap stub. Any new
+ * family must be audited here in the same change as its decoder; the zero
+ * descriptor keeps unknown instructions on the full barrier/reset path.
+ */
+riscv_fpu_gpr_effect_t riscv_fpu_gpr_effect(uint32_t inst)
+{
+    const riscv_fpu_gpr_effect_t preserve = {
+        .precise = true,
+        .trap_preserves_gprs = true,
+    };
+
+    switch (fp_opcode(inst))
+    {
+    case RISCV_FP_OPCODE_FMADD:
+    case RISCV_FP_OPCODE_FMSUB:
+    case RISCV_FP_OPCODE_FNMSUB:
+    case RISCV_FP_OPCODE_FNMADD:
+        return preserve;
+    case RISCV_FP_OPCODE_OP:
+        break;
+    default:
+        return (riscv_fpu_gpr_effect_t){0};
+    }
+
+    switch (fp_funct7(inst))
+    {
+    case RISCV_FP_FUNCT7_FCOMPARE_S:
+    case RISCV_FP_FUNCT7_FCVT_INT_S:
+    case RISCV_FP_FUNCT7_FMV_X_W_FCLASS_S:
+#ifdef CONFIG_RISCV_D
+    case RISCV_FP_FUNCT7_FCOMPARE_D:
+    case RISCV_FP_FUNCT7_FCVT_INT_D:
+    case RISCV_FP_FUNCT7_FMV_X_D_FCLASS_D:
+#endif
+        return (riscv_fpu_gpr_effect_t){
+            .success_write_mask = fp_gpr_mask(fp_rd(inst)),
+            .precise = true,
+            .trap_preserves_gprs = true,
+        };
+
+    case RISCV_FP_FUNCT7_FCVT_S_INT:
+    case RISCV_FP_FUNCT7_FMV_W_X:
+#ifdef CONFIG_RISCV_D
+    case RISCV_FP_FUNCT7_FCVT_D_INT:
+#if defined(CONFIG_RV64)
+    case RISCV_FP_FUNCT7_FMV_D_X:
+#endif
+#endif
+        return (riscv_fpu_gpr_effect_t){
+            .read_mask = fp_gpr_mask(fp_rs1(inst)),
+            .precise = true,
+            .trap_preserves_gprs = true,
+        };
+
+    case RISCV_FP_FUNCT7_FADD_S:
+    case RISCV_FP_FUNCT7_FSUB_S:
+    case RISCV_FP_FUNCT7_FMUL_S:
+    case RISCV_FP_FUNCT7_FDIV_S:
+    case RISCV_FP_FUNCT7_FSGNJ_S:
+    case RISCV_FP_FUNCT7_FMIN_MAX_S:
+    case RISCV_FP_FUNCT7_FSQRT_S:
+#ifdef CONFIG_RISCV_D
+    case RISCV_FP_FUNCT7_FADD_D:
+    case RISCV_FP_FUNCT7_FSUB_D:
+    case RISCV_FP_FUNCT7_FMUL_D:
+    case RISCV_FP_FUNCT7_FDIV_D:
+    case RISCV_FP_FUNCT7_FSGNJ_D:
+    case RISCV_FP_FUNCT7_FMIN_MAX_D:
+    case RISCV_FP_FUNCT7_FCVT_S_D:
+    case RISCV_FP_FUNCT7_FCVT_D_S:
+    case RISCV_FP_FUNCT7_FSQRT_D:
+#endif
+        return preserve;
+    default:
+        return (riscv_fpu_gpr_effect_t){0};
+    }
+}
+
 #endif

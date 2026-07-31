@@ -13,6 +13,8 @@ export SDL_VIDEODRIVER=dummy
 
 DEFAULT_DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit_defconfig"
 DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit-stats_defconfig"
+TEMP_FILES=()
+STATS_CONFIG_ACTIVE=0
 RV64_FPU_JIT_TEST=riscv64-fpu-jit-fallback
 RV64_FPU_TRAP_TEST=riscv64-fpu-traps
 RV64_FPU_EXACT_TEST=riscv64-fpu-transfer
@@ -26,13 +28,42 @@ TESTS=(
   "$RV64_FPU_MEMORY_NATIVE_TEST"
   "$RV64_FPU_MMIO_BOUNDARY_TEST"
   riscv64-jit-strict
-  riscv64-jit-smc riscv64-jit-negative-cache
+  riscv64-jit-smc riscv64-jit-pic-source-teardown
+  riscv64-jit-negative-cache
   riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast
   riscv64-jit-return-link riscv64-jit-indirect-link
+  riscv64-jit-pic-megamorphic riscv64-jit-pic-jump-guarded
+  riscv64-jit-pic-alt-return
+  riscv64-jit-indirect-budget
+  riscv64-jit-jump-cache-budget
   riscv64-jit-direct-link riscv64-jit-trace
   riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-sv39-cross-page riscv64-jit-mprv-ifetch
   riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data riscv64-jit-sv39-dtlb
 )
+
+cleanup() {
+  local status=$?
+  local temp_file
+
+  trap - EXIT
+  for temp_file in "${TEMP_FILES[@]}"; do
+    rm -f "$temp_file"
+  done
+
+  if [ "$STATS_CONFIG_ACTIVE" -eq 1 ]; then
+    if ! make -C "$NEMU_HOME" \
+        riscv64-am-headless-jit_defconfig >/dev/null; then
+      echo "Failed to restore the production RV64 JIT configuration" >&2
+      if [ "$status" -eq 0 ]; then
+        status=1
+      fi
+    fi
+  fi
+
+  exit "$status"
+}
+
+trap cleanup EXIT
 
 fail() {
   echo "RISC-V64 JIT correctness check failed: $*" >&2
@@ -46,7 +77,7 @@ require_mmio_cross_map_rejection() {
   local run_status
 
   out=$(mktemp)
-  trap 'rm -f "$out"' EXIT
+  TEMP_FILES+=("$out")
 
   # This is an expected host-side rejection rather than a successful guest
   # trap. The CPU-test wrapper records an inner emulator failure in its output
@@ -64,7 +95,6 @@ require_mmio_cross_map_rejection() {
       "$out" &&
       ! grep -q 'HIT GOOD TRAP' "$out"; then
     rm -f "$out"
-    trap - EXIT
     return
   fi
 
@@ -194,6 +224,54 @@ require_fp_helper_stats() {
   require_count_expectation "$continuations" "$expected_continuations" "helper continuations" "$test_name" "$log"
   require_count_expectation "$trap_exits" "$expected_trap_exits" "helper trap exits" "$test_name" "$log"
   require_count_expectation "$memory_exits" "$expected_memory_exits" "helper memory exits" "$test_name" "$log"
+}
+
+require_fp_helper_gpr_effect_stats() {
+  local log=$1
+  local test_name=$2
+  local expected_classified_sites=$3
+  local expected_preserved_mappings=$4
+  local expected_selective_invalidations=$5
+  local expected_input_flushes=$6
+  local expected_dirty_preserved=$7
+  local expected_trap_stores=$8
+  local summary
+  local classified_sites
+  local preserved_mappings
+  local selective_invalidations
+  local input_flushes
+  local dirty_preserved
+  local trap_stores
+
+  summary=$(parse_single_stat_value \
+    "$log" \
+    's/.*FP helper GPR effects: classified sites = \([0-9][0-9]*\), preserved mappings = \([0-9][0-9]*\), selective invalidations = \([0-9][0-9]*\), input flushes = \([0-9][0-9]*\), dirty mappings preserved = \([0-9][0-9]*\), trap stores = \([0-9][0-9]*\).*/\1 \2 \3 \4 \5 \6/p' \
+    "FP helper GPR-effect summary" "$test_name")
+  read -r classified_sites preserved_mappings \
+    selective_invalidations input_flushes dirty_preserved \
+    trap_stores <<<"$summary"
+
+  # These fixtures have a deliberately fixed instruction topology. Exact
+  # counts detect both a missing S/D classifier label and redundant stores
+  # which would preserve behaviour while silently losing the optimisation.
+  require_count_expectation \
+    "$classified_sites" "$expected_classified_sites" \
+    "helper-effect classified sites" "$test_name" "$log"
+  require_count_expectation \
+    "$preserved_mappings" "$expected_preserved_mappings" \
+    "helper-effect preserved mappings" "$test_name" "$log"
+  require_count_expectation \
+    "$selective_invalidations" "$expected_selective_invalidations" \
+    "helper-effect selective invalidations" "$test_name" "$log"
+  require_count_expectation \
+    "$input_flushes" "$expected_input_flushes" \
+    "helper-effect input flushes" "$test_name" "$log"
+  require_count_expectation \
+    "$dirty_preserved" "$expected_dirty_preserved" \
+    "helper-effect dirty mappings preserved" "$test_name" "$log"
+  require_count_expectation \
+    "$trap_stores" "$expected_trap_stores" \
+    "helper-effect trap stores" "$test_name" "$log"
 }
 
 require_all_native_fp_exact_executions() {
@@ -544,6 +622,33 @@ require_reg_cache_spills_at_most() {
   fi
 }
 
+require_positive_liveness_victim_avoidance() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local dead_victims
+  local live_lru_avoided
+
+  summary=$(sed -n \
+    's/.*reg cache liveness: dead victims = \([0-9][0-9]*\), live LRU avoided = \([0-9][0-9]*\).*/\1 \2/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$summary" ]; then
+    echo "Failed to find register-cache liveness stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  read -r dead_victims live_lru_avoided <<<"$summary"
+
+  if [ "$dead_victims" -le 0 ] || [ "$live_lru_avoided" -le 0 ]; then
+    echo "Expected liveness-guided dead victims and a live LRU avoidance for" \
+      "$test_name; got dead=$dead_victims avoided=$live_lru_avoided" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 require_positive_stable_register_loops() {
   local log=$1
   local test_name=$2
@@ -689,13 +794,14 @@ require_mmio_store_continuation_stats() {
   local calls
   local continuations
   local boundary_exits
+  local invalidation_exits
 
   summary=$(parse_single_stat_value \
     "$log" \
-    's/.*bare MMIO store calls = \([0-9][0-9]*\), continuations = \([0-9][0-9]*\), boundary exits = \([0-9][0-9]*\).*/\1 \2 \3/p' \
+    's/.*bare MMIO store calls = \([0-9][0-9]*\), continuations = \([0-9][0-9]*\), boundary exits = \([0-9][0-9]*\), invalidation exits = \([0-9][0-9]*\).*/\1 \2 \3 \4/p' \
     "bare-MMIO store summary" "$test_name")
 
-  read -r calls continuations boundary_exits <<<"$summary"
+  read -r calls continuations boundary_exits invalidation_exits <<<"$summary"
 
   # The focused fixture performs one helper-backed eight-byte VGACTL staging
   # write, two adjacent-word writes, two command writes, one dynamically
@@ -703,11 +809,12 @@ require_mmio_store_continuation_stats() {
   # Every helper call must have exactly one outcome.
   if [ "$calls" -ne 24 ] ||
     [ "$continuations" -le 0 ] ||
-    [ "$boundary_exits" -lt 2 ] ||
+    [ "$boundary_exits" -lt 3 ] ||
+    [ "$invalidation_exits" -ne 2 ] ||
     [ "$calls" -ne $((continuations + boundary_exits)) ]; then
     echo "Expected repeated, positive, and balanced bare-MMIO store stats for $test_name," \
       "got calls=$calls continuations=$continuations" \
-      "boundary-exits=$boundary_exits" >&2
+      "boundary-exits=$boundary_exits invalidation-exits=$invalidation_exits" >&2
     cat "$log" >&2
     exit 1
   fi
@@ -801,13 +908,14 @@ require_direct_mmio_route_cache_stats() {
   read -r store_hits store_misses store_fills <<<"$store_summary"
 
   # Every selected route starts with a valid exact compile-time seed. The
-  # forced direct-address change performs two refills, while the reset-state
-  # read and eight other direct operations retain the uncached classifier.
-  if [ "$load_hits" -ne 15 ] ||
+  # forced direct-address change performs two refills. The final injected arena
+  # reset recompiles one late load into the routed set, leaving eight other
+  # direct operations on the uncached classifier.
+  if [ "$load_hits" -ne 16 ] ||
     [ "$load_misses" -ne 6 ] ||
     [ "$load_fills" -ne 2 ] ||
-    [ "$direct_loads" -ne $((load_hits + load_fills + 9)) ]; then
-    echo "Expected load routes hits=15 misses=6 fills=2 and nine uncached directs" \
+    [ "$direct_loads" -ne $((load_hits + load_fills + 8)) ]; then
+    echo "Expected load routes hits=16 misses=6 fills=2 and eight uncached directs" \
       "for $test_name; got hits=$load_hits misses=$load_misses" \
       "fills=$load_fills direct=$direct_loads" >&2
     cat "$log" >&2
@@ -953,6 +1061,29 @@ require_positive_ifetch_generation_fast_hits() {
   fi
 }
 
+require_positive_avoided_ifetch_generation_bumps() {
+  local log=$1
+  local test_name=$2
+  local avoided_bumps
+
+  avoided_bumps=$(sed -n \
+    's/.*unrelated ifetch writes avoided = \([0-9][0-9]*\).*/\1/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$avoided_bumps" ]; then
+    echo "Failed to find avoided ifetch-generation bumps for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$avoided_bumps" -le 0 ]; then
+    echo "Expected unrelated PMEM writes to avoid ifetch-generation bumps" \
+      "for $test_name, got $avoided_bumps" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 require_positive_source_reverse_invalidations() {
   local log=$1
   local test_name=$2
@@ -968,6 +1099,41 @@ require_positive_source_reverse_invalidations() {
 
   if [ "$reverse_walks" -le 0 ]; then
     echo "Expected positive source reverse-invalidation count for $test_name, got $reverse_walks" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_lazy_source_reverse_map_nodes() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local sequential_allocations
+  local recycled_allocations
+  local usable_capacity
+
+  summary=$(parse_single_stat_value \
+    "$log" \
+    's/.*source reverse-map nodes: sequential allocations = \([0-9][0-9]*\), recycled allocations = \([0-9][0-9]*\), usable capacity = \([0-9][0-9]*\).*/\1 \2 \3/p' \
+    "source reverse-map allocation summary" "$test_name")
+  read -r sequential_allocations recycled_allocations \
+    usable_capacity <<<"$summary"
+
+  # This lifecycle fixture compiles a small set of blocks, invalidates their
+  # source, and recompiles it.  The counts therefore prove both that the large
+  # pool is claimed on demand and that discarded nodes are safely recycled.
+  if [ "$sequential_allocations" -le 0 ] ||
+    [ "$sequential_allocations" -ge "$usable_capacity" ]; then
+    echo "Expected lazy source-map allocation for $test_name to claim" \
+      "between 1 and $((usable_capacity - 1)) nodes, got" \
+      "$sequential_allocations" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+
+  if [ "$recycled_allocations" -le 0 ]; then
+    echo "Expected source-map node recycling for $test_name, got" \
+      "$recycled_allocations" >&2
     cat "$log" >&2
     exit 1
   fi
@@ -1068,6 +1234,29 @@ require_positive_data_tlb_page_table_flushes() {
 
   if [ "$data_tlb_page_table_flushes" -le 0 ]; then
     echo "Expected positive data TLB page-table flush count for $test_name, got $data_tlb_page_table_flushes" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_paged_store_helper_continuations() {
+  local log=$1
+  local test_name=$2
+  local continuations
+
+  continuations=$(sed -n \
+    's/.*paged store helper continuations = \([0-9][0-9]*\).*/\1/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$continuations" ]; then
+    echo "Failed to find paged-store helper continuations for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$continuations" -le 0 ]; then
+    echo "Expected a safe translated-store refill to continue for $test_name," \
+      "got $continuations" >&2
     cat "$log" >&2
     exit 1
   fi
@@ -1256,6 +1445,23 @@ require_positive_side_exit_reason() {
   fi
 }
 
+require_absent_side_exit_reason() {
+  local log=$1
+  local test_name=$2
+  local reason=$3
+  local count
+
+  count=$(sed -n \
+    "s/.*side exit $reason = \([0-9][0-9]*\).*/\1/p" \
+    "$log" | tail -n 1)
+
+  if [ -n "$count" ] && [ "$count" -ne 0 ]; then
+    echo "Expected no side-exit $reason for $test_name, got $count" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 require_exact_side_exit_reason() {
   local log=$1
   local test_name=$2
@@ -1331,6 +1537,62 @@ require_positive_direct_branch_links() {
   fi
 }
 
+require_positive_patched_direct_links() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local taken
+  local resolutions
+  local unlinks
+
+  summary=$(sed -n \
+    's/.*patched direct links taken = \([0-9][0-9]*\), resolutions = \([0-9][0-9]*\), unlinks = \([0-9][0-9]*\).*/\1 \2 \3/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$summary" ]; then
+    echo "Failed to find patched direct-link stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  read -r taken resolutions unlinks <<<"$summary"
+
+  if [ "$taken" -le 0 ] || [ "$resolutions" -le 0 ]; then
+    echo "Expected positive patched-link executions and resolutions for" \
+      "$test_name; got taken=$taken resolutions=$resolutions" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_positive_direct_link_unlinks() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local taken
+  local resolutions
+  local unlinks
+
+  summary=$(sed -n \
+    's/.*patched direct links taken = \([0-9][0-9]*\), resolutions = \([0-9][0-9]*\), unlinks = \([0-9][0-9]*\).*/\1 \2 \3/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$summary" ]; then
+    echo "Failed to find patched direct-link stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  read -r taken resolutions unlinks <<<"$summary"
+
+  if [ "$unlinks" -le 0 ]; then
+    echo "Expected a patched incoming link to be removed for $test_name;" \
+      "got unlinks=$unlinks" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 require_positive_direct_return_links() {
   local log=$1
   local test_name=$2
@@ -1389,7 +1651,7 @@ require_positive_direct_jalr_links() {
   read -r taken misses <<<"$summary"
   attempts=$((taken + misses))
 
-  # The focused guest executes 8,192 eligible non-canonical JALRs. Requiring
+  # The focused guest executes 8,212 eligible non-canonical JALRs. Requiring
   # 7,000 hits prevents only the alternating call or only its returns from
   # satisfying the test; misses remain non-exact because cold targets and
   # legitimate direct-map collisions can add more.
@@ -1399,6 +1661,561 @@ require_positive_direct_jalr_links() {
     echo "Expected at least $minimum_taken direct JALR-link hits, at least two" \
       "misses, and a 99% hit rate for $test_name; got taken=$taken" \
       "misses=$misses" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+parse_indirect_pic_stats() {
+  local log=$1
+  local test_name=$2
+  local subset=$3
+
+  parse_single_stat_value \
+    "$log" \
+    "s/.*direct ${subset} PIC hits = \\([0-9][0-9]*\\), secondary hits = \\([0-9][0-9]*\\), misses = \\([0-9][0-9]*\\), fills = \\([0-9][0-9]*\\), replacements = \\([0-9][0-9]*\\), stale rejections = \\([0-9][0-9]*\\), budget rejects = \\([0-9][0-9]*\\).*/\\1 \\2 \\3 \\4 \\5 \\6 \\7/p" \
+    "direct ${subset} PIC summary" "$test_name"
+}
+
+parse_indirect_jump_cache_stats() {
+  local log=$1
+  local test_name=$2
+
+  parse_single_stat_value \
+    "$log" \
+    's/.*indirect jump cache sites = \([0-9][0-9]*\), hits = \([0-9][0-9]*\), misses = \([0-9][0-9]*\), fills = \([0-9][0-9]*\), replacements = \([0-9][0-9]*\), stale rejections = \([0-9][0-9]*\), budget rejects = \([0-9][0-9]*\).*/\1 \2 \3 \4 \5 \6 \7/p' \
+    "indirect jump cache summary" "$test_name"
+}
+
+parse_indirect_pic_patch_stats() {
+  local log=$1
+  local test_name=$2
+  local subset=$3
+
+  parse_single_stat_value \
+    "$log" \
+    "s/.*direct ${subset} PIC patches = \([0-9][0-9]*\), unlinks = \([0-9][0-9]*\), source detaches = \([0-9][0-9]*\), target detaches = \([0-9][0-9]*\), patched entries = \([0-9][0-9]*\).*/\1 \2 \3 \4 \5/p" \
+    "direct ${subset} PIC patch summary" "$test_name"
+}
+
+require_indirect_pic_patches() {
+  local log=$1
+  local test_name=$2
+  local subset=$3
+  local minimum_patches=$4
+  local minimum_unlinks=$5
+  local minimum_source_detaches=$6
+  local minimum_target_detaches=$7
+  local minimum_patched_entries=$8
+  local summary
+  local patches
+  local unlinks
+  local source_detaches
+  local target_detaches
+  local patched_entries
+
+  summary=$(parse_indirect_pic_patch_stats "$log" "$test_name" "$subset")
+  read -r patches unlinks source_detaches target_detaches \
+    patched_entries <<<"$summary"
+
+  # A learned way is useful only after its selector reaches the target-owned
+  # chain entry. Replacement and SMC must restore that selector before reuse;
+  # target invalidation must also detach generation-specific waiting records.
+  if [ "$patches" -lt "$minimum_patches" ] ||
+    [ "$unlinks" -lt "$minimum_unlinks" ] ||
+    [ "$source_detaches" -lt "$minimum_source_detaches" ] ||
+    [ "$target_detaches" -lt "$minimum_target_detaches" ] ||
+    [ "$patched_entries" -lt "$minimum_patched_entries" ] ||
+    [ "$source_detaches" -gt "$unlinks" ] ||
+    [ "$target_detaches" -gt "$unlinks" ] ||
+    [ "$unlinks" -gt "$patches" ]; then
+    echo "Expected direct $subset PIC patch lifecycle for $test_name;" \
+      "got patches=$patches unlinks=$unlinks source-detaches=$source_detaches" \
+      "target-detaches=$target_detaches patched-entries=$patched_entries," \
+      "minimum patches=$minimum_patches minimum unlinks=$minimum_unlinks" \
+      "minimum source-detaches=$minimum_source_detaches minimum target-detaches=" \
+      "$minimum_target_detaches minimum patched-entries=$minimum_patched_entries" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_bounded_megamorphic_jalr_patching() {
+  local log=$1
+  local test_name=$2
+  local pic_summary
+  local patch_summary
+  local hits
+  local secondary_hits
+  local misses
+  local fills
+  local replacements
+  local stale_rejections
+  local budget_rejects
+  local patches
+  local unlinks
+  local source_detaches
+  local target_detaches
+  local patched_entries
+  local churn_downgrades
+
+  pic_summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
+  read -r hits secondary_hits misses fills replacements \
+    stale_rejections budget_rejects <<<"$pic_summary"
+  patch_summary=$(parse_indirect_pic_patch_stats "$log" "$test_name" JALR)
+  read -r patches unlinks source_detaches target_detaches \
+    patched_entries <<<"$patch_summary"
+  churn_downgrades=$(parse_single_stat_value \
+    "$log" \
+    's/.*direct JALR PIC patches = .*churn downgrades = \([0-9][0-9]*\).*/\1/p' \
+    "direct JALR PIC churn downgrade count" "$test_name")
+
+  # A link-producing five-target source remains eligible for the two-way PIC.
+  # It must collect enough replacement evidence to downgrade exactly once;
+  # guarding every JALR from birth would incorrectly make these values zero.
+  if [ "$replacements" -lt 3900 ] ||
+    [ "$fills" -lt "$replacements" ] ||
+    [ "$patches" -lt 1 ] ||
+    [ "$patches" -gt 32 ] ||
+    [ "$unlinks" -lt 1 ] ||
+    [ "$unlinks" -gt 32 ] ||
+    [ "$churn_downgrades" -ne 1 ] ||
+    [ "$unlinks" -gt "$patches" ]; then
+    echo "Expected bounded patching for megamorphic JALR PIC in $test_name;" \
+      "got hits=$hits secondary=$secondary_hits misses=$misses fills=$fills" \
+      "replacements=$replacements stale=$stale_rejections" \
+      "budget=$budget_rejects patches=$patches unlinks=$unlinks" \
+      "patched-entries=$patched_entries downgrades=$churn_downgrades" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_alternate_return_hint_pic() {
+  local log=$1
+  local test_name=$2
+  local pic_summary
+  local patch_summary
+  local hits
+  local secondary_hits
+  local misses
+  local fills
+  local replacements
+  local stale_rejections
+  local budget_rejects
+  local patches
+  local unlinks
+  local source_detaches
+  local target_detaches
+  local patched_entries
+  local churn_downgrades
+
+  pic_summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
+  read -r hits secondary_hits misses fills replacements \
+    stale_rejections budget_rejects <<<"$pic_summary"
+  patch_summary=$(parse_indirect_pic_patch_stats "$log" "$test_name" JALR)
+  read -r patches unlinks source_detaches target_detaches \
+    patched_entries <<<"$patch_summary"
+  churn_downgrades=$(parse_single_stat_value \
+    "$log" \
+    's/.*direct JALR PIC patches = .*churn downgrades = \([0-9][0-9]*\).*/\1/p' \
+    "direct JALR PIC churn downgrade count" "$test_name")
+
+  # x5 is the ISA's alternate link register. Even with a non-zero immediate,
+  # this monomorphic rd=x0 source is a return-stack hint and should spend nearly
+  # every iteration in one patched PIC way without replacement or downgrade.
+  if [ "$hits" -lt 4000 ] ||
+    [ "$fills" -lt 1 ] ||
+    [ "$replacements" -ne 0 ] ||
+    [ "$patches" -lt 1 ] ||
+    [ "$unlinks" -ne 0 ] ||
+    [ "$source_detaches" -ne 0 ] ||
+    [ "$target_detaches" -ne 0 ] ||
+    [ "$patched_entries" -lt 4000 ] ||
+    [ "$churn_downgrades" -ne 0 ]; then
+    echo "Expected alternate-link return-hint PIC activity for $test_name;" \
+      "got hits=$hits secondary=$secondary_hits misses=$misses fills=$fills" \
+      "replacements=$replacements stale=$stale_rejections" \
+      "budget=$budget_rejects patches=$patches unlinks=$unlinks" \
+      "source-detaches=$source_detaches target-detaches=$target_detaches" \
+      "patched-entries=$patched_entries downgrades=$churn_downgrades" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_guarded_jump_cache() {
+  local log=$1
+  local test_name=$2
+  local cache_summary
+  local pic_summary
+  local patch_summary
+  local direct_summary
+  local sites
+  local cache_hits
+  local cache_misses
+  local cache_fills
+  local cache_replacements
+  local cache_stale_rejections
+  local cache_budget_rejects
+  local hits
+  local secondary_hits
+  local misses
+  local fills
+  local replacements
+  local stale_rejections
+  local budget_rejects
+  local patches
+  local unlinks
+  local source_detaches
+  local target_detaches
+  local patched_entries
+  local churn_downgrades
+  local direct_taken
+  local direct_misses
+  local direct_attempts
+
+  cache_summary=$(parse_indirect_jump_cache_stats "$log" "$test_name")
+  read -r sites cache_hits cache_misses cache_fills cache_replacements \
+    cache_stale_rejections cache_budget_rejects <<<"$cache_summary"
+  pic_summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
+  read -r hits secondary_hits misses fills replacements \
+    stale_rejections budget_rejects <<<"$pic_summary"
+  patch_summary=$(parse_indirect_pic_patch_stats "$log" "$test_name" JALR)
+  read -r patches unlinks source_detaches target_detaches \
+    patched_entries <<<"$patch_summary"
+  churn_downgrades=$(parse_single_stat_value \
+    "$log" \
+    's/.*direct JALR PIC patches = .*churn downgrades = \([0-9][0-9]*\).*/\1/p' \
+    "direct JALR PIC churn downgrade count" "$test_name")
+  direct_summary=$(parse_single_stat_value \
+    "$log" \
+    's/.*direct JALR links taken = \([0-9][0-9]*\), misses = \([0-9][0-9]*\).*/\1 \2/p' \
+    "direct JALR link summary" "$test_name")
+  read -r direct_taken direct_misses <<<"$direct_summary"
+  direct_attempts=$((direct_taken + direct_misses))
+
+  # The first eight targets occupy distinct raw 16-way entries and the ninth
+  # deliberately aliases the first. This keeps roughly seven ninths of the
+  # round-robin transfers hot while forcing enough inline replacements to prove
+  # the cache remains a guarded hint. An eight-entry regression aliases four
+  # more pairs and cannot satisfy the hit bound.
+  if [ "$sites" -ne 1 ] ||
+    [ $((cache_hits + cache_misses)) -ne 1800 ] ||
+    [ "$cache_hits" -lt 1300 ] ||
+    [ "$cache_misses" -lt 400 ] ||
+    [ "$cache_fills" -lt 390 ] ||
+    [ "$cache_replacements" -lt 350 ] ||
+    [ "$cache_replacements" -gt "$cache_fills" ] ||
+    [ "$cache_fills" -gt "$cache_misses" ] ||
+    [ "$cache_stale_rejections" -ne 0 ] ||
+    [ "$cache_budget_rejects" -ne 0 ] ||
+    [ "$hits" -ne 0 ] ||
+    [ "$secondary_hits" -ne 0 ] ||
+    [ "$misses" -ne 0 ] ||
+    [ "$fills" -ne 0 ] ||
+    [ "$replacements" -ne 0 ] ||
+    [ "$stale_rejections" -ne 0 ] ||
+    [ "$budget_rejects" -ne 0 ] ||
+    [ "$patches" -ne 0 ] ||
+    [ "$unlinks" -ne 0 ] ||
+    [ "$source_detaches" -ne 0 ] ||
+    [ "$target_detaches" -ne 0 ] ||
+    [ "$patched_entries" -ne 0 ] ||
+    [ "$churn_downgrades" -ne 0 ] ||
+    [ "$direct_taken" -le 0 ] ||
+    [ "$direct_misses" -lt 9 ] ||
+    [ "$direct_attempts" -ne 1800 ]; then
+    echo "Expected a guarded 16-entry no-PIC JALR cache for $test_name;" \
+      "got cache sites=$sites hits=$cache_hits misses=$cache_misses" \
+      "fills=$cache_fills replacements=$cache_replacements" \
+      "stale=$cache_stale_rejections budget=$cache_budget_rejects," \
+      "PIC hits=$hits secondary=$secondary_hits misses=$misses" \
+      "fills=$fills replacements=$replacements stale=$stale_rejections" \
+      "budget=$budget_rejects patches=$patches unlinks=$unlinks" \
+      "source-detaches=$source_detaches target-detaches=$target_detaches" \
+      "patched-entries=$patched_entries downgrades=$churn_downgrades," \
+      "direct-taken=$direct_taken direct-misses=$direct_misses" \
+      "direct-attempts=$direct_attempts" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_stale_indirect_jump_cache_rejection() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local sites
+  local hits
+  local misses
+  local fills
+  local replacements
+  local stale_rejections
+  local budget_rejects
+
+  summary=$(parse_indirect_jump_cache_stats "$log" "$test_name")
+  read -r sites hits misses fills replacements stale_rejections \
+    budget_rejects <<<"$summary"
+
+  if [ "$sites" -le 0 ] || [ "$hits" -le 0 ] || [ "$fills" -le 0 ] ||
+    [ "$stale_rejections" -le 0 ] || [ "$budget_rejects" -ne 0 ] ||
+    [ "$replacements" -gt "$fills" ] || [ "$fills" -gt "$misses" ]; then
+    echo "Expected a stale guarded-jump-cache rejection for $test_name;" \
+      "got sites=$sites hits=$hits misses=$misses fills=$fills" \
+      "replacements=$replacements stale=$stale_rejections" \
+      "budget=$budget_rejects" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_unprobed_indirect_jump_cache() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local sites
+  local hits
+  local misses
+  local fills
+  local replacements
+  local stale_rejections
+  local budget_rejects
+
+  summary=$(parse_indirect_jump_cache_stats "$log" "$test_name")
+  read -r sites hits misses fills replacements stale_rejections \
+    budget_rejects <<<"$summary"
+
+  if [ "$sites" -lt 1 ] || [ "$hits" -ne 0 ] || [ "$misses" -ne 0 ] ||
+    [ "$fills" -ne 0 ] || [ "$replacements" -ne 0 ] ||
+    [ "$stale_rejections" -ne 0 ] || [ "$budget_rejects" -ne 0 ]; then
+    echo "Expected emitted but unprobed guarded jump caches for" \
+      "$test_name; got sites=$sites hits=$hits misses=$misses fills=$fills" \
+      "replacements=$replacements stale=$stale_rejections" \
+      "budget=$budget_rejects" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_exact_indirect_jump_cache_budget_rejection() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local pic_summary
+  local patch_summary
+  local sites
+  local hits
+  local misses
+  local fills
+  local replacements
+  local stale_rejections
+  local budget_rejects
+  local pic_hits
+  local pic_secondary_hits
+  local pic_misses
+  local pic_fills
+  local pic_replacements
+  local pic_stale_rejections
+  local pic_budget_rejects
+  local patches
+  local unlinks
+  local source_detaches
+  local target_detaches
+  local patched_entries
+  local churn_downgrades
+
+  summary=$(parse_indirect_jump_cache_stats "$log" "$test_name")
+  read -r sites hits misses fills replacements stale_rejections \
+    budget_rejects <<<"$summary"
+  pic_summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
+  read -r pic_hits pic_secondary_hits pic_misses pic_fills \
+    pic_replacements pic_stale_rejections pic_budget_rejects \
+    <<<"$pic_summary"
+  patch_summary=$(parse_indirect_pic_patch_stats "$log" "$test_name" JALR)
+  read -r patches unlinks source_detaches target_detaches patched_entries \
+    <<<"$patch_summary"
+  churn_downgrades=$(parse_single_stat_value \
+    "$log" \
+    's/.*direct JALR PIC patches = .*churn downgrades = \([0-9][0-9]*\).*/\1/p' \
+    "direct JALR PIC churn downgrade count" "$test_name")
+
+  if [ "$sites" -ne 1 ] || [ "$hits" -le 0 ] || [ "$misses" -le 0 ] ||
+    [ "$fills" -le 0 ] || [ "$replacements" -ne 0 ] ||
+    [ "$stale_rejections" -ne 0 ] || [ "$budget_rejects" -ne 1 ] ||
+    [ "$fills" -gt "$misses" ] || [ "$pic_hits" -ne 0 ] ||
+    [ "$pic_secondary_hits" -ne 0 ] || [ "$pic_misses" -ne 0 ] ||
+    [ "$pic_fills" -ne 0 ] || [ "$pic_replacements" -ne 0 ] ||
+    [ "$pic_stale_rejections" -ne 0 ] ||
+    [ "$pic_budget_rejects" -ne 0 ] || [ "$patches" -ne 0 ] ||
+    [ "$unlinks" -ne 0 ] || [ "$source_detaches" -ne 0 ] ||
+    [ "$target_detaches" -ne 0 ] || [ "$patched_entries" -ne 0 ] ||
+    [ "$churn_downgrades" -ne 0 ]; then
+    echo "Expected exactly one guarded-jump-cache budget rejection for" \
+      "$test_name; got sites=$sites hits=$hits misses=$misses fills=$fills" \
+      "replacements=$replacements stale=$stale_rejections" \
+      "budget=$budget_rejects; PIC hits=$pic_hits" \
+      "secondary=$pic_secondary_hits misses=$pic_misses fills=$pic_fills" \
+      "replacements=$pic_replacements stale=$pic_stale_rejections" \
+      "budget=$pic_budget_rejects patches=$patches unlinks=$unlinks" \
+      "source-detaches=$source_detaches target-detaches=$target_detaches" \
+      "patched-entries=$patched_entries downgrades=$churn_downgrades" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_exact_indirect_pic_target_detaches() {
+  local log=$1
+  local test_name=$2
+  local subset=$3
+  local expected=$4
+  local summary
+  local patches
+  local unlinks
+  local source_detaches
+  local target_detaches
+  local patched_entries
+
+  summary=$(parse_indirect_pic_patch_stats "$log" "$test_name" "$subset")
+  read -r patches unlinks source_detaches target_detaches \
+    patched_entries <<<"$summary"
+
+  if [ "$target_detaches" -ne "$expected" ]; then
+    echo "Expected direct $subset PIC target detaches=$expected for" \
+      "$test_name, got $target_detaches" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_two_target_return_pic() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local hits
+  local secondary_hits
+  local misses
+  local fills
+  local replacements
+  local stale_rejections
+  local budget_rejects
+
+  summary=$(parse_indirect_pic_stats "$log" "$test_name" return)
+  read -r hits secondary_hits misses fills replacements \
+    stale_rejections budget_rejects <<<"$summary"
+
+  # The shared RET alternates between two return PCs for 4,096 laps. A large
+  # secondary-way count proves that the optimisation is genuinely polymorphic.
+  if [ "$hits" -lt 4000 ] ||
+    [ "$secondary_hits" -lt 1800 ] ||
+    [ "$misses" -lt 2 ] ||
+    [ "$fills" -lt 2 ] ||
+    [ "$secondary_hits" -gt "$hits" ] ||
+    [ "$replacements" -gt "$fills" ] ||
+    [ "$fills" -gt "$misses" ] ||
+    [ "$stale_rejections" -gt "$misses" ]; then
+    echo "Expected a warm two-entry return PIC for $test_name; got" \
+      "hits=$hits secondary=$secondary_hits misses=$misses fills=$fills" \
+      "replacements=$replacements stale=$stale_rejections" \
+      "budget=$budget_rejects" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_polymorphic_jalr_pic() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local hits
+  local secondary_hits
+  local misses
+  local fills
+  local replacements
+  local stale_rejections
+  local budget_rejects
+
+  summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
+  read -r hits secondary_hits misses fills replacements \
+    stale_rejections budget_rejects <<<"$summary"
+
+  # Two alternating targets must occupy both ways and the third target must
+  # force bounded replacement at that same shared exit.
+  if [ "$hits" -lt 8000 ] ||
+    [ "$secondary_hits" -lt 1800 ] ||
+    [ "$misses" -lt 3 ] ||
+    [ "$fills" -lt 3 ] ||
+    [ "$replacements" -lt 1 ] ||
+    [ "$secondary_hits" -gt "$hits" ] ||
+    [ "$replacements" -gt "$fills" ] ||
+    [ "$fills" -gt "$misses" ] ||
+    [ "$stale_rejections" -gt "$misses" ]; then
+    echo "Expected a two-entry/replacement JALR PIC for $test_name;" \
+      "got hits=$hits secondary=$secondary_hits misses=$misses fills=$fills" \
+      "replacements=$replacements stale=$stale_rejections" \
+      "budget=$budget_rejects" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_exact_jalr_pic_budget_rejection() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local hits
+  local secondary_hits
+  local misses
+  local fills
+  local replacements
+  local stale_rejections
+  local budget_rejects
+
+  summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
+  read -r hits secondary_hits misses fills replacements \
+    stale_rejections budget_rejects <<<"$summary"
+
+  # The final warmed edge fits by source count alone but not after adding its
+  # 181-instruction destination, which reaches FENCE before any later JALR.
+  # Exactly one rejection therefore proves the whole target was budgeted here.
+  if [ "$hits" -le 0 ] || [ "$fills" -le 0 ] ||
+    [ "$budget_rejects" -ne 1 ] ||
+    [ "$secondary_hits" -gt "$hits" ] ||
+    [ "$replacements" -gt "$fills" ] ||
+    [ "$fills" -gt "$misses" ] ||
+    [ "$stale_rejections" -gt "$misses" ]; then
+    echo "Expected exactly one hot JALR-PIC budget rejection for" \
+      "$test_name; got hits=$hits secondary=$secondary_hits misses=$misses" \
+      "fills=$fills replacements=$replacements stale=$stale_rejections" \
+      "budget=$budget_rejects" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_stale_jalr_pic_rejection() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local hits
+  local secondary_hits
+  local misses
+  local fills
+  local replacements
+  local stale_rejections
+  local budget_rejects
+
+  summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
+  read -r hits secondary_hits misses fills replacements \
+    stale_rejections budget_rejects <<<"$summary"
+
+  if [ "$hits" -le 0 ] || [ "$fills" -le 0 ] ||
+    [ "$stale_rejections" -le 0 ] ||
+    [ "$fills" -gt "$misses" ] ||
+    [ "$stale_rejections" -gt "$misses" ]; then
+    echo "Expected a warmed JALR PIC to reject its rewritten target for" \
+      "$test_name; got hits=$hits fills=$fills stale=$stale_rejections" >&2
     cat "$log" >&2
     exit 1
   fi
@@ -1424,21 +2241,77 @@ require_positive_guarded_direct_links() {
   fi
 }
 
+require_disabled_indirect_jump_cache() {
+  local test_name=$1
+  local out
+  local summary
+  local direct_summary
+  local sites
+  local hits
+  local misses
+  local fills
+  local replacements
+  local stale_rejections
+  local budget_rejects
+  local direct_taken
+  local direct_misses
+
+  out=$(mktemp)
+  TEMP_FILES+=("$out")
+
+  if ! env NEMU_JIT_STATS=1 NEMU_DISABLE_RV64_JIT_DIRECT_LINK=1 \
+      make -C am-kernels/tests/cpu-tests ARCH="$ARCH" ALL="$test_name" \
+      run >"$out" 2>&1; then
+    echo "$test_name failed with direct linking disabled" >&2
+    cat "$out" >&2
+    exit 2
+  fi
+
+  require_good_trap "$out" "$test_name direct-link-disabled"
+  require_positive_jit_instructions "$out" "$test_name direct-link-disabled"
+  summary=$(parse_indirect_jump_cache_stats \
+    "$out" "$test_name direct-link-disabled")
+  read -r sites hits misses fills replacements stale_rejections \
+    budget_rejects <<<"$summary"
+  direct_summary=$(parse_single_stat_value \
+    "$out" \
+    's/.*direct JALR links taken = \([0-9][0-9]*\), misses = \([0-9][0-9]*\).*/\1 \2/p' \
+    "direct JALR link summary" "$test_name direct-link-disabled")
+  read -r direct_taken direct_misses <<<"$direct_summary"
+
+  if [ "$sites" -ne 0 ] || [ "$hits" -ne 0 ] || [ "$misses" -ne 0 ] ||
+    [ "$fills" -ne 0 ] || [ "$replacements" -ne 0 ] ||
+    [ "$stale_rejections" -ne 0 ] || [ "$budget_rejects" -ne 0 ] ||
+    [ "$direct_taken" -ne 0 ] || [ "$direct_misses" -ne 0 ]; then
+    echo "Expected no guarded jump cache with direct linking disabled for" \
+      "$test_name; got sites=$sites hits=$hits misses=$misses fills=$fills" \
+      "replacements=$replacements stale=$stale_rejections" \
+      "budget=$budget_rejects direct-taken=$direct_taken" \
+      "direct-misses=$direct_misses" >&2
+    cat "$out" >&2
+    exit 1
+  fi
+
+  rm -f "$out"
+}
+
 cd "$ROOT"
 
 [ -f "$DEFAULT_DEFCONFIG" ] || fail "missing $DEFAULT_DEFCONFIG"
 [ -f "$DEFCONFIG" ] || fail "missing $DEFCONFIG"
 bash "$SCRIPT_DIR/check-rv64-new-interpreter.sh"
 make -C "$NEMU_HOME" riscv64-am-headless-jit-stats_defconfig >/dev/null
+STATS_CONFIG_ACTIVE=1
 
 for test_name in "${TESTS[@]}"; do
   out=$(mktemp)
-  trap 'rm -f "$out"' EXIT
+  TEMP_FILES+=("$out")
 
   run_env=(NEMU_JIT_STATS=1)
   if [ "$test_name" = "riscv64-jit-memory-entry" ]; then
-    # The statistics-only hook makes the first two bare MMIO stores exercise
-    # instruction-generation and outer CPU boundaries deterministically.
+    # The statistics-only hook exercises source invalidation and an outer CPU
+    # boundary on the first two bare MMIO stores, then resets the arena on the
+    # final helper store without perturbing the earlier route-cache samples.
     run_env+=(NEMU_RV64_JIT_TEST_MMIO_BOUNDARIES=1)
     # Poison allocator storage so the initial VGACTL read proves that device
     # reset state comes from explicit initialisation rather than fresh pages.
@@ -1470,7 +2343,14 @@ for test_name in "${TESTS[@]}"; do
   fi
 
   if [ "$test_name" = "$RV64_FPU_JIT_TEST" ]; then
-    require_fp_helper_stats "$out" "$test_name" positive 16 16 zero zero
+    require_fp_helper_stats "$out" "$test_name" positive 28 28 zero zero
+    # The S and D round-trips each have four classified sites. Six loaded
+    # mappings survive the conversion and addition, then two destinations are
+    # selectively discarded. The exact aggregate also includes the fixture's
+    # other recognised non-memory helpers; pinning it makes an accidental
+    # width-specific full barrier or redundant emitted store observable.
+    require_fp_helper_gpr_effect_stats \
+      "$out" "$test_name" 15 51 4 2 39 41
     require_all_native_fp_memory_executions \
       "$out" "$test_name" 0 6 0 10
     require_positive_source_reverse_invalidations "$out" "$test_name"
@@ -1479,7 +2359,12 @@ for test_name in "${TESTS[@]}"; do
   fi
 
   if [ "$test_name" = "$RV64_FPU_TRAP_TEST" ]; then
-    require_fp_helper_stats "$out" "$test_name" positive 10 zero 10 zero
+    require_fp_helper_stats "$out" "$test_name" positive 12 zero 12 zero
+    # The reserved-rounding probe carries six dirty mappings into one
+    # classified arithmetic helper. Its executed trap arm must have a store
+    # for every mapping before the guest trap handler can resume the suffix.
+    require_fp_helper_gpr_effect_stats \
+      "$out" "$test_name" 12 12 1 0 6 7
     require_all_native_fp_memory_executions \
       "$out" "$test_name" 1 1 1 1
     require_exact_side_exit_reason \
@@ -1523,6 +2408,20 @@ for test_name in "${TESTS[@]}"; do
     require_positive_native_stores "$out" "$test_name"
   fi
 
+  if [ "$test_name" = "riscv64-jit-smc" ]; then
+    require_positive_direct_link_unlinks "$out" "$test_name"
+    require_stale_jalr_pic_rejection "$out" "$test_name"
+    require_stale_indirect_jump_cache_rejection "$out" "$test_name"
+    require_indirect_pic_patches "$out" "$test_name" JALR 2 1 0 1 7
+  fi
+
+  if [ "$test_name" = "riscv64-jit-pic-source-teardown" ]; then
+    require_indirect_pic_patches "$out" "$test_name" JALR 2 1 1 0 8
+    require_exact_indirect_pic_target_detaches \
+      "$out" "$test_name" JALR 0
+    require_lazy_source_reverse_map_nodes "$out" "$test_name"
+  fi
+
   if [ "$test_name" = "riscv64-jit-negative-cache" ]; then
     require_positive_invalidated_blocks "$out" "$test_name"
     require_positive_source_reverse_invalidations "$out" "$test_name"
@@ -1538,19 +2437,50 @@ for test_name in "${TESTS[@]}"; do
   if [ "$test_name" = "riscv64-jit-return-link" ]; then
     require_positive_native_jumps "$out" "$test_name"
     require_positive_direct_return_links "$out" "$test_name"
+    require_two_target_return_pic "$out" "$test_name"
+    require_indirect_pic_patches "$out" "$test_name" return 2 0 0 0 4000
   fi
 
   if [ "$test_name" = "riscv64-jit-indirect-link" ]; then
     require_positive_native_jumps "$out" "$test_name"
     require_positive_direct_jalr_links "$out" "$test_name"
+    require_polymorphic_jalr_pic "$out" "$test_name"
+    require_indirect_pic_patches "$out" "$test_name" JALR 3 1 0 0 8000
     require_positive_side_exit_reason \
       "$out" "$test_name" "jalr-misaligned"
+    require_unprobed_indirect_jump_cache "$out" "$test_name"
+  fi
+
+  if [ "$test_name" = "riscv64-jit-pic-megamorphic" ]; then
+    require_bounded_megamorphic_jalr_patching "$out" "$test_name"
+  fi
+
+  if [ "$test_name" = "riscv64-jit-pic-jump-guarded" ]; then
+    require_guarded_jump_cache "$out" "$test_name"
+  fi
+
+  if [ "$test_name" = "riscv64-jit-pic-alt-return" ]; then
+    require_alternate_return_hint_pic "$out" "$test_name"
+  fi
+
+  if [ "$test_name" = "riscv64-jit-indirect-budget" ]; then
+    require_exact_jalr_pic_budget_rejection "$out" "$test_name"
+    require_indirect_pic_patches "$out" "$test_name" JALR 1 0 0 0 1
+    require_absent_side_exit_reason \
+      "$out" "$test_name" "chained-over-budget"
+  fi
+
+  if [ "$test_name" = "riscv64-jit-jump-cache-budget" ]; then
+    require_exact_indirect_jump_cache_budget_rejection "$out" "$test_name"
+    require_absent_side_exit_reason \
+      "$out" "$test_name" "chained-over-budget"
   fi
 
   if [ "$test_name" = "riscv64-jit-direct-link" ]; then
     require_positive_native_jumps "$out" "$test_name"
     require_positive_direct_links "$out" "$test_name"
     require_positive_direct_branch_links "$out" "$test_name"
+    require_positive_patched_direct_links "$out" "$test_name"
   fi
 
   if [ "$test_name" = "riscv64-jit-trace" ]; then
@@ -1579,7 +2509,8 @@ for test_name in "${TESTS[@]}"; do
 
   if [ "$test_name" = "riscv64-jit-reg-cache" ]; then
     require_positive_reg_cache_spills "$out" "$test_name"
-    require_reg_cache_spills_at_most "$out" "$test_name" 12
+    require_reg_cache_spills_at_most "$out" "$test_name" 15
+    require_positive_liveness_victim_avoidance "$out" "$test_name"
   fi
 
   if [ "$test_name" = "riscv64-jit-memory-entry" ]; then
@@ -1618,6 +2549,7 @@ for test_name in "${TESTS[@]}"; do
   if [ "$test_name" = "riscv64-jit-sv39-dtlb" ]; then
     require_positive_translated_blocks "$out" "$test_name"
     require_positive_ifetch_generation_fast_hits "$out" "$test_name"
+    require_positive_avoided_ifetch_generation_bumps "$out" "$test_name"
     require_positive_native_paged_loads "$out" "$test_name"
     require_positive_native_paged_stores "$out" "$test_name"
     require_positive_helper_loads "$out" "$test_name"
@@ -1626,6 +2558,7 @@ for test_name in "${TESTS[@]}"; do
     require_positive_data_tlb_fills "$out" "$test_name"
     require_positive_data_tlb_flushes "$out" "$test_name"
     require_positive_data_tlb_page_table_flushes "$out" "$test_name"
+    require_positive_paged_store_helper_continuations "$out" "$test_name"
     require_positive_inline_paged_loads "$out" "$test_name"
     require_positive_inline_paged_stores "$out" "$test_name"
     require_positive_inline_paged_load_hits "$out" "$test_name"
@@ -1635,12 +2568,14 @@ for test_name in "${TESTS[@]}"; do
   fi
 
   rm -f "$out"
-  trap - EXIT
 done
+
+require_disabled_indirect_jump_cache riscv64-jit-pic-jump-guarded
 
 require_mmio_cross_map_rejection "$RV64_MMIO_BOUNDARY_TEST" load
 require_mmio_cross_map_rejection \
   "$RV64_MMIO_STORE_BOUNDARY_TEST" store
 
 make -C "$NEMU_HOME" riscv64-am-headless-jit_defconfig >/dev/null
+STATS_CONFIG_ACTIVE=0
 echo "RISC-V64 JIT correctness gate passed: ${TESTS[*]}"

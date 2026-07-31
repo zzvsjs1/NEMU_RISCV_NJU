@@ -256,6 +256,177 @@ jit_prescan_self_backedge(vaddr_t pc, uint32_t max_insns,
     return result;
 }
 
+typedef struct
+{
+    uint32_t uses;
+    uint32_t defs;
+    uint32_t live_after;
+} rv64_jit_gpr_liveness_t;
+
+typedef struct
+{
+    rv64_jit_gpr_liveness_t insns[RV64_JIT_TRACE_MAX_INSNS];
+    uint32_t count;
+} rv64_jit_gpr_liveness_scan_t;
+
+/* Return the bit for one cacheable architectural GPR, excluding constant x0. */
+static uint32_t jit_gpr_mask_bit(uint32_t reg)
+{
+    return reg == RV64_GPR_ZERO ? 0 : 1u << reg;
+}
+
+/*
+ * Decode the integer-register effects needed only for victim selection.
+ *
+ * Unknown major opcodes end the window. Missing a sub-encoding can only make
+ * the heuristic more conservative because dirty victims are never discarded;
+ * the real emitter remains the authority for instruction support and traps.
+ */
+static bool jit_decode_gpr_use_def(uint32_t instr, uint32_t *uses,
+                                   uint32_t *defs, bool *terminal)
+{
+    const uint32_t opcode = instr & RV64_OPCODE_MASK;
+    const uint32_t rd_bit = jit_gpr_mask_bit(rv64_instr_rd(instr));
+    const uint32_t rs1_bit = jit_gpr_mask_bit(rv64_instr_rs1(instr));
+    const uint32_t rs2_bit = jit_gpr_mask_bit(rv64_instr_rs2(instr));
+
+    *uses = 0;
+    *defs = 0;
+    *terminal = false;
+
+    switch (opcode)
+    {
+    case RV64_OPCODE_OP_IMM:
+    case RV64_OPCODE_OP_IMM_32:
+        *uses = rs1_bit;
+        *defs = rd_bit;
+        return true;
+    case RV64_OPCODE_OP:
+    case RV64_OPCODE_OP_32:
+        *uses = rs1_bit | rs2_bit;
+        *defs = rd_bit;
+        return true;
+    case RV64_OPCODE_LOAD:
+        *uses = rs1_bit;
+        *defs = rd_bit;
+        return true;
+    case RV64_OPCODE_STORE:
+        *uses = rs1_bit | rs2_bit;
+        return true;
+    case RV64_OPCODE_BRANCH:
+        *uses = rs1_bit | rs2_bit;
+        return true;
+    case RV64_OPCODE_JAL:
+        *defs = rd_bit;
+        *terminal = true;
+        return true;
+    case RV64_OPCODE_JALR:
+        *uses = rs1_bit;
+        *defs = rd_bit;
+        *terminal = true;
+        return true;
+    case RV64_OPCODE_LUI:
+    case RV64_OPCODE_AUIPC:
+        *defs = rd_bit;
+        return true;
+#ifdef CONFIG_RISCV_FPU
+    case RV64_FP_OPCODE_LOAD:
+    case RV64_FP_OPCODE_STORE:
+        /* FP stores encode an FPR, not a GPR, in the rs2 field. */
+        *uses = rs1_bit;
+        return true;
+    case RV64_FP_OPCODE_FMADD:
+    case RV64_FP_OPCODE_FMSUB:
+    case RV64_FP_OPCODE_FNMSUB:
+    case RV64_FP_OPCODE_FNMADD:
+        return true;
+    case RV64_FP_OPCODE_OP:
+        switch (rv64_jit_decode_fp_exact(instr))
+        {
+        case RV64_JIT_FP_EXACT_FMV_W_X:
+        case RV64_JIT_FP_EXACT_FMV_D_X:
+            *uses = rs1_bit;
+            break;
+        case RV64_JIT_FP_EXACT_FMV_X_W:
+        case RV64_JIT_FP_EXACT_FMV_X_D:
+        case RV64_JIT_FP_EXACT_FCLASS_S:
+        case RV64_JIT_FP_EXACT_FCLASS_D:
+            *defs = rd_bit;
+            break;
+        default:
+            /*
+             * Other FP operations use FPRs or run through a helper which reads
+             * flushed CPU state, so no emitted GPR slot pointer is retained.
+             */
+            break;
+        }
+        return true;
+#endif
+    default:
+        return false;
+    }
+}
+
+/*
+ * Build a bounded fall-through liveness window with the same safe fetch proof
+ * as compilation. This is a compile-time hint only: source metadata and the
+ * real emitter still decide the published block prefix.
+ */
+static rv64_jit_gpr_liveness_scan_t
+jit_prescan_gpr_liveness(vaddr_t pc, uint32_t max_insns,
+                         bool uses_translated_ifetch)
+{
+    rv64_jit_gpr_liveness_scan_t scan = {0};
+    vaddr_t candidate_pc = pc;
+
+    while (scan.count < max_insns &&
+           scan.count < RV64_JIT_TRACE_MAX_INSNS)
+    {
+        paddr_t candidate_paddr = 0;
+        bool candidate_uses_translated_ifetch = false;
+
+        if (!rv64_jit_translate_ifetch_ex(
+                candidate_pc, &candidate_paddr,
+                &candidate_uses_translated_ifetch) ||
+            !in_pmem(candidate_paddr) ||
+            candidate_uses_translated_ifetch != uses_translated_ifetch)
+        {
+            break;
+        }
+
+        const uint32_t instr =
+            (uint32_t)vaddr_ifetch(candidate_pc, RV64_INSN_SIZE);
+        rv64_jit_gpr_liveness_t *item = &scan.insns[scan.count];
+        bool terminal = false;
+
+        if (!jit_decode_gpr_use_def(
+                instr, &item->uses, &item->defs, &terminal))
+        {
+            break;
+        }
+
+        scan.count++;
+
+        if (terminal)
+        {
+            break;
+        }
+
+        candidate_pc += RV64_INSN_SIZE;
+    }
+
+    uint32_t live = 0;
+
+    for (uint32_t i = scan.count; i-- > 0;)
+    {
+        rv64_jit_gpr_liveness_t *item = &scan.insns[i];
+        item->live_after = live;
+        live = (live & ~item->defs) | item->uses;
+    }
+
+    return scan;
+}
+
 /*
  * Counters in this snapshot describe native sites emitted while compiling.
  * They are transactional for the same reason as native bytes and register-cache
@@ -271,7 +442,11 @@ typedef struct
     uint64_t native_m_ops;
     uint64_t native_fp_exact_sites;
     uint64_t native_fp_memory_sites;
+    uint64_t indirect_pic_sites;
+    uint64_t indirect_jump_cache_sites;
     uint64_t reg_cache_spills;
+    uint64_t reg_cache_dead_victims;
+    uint64_t reg_cache_live_lru_avoided;
     uint64_t native_store_continuations;
     uint64_t native_paged_loads;
     uint64_t native_paged_stores;
@@ -280,6 +455,12 @@ typedef struct
     uint64_t direct_mmio_load_sites;
     uint64_t direct_mmio_store_sites;
     uint64_t fp_helper_sites;
+    uint64_t fp_helper_gpr_effect_sites;
+    uint64_t fp_helper_gpr_mappings_preserved;
+    uint64_t fp_helper_gpr_selective_invalidations;
+    uint64_t fp_helper_gpr_input_flushes;
+    uint64_t fp_helper_gpr_dirty_mappings_preserved;
+    uint64_t fp_helper_gpr_trap_stores;
 } rv64_jit_emitted_site_stats_t;
 
 static rv64_jit_emitted_site_stats_t jit_snapshot_emitted_site_stats(void)
@@ -291,7 +472,14 @@ static rv64_jit_emitted_site_stats_t jit_snapshot_emitted_site_stats(void)
         .native_m_ops = rv64_jit_stats.native_m_ops,
         .native_fp_exact_sites = rv64_jit_stats.native_fp_exact_sites,
         .native_fp_memory_sites = rv64_jit_stats.native_fp_memory_sites,
+        .indirect_pic_sites = rv64_jit_stats.indirect_pic_sites,
+        .indirect_jump_cache_sites =
+            rv64_jit_stats.indirect_jump_cache_sites,
         .reg_cache_spills = rv64_jit_stats.reg_cache_spills,
+        .reg_cache_dead_victims =
+            rv64_jit_stats.reg_cache_dead_victims,
+        .reg_cache_live_lru_avoided =
+            rv64_jit_stats.reg_cache_live_lru_avoided,
         .native_store_continuations = rv64_jit_stats.native_store_continuations,
         .native_paged_loads = rv64_jit_stats.native_paged_loads,
         .native_paged_stores = rv64_jit_stats.native_paged_stores,
@@ -300,6 +488,18 @@ static rv64_jit_emitted_site_stats_t jit_snapshot_emitted_site_stats(void)
         .direct_mmio_load_sites = rv64_jit_stats.direct_mmio_load_sites,
         .direct_mmio_store_sites = rv64_jit_stats.direct_mmio_store_sites,
         .fp_helper_sites = rv64_jit_stats.fp_helper_sites,
+        .fp_helper_gpr_effect_sites =
+            rv64_jit_stats.fp_helper_gpr_effect_sites,
+        .fp_helper_gpr_mappings_preserved =
+            rv64_jit_stats.fp_helper_gpr_mappings_preserved,
+        .fp_helper_gpr_selective_invalidations =
+            rv64_jit_stats.fp_helper_gpr_selective_invalidations,
+        .fp_helper_gpr_input_flushes =
+            rv64_jit_stats.fp_helper_gpr_input_flushes,
+        .fp_helper_gpr_dirty_mappings_preserved =
+            rv64_jit_stats.fp_helper_gpr_dirty_mappings_preserved,
+        .fp_helper_gpr_trap_stores =
+            rv64_jit_stats.fp_helper_gpr_trap_stores,
     };
 }
 
@@ -314,7 +514,14 @@ static void jit_restore_emitted_site_stats(
         snapshot->native_fp_exact_sites;
     rv64_jit_stats.native_fp_memory_sites =
         snapshot->native_fp_memory_sites;
+    rv64_jit_stats.indirect_pic_sites = snapshot->indirect_pic_sites;
+    rv64_jit_stats.indirect_jump_cache_sites =
+        snapshot->indirect_jump_cache_sites;
     rv64_jit_stats.reg_cache_spills = snapshot->reg_cache_spills;
+    rv64_jit_stats.reg_cache_dead_victims =
+        snapshot->reg_cache_dead_victims;
+    rv64_jit_stats.reg_cache_live_lru_avoided =
+        snapshot->reg_cache_live_lru_avoided;
     rv64_jit_stats.native_store_continuations =
         snapshot->native_store_continuations;
     rv64_jit_stats.native_paged_loads = snapshot->native_paged_loads;
@@ -326,6 +533,18 @@ static void jit_restore_emitted_site_stats(
     rv64_jit_stats.direct_mmio_store_sites =
         snapshot->direct_mmio_store_sites;
     rv64_jit_stats.fp_helper_sites = snapshot->fp_helper_sites;
+    rv64_jit_stats.fp_helper_gpr_effect_sites =
+        snapshot->fp_helper_gpr_effect_sites;
+    rv64_jit_stats.fp_helper_gpr_mappings_preserved =
+        snapshot->fp_helper_gpr_mappings_preserved;
+    rv64_jit_stats.fp_helper_gpr_selective_invalidations =
+        snapshot->fp_helper_gpr_selective_invalidations;
+    rv64_jit_stats.fp_helper_gpr_input_flushes =
+        snapshot->fp_helper_gpr_input_flushes;
+    rv64_jit_stats.fp_helper_gpr_dirty_mappings_preserved =
+        snapshot->fp_helper_gpr_dirty_mappings_preserved;
+    rv64_jit_stats.fp_helper_gpr_trap_stores =
+        snapshot->fp_helper_gpr_trap_stores;
 }
 #else
 /* Keep call sites uniform; the optimiser removes this one-byte no-op snapshot. */
@@ -355,6 +574,11 @@ typedef struct
     rv64_jit_emitted_site_stats_t emitted_site_stats;
     uint8_t mmio_route_site_count;
     uint8_t mmio_route_fixup_count;
+    uint8_t indirect_pic_fixup_count;
+    bool indirect_pic_used;
+    uint8_t indirect_jump_cache_fixup_count;
+    bool indirect_jump_cache_used;
+    uint32_t link_count;
 } rv64_jit_compile_snapshot_t;
 
 typedef enum
@@ -376,8 +600,12 @@ typedef struct
     uint32_t compiled_insn_count;
     uint32_t stable_loop_reg_count;
     const uint8_t *native_body_entry;
+    const uint8_t *chain_entry;
     const uint8_t *native_code_end;
     const uint8_t *allocation_end;
+    rv64_jit_link_t *link_records;
+    uint32_t link_count;
+    rv64_jit_indirect_pic_t *indirect_pic;
     const rv64_jit_source_builder_t *source;
     const rv64_jit_ifetch_ref_builder_t *ifetch_refs;
 } rv64_jit_publish_info_t;
@@ -405,6 +633,12 @@ static bool jit_handle_emit_failure(rv64_jit_writer_t *w,
     *ifetch_refs = snapshot->ifetch_refs;
     mmio_routes->site_count = snapshot->mmio_route_site_count;
     mmio_routes->fixup_count = snapshot->mmio_route_fixup_count;
+    w->indirect_pic->fixup_count = snapshot->indirect_pic_fixup_count;
+    w->indirect_pic->used = snapshot->indirect_pic_used;
+    w->indirect_jump_cache->fixup_count =
+        snapshot->indirect_jump_cache_fixup_count;
+    w->indirect_jump_cache->used = snapshot->indirect_jump_cache_used;
+    w->links->count = snapshot->link_count;
     jit_restore_emitted_site_stats(&snapshot->emitted_site_stats);
 
     /*
@@ -421,6 +655,66 @@ static bool jit_handle_emit_failure(rv64_jit_writer_t *w,
 
     rv64_jit_stat_unsupported_opcode(instr);
     *block_end_reason = RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX;
+    return true;
+}
+
+/*
+ * Materialise mutable direct-link records after all executable bytes and other
+ * sidecars. Build records point into the just-emitted native region; their
+ * persistent counterparts additionally acquire cache-slot list ownership when
+ * the block is published.
+ */
+static bool jit_finalise_links(rv64_jit_writer_t *w,
+                               rv64_jit_link_builder_t *links,
+                               rv64_jit_link_t **records)
+{
+    Assert(links != NULL, "jit: missing RV64 direct-link builder");
+    Assert(records != NULL, "jit: missing RV64 direct-link sidecar result");
+    Assert(links->count <= RV64_JIT_BLOCK_MAX_LINKS,
+           "jit: too many RV64 direct-link records");
+    *records = NULL;
+
+    if (links->count == 0)
+    {
+        return true;
+    }
+
+    const uintptr_t aligned =
+        rv64_jit_align_up((uintptr_t)w->cur, _Alignof(rv64_jit_link_t));
+    const size_t padding = (size_t)(aligned - (uintptr_t)w->cur);
+    const size_t record_bytes =
+        (size_t)links->count * sizeof(rv64_jit_link_t);
+    const size_t available = (size_t)(w->end - w->cur);
+
+    if (padding > available || record_bytes > available - padding)
+    {
+        w->overflowed = true;
+        return false;
+    }
+
+    memset(w->cur, 0, padding);
+    w->cur += padding;
+    rv64_jit_link_t *persistent = (rv64_jit_link_t *)w->cur;
+    memset(persistent, 0, record_bytes);
+
+    for (uint32_t i = 0; i < links->count; i++)
+    {
+        const rv64_jit_link_build_record_t *build = &links->records[i];
+        persistent[i] = (rv64_jit_link_t){
+            .selector_disp = build->selector_disp,
+            .target_disp = build->target_disp,
+            .guarded_path = build->guarded_path,
+            .patched_path = build->patched_path,
+            .target_pc = build->target_pc,
+            .target_satp = build->target_satp,
+            .target_ifetch_state = build->target_ifetch_state,
+            .target_slot_index = UINT32_MAX,
+            .patch_eligible = build->patch_eligible,
+        };
+    }
+
+    w->cur += record_bytes;
+    *records = persistent;
     return true;
 }
 
@@ -447,6 +741,7 @@ static rv64_jit_block_t *jit_publish_compiled_block(
         .valid = false,
         .translated = info->uses_translated_ifetch,
         .uses_data_state = info->needs_data_translation_guard,
+        .generation = rv64_jit_allocate_block_generation(),
         .pc = info->start_pc,
         .satp = cpu.csr.satp,
         .ifetch_state = rv64_jit_ifetch_state(),
@@ -461,6 +756,10 @@ static rv64_jit_block_t *jit_publish_compiled_block(
         .insn_count = info->compiled_insn_count,
         .entry = (rv64_jit_entry_t)w->start,
         .body_entry = (rv64_jit_entry_t)info->native_body_entry,
+        .chain_entry = (rv64_jit_entry_t)info->chain_entry,
+        .outgoing_links = info->link_records,
+        .outgoing_link_count = info->link_count,
+        .indirect_pic = info->indirect_pic,
     };
     memcpy(block->source_segments, info->source->segments,
            sizeof(info->source->segments));
@@ -473,6 +772,8 @@ static rv64_jit_block_t *jit_publish_compiled_block(
 
     rv64_jit_code_used =
         (size_t)(info->allocation_end - rv64_jit_code);
+    rv64_jit_links_source_published(block);
+    rv64_jit_links_target_published(block);
     rv64_jit_perf_map_publish(
         block, w->start,
         (size_t)(info->native_code_end - w->start));
@@ -554,7 +855,11 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         jit_snapshot_emitted_site_stats();
 
     if (rv64_jit_code_used + RV64_JIT_BLOCK_CODE_HEADROOM +
-            RV64_JIT_MMIO_ROUTE_MAX_ALLOCATION >
+        RV64_JIT_MMIO_ROUTE_MAX_ALLOCATION +
+            RV64_JIT_INDIRECT_JUMP_CACHE_MAX_ALLOCATION +
+            RV64_JIT_INDIRECT_PIC_MAX_ALLOCATION +
+            _Alignof(rv64_jit_link_t) - 1u +
+            RV64_JIT_BLOCK_MAX_LINKS * sizeof(rv64_jit_link_t) >
         RV64_JIT_CODE_SIZE)
     {
         rv64_jit_arena_reset();
@@ -572,10 +877,21 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         return NULL;
     }
 
+    /*
+     * Only the count needs initialising: every consumed build record is fully
+     * assigned when its edge is emitted, avoiding a large per-block stack clear.
+     */
+    rv64_jit_link_builder_t links;
+    links.count = 0;
+    rv64_jit_indirect_pic_builder_t indirect_pic = {0};
+    rv64_jit_indirect_jump_cache_builder_t indirect_jump_cache = {0};
     rv64_jit_writer_t w = {
         .start = rv64_jit_code + rv64_jit_code_used,
         .cur = rv64_jit_code + rv64_jit_code_used,
         .end = rv64_jit_code + RV64_JIT_CODE_SIZE,
+        .links = &links,
+        .indirect_pic = &indirect_pic,
+        .indirect_jump_cache = &indirect_jump_cache,
     };
     rv64_jit_reg_cache_t regs;
     rv64_jit_reg_cache_init(&regs);
@@ -591,6 +907,9 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     const rv64_jit_loop_scan_t loop_scan =
         jit_prescan_self_backedge(pc, max_insns,
                                   uses_translated_ifetch);
+    const rv64_jit_gpr_liveness_scan_t liveness_scan =
+        jit_prescan_gpr_liveness(pc, max_insns,
+                                 uses_translated_ifetch);
     const uint8_t *native_body_entry = w.cur;
     const uint8_t *loop_body_entry = native_body_entry;
 
@@ -648,6 +967,32 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         const uint32_t instr =
             (uint32_t)vaddr_ifetch(guest_pc, RV64_INSN_SIZE);
         const uint32_t opcode = instr & RV64_OPCODE_MASK;
+        uint32_t current_uses = 0;
+        uint32_t current_defs = 0;
+        bool current_terminal = false;
+
+        if (compiled_insn_count < liveness_scan.count)
+        {
+            current_uses =
+                liveness_scan.insns[compiled_insn_count].uses;
+            rv64_jit_reg_cache_set_liveness(
+                &regs, current_uses,
+                liveness_scan.insns[compiled_insn_count].live_after);
+        }
+        else
+        {
+            /*
+             * A conservative scan boundary can precede the real emitter's
+             * exact boundary. Pin this instruction's operands but disable
+             * future-use preference for the remaining prefix.
+             */
+            (void)jit_decode_gpr_use_def(
+                instr, &current_uses, &current_defs,
+                &current_terminal);
+            rv64_jit_reg_cache_set_liveness(
+                &regs, current_uses, UINT32_MAX);
+        }
+
         const rv64_jit_compile_snapshot_t instr_snapshot = {
             .writer_cur = w.cur,
             .regs = regs,
@@ -656,6 +1001,12 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
             .emitted_site_stats = jit_snapshot_emitted_site_stats(),
             .mmio_route_site_count = mmio_routes.site_count,
             .mmio_route_fixup_count = mmio_routes.fixup_count,
+            .indirect_pic_fixup_count = indirect_pic.fixup_count,
+            .indirect_pic_used = indirect_pic.used,
+            .indirect_jump_cache_fixup_count =
+                indirect_jump_cache.fixup_count,
+            .indirect_jump_cache_used = indirect_jump_cache.used,
+            .link_count = links.count,
         };
         bool stop_after_instruction = false;
 
@@ -879,14 +1230,61 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     }
 
     /*
-     * All executable paths are terminal now. Keep profiler attribution and
-     * instruction-cache synchronisation bounded to native bytes, then append
-     * the freshly initialised mutable MMIO routing data which belongs to this
-     * generation.
+     * All ordinary paths are terminal now. A context-simple target can append
+     * the alternate entry used by an incoming patched edge; translated or
+     * data-sensitive targets retain only their complete guarded entry path.
+     * The alternate entry performs the destination budget check without
+     * another prologue and then jumps backwards to native_body_entry.
+     */
+    const uint8_t *chain_entry = NULL;
+
+    if (!uses_translated_ifetch && !needs_data_translation_guard &&
+        !rv64_jit_emit_chain_entry(
+            &w, pc, compiled_insn_count,
+            native_body_entry, &chain_entry))
+    {
+        *arena_overflowed = w.overflowed;
+        jit_restore_emitted_site_stats(&attempt_site_stats);
+        return NULL;
+    }
+
+    /*
+     * Keep profiler attribution and instruction-cache synchronisation bounded
+     * to native bytes, then append mutable sidecars for this generation.
      */
     const uint8_t *native_code_end = w.cur;
 
+    Assert(!(indirect_pic.used && indirect_jump_cache.used),
+           "jit: one RV64 block selected both indirect cache kinds");
+
     if (!rv64_jit_finalise_mmio_routes(&w, &mmio_routes))
+    {
+        *arena_overflowed = w.overflowed;
+        jit_restore_emitted_site_stats(&attempt_site_stats);
+        return NULL;
+    }
+
+    if (!rv64_jit_finalise_indirect_jump_cache(
+            &w, &indirect_jump_cache))
+    {
+        *arena_overflowed = w.overflowed;
+        jit_restore_emitted_site_stats(&attempt_site_stats);
+        return NULL;
+    }
+
+    rv64_jit_indirect_pic_t *indirect_pic_sidecar = NULL;
+
+    if (!rv64_jit_finalise_indirect_pic(
+            &w, &indirect_pic, &indirect_pic_sidecar))
+    {
+        *arena_overflowed = w.overflowed;
+        jit_restore_emitted_site_stats(&attempt_site_stats);
+        return NULL;
+    }
+
+    rv64_jit_link_t *link_records = NULL;
+
+    if (!jit_finalise_links(&w, &links, &link_records))
     {
         *arena_overflowed = w.overflowed;
         jit_restore_emitted_site_stats(&attempt_site_stats);
@@ -903,8 +1301,12 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         .stable_loop_reg_count =
             used_stable_loop ? loop_scan.stable_reg_count : 0,
         .native_body_entry = native_body_entry,
+        .chain_entry = chain_entry,
         .native_code_end = native_code_end,
         .allocation_end = w.cur,
+        .link_records = link_records,
+        .link_count = links.count,
+        .indirect_pic = indirect_pic_sidecar,
         .source = &source,
         .ifetch_refs = &ifetch_refs,
     };

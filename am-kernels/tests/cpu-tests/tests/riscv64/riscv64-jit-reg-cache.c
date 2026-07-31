@@ -81,12 +81,39 @@ static uint64_t word_and_m_sequence(void)
     return out;
 }
 
+/*
+ * Make the ordinary LRU victim (`t1`) live at the seventh allocation while
+ * several newer values are dead. A liveness-aware victim choice preserves t1
+ * and avoids an immediate reload before the final add.
+ */
+static uint64_t liveness_victim_sequence(void)
+{
+    uint64_t out;
+
+    asm volatile(
+        "li t0, 1\n"
+        "li t1, 2\n"
+        "li t2, 3\n"
+        "li t3, 4\n"
+        "li t4, 5\n"
+        "li t5, 6\n"
+        "addi t0, t0, 0\n"
+        "li t6, 7\n"
+        "add %[out], t1, t6\n"
+        : [out] "=r"(out)
+        :
+        : "t0", "t1", "t2", "t3", "t4", "t5", "t6", "memory");
+
+    return out;
+}
+
 /* Group behaviours that become fragile when guest registers live in host regs. */
 static void test_register_cache_edges(void)
 {
     check(spill_sequence() == 46ull);
     check(store_and_branch_sequence() == 48ull);
     check(word_and_m_sequence() == 0xffffffff7fffffefull);
+    check(liveness_victim_sequence() == 9ull);
     check(reg_cache_slot == 42ull);
 }
 

@@ -495,6 +495,8 @@ static void jit_dump_compilation_stats(void)
         rv64_jit_stats.native_jumps, rv64_jit_stats.native_m_ops,
         rv64_jit_stats.native_fp_exact_sites,
         rv64_jit_stats.native_fp_memory_sites);
+    Log("jit:   emitted indirect PIC sites = %" PRIu64,
+        rv64_jit_stats.indirect_pic_sites);
     Log("jit:   emitted Sv39 sites: native paged loads = %" PRIu64
         ", native paged stores = %" PRIu64,
         rv64_jit_stats.native_paged_loads,
@@ -513,6 +515,10 @@ static void jit_dump_compilation_stats(void)
         rv64_jit_stats.direct_mmio_store_sites);
     Log("jit:   reg cache spills = %" PRIu64 " emitted spill sequences",
         rv64_jit_stats.reg_cache_spills);
+    Log("jit:   reg cache liveness: dead victims = %" PRIu64
+        ", live LRU avoided = %" PRIu64,
+        rv64_jit_stats.reg_cache_dead_victims,
+        rv64_jit_stats.reg_cache_live_lru_avoided);
     Log("jit:   stable register loops = %" PRIu64
         ", preloaded registers = %" PRIu64,
         rv64_jit_stats.stable_loop_blocks,
@@ -529,6 +535,18 @@ static void jit_dump_fp_helper_stats(void)
         ", memory exits = %" PRIu64,
         rv64_jit_stats.fp_helper_sites, rv64_jit_stats.fp_helper_calls, rv64_jit_stats.fp_helper_continuations,
         rv64_jit_stats.fp_helper_trap_exits, rv64_jit_stats.fp_helper_memory_exits);
+    Log("jit:   FP helper GPR effects: classified sites = %" PRIu64
+        ", preserved mappings = %" PRIu64
+        ", selective invalidations = %" PRIu64
+        ", input flushes = %" PRIu64
+        ", dirty mappings preserved = %" PRIu64
+        ", trap stores = %" PRIu64,
+        rv64_jit_stats.fp_helper_gpr_effect_sites,
+        rv64_jit_stats.fp_helper_gpr_mappings_preserved,
+        rv64_jit_stats.fp_helper_gpr_selective_invalidations,
+        rv64_jit_stats.fp_helper_gpr_input_flushes,
+        rv64_jit_stats.fp_helper_gpr_dirty_mappings_preserved,
+        rv64_jit_stats.fp_helper_gpr_trap_stores);
 }
 
 /* Memory summary: these counters measure helper and generated-code activity. */
@@ -575,13 +593,17 @@ static void jit_dump_memory_stats(void)
     Log("jit:   helper loads = %" PRIu64 ", helper stores = %" PRIu64,
         rv64_jit_stats.helper_load_count,
         rv64_jit_stats.helper_store_count);
+    Log("jit:   paged store helper continuations = %" PRIu64,
+        rv64_jit_stats.paged_store_helper_continuations);
     Log("jit:   bare MMIO load calls = %" PRIu64,
         rv64_jit_stats.bare_mmio_load_calls);
     Log("jit:   bare MMIO store calls = %" PRIu64
-        ", continuations = %" PRIu64 ", boundary exits = %" PRIu64,
+        ", continuations = %" PRIu64 ", boundary exits = %" PRIu64
+        ", invalidation exits = %" PRIu64,
         rv64_jit_stats.bare_mmio_store_calls,
         rv64_jit_stats.bare_mmio_store_continuations,
-        rv64_jit_stats.bare_mmio_store_boundary_exits);
+        rv64_jit_stats.bare_mmio_store_boundary_exits,
+        rv64_jit_stats.bare_mmio_store_invalidation_exits);
 }
 
 /* Linking and validation counters are updated by running generated code or C. */
@@ -608,6 +630,11 @@ static void jit_dump_link_and_validation_stats(void)
         rv64_jit_stats.direct_branch_link_taken_count);
     Log("jit:   direct guarded links taken = %" PRIu64,
         rv64_jit_stats.direct_guarded_link_taken_count);
+    Log("jit:   patched direct links taken = %" PRIu64
+        ", resolutions = %" PRIu64 ", unlinks = %" PRIu64,
+        rv64_jit_stats.patched_direct_link_taken_count,
+        rv64_jit_stats.direct_link_patch_resolutions,
+        rv64_jit_stats.direct_link_patch_unlinks);
     jit_log_percentage("Direct return-link success rate",
                        rv64_jit_stats.direct_return_link_taken_count,
                        direct_return_link_attempts);
@@ -620,11 +647,58 @@ static void jit_dump_link_and_validation_stats(void)
     Log("jit:   direct JALR links taken = %" PRIu64 ", misses = %" PRIu64,
         rv64_jit_stats.direct_jalr_link_taken_count,
         rv64_jit_stats.direct_jalr_link_miss_count);
+    Log("jit:   indirect jump cache sites = %" PRIu64
+        ", hits = %" PRIu64 ", misses = %" PRIu64
+        ", fills = %" PRIu64 ", replacements = %" PRIu64
+        ", stale rejections = %" PRIu64
+        ", budget rejects = %" PRIu64,
+        rv64_jit_stats.indirect_jump_cache_sites,
+        rv64_jit_stats.indirect_jump_cache_hits,
+        rv64_jit_stats.indirect_jump_cache_misses,
+        rv64_jit_stats.indirect_jump_cache_fills,
+        rv64_jit_stats.indirect_jump_cache_replacements,
+        rv64_jit_stats.indirect_jump_cache_stale_rejections,
+        rv64_jit_stats.indirect_jump_cache_budget_rejections);
+
+    static const char *const pic_names[RV64_JIT_INDIRECT_PIC_KIND_COUNT] = {
+        [RV64_JIT_INDIRECT_PIC_RETURN] = "return",
+        [RV64_JIT_INDIRECT_PIC_JALR] = "JALR",
+    };
+
+    for (uint32_t i = 0; i < RV64_JIT_INDIRECT_PIC_KIND_COUNT; i++)
+    {
+        Log("jit:   direct %s PIC hits = %" PRIu64
+            ", secondary hits = %" PRIu64 ", misses = %" PRIu64
+            ", fills = %" PRIu64 ", replacements = %" PRIu64
+            ", stale rejections = %" PRIu64
+            ", budget rejects = %" PRIu64,
+            pic_names[i], rv64_jit_stats.indirect_pic_hits[i],
+            rv64_jit_stats.indirect_pic_secondary_hits[i],
+            rv64_jit_stats.indirect_pic_misses[i],
+            rv64_jit_stats.indirect_pic_fills[i],
+            rv64_jit_stats.indirect_pic_replacements[i],
+            rv64_jit_stats.indirect_pic_stale_rejections[i],
+            rv64_jit_stats.indirect_pic_budget_rejections[i]);
+        Log("jit:   direct %s PIC patches = %" PRIu64
+            ", unlinks = %" PRIu64 ", source detaches = %" PRIu64
+            ", target detaches = %" PRIu64
+            ", patched entries = %" PRIu64
+            ", churn downgrades = %" PRIu64,
+            pic_names[i],
+            rv64_jit_stats.indirect_pic_patch_resolutions[i],
+            rv64_jit_stats.indirect_pic_patch_unlinks[i],
+            rv64_jit_stats.indirect_pic_source_detaches[i],
+            rv64_jit_stats.indirect_pic_target_detaches[i],
+            rv64_jit_stats.indirect_pic_patched_entries[i],
+            rv64_jit_stats.indirect_pic_patch_downgrades[i]);
+    }
     Log("jit:   ifetch generation fast hits = %" PRIu64
         ", revalidations = %" PRIu64 ", bumps = %" PRIu64,
         rv64_jit_stats.ifetch_generation_fast_hits,
         rv64_jit_stats.ifetch_generation_revalidations,
         rv64_jit_stats.ifetch_generation_bumps);
+    Log("jit:   unrelated ifetch writes avoided = %" PRIu64,
+        rv64_jit_stats.ifetch_generation_avoided_bumps);
 }
 
 /* Maintenance work is kept separate from hot-path execution counts. */
@@ -640,6 +714,11 @@ static void jit_dump_invalidation_stats(void)
         ", full scans = %" PRIu64,
         rv64_jit_stats.source_reverse_invalidations,
         rv64_jit_stats.source_full_invalidation_scans);
+    Log("jit:   source reverse-map nodes: sequential allocations = %" PRIu64
+        ", recycled allocations = %" PRIu64 ", usable capacity = %u",
+        rv64_jit_stats.source_link_sequential_allocations,
+        rv64_jit_stats.source_link_recycled_allocations,
+        (unsigned)(RV64_JIT_SOURCE_LINK_COUNT - 1u));
 }
 
 /* Print only non-zero fallback categories so the diagnostic list stays short. */

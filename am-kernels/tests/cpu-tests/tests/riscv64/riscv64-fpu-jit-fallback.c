@@ -38,9 +38,12 @@ static uint32_t rv64_fpu_store_patch_code[4] __attribute__((aligned(16))) = {
  * block-entry and integer-prefix boundaries visible while the JIT executes FP
  * helper sites.
  *
- * The final helper is the register-cache coherence probe. Its integer prefix
- * changes a cached GPR before FMV.D.X reads it, while FCVT.W.D writes a
- * different GPR which the immediately following integer suffix consumes.
+ * The final two helpers are register-cache coherence probes. Their integer
+ * prefixes dirty all six ordinary cache slots before FCVT.D.L or FCVT.S.L
+ * reads t0. The additions then change no GPR, while the conversions and
+ * comparisons overwrite two cached destinations. Keeping separate S and D
+ * sites prevents either half of the effect table silently falling back to a
+ * correct but needlessly fully synchronised helper path.
  */
 asm(".section .text\n"
     ".align 2\n"
@@ -101,14 +104,46 @@ asm(".section .text\n"
     ".globl rv64_fpu_gpr_cache_roundtrip\n"
     ".type rv64_fpu_gpr_cache_roundtrip, @function\n"
     "rv64_fpu_gpr_cache_roundtrip:\n"
-    "  addi a0, a0, 1\n"
-    "  fmv.d.x f0, a0\n"
+    "  addi t0, a0, 1\n"
+    "  addi t1, zero, 22\n"
+    "  addi t2, zero, 33\n"
+    "  addi t3, zero, 44\n"
+    "  addi t4, zero, 55\n"
+    "  addi t5, zero, 66\n"
+    "  fcvt.d.l f0, t0, rne\n"
     "  fadd.d f0, f0, f0, rne\n"
-    "  fcvt.w.d a1, f0, rtz\n"
-    "  addi a0, a1, 7\n"
+    "  fcvt.w.d t0, f0, rtz\n"
+    "  feq.d t1, f0, f0\n"
+    "  add a0, t0, t1\n"
+    "  add a0, a0, t2\n"
+    "  add a0, a0, t3\n"
+    "  add a0, a0, t4\n"
+    "  add a0, a0, t5\n"
     "  ret\n"
     ".size rv64_fpu_gpr_cache_roundtrip, "
     ".-rv64_fpu_gpr_cache_roundtrip\n"
+
+    ".globl rv64_fpu_gpr_cache_roundtrip_s\n"
+    ".type rv64_fpu_gpr_cache_roundtrip_s, @function\n"
+    "rv64_fpu_gpr_cache_roundtrip_s:\n"
+    "  addi t0, a0, 1\n"
+    "  addi t1, zero, 22\n"
+    "  addi t2, zero, 33\n"
+    "  addi t3, zero, 44\n"
+    "  addi t4, zero, 55\n"
+    "  addi t5, zero, 66\n"
+    "  fcvt.s.l f0, t0, rne\n"
+    "  fadd.s f0, f0, f0, rne\n"
+    "  fcvt.w.s t0, f0, rtz\n"
+    "  feq.s t1, f0, f0\n"
+    "  add a0, t0, t1\n"
+    "  add a0, a0, t2\n"
+    "  add a0, a0, t3\n"
+    "  add a0, a0, t4\n"
+    "  add a0, a0, t5\n"
+    "  ret\n"
+    ".size rv64_fpu_gpr_cache_roundtrip_s, "
+    ".-rv64_fpu_gpr_cache_roundtrip_s\n"
 
     ".option pop\n");
 
@@ -118,6 +153,7 @@ extern uint64_t rv64_fpu_after_integer_prefix(uint64_t input,
                                               uint64_t *counter);
 extern void rv64_fpu_all_major_opcodes(const uint64_t *, uint64_t *);
 extern uint64_t rv64_fpu_gpr_cache_roundtrip(uint64_t input);
+extern uint64_t rv64_fpu_gpr_cache_roundtrip_s(uint64_t input);
 
 static uintptr_t read_mstatus(void)
 {
@@ -209,12 +245,21 @@ static void test_fpu_jit_fallback_boundaries(void)
     check(prefix_counter == 1);
 
     /*
-     * Adding one to this literal produces the exact binary64 encoding of
-     * +1.5. Doubling gives +3.0, conversion yields 3, and the native suffix
-     * adds 7. Repeating the same call covers cold and warm JIT paths.
+     * The integer prefix produces 3 and constants 22, 33, 44, 55, and 66.
+     * FCVT.D.L and FADD.D produce +6.0, FCVT.W.D writes 6 to t0, and FEQ.D
+     * writes 1 to t1. The four preserved constants make the exact sum 205.
+     * Repeating the same call covers cold and warm JIT paths.
      */
-    check(rv64_fpu_gpr_cache_roundtrip(UINT64_C(0x3ff7ffffffffffff)) == 10);
-    check(rv64_fpu_gpr_cache_roundtrip(UINT64_C(0x3ff7ffffffffffff)) == 10);
+    check(rv64_fpu_gpr_cache_roundtrip(2) == 205);
+    check(rv64_fpu_gpr_cache_roundtrip(2) == 205);
+
+    /*
+     * The same exact values fit binary32. Separate instruction addresses make
+     * the S-width read, preserve, and write effects independently visible in
+     * the compile-time statistics, again on both cold and warm executions.
+     */
+    check(rv64_fpu_gpr_cache_roundtrip_s(2) == 205);
+    check(rv64_fpu_gpr_cache_roundtrip_s(2) == 205);
 
     test_all_fp_major_opcodes_cold_and_warm();
     test_fp_store_source_invalidation_boundary();

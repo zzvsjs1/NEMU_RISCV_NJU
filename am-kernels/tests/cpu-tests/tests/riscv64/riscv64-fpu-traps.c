@@ -238,6 +238,51 @@ asm(".section .text\n"
     "  ret\n"
     ".size rv64_fpu_bad_static_rm, .-rv64_fpu_bad_static_rm\n"
 
+    /*
+     * A classified arithmetic helper reads no GPR, so the optimised path may
+     * carry these six dirty values through the C call.  Reserved rm=101 then
+     * forces the generated trap-only stub to publish them before the guest
+     * handler and resumed suffix run from separate native entries.  The trap
+     * handler intentionally uses only t0/t1.
+     */
+    ".globl rv64_fpu_bad_static_rm_dirty\n"
+    ".type rv64_fpu_bad_static_rm_dirty, @function\n"
+    "rv64_fpu_bad_static_rm_dirty:\n"
+    "  addi t2, zero, 0x112\n"
+    "  addi t3, zero, 0x223\n"
+    "  addi t4, zero, 0x334\n"
+    "  addi t5, zero, 0x445\n"
+    "  addi t6, zero, 0x556\n"
+    "  addi a2, zero, 0x667\n"
+    ".globl rv64_fpu_bad_static_rm_dirty_insn\n"
+    "rv64_fpu_bad_static_rm_dirty_insn:\n"
+    "  .word 0x0020d053\n" /* FADD.S f0, f1, f2, reserved rm=101 */
+    "  add a0, t2, t3\n"
+    "  add a0, a0, t4\n"
+    "  add a0, a0, t5\n"
+    "  add a0, a0, t6\n"
+    "  add a0, a0, a2\n"
+    "  ret\n"
+    ".size rv64_fpu_bad_static_rm_dirty, "
+    ".-rv64_fpu_bad_static_rm_dirty\n"
+
+    /*
+     * The potential success edge writes t2, but reserved rm traps before that
+     * writeback.  The trap stub must therefore publish the dirty old t2 value
+     * before success-only cache invalidation is applied to compiler metadata.
+     */
+    ".globl rv64_fpu_bad_fcvt_dirty_rd\n"
+    ".type rv64_fpu_bad_fcvt_dirty_rd, @function\n"
+    "rv64_fpu_bad_fcvt_dirty_rd:\n"
+    "  addi t2, zero, 0x345\n"
+    ".globl rv64_fpu_bad_fcvt_dirty_rd_insn\n"
+    "rv64_fpu_bad_fcvt_dirty_rd_insn:\n"
+    "  .word 0xc20053d3\n" /* FCVT.W.D t2, f0, reserved rm=101 */
+    "  addi a0, t2, 0\n"
+    "  ret\n"
+    ".size rv64_fpu_bad_fcvt_dirty_rd, "
+    ".-rv64_fpu_bad_fcvt_dirty_rd\n"
+
     ".globl rv64_fpu_bad_dynamic_rm\n"
     ".type rv64_fpu_bad_dynamic_rm, @function\n"
     "rv64_fpu_bad_dynamic_rm:\n"
@@ -468,6 +513,10 @@ extern void rv64_fpu_bad_fsgnj_d_funct3(void);
 extern char rv64_fpu_bad_fsgnj_d_funct3_insn[];
 extern uint64_t rv64_fpu_bad_static_rm(uint32_t, uint32_t, uint32_t);
 extern char rv64_fpu_bad_static_rm_insn[];
+extern uint64_t rv64_fpu_bad_static_rm_dirty(void);
+extern char rv64_fpu_bad_static_rm_dirty_insn[];
+extern uint64_t rv64_fpu_bad_fcvt_dirty_rd(void);
+extern char rv64_fpu_bad_fcvt_dirty_rd_insn[];
 extern uint64_t rv64_fpu_bad_dynamic_rm(uint32_t, uint32_t, uint32_t);
 extern char rv64_fpu_bad_dynamic_rm_insn[];
 extern uint64_t rv64_fpu_misaligned_flw(const void *, uint64_t);
@@ -586,6 +635,14 @@ static void test_fs_off_and_reserved_rounding(uintptr_t base_mstatus)
                                 UINT32_C(0x40000000)) ==
           boxed_sentinel);
     check_trap(2, rv64_fpu_bad_static_rm_insn, 0);
+
+    reset_trap();
+    check(rv64_fpu_bad_static_rm_dirty() == UINT64_C(0x166b));
+    check_trap(2, rv64_fpu_bad_static_rm_dirty_insn, 0);
+
+    reset_trap();
+    check(rv64_fpu_bad_fcvt_dirty_rd() == UINT64_C(0x345));
+    check_trap(2, rv64_fpu_bad_fcvt_dirty_rd_insn, 0);
 
     write_frm(5);
     reset_trap();

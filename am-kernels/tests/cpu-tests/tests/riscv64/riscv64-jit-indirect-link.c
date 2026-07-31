@@ -69,49 +69,77 @@ static inline void write_mscratch(uintptr_t value)
  * Each selected target has bit zero set before JALR, so reaching either label
  * proves the architectural low-bit clearing rule. JALR must preserve the old
  * t0 value long enough to calculate the target, then replace t0 with PC + 4.
- * Both targets verify that link before returning through a non-canonical JALR.
+ * All three targets verify that link before returning through a non-canonical
+ * JALR.
  */
-static uint64_t run_two_target_indirect_loop(void)
+static uint64_t run_three_phase_indirect_pic_loop(void)
 {
     uint64_t sum = 0;
+    uint64_t warm_laps = 8;
     uint64_t laps = 4096;
+    uint64_t third_laps = 2;
     uint64_t bad_link = 0;
 
     asm volatile(
         ".option push\n"
         ".option norvc\n"
         "1:\n"
-        "  andi t1, %[laps], 1\n"
         "  la t0, 4f\n"
-        "  beqz t1, 2f\n"
+        "  bnez %[warm], 12f\n"
+        "  beqz %[laps], 8f\n"
+        "  andi t1, %[laps], 1\n"
+        "  beqz t1, 12f\n"
         "  la t0, 5f\n"
+        "12:\n"
+        "  jal zero, 2f\n"
         "2:\n"
         "  ori t0, t0, 1\n"
         "  jalr t0, 0(t0)\n"
         "3:\n"
         "  addi %[sum], %[sum], 7\n"
+        "  beqz %[warm], 9f\n"
+        "  addi %[warm], %[warm], -1\n"
+        "  j 1b\n"
+        "9:\n"
+        "  beqz %[laps], 10f\n"
         "  addi %[laps], %[laps], -1\n"
         "  bnez %[laps], 1b\n"
-        "  j 6f\n"
+        "  j 1b\n"
+        "10:\n"
+        "  addi %[third], %[third], -1\n"
+        "  bnez %[third], 1b\n"
+        "  j 7f\n"
         ".balign 4\n"
         "4:\n"
         "  la t1, 3b\n"
-        "  bne t0, t1, 7f\n"
+        "  bne t0, t1, 6f\n"
         "  addi %[sum], %[sum], 3\n"
-        "  jalr zero, 0(t0)\n"
+        "  jalr t1, 0(t0)\n"
         ".balign 4\n"
         "5:\n"
         "  la t1, 3b\n"
-        "  bne t0, t1, 7f\n"
+        "  bne t0, t1, 6f\n"
         "  addi %[sum], %[sum], 5\n"
-        "  jalr zero, 0(t0)\n"
-        "7:\n"
+        "  jalr t1, 0(t0)\n"
+        ".balign 4\n"
+        "8:\n"
+        "  la t0, 11f\n"
+        "  j 2b\n"
+        ".balign 4\n"
+        "11:\n"
+        "  la t1, 3b\n"
+        "  bne t0, t1, 6f\n"
+        "  addi %[sum], %[sum], 11\n"
+        "  jalr t1, 0(t0)\n"
+        "6:\n"
         "  li %[bad_link], 1\n"
         "  j 3b\n"
-        "6:\n"
+        "7:\n"
         ".option pop\n"
         : [sum] "+&r"(sum),
+          [warm] "+&r"(warm_laps),
           [laps] "+&r"(laps),
+          [third] "+&r"(third_laps),
           [bad_link] "+&r"(bad_link)
         :
         : "t0", "t1", "memory");
@@ -123,10 +151,13 @@ static uint64_t run_two_target_indirect_loop(void)
 static void test_general_indirect_link(void)
 {
     /*
-     * Each target runs 2,048 times, while the common continuation runs on all
-     * 4,096 laps: 2,048 * (3 + 5) + 4,096 * 7 = 45,056.
+     * Eight monomorphic warm-up calls use the first target, the alternating
+     * phase uses each of the first two targets 2,048 times, and two final calls
+     * use a third target. Every call also adds seven in the common continuation:
+     * 8 * (3 + 7) + 2,048 * (3 + 7) + 2,048 * (5 + 7) +
+     * 2 * (11 + 7) = 45,172.
      */
-    check(run_two_target_indirect_loop() == 45056u);
+    check(run_three_phase_indirect_pic_loop() == 45172u);
 }
 
 /* Verify alignment failure occurs after target masking but before rd is written. */
@@ -173,6 +204,54 @@ static void test_misaligned_indirect_link(void)
     check(actual_t0 == expected_target);
 }
 
+/*
+ * Repeat the pre-commit alignment proof for a non-return-hinted x0 jump. This
+ * is the architectural class that may own a guarded data cache, so the fault
+ * must occur before any cache probe, fill, retirement, or target execution.
+ */
+static void test_misaligned_guarded_jump(void)
+{
+    const uintptr_t old_mtvec = read_mtvec();
+    const uintptr_t old_mscratch = read_mscratch();
+    uintptr_t expected_target = 0;
+    uintptr_t actual_t2 = 0;
+    uint64_t reached_target = 0;
+
+    indirect_link_saved_mcause = UINT64_MAX;
+    indirect_link_saved_mtval = UINT64_MAX;
+    indirect_link_restore_mtvec = old_mtvec;
+    write_mscratch(0);
+    write_mtvec((uintptr_t)indirect_link_trap_handler);
+
+    asm volatile(
+        ".option push\n"
+        ".option norvc\n"
+        "  la t2, 1f\n"
+        "  addi t2, t2, 2\n"
+        "  mv %[expected], t2\n"
+        "  jalr zero, 0(t2)\n"
+        "  mv %[actual], t2\n"
+        "  j 2f\n"
+        ".balign 4\n"
+        "1:\n"
+        "  li %[reached], 1\n"
+        "2:\n"
+        ".option pop\n"
+        : [expected] "=&r"(expected_target),
+          [actual] "=&r"(actual_t2),
+          [reached] "+&r"(reached_target)
+        :
+        : "t0", "t1", "t2", "memory");
+
+    write_mtvec(old_mtvec);
+    write_mscratch(old_mscratch);
+
+    check(reached_target == 0);
+    check(indirect_link_saved_mcause == 0u);
+    check(indirect_link_saved_mtval == expected_target);
+    check(actual_t2 == expected_target);
+}
+
 #endif
 
 /* Keep the source buildable outside RV64 while exercising the RV64-only path. */
@@ -181,6 +260,7 @@ int main(void)
 #if defined(__riscv) && __riscv_xlen == 64
     test_general_indirect_link();
     test_misaligned_indirect_link();
+    test_misaligned_guarded_jump();
 #endif
 
     return 0;

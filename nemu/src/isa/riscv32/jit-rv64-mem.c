@@ -774,8 +774,15 @@ static uint32_t jit_store_pmem_direct_continue(paddr_t addr, uint32_t len,
                : RV64_JIT_STORE_MAY_CONTINUE;
 }
 
-/* Shared RV64 store helper that preserves MMIO, tracing, and invalidation. */
-void rv64_jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data)
+/*
+ * Shared translated-store helper.
+ *
+ * A proven PMEM translation can refill the DTLB, commit the store, and let the
+ * current native block continue when no source or translation dependency was
+ * touched. MMIO, faults, and sensitive writes retain the dispatcher boundary.
+ */
+uint32_t rv64_jit_store_vaddr_continue(vaddr_t addr, uint32_t len,
+                                       uint64_t data)
 {
     /*
      * A data-TLB hit skips the repeated page walk and commits through the
@@ -790,11 +797,19 @@ void rv64_jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data)
     if (jit_translate_pmem(addr, len, MEM_TYPE_WRITE, &paddr))
     {
         JIT_STAT_INC(data_tlb_direct_stores);
-        (void)jit_store_pmem_direct_continue(paddr, len, data);
-        return;
+        const uint32_t result =
+            jit_store_pmem_direct_continue(paddr, len, data);
+
+        if (result == RV64_JIT_STORE_MAY_CONTINUE)
+        {
+            JIT_STAT_INC(paged_store_helper_continuations);
+        }
+
+        return result;
     }
 
     vaddr_write(addr, (int)len, (word_t)data);
+    return RV64_JIT_STORE_MUST_EXIT;
 }
 
 #if RV64_JIT_STATS
@@ -803,14 +818,17 @@ void rv64_jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data)
  *
  * Production builds compile this hook out. The diagnostic build pays one
  * cached environment lookup and injects only when explicitly requested:
- * phase one changes the instruction-fetch generation, while phase two requests
- * the same outer CPU boundary as a device which makes an interrupt pending.
+ * The first call simulates callback-driven DMA invalidating the currently
+ * executing Bare block, the second requests the same outer CPU boundary as a
+ * device which makes an interrupt pending, and the fixture's final helper call
+ * resets the complete native arena. Delaying that reset preserves the earlier
+ * route-cache measurements while still proving that generated code exits.
  */
 static uint32_t jit_test_mmio_boundary_phase(void)
 {
     static bool initialised = false;
     static bool enabled = false;
-    static uint32_t phase = 0;
+    static uint32_t call_count = 0;
 
     if (!initialised)
     {
@@ -821,13 +839,29 @@ static uint32_t jit_test_mmio_boundary_phase(void)
         initialised = true;
     }
 
-    if (!enabled || phase >= 2u)
+    if (!enabled)
     {
         return 0;
     }
 
-    phase++;
-    return phase;
+    call_count++;
+
+    if (call_count == 1u)
+    {
+        return 1u;
+    }
+
+    if (call_count == 2u)
+    {
+        return 3u;
+    }
+
+    if (call_count == 24u)
+    {
+        return 2u;
+    }
+
+    return 0;
 }
 #endif
 
@@ -842,6 +876,8 @@ uint32_t rv64_jit_store_bare_continue(paddr_t addr, uint32_t len,
 {
     const uint64_t ifetch_generation_before =
         rv64_jit_ifetch_generation;
+    const uint64_t native_cache_epoch_before =
+        rv64_jit_native_cache_epoch;
     const bool interrupt_was_pending = cpu.INTR;
 
     JIT_STAT_INC(helper_store_count);
@@ -854,10 +890,20 @@ uint32_t rv64_jit_store_bare_continue(paddr_t addr, uint32_t len,
 
     if (test_boundary_phase == 1u)
     {
-        rv64_jit_ifetch_generation_bump();
+        /*
+         * Generated stores publish their current PC before entering this
+         * helper. In this Bare-only fixture it is also the source paddr, so the
+         * invalidation precisely reproduces an MMIO callback whose DMA target
+         * overlaps the active native block.
+         */
+        isa_jit_invalidate_paddr((paddr_t)cpu.pc, RV64_INSN_SIZE);
+    }
+    else if (test_boundary_phase == 2u)
+    {
+        rv64_jit_arena_reset();
     }
 
-    const bool test_cpu_boundary = test_boundary_phase == 2u;
+    const bool test_cpu_boundary = test_boundary_phase == 3u;
     if (test_cpu_boundary)
     {
         cpu.INTR = true;
@@ -871,7 +917,13 @@ uint32_t rv64_jit_store_bare_continue(paddr_t addr, uint32_t len,
         nemu_state.state != NEMU_RUNNING ||
         (!interrupt_was_pending && cpu.INTR);
     const bool invalidated_native_state =
-        rv64_jit_ifetch_generation != ifetch_generation_before;
+        rv64_jit_ifetch_generation != ifetch_generation_before ||
+        rv64_jit_native_cache_epoch != native_cache_epoch_before;
+
+    if (invalidated_native_state)
+    {
+        JIT_STAT_INC(bare_mmio_store_invalidation_exits);
+    }
 
     if (cpu_boundary)
     {
@@ -1124,30 +1176,56 @@ static bool jit_block_source_chunk_seen_before(const rv64_jit_block_t *block,
     return false;
 }
 
-/* Rebuild the free list for reverse source-chunk map nodes. */
+/*
+ * Nodes below this frontier have been claimed in the current arena lifetime.
+ * Index zero remains the null sentinel; discarded nodes are recycled through
+ * rv64_jit_source_link_free_head before the frontier advances further.
+ */
+static uint32_t jit_source_link_next_unused = 1u;
+
+/*
+ * Validate the static-storage state used by the first executable arena.
+ * Chunk heads and node storage are zero-initialised by C before NEMU starts,
+ * so walking the multi-million-node pool here would only manufacture a free
+ * list that the lazy frontier can represent with this single scalar.
+ */
+void rv64_jit_source_reverse_map_init(void)
+{
+    Assert(rv64_jit_source_link_free_head == RV64_JIT_SOURCE_LINK_NULL &&
+               jit_source_link_next_unused == 1u,
+           "jit: RV64 source reverse map initialised after node allocation");
+}
+
+/* Discard every published root and rewind the lazy per-arena allocators. */
 void rv64_jit_source_reverse_map_reset(void)
 {
     memset(rv64_jit_source_chunk_heads, 0, sizeof(rv64_jit_source_chunk_heads));
-
-    for (uint32_t i = 1; i < RV64_JIT_SOURCE_LINK_COUNT - 1u; i++)
-    {
-        rv64_jit_source_links[i].next = i + 1u;
-        rv64_jit_source_links[i].block_index = 0;
-    }
-
-    rv64_jit_source_links[RV64_JIT_SOURCE_LINK_COUNT - 1u].next = RV64_JIT_SOURCE_LINK_NULL;
-    rv64_jit_source_links[RV64_JIT_SOURCE_LINK_COUNT - 1u].block_index = 0;
-    rv64_jit_source_link_free_head = 1u;
+    rv64_jit_source_link_free_head = RV64_JIT_SOURCE_LINK_NULL;
+    jit_source_link_next_unused = 1u;
 }
 
-/* Allocate one node from the fixed reverse source map pool. */
+/* Allocate a recycled node first, then claim untouched pool storage lazily. */
 static uint32_t jit_source_link_alloc(void)
 {
-    Assert(rv64_jit_source_link_free_head != RV64_JIT_SOURCE_LINK_NULL,
-           "jit: RV64 source reverse-map node pool exhausted");
+    uint32_t node = RV64_JIT_SOURCE_LINK_NULL;
 
-    const uint32_t node = rv64_jit_source_link_free_head;
-    rv64_jit_source_link_free_head = rv64_jit_source_links[node].next;
+    if (rv64_jit_source_link_free_head != RV64_JIT_SOURCE_LINK_NULL)
+    {
+        node = rv64_jit_source_link_free_head;
+        Assert(node < jit_source_link_next_unused,
+               "jit: invalid recycled RV64 source reverse-map node %u", node);
+        rv64_jit_source_link_free_head = rv64_jit_source_links[node].next;
+        JIT_STAT_INC(source_link_recycled_allocations);
+    }
+    else
+    {
+        Assert(jit_source_link_next_unused < RV64_JIT_SOURCE_LINK_COUNT,
+               "jit: RV64 source reverse-map node pool exhausted");
+        node = jit_source_link_next_unused++;
+        JIT_STAT_INC(source_link_sequential_allocations);
+    }
+
+    /* A post-reset frontier claim may contain an old arena's stale link. */
     rv64_jit_source_links[node].next = RV64_JIT_SOURCE_LINK_NULL;
     return node;
 }
@@ -1156,7 +1234,7 @@ static uint32_t jit_source_link_alloc(void)
 static void jit_source_link_free(uint32_t node)
 {
     Assert(node != RV64_JIT_SOURCE_LINK_NULL &&
-               node < RV64_JIT_SOURCE_LINK_COUNT,
+               node < jit_source_link_next_unused,
            "jit: invalid RV64 source reverse-map node %u", node);
 
     rv64_jit_source_links[node].block_index = 0;
@@ -1360,8 +1438,24 @@ bool rv64_jit_write_may_touch_source_chunk(paddr_t addr, int len)
 /* Release one cache slot and its source refs, if it owns source bytes. */
 void rv64_jit_block_discard(rv64_jit_block_t *block)
 {
-    if (block->valid)
+    const bool was_valid = block->valid;
+
+    /*
+     * Native selectors must stop reaching this generation before its metadata
+     * or arena bytes can be cleared. Source-owned records are removed from
+     * their target-slot lists by the same lifecycle hook.
+     */
+    rv64_jit_links_block_discard(block);
+
+    if (was_valid)
     {
+        /*
+         * Make lazy PIC readers reject this publication before dependency
+         * metadata is released or its arena bytes can later be recycled.
+         */
+        block->valid = false;
+        block->generation = 0;
+
         if (block->source_segment_count != 0)
         {
             jit_source_reverse_map_remove(block);
