@@ -40,6 +40,7 @@ static bool rv64_jit_disabled = false;
 static bool rv64_jit_env_disable = false;
 static bool rv64_jit_env_disable_direct_link = false;
 static bool rv64_jit_env_disable_return_link = false;
+static bool rv64_jit_env_perf_map = false;
 static bool rv64_jit_stats_enabled = false;
 static bool rv64_jit_runtime_options_ready = false;
 /* Current native-entry instruction budget, used by in-block chained loops. */
@@ -95,6 +96,7 @@ static void rv64_jit_init_runtime_options(void)
             jit_env_flag_enabled("NEMU_DISABLE_RV64_JIT_DIRECT_LINK");
         rv64_jit_env_disable_return_link =
             jit_env_flag_enabled("NEMU_DISABLE_RV64_JIT_RETURN_LINK");
+        rv64_jit_env_perf_map = jit_env_flag_enabled("NEMU_JIT_PERFMAP");
         rv64_jit_stats_enabled = jit_env_flag_enabled("NEMU_JIT_STATS");
         rv64_jit_runtime_options_ready = true;
     }
@@ -193,6 +195,8 @@ bool rv64_jit_code_init(void)
     rv64_jit_code_used = 0;
     rv64_jit_source_reverse_map_reset();
     isa_jit_invalidation_active = true;
+    rv64_jit_init_runtime_options();
+    rv64_jit_perf_map_init(rv64_jit_env_perf_map);
     Log("jit: RISC-V64 native code arena = %zu bytes", (size_t)RV64_JIT_CODE_SIZE);
     return true;
 #else
@@ -204,6 +208,7 @@ bool rv64_jit_code_init(void)
 void rv64_jit_arena_reset(void)
 {
     jit_cache_clear();
+    rv64_jit_perf_map_reset();
     rv64_jit_code_used = 0;
     JIT_STAT_INC(arena_resets);
 }

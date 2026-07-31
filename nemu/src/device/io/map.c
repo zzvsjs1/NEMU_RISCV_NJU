@@ -23,7 +23,8 @@ uint8_t *new_space(int size)
     return p;
 }
 
-static void check_bound(IOMap *map, paddr_t addr)
+/* Reject any access whose complete byte span is not inside one map. */
+static void check_bound(IOMap *map, paddr_t addr, int len)
 {
     if (map == NULL)
     {
@@ -31,9 +32,23 @@ static void check_bound(IOMap *map, paddr_t addr)
     }
     else
     {
-        Assert(addr <= map->high && addr >= map->low,
-               "address (" FMT_PADDR ") is out of bound {%s} [" FMT_PADDR ", " FMT_PADDR "] at pc = " FMT_WORD,
-               addr, map->name, map->low, map->high, cpu.pc);
+        const paddr_t map_size = map->high - map->low + 1u;
+        const bool starts_inside = addr >= map->low;
+        const paddr_t offset = starts_inside ? addr - map->low : 0u;
+        const bool whole_span_inside =
+            starts_inside &&
+            (paddr_t)len <= map_size &&
+            offset <= map_size - (paddr_t)len;
+
+        /*
+         * Subtracting from the proven map size avoids overflow in
+         * `addr + len - 1`.  This check runs before a callback or host access,
+         * so an invalid device operation has no partial side effect.
+         */
+        Assert(whole_span_inside,
+               "MMIO access at " FMT_PADDR " with len=%d is out of bound "
+               "{%s} [" FMT_PADDR ", " FMT_PADDR "] at pc = " FMT_WORD,
+               addr, len, map->name, map->low, map->high, cpu.pc);
     }
 }
 
@@ -55,7 +70,7 @@ void init_map()
 word_t map_read(paddr_t addr, int len, IOMap *map)
 {
     assert(len >= 1 && len <= 8);
-    check_bound(map, addr);
+    check_bound(map, addr, len);
     paddr_t offset = addr - map->low;
     /*
      * Read callbacks publish volatile device state into the mapped bytes before
@@ -72,7 +87,7 @@ word_t map_read(paddr_t addr, int len, IOMap *map)
 void map_write(paddr_t addr, int len, word_t data, IOMap *map)
 {
     assert(len >= 1 && len <= 8);
-    check_bound(map, addr);
+    check_bound(map, addr, len);
     paddr_t offset = addr - map->low;
     host_write(map->space + offset, len, data);
     /*

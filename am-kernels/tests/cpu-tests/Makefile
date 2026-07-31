@@ -24,6 +24,13 @@ endif
 ARCH_TEST_SRCS = $(foreach dir,$(ARCH_TEST_DIRS),$(wildcard tests/$(dir)/*.c))
 ARCH_TESTS = $(basename $(notdir $(ARCH_TEST_SRCS)))
 
+# This guest intentionally makes NEMU reject a cross-map MMIO access.  Keep it
+# available through explicit ALL=... selection without making a normal RV64
+# sweep report its expected host abort as a failed architectural test.
+ifeq ($(ARCH_ISA),riscv64)
+ARCH_TESTS := $(filter-out riscv64-jit-mmio-boundary,$(ARCH_TESTS))
+endif
+
 # RV32D is an optional configuration layered on the default RV32F target.
 # Its conformance tests deliberately require misa.D and therefore belong to
 # the explicit RV32D matrix rather than the generic architecture test list.
@@ -48,6 +55,8 @@ Makefile.$(1): $(2) latest
 		NEMU_MOUSE_SCRIPT=move:17,23 make -s -f $$@ ARCH=$(ARCH) $(MAKECMDGOALS); \
 	elif [ "$(1)" = "riscv-io-strict" ]; then \
 		NEMU_MOUSE_SCRIPT='move:31,47;move:31,47;wheel:2,-3' make -s -f $$@ ARCH=$(ARCH) $(MAKECMDGOALS); \
+	elif [ "$(1)" = "riscv64-jit-memory-entry" ]; then \
+		NEMU_MOUSE_SCRIPT='move:17,23;wheel:2,-3' make -s -f $$@ ARCH=$(ARCH) $(MAKECMDGOALS); \
 	elif [ "$(1)" = "riscv-fast-mmu-priv-strict" ]; then \
 		NEMU_DISABLE_JIT=1 make -s -f $$@ ARCH=$(ARCH) $(MAKECMDGOALS); \
 	else \

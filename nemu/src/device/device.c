@@ -1,6 +1,7 @@
 #include <common.h>
 #include <utils.h>
 #include <device/alarm.h>
+#include <device/map.h>
 #ifndef CONFIG_TARGET_AM
 #include <SDL2/SDL.h>
 #endif
@@ -140,4 +141,5 @@ void init_device()
     IFDEF(CONFIG_HAS_SDCARD, init_sdcard());
 
     IFNDEF(CONFIG_TARGET_AM, init_alarm());
+    mmio_freeze_direct_routes();
 }

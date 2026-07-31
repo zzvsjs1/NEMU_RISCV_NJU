@@ -715,8 +715,24 @@ void init_vga()
     add_pio_map("vgactl", CONFIG_VGA_CTL_PORT, vgactl_port_base,
                 VGACTL_NR_REGS * sizeof(uint32_t), vgactl_io_handler);
 #else
-    add_mmio_map("vgactl", CONFIG_VGA_CTL_MMIO, vgactl_port_base,
-                 VGACTL_NR_REGS * sizeof(uint32_t), vgactl_io_handler);
+    /*
+     * Every VGACTL read observes only the current register backing: the handler
+     * returns immediately when is_write is false.  Opt in explicitly so the
+     * RV64 JIT may bypass the callback for all architectural integer widths.
+     */
+    add_mmio_map_with_direct_read(
+        "vgactl", CONFIG_VGA_CTL_MMIO, vgactl_port_base,
+        VGACTL_NR_REGS * sizeof(uint32_t), vgactl_io_handler,
+        IO_MAP_DIRECT_READ_ALL);
+    /*
+     * BLIT_SRC is a passive staging word until a separate BLIT_CMD write. An
+     * exact four-byte direct store is therefore callback-equivalent, while the
+     * neighbouring SYNC and command registers must remain helper-backed.
+     */
+    add_mmio_direct_write_region(
+        CONFIG_VGA_CTL_MMIO +
+            NEMU_VGACTL_BLIT_SRC * (uint32_t)sizeof(uint32_t),
+        sizeof(uint32_t), IO_MAP_DIRECT_WRITE_4);
 #endif
 
     vmem = new_space(screen_size());

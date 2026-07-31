@@ -49,6 +49,15 @@ static bool jit_opcode_may_be_in_loop_prescan(uint32_t instr)
     case RV64_OPCODE_LUI:
     case RV64_OPCODE_BRANCH:
         return true;
+#ifdef CONFIG_RISCV_FPU
+    case RV64_FP_OPCODE_LOAD:
+    case RV64_FP_OPCODE_STORE:
+        return rv64_jit_decode_fp_memory(instr) !=
+               RV64_JIT_FP_MEMORY_INVALID;
+    case RV64_FP_OPCODE_OP:
+        return rv64_jit_decode_fp_exact(instr) !=
+               RV64_JIT_FP_EXACT_INVALID;
+#endif
     default:
         return false;
     }
@@ -89,13 +98,25 @@ static bool jit_collect_stable_loop_regs(uint32_t instr, uint32_t *reg_mask)
     case RV64_OPCODE_OP:
     case RV64_OPCODE_OP_32:
         /*
-         * Some RV64M operations still call the pure C arithmetic helper. Keep
-         * the complete M class on the ordinary six-slot mapping until every
-         * member has a native lowering.
+         * Every full-width M funct3 is defined. OP-32 reserves funct3 1-3, so
+         * reject those encodings before expanding the loop register cache.
+         * All valid M members are now helper-free and leave R8 available for
+         * the seventh loop-carried guest register.
          */
-        if (rv64_instr_funct7(instr) == RV64_FUNCT7_MULDIV)
+        if (rv64_instr_funct7(instr) == RV64_FUNCT7_MULDIV &&
+            opcode == RV64_OPCODE_OP_32)
         {
-            return false;
+            switch (rv64_instr_funct3(instr))
+            {
+            case RV64_FUNCT3_ADD_SUB: /* MULW */
+            case RV64_FUNCT3_XOR:     /* DIVW */
+            case RV64_FUNCT3_SRL_SRA: /* DIVUW */
+            case RV64_FUNCT3_OR:      /* REMW */
+            case RV64_FUNCT3_AND:     /* REMUW */
+                break;
+            default:
+                return false;
+            }
         }
 
         jit_stable_loop_add_reg(reg_mask, rv64_instr_rd(instr));
@@ -110,6 +131,39 @@ static bool jit_collect_stable_loop_regs(uint32_t instr, uint32_t *reg_mask)
         jit_stable_loop_add_reg(reg_mask, rv64_instr_rs1(instr));
         jit_stable_loop_add_reg(reg_mask, rv64_instr_rs2(instr));
         return true;
+#ifdef CONFIG_RISCV_FPU
+    case RV64_FP_OPCODE_LOAD:
+    case RV64_FP_OPCODE_STORE:
+        /*
+         * FP memory can form a native self-backedge, but its guards reserve R8
+         * as scratch. Reject the seven-slot stable mapping while allowing the
+         * ordinary six-slot loop cache selected by the completed pre-scan.
+         */
+        return false;
+    case RV64_FP_OPCODE_OP:
+        switch (rv64_jit_decode_fp_exact(instr))
+        {
+        case RV64_JIT_FP_EXACT_FMV_W_X:
+        case RV64_JIT_FP_EXACT_FMV_D_X:
+            jit_stable_loop_add_reg(reg_mask, rv64_instr_rs1(instr));
+            return true;
+        case RV64_JIT_FP_EXACT_FMV_X_W:
+        case RV64_JIT_FP_EXACT_FMV_X_D:
+        case RV64_JIT_FP_EXACT_FCLASS_S:
+        case RV64_JIT_FP_EXACT_FCLASS_D:
+            jit_stable_loop_add_reg(reg_mask, rv64_instr_rd(instr));
+            return true;
+        case RV64_JIT_FP_EXACT_FSGNJ_S:
+        case RV64_JIT_FP_EXACT_FSGNJN_S:
+        case RV64_JIT_FP_EXACT_FSGNJX_S:
+        case RV64_JIT_FP_EXACT_FSGNJ_D:
+        case RV64_JIT_FP_EXACT_FSGNJN_D:
+        case RV64_JIT_FP_EXACT_FSGNJX_D:
+            return true;
+        default:
+            return false;
+        }
+#endif
     default:
         return false;
     }
@@ -215,12 +269,16 @@ typedef struct
     uint64_t native_stores;
     uint64_t native_jumps;
     uint64_t native_m_ops;
+    uint64_t native_fp_exact_sites;
+    uint64_t native_fp_memory_sites;
     uint64_t reg_cache_spills;
     uint64_t native_store_continuations;
     uint64_t native_paged_loads;
     uint64_t native_paged_stores;
     uint64_t inline_paged_loads;
     uint64_t inline_paged_stores;
+    uint64_t direct_mmio_load_sites;
+    uint64_t direct_mmio_store_sites;
     uint64_t fp_helper_sites;
 } rv64_jit_emitted_site_stats_t;
 
@@ -231,12 +289,16 @@ static rv64_jit_emitted_site_stats_t jit_snapshot_emitted_site_stats(void)
         .native_stores = rv64_jit_stats.native_stores,
         .native_jumps = rv64_jit_stats.native_jumps,
         .native_m_ops = rv64_jit_stats.native_m_ops,
+        .native_fp_exact_sites = rv64_jit_stats.native_fp_exact_sites,
+        .native_fp_memory_sites = rv64_jit_stats.native_fp_memory_sites,
         .reg_cache_spills = rv64_jit_stats.reg_cache_spills,
         .native_store_continuations = rv64_jit_stats.native_store_continuations,
         .native_paged_loads = rv64_jit_stats.native_paged_loads,
         .native_paged_stores = rv64_jit_stats.native_paged_stores,
         .inline_paged_loads = rv64_jit_stats.inline_paged_loads,
         .inline_paged_stores = rv64_jit_stats.inline_paged_stores,
+        .direct_mmio_load_sites = rv64_jit_stats.direct_mmio_load_sites,
+        .direct_mmio_store_sites = rv64_jit_stats.direct_mmio_store_sites,
         .fp_helper_sites = rv64_jit_stats.fp_helper_sites,
     };
 }
@@ -248,6 +310,10 @@ static void jit_restore_emitted_site_stats(
     rv64_jit_stats.native_stores = snapshot->native_stores;
     rv64_jit_stats.native_jumps = snapshot->native_jumps;
     rv64_jit_stats.native_m_ops = snapshot->native_m_ops;
+    rv64_jit_stats.native_fp_exact_sites =
+        snapshot->native_fp_exact_sites;
+    rv64_jit_stats.native_fp_memory_sites =
+        snapshot->native_fp_memory_sites;
     rv64_jit_stats.reg_cache_spills = snapshot->reg_cache_spills;
     rv64_jit_stats.native_store_continuations =
         snapshot->native_store_continuations;
@@ -255,6 +321,10 @@ static void jit_restore_emitted_site_stats(
     rv64_jit_stats.native_paged_stores = snapshot->native_paged_stores;
     rv64_jit_stats.inline_paged_loads = snapshot->inline_paged_loads;
     rv64_jit_stats.inline_paged_stores = snapshot->inline_paged_stores;
+    rv64_jit_stats.direct_mmio_load_sites =
+        snapshot->direct_mmio_load_sites;
+    rv64_jit_stats.direct_mmio_store_sites =
+        snapshot->direct_mmio_store_sites;
     rv64_jit_stats.fp_helper_sites = snapshot->fp_helper_sites;
 }
 #else
@@ -283,6 +353,8 @@ typedef struct
     rv64_jit_source_builder_t source;
     rv64_jit_ifetch_ref_builder_t ifetch_refs;
     rv64_jit_emitted_site_stats_t emitted_site_stats;
+    uint8_t mmio_route_site_count;
+    uint8_t mmio_route_fixup_count;
 } rv64_jit_compile_snapshot_t;
 
 typedef enum
@@ -304,6 +376,8 @@ typedef struct
     uint32_t compiled_insn_count;
     uint32_t stable_loop_reg_count;
     const uint8_t *native_body_entry;
+    const uint8_t *native_code_end;
+    const uint8_t *allocation_end;
     const rv64_jit_source_builder_t *source;
     const rv64_jit_ifetch_ref_builder_t *ifetch_refs;
 } rv64_jit_publish_info_t;
@@ -319,6 +393,7 @@ static bool jit_handle_emit_failure(rv64_jit_writer_t *w,
                                     rv64_jit_reg_cache_t *regs,
                                     rv64_jit_source_builder_t *source,
                                     rv64_jit_ifetch_ref_builder_t *ifetch_refs,
+                                    rv64_jit_mmio_route_builder_t *mmio_routes,
                                     const rv64_jit_compile_snapshot_t *snapshot,
                                     uint32_t instr,
                                     rv64_jit_block_end_reason_t *block_end_reason,
@@ -328,6 +403,8 @@ static bool jit_handle_emit_failure(rv64_jit_writer_t *w,
     rv64_jit_reg_cache_restore(regs, &snapshot->regs);
     *source = snapshot->source;
     *ifetch_refs = snapshot->ifetch_refs;
+    mmio_routes->site_count = snapshot->mmio_route_site_count;
+    mmio_routes->fixup_count = snapshot->mmio_route_fixup_count;
     jit_restore_emitted_site_stats(&snapshot->emitted_site_stats);
 
     /*
@@ -357,7 +434,12 @@ static bool jit_handle_emit_failure(rv64_jit_writer_t *w,
 static rv64_jit_block_t *jit_publish_compiled_block(
     rv64_jit_writer_t *w, const rv64_jit_publish_info_t *info)
 {
-    __builtin___clear_cache((char *)w->start, (char *)w->cur);
+    Assert(info->native_code_end >= w->start &&
+               info->allocation_end >= info->native_code_end &&
+               info->allocation_end == w->cur,
+           "jit: invalid native-code/sidecar publication bounds");
+    __builtin___clear_cache((char *)w->start,
+                            (char *)info->native_code_end);
 
     rv64_jit_block_t *block = rv64_jit_cache_slot(info->start_pc);
     rv64_jit_block_discard(block);
@@ -389,7 +471,11 @@ static rv64_jit_block_t *jit_publish_compiled_block(
     rv64_jit_source_reverse_map_add(block);
     block->valid = true;
 
-    rv64_jit_code_used = (size_t)(w->cur - rv64_jit_code);
+    rv64_jit_code_used =
+        (size_t)(info->allocation_end - rv64_jit_code);
+    rv64_jit_perf_map_publish(
+        block, w->start,
+        (size_t)(info->native_code_end - w->start));
     return block;
 }
 
@@ -467,7 +553,9 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     const rv64_jit_emitted_site_stats_t attempt_site_stats =
         jit_snapshot_emitted_site_stats();
 
-    if (rv64_jit_code_used + RV64_JIT_BLOCK_CODE_HEADROOM > RV64_JIT_CODE_SIZE)
+    if (rv64_jit_code_used + RV64_JIT_BLOCK_CODE_HEADROOM +
+            RV64_JIT_MMIO_ROUTE_MAX_ALLOCATION >
+        RV64_JIT_CODE_SIZE)
     {
         rv64_jit_arena_reset();
     }
@@ -491,6 +579,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     };
     rv64_jit_reg_cache_t regs;
     rv64_jit_reg_cache_init(&regs);
+    rv64_jit_mmio_route_builder_t mmio_routes = {0};
 
     if (!rv64_jit_emit_prologue(&w))
     {
@@ -565,6 +654,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
             .source = source,
             .ifetch_refs = ifetch_refs_start,
             .emitted_site_stats = jit_snapshot_emitted_site_stats(),
+            .mmio_route_site_count = mmio_routes.site_count,
+            .mmio_route_fixup_count = mmio_routes.fixup_count,
         };
         bool stop_after_instruction = false;
 
@@ -583,12 +674,23 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
 
             if (!rv64_jit_emit_fp_instr(&w, &regs, instr, guest_pc, compiled_insn_count, &fp_ends_block))
             {
-                if (!jit_handle_emit_failure(&w, &regs, &source, &ifetch_refs, &instr_snapshot, instr, &block_end_reason, arena_overflowed))
+                if (!jit_handle_emit_failure(
+                        &w, &regs, &source, &ifetch_refs, &mmio_routes,
+                        &instr_snapshot, instr, &block_end_reason,
+                        arena_overflowed))
                 {
                     jit_restore_emitted_site_stats(&attempt_site_stats);
                     return NULL;
                 }
                 break;
+            }
+
+            if (rv64_jit_decode_fp_memory(instr) !=
+                    RV64_JIT_FP_MEMORY_INVALID &&
+                (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) !=
+                    RV64_JIT_SATP_MODE_BARE)
+            {
+                needs_data_translation_guard = true;
             }
 
             if (fp_ends_block)
@@ -607,8 +709,9 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                     needs_data_translation_guard))
             {
                 if (!jit_handle_emit_failure(
-                        &w, &regs, &source, &ifetch_refs, &instr_snapshot,
-                        instr, &block_end_reason, arena_overflowed))
+                        &w, &regs, &source, &ifetch_refs, &mmio_routes,
+                        &instr_snapshot, instr, &block_end_reason,
+                        arena_overflowed))
                 {
                     jit_restore_emitted_site_stats(&attempt_site_stats);
                     return NULL;
@@ -628,12 +731,14 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
              * unsafe.  The dispatcher treats that as a miss-like fallback and
              * lets the interpreter execute the load.
              */
-            if (!rv64_jit_emit_load_instr(&w, &regs, instr, guest_pc,
-                                          compiled_insn_count))
+            if (!rv64_jit_emit_load_instr(
+                    &w, &regs, instr, guest_pc, compiled_insn_count,
+                    &mmio_routes))
             {
                 if (!jit_handle_emit_failure(
-                        &w, &regs, &source, &ifetch_refs, &instr_snapshot,
-                        instr, &block_end_reason, arena_overflowed))
+                        &w, &regs, &source, &ifetch_refs, &mmio_routes,
+                        &instr_snapshot, instr, &block_end_reason,
+                        arena_overflowed))
                 {
                     jit_restore_emitted_site_stats(&attempt_site_stats);
                     return NULL;
@@ -662,11 +767,13 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
              */
             if (!rv64_jit_emit_store_instr(
                     &w, &regs, instr, guest_pc,
-                    guest_pc + RV64_INSN_SIZE, compiled_insn_count))
+                    guest_pc + RV64_INSN_SIZE, compiled_insn_count,
+                    &mmio_routes))
             {
                 if (!jit_handle_emit_failure(
-                        &w, &regs, &source, &ifetch_refs, &instr_snapshot,
-                        instr, &block_end_reason, arena_overflowed))
+                        &w, &regs, &source, &ifetch_refs, &mmio_routes,
+                        &instr_snapshot, instr, &block_end_reason,
+                        arena_overflowed))
                 {
                     jit_restore_emitted_site_stats(&attempt_site_stats);
                     return NULL;
@@ -693,8 +800,9 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                     needs_data_translation_guard))
             {
                 if (!jit_handle_emit_failure(
-                        &w, &regs, &source, &ifetch_refs, &instr_snapshot,
-                        instr, &block_end_reason, arena_overflowed))
+                        &w, &regs, &source, &ifetch_refs, &mmio_routes,
+                        &instr_snapshot, instr, &block_end_reason,
+                        arena_overflowed))
                 {
                     jit_restore_emitted_site_stats(&attempt_site_stats);
                     return NULL;
@@ -713,8 +821,9 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                                       compiled_insn_count + 1u))
         {
             if (!jit_handle_emit_failure(
-                    &w, &regs, &source, &ifetch_refs, &instr_snapshot,
-                    instr, &block_end_reason, arena_overflowed))
+                    &w, &regs, &source, &ifetch_refs, &mmio_routes,
+                    &instr_snapshot, instr, &block_end_reason,
+                    arena_overflowed))
             {
                 jit_restore_emitted_site_stats(&attempt_site_stats);
                 return NULL;
@@ -769,6 +878,21 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         return NULL;
     }
 
+    /*
+     * All executable paths are terminal now. Keep profiler attribution and
+     * instruction-cache synchronisation bounded to native bytes, then append
+     * the freshly initialised mutable MMIO routing data which belongs to this
+     * generation.
+     */
+    const uint8_t *native_code_end = w.cur;
+
+    if (!rv64_jit_finalise_mmio_routes(&w, &mmio_routes))
+    {
+        *arena_overflowed = w.overflowed;
+        jit_restore_emitted_site_stats(&attempt_site_stats);
+        return NULL;
+    }
+
     const rv64_jit_publish_info_t publish_info = {
         .start_pc = pc,
         .next_pc = guest_pc,
@@ -779,6 +903,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         .stable_loop_reg_count =
             used_stable_loop ? loop_scan.stable_reg_count : 0,
         .native_body_entry = native_body_entry,
+        .native_code_end = native_code_end,
+        .allocation_end = w.cur,
         .source = &source,
         .ifetch_refs = &ifetch_refs,
     };

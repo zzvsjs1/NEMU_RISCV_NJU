@@ -6,6 +6,9 @@
 
 #define MSTATUS_FS_MASK ((uintptr_t)3u << 13)
 #define MSTATUS_FS_INITIAL ((uintptr_t)1u << 13)
+#define MSTATUS_FS_CLEAN ((uintptr_t)2u << 13)
+#define MSTATUS_FS_DIRTY ((uintptr_t)3u << 13)
+#define MSTATUS_SD (UINT64_C(1) << 63)
 
 #define FP_ASM_BITWISE_S(name, instruction) \
     ".globl " #name "\n" \
@@ -68,6 +71,31 @@ asm(
     FP_ASM_BITWISE_D(rv64_fp_min_d, fmin.d)
     FP_ASM_BITWISE_D(rv64_fp_max_d, fmax.d)
 
+    /*
+     * The macro-generated sign probes cover rd==rs1. These two probes retain
+     * distinct source values while making rd==rs2, so native stores cannot
+     * accidentally overwrite a source before both inputs have been consumed.
+     */
+    ".globl rv64_fp_sgnj_s_rd_rs2\n"
+    ".type rv64_fp_sgnj_s_rd_rs2, @function\n"
+    "rv64_fp_sgnj_s_rd_rs2:\n"
+    "  fmv.w.x f0, a0\n"
+    "  fmv.w.x f1, a1\n"
+    "  fsgnj.s f1, f0, f1\n"
+    "  fmv.x.d a0, f1\n"
+    "  ret\n"
+    ".size rv64_fp_sgnj_s_rd_rs2, .-rv64_fp_sgnj_s_rd_rs2\n"
+
+    ".globl rv64_fp_sgnj_d_rd_rs2\n"
+    ".type rv64_fp_sgnj_d_rd_rs2, @function\n"
+    "rv64_fp_sgnj_d_rd_rs2:\n"
+    "  fmv.d.x f0, a0\n"
+    "  fmv.d.x f1, a1\n"
+    "  fsgnj.d f1, f0, f1\n"
+    "  fmv.x.d a0, f1\n"
+    "  ret\n"
+    ".size rv64_fp_sgnj_d_rd_rs2, .-rv64_fp_sgnj_d_rd_rs2\n"
+
     FP_ASM_COMPARE_S(rv64_fp_eq_s, feq.s)
     FP_ASM_COMPARE_S(rv64_fp_lt_s, flt.s)
     FP_ASM_COMPARE_S(rv64_fp_le_s, fle.s)
@@ -117,6 +145,93 @@ asm(
     "  ret\n"
     ".size rv64_fp_store_malformed_s, .-rv64_fp_store_malformed_s\n"
 
+    /*
+     * These probes deliberately create malformed S boxes through the raw D
+     * move. Computational S operations must substitute canonical qNaN, while
+     * FMV.X.W must continue to expose the untouched low word.
+     */
+    ".globl rv64_fp_malformed_s_sgnj\n"
+    ".type rv64_fp_malformed_s_sgnj, @function\n"
+    "rv64_fp_malformed_s_sgnj:\n"
+    "  fmv.d.x f0, a0\n"
+    "  fmv.d.x f1, a1\n"
+    "  fsgnj.s f0, f0, f1\n"
+    "  fmv.x.d a0, f0\n"
+    "  ret\n"
+    ".size rv64_fp_malformed_s_sgnj, "
+    ".-rv64_fp_malformed_s_sgnj\n"
+
+    ".globl rv64_fp_malformed_s_class\n"
+    ".type rv64_fp_malformed_s_class, @function\n"
+    "rv64_fp_malformed_s_class:\n"
+    "  fmv.d.x f0, a0\n"
+    "  fclass.s a0, f0\n"
+    "  ret\n"
+    ".size rv64_fp_malformed_s_class, "
+    ".-rv64_fp_malformed_s_class\n"
+
+    ".globl rv64_fp_malformed_move_x_w\n"
+    ".type rv64_fp_malformed_move_x_w, @function\n"
+    "rv64_fp_malformed_move_x_w:\n"
+    "  fmv.d.x f0, a0\n"
+    "  fmv.x.w a0, f0\n"
+    "  ret\n"
+    ".size rv64_fp_malformed_move_x_w, "
+    ".-rv64_fp_malformed_move_x_w\n"
+
+    /*
+     * Isolate read-only and FPR-writing instructions so FS state transitions
+     * cannot be hidden by setup or result-transfer instructions.
+     */
+    ".globl rv64_fp_write_w_x_only\n"
+    ".type rv64_fp_write_w_x_only, @function\n"
+    "rv64_fp_write_w_x_only:\n"
+    "  fmv.w.x f0, a0\n"
+    "  ret\n"
+    ".size rv64_fp_write_w_x_only, .-rv64_fp_write_w_x_only\n"
+
+    ".globl rv64_fp_read_x_w_only\n"
+    ".type rv64_fp_read_x_w_only, @function\n"
+    "rv64_fp_read_x_w_only:\n"
+    "  fmv.x.w a0, f0\n"
+    "  ret\n"
+    ".size rv64_fp_read_x_w_only, .-rv64_fp_read_x_w_only\n"
+
+    ".globl rv64_fp_class_s_only\n"
+    ".type rv64_fp_class_s_only, @function\n"
+    "rv64_fp_class_s_only:\n"
+    "  fclass.s a0, f0\n"
+    "  ret\n"
+    ".size rv64_fp_class_s_only, .-rv64_fp_class_s_only\n"
+
+    ".globl rv64_fp_sgnj_s_alias_only\n"
+    ".type rv64_fp_sgnj_s_alias_only, @function\n"
+    "rv64_fp_sgnj_s_alias_only:\n"
+    "  fsgnj.s f0, f0, f0\n"
+    "  ret\n"
+    ".size rv64_fp_sgnj_s_alias_only, "
+    ".-rv64_fp_sgnj_s_alias_only\n"
+
+    /*
+     * The entry is the real self-backedge target. The four GPRs are therefore
+     * eligible for the stable cache only when every exact FP operation remains
+     * helper-free and preserves R8.
+     */
+    ".globl rv64_fp_exact_stable_loop\n"
+    ".type rv64_fp_exact_stable_loop, @function\n"
+    "rv64_fp_exact_stable_loop:\n"
+    "  fmv.d.x f0, a0\n"
+    "  fmv.d.x f1, a1\n"
+    "  fsgnj.d f2, f0, f1\n"
+    "  fmv.x.d a0, f2\n"
+    "  fclass.d a3, f2\n"
+    "  xor a0, a0, a3\n"
+    "  addi a2, a2, -1\n"
+    "  bne a2, zero, rv64_fp_exact_stable_loop\n"
+    "  ret\n"
+    ".size rv64_fp_exact_stable_loop, "
+    ".-rv64_fp_exact_stable_loop\n"
+
     ".option pop\n");
 
 extern uint64_t rv64_fp_sgnj_s(uint32_t, uint32_t);
@@ -125,6 +240,8 @@ extern uint64_t rv64_fp_sgnjx_s(uint32_t, uint32_t);
 extern uint64_t rv64_fp_sgnj_d(uint64_t, uint64_t);
 extern uint64_t rv64_fp_sgnjn_d(uint64_t, uint64_t);
 extern uint64_t rv64_fp_sgnjx_d(uint64_t, uint64_t);
+extern uint64_t rv64_fp_sgnj_s_rd_rs2(uint32_t, uint32_t);
+extern uint64_t rv64_fp_sgnj_d_rd_rs2(uint64_t, uint64_t);
 extern uint64_t rv64_fp_min_s(uint32_t, uint32_t);
 extern uint64_t rv64_fp_max_s(uint32_t, uint32_t);
 extern uint64_t rv64_fp_min_d(uint64_t, uint64_t);
@@ -140,6 +257,14 @@ extern uint64_t rv64_fp_class_d(uint64_t);
 extern uint64_t rv64_fp_move_x_w(uint32_t);
 extern uint64_t rv64_fp_malformed_s_add(uint64_t, uint32_t);
 extern void rv64_fp_store_malformed_s(uint64_t, uint32_t *);
+extern uint64_t rv64_fp_malformed_s_sgnj(uint64_t, uint64_t);
+extern uint64_t rv64_fp_malformed_s_class(uint64_t);
+extern uint64_t rv64_fp_malformed_move_x_w(uint64_t);
+extern uint64_t rv64_fp_write_w_x_only(uint64_t);
+extern uint64_t rv64_fp_read_x_w_only(void);
+extern uint64_t rv64_fp_class_s_only(void);
+extern void rv64_fp_sgnj_s_alias_only(void);
+extern uint64_t rv64_fp_exact_stable_loop(uint64_t, uint64_t, uint64_t);
 
 /*
  * These literal encodings cover every architectural FCLASS result bit.  The
@@ -204,6 +329,11 @@ static void write_fflags(uintptr_t value)
     asm volatile("csrw 0x001, %0" : : "r"(value) : "memory");
 }
 
+static void write_frm(uintptr_t value)
+{
+    asm volatile("csrw 0x002, %0" : : "r"(value) : "memory");
+}
+
 static uintptr_t enable_initial_fp_state(void)
 {
     const uintptr_t old = read_mstatus();
@@ -218,7 +348,7 @@ static void test_sign_injection(void)
     const uint64_t d_payload = UINT64_C(0x7ff8123456789abc);
     const uint64_t d_negative = UINT64_C(0xbff0000000000000);
 
-    write_fflags(0);
+    write_fflags(UINT64_C(0x1f));
     check(rv64_fp_sgnj_s(s_payload, s_negative) ==
           (UINT64_C(0xffffffff) << 32 | UINT32_C(0xffc12345)));
     check(rv64_fp_sgnjn_s(s_payload, s_negative) ==
@@ -232,6 +362,11 @@ static void test_sign_injection(void)
     check(rv64_fp_sgnjx_d(UINT64_C(0xfff8123456789abc), d_negative) ==
           d_payload);
 
+    check(rv64_fp_sgnj_s_rd_rs2(s_payload, s_negative) ==
+          UINT64_C(0xffffffffffc12345));
+    check(rv64_fp_sgnj_d_rd_rs2(d_payload, d_negative) ==
+          UINT64_C(0xfff8123456789abc));
+
     /*
      * Sign injection is bitwise and never signals, including for a signalling
      * NaN payload.
@@ -239,7 +374,7 @@ static void test_sign_injection(void)
     check(rv64_fp_sgnj_s(UINT32_C(0x7f800123),
                         UINT32_C(0x3f800000)) ==
           UINT64_C(0xffffffff7f800123));
-    check(read_fflags() == 0);
+    check(read_fflags() == UINT64_C(0x1f));
 }
 
 static void test_min_max_and_signed_zero(void)
@@ -283,14 +418,14 @@ static void test_compare_and_classify(void)
     check(rv64_fp_lt_s(UINT32_C(0x7fc00000), UINT32_C(0x3f800000)) == 0);
     check((read_fflags() & UINT64_C(0x10)) != 0);
 
-    write_fflags(0);
+    write_fflags(UINT64_C(0x1f));
 
     for (unsigned i = 0;
          i < sizeof(fclass_s_cases) / sizeof(fclass_s_cases[0]); ++i)
     {
         check(rv64_fp_class_s(fclass_s_cases[i].bits) ==
               fclass_s_cases[i].expected);
-        check(read_fflags() == 0);
+        check(read_fflags() == UINT64_C(0x1f));
     }
 
     for (unsigned i = 0;
@@ -298,7 +433,7 @@ static void test_compare_and_classify(void)
     {
         check(rv64_fp_class_d(fclass_d_cases[i].bits) ==
               fclass_d_cases[i].expected);
-        check(read_fflags() == 0);
+        check(read_fflags() == UINT64_C(0x1f));
     }
 }
 
@@ -327,6 +462,95 @@ static void test_nan_boxing_and_raw_store_exception(void)
           UINT64_C(0xffffffffff800123));
 }
 
+static void test_malformed_exact_inputs(void)
+{
+    /*
+     * A malformed computational S operand becomes canonical qNaN. The sign
+     * source is unboxed independently, so a malformed negative-looking rhs is
+     * nevertheless the positive canonical qNaN for sign selection.
+     */
+    check(rv64_fp_malformed_s_sgnj(
+              UINT64_C(0x000000003f800000),
+              UINT64_C(0xffffffffbf800000)) ==
+          UINT64_C(0xffffffffffc00000));
+    check(rv64_fp_malformed_s_sgnj(
+              UINT64_C(0xffffffff3f800000),
+              UINT64_C(0x00000000bf800000)) ==
+          UINT64_C(0xffffffff3f800000));
+    check(rv64_fp_malformed_s_class(
+              UINT64_C(0x000000003f800000)) == (1u << 9));
+
+    /*
+     * FMV.X.W is a transfer rather than a computational consumer: it ignores
+     * the malformed upper half and sign-extends only the raw low word.
+     */
+    check(rv64_fp_malformed_move_x_w(
+              UINT64_C(0x000000007fa12345)) ==
+          UINT64_C(0x000000007fa12345));
+    check(rv64_fp_malformed_move_x_w(
+              UINT64_C(0x0123456781234567)) ==
+          UINT64_C(0xffffffff81234567));
+}
+
+static void test_exact_fp_state_effects(void)
+{
+    uintptr_t status = read_mstatus();
+
+    write_fflags(UINT64_C(0x1f));
+    write_mstatus((status & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
+    (void)rv64_fp_write_w_x_only(UINT64_C(0x0123456781234567));
+
+    status = read_mstatus();
+    check((status & MSTATUS_FS_MASK) == MSTATUS_FS_DIRTY);
+    check((status & MSTATUS_SD) != 0);
+    check(read_fflags() == UINT64_C(0x1f));
+
+    /*
+     * Explicitly mark the already-populated state Clean. Raw moves from an FPR
+     * and classification are read-only and must not set FS or SD.
+     */
+    write_mstatus((status & ~MSTATUS_FS_MASK) | MSTATUS_FS_CLEAN);
+    check(rv64_fp_read_x_w_only() ==
+          UINT64_C(0xffffffff81234567));
+    check((read_mstatus() & MSTATUS_FS_MASK) == MSTATUS_FS_CLEAN);
+    check((read_mstatus() & MSTATUS_SD) == 0);
+
+    check(rv64_fp_class_s_only() == (1u << 1));
+    check((read_mstatus() & MSTATUS_FS_MASK) == MSTATUS_FS_CLEAN);
+    check((read_mstatus() & MSTATUS_SD) == 0);
+    check(read_fflags() == UINT64_C(0x1f));
+
+    /* Even an aliased sign-injection destination is an architectural write. */
+    rv64_fp_sgnj_s_alias_only();
+    status = read_mstatus();
+    check((status & MSTATUS_FS_MASK) == MSTATUS_FS_DIRTY);
+    check((status & MSTATUS_SD) != 0);
+}
+
+static void test_exact_ops_ignore_reserved_frm(void)
+{
+    for (uintptr_t frm = 5; frm <= 7; ++frm)
+    {
+        write_frm(frm);
+        check(rv64_fp_sgnj_d(
+                  UINT64_C(0x3ff123456789abcd),
+                  UINT64_C(0xbff0000000000000)) ==
+              UINT64_C(0xbff123456789abcd));
+        check(rv64_fp_class_d(
+                  UINT64_C(0x7ff0000000000001)) == (1u << 8));
+    }
+}
+
+static void test_exact_fp_stable_loop(void)
+{
+    write_fflags(UINT64_C(0x1f));
+    check(rv64_fp_exact_stable_loop(
+              UINT64_C(0x3ff0000000000000),
+              UINT64_C(0xbff0000000000000), 64) ==
+          UINT64_C(0xbff0000000000000));
+    check(read_fflags() == UINT64_C(0x1f));
+}
+
 #endif
 
 int main(void)
@@ -338,6 +562,10 @@ int main(void)
     test_min_max_and_signed_zero();
     test_compare_and_classify();
     test_nan_boxing_and_raw_store_exception();
+    test_malformed_exact_inputs();
+    test_exact_fp_state_effects();
+    test_exact_ops_ignore_reserved_frm();
+    test_exact_fp_stable_loop();
 
     write_mstatus(old_mstatus);
 #endif

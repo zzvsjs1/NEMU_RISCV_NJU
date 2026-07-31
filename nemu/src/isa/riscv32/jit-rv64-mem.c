@@ -603,6 +603,27 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
     return false;
 }
 
+/*
+ * Warm one JIT data-TLB entry without performing the guest memory operation.
+ *
+ * Native FP-memory slow edges use this only before returning to the dispatcher
+ * at the unexecuted instruction. A valid ordinary-PMEM translation may
+ * therefore be reused by the retrying native entry, while MMIO, faults,
+ * non-canonical addresses, and cross-page accesses remain completely owned by
+ * the architectural fallback path.
+ */
+bool rv64_jit_data_tlb_probe_read(vaddr_t addr, uint32_t len)
+{
+    paddr_t ignored = 0;
+    return jit_translate_pmem(addr, len, MEM_TYPE_READ, &ignored);
+}
+
+bool rv64_jit_data_tlb_probe_write(vaddr_t addr, uint32_t len)
+{
+    paddr_t ignored = 0;
+    return jit_translate_pmem(addr, len, MEM_TYPE_WRITE, &ignored);
+}
+
 /* Forward declaration: store helpers need source-chunk state defined below. */
 bool rv64_jit_write_may_touch_source_chunk(paddr_t addr, int len);
 
@@ -626,6 +647,19 @@ static uint64_t jit_load_vaddr_raw(vaddr_t addr, uint32_t len)
     }
 
     return (uint64_t)vaddr_read(addr, (int)len);
+}
+
+/*
+ * Read an aligned Bare-mode address which generated code has already proved is
+ * outside PMEM. Enter at the physical layer to avoid repeating translation and
+ * virtual-address checks, while retaining MMIO routing, callbacks, tracing,
+ * bounds checks, and invalid-address behaviour.
+ */
+static uint64_t jit_load_paddr_raw(paddr_t addr, uint32_t len)
+{
+    JIT_STAT_INC(helper_load_count);
+    JIT_STAT_INC(bare_mmio_load_calls);
+    return (uint64_t)paddr_read(addr, (int)len);
 }
 
 /* Load one signed byte and sign-extend it to RV64 XLEN. */
@@ -668,6 +702,48 @@ uint64_t rv64_jit_load_u16(vaddr_t addr)
 uint64_t rv64_jit_load_u32(vaddr_t addr)
 {
     return jit_load_vaddr_raw(addr, 4) & UINT32_MAX;
+}
+
+/* Load one signed Bare-mode MMIO byte and sign-extend it to RV64 XLEN. */
+uint64_t rv64_jit_load_bare_i8(paddr_t addr)
+{
+    return (uint64_t)(int64_t)(int8_t)jit_load_paddr_raw(addr, 1);
+}
+
+/* Load one signed Bare-mode MMIO halfword and sign-extend it to RV64 XLEN. */
+uint64_t rv64_jit_load_bare_i16(paddr_t addr)
+{
+    return (uint64_t)(int64_t)(int16_t)jit_load_paddr_raw(addr, 2);
+}
+
+/* Load one signed Bare-mode MMIO word and sign-extend it to RV64 XLEN. */
+uint64_t rv64_jit_load_bare_i32(paddr_t addr)
+{
+    return (uint64_t)(int64_t)(int32_t)jit_load_paddr_raw(addr, 4);
+}
+
+/* Load one full-width Bare-mode MMIO doubleword. */
+uint64_t rv64_jit_load_bare_u64(paddr_t addr)
+{
+    return jit_load_paddr_raw(addr, 8);
+}
+
+/* Load one unsigned Bare-mode MMIO byte and zero-extend it to RV64 XLEN. */
+uint64_t rv64_jit_load_bare_u8(paddr_t addr)
+{
+    return jit_load_paddr_raw(addr, 1) & 0xffu;
+}
+
+/* Load one unsigned Bare-mode MMIO halfword and zero-extend it to RV64 XLEN. */
+uint64_t rv64_jit_load_bare_u16(paddr_t addr)
+{
+    return jit_load_paddr_raw(addr, 2) & 0xffffu;
+}
+
+/* Load one unsigned Bare-mode MMIO word and zero-extend it to RV64 XLEN. */
+uint64_t rv64_jit_load_bare_u32(paddr_t addr)
+{
+    return jit_load_paddr_raw(addr, 4) & UINT32_MAX;
 }
 
 /* Commit a proven PMEM store and invalidate only when the bytes are sensitive. */
@@ -829,99 +905,6 @@ uint32_t rv64_jit_store_pmem_continue(paddr_t addr, uint32_t len, uint64_t data)
     JIT_STAT_INC(helper_store_count);
 
     return jit_store_pmem_direct_continue(addr, len, data);
-}
-
-/* Sign-extend one 32-bit W-form result to the RV64 register width. */
-static uint64_t jit_sext32(uint32_t value)
-{
-    return (uint64_t)(int64_t)(int32_t)value;
-}
-
-/* Compute RV64M operations that are uncommon or awkward to emit inline. */
-uint64_t rv64_jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr)
-{
-    const uint32_t opcode = instr & RV64_OPCODE_MASK;
-    const uint32_t funct3 = rv64_instr_funct3(instr);
-    const uint32_t key = RV64_OP_KEY(rv64_instr_funct7(instr), funct3);
-
-    if (opcode == RV64_OPCODE_OP)
-    {
-        switch (key)
-        {
-        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_SLL): /* MULH */
-            return (uint64_t)(((__int128)(int64_t)lhs * (__int128)(int64_t)rhs) >> 64);
-        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_SLT): /* MULHSU */
-            return (uint64_t)(((__int128)(int64_t)lhs * (__int128)(uint64_t)rhs) >> 64);
-        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_SLTU): /* MULHU */
-            return (uint64_t)(((__uint128_t)lhs * (__uint128_t)rhs) >> 64);
-        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_XOR): /* DIV */
-            if (rhs == 0)
-            {
-                return UINT64_MAX;
-            }
-            if (lhs == (uint64_t)INT64_MIN && rhs == UINT64_MAX)
-            {
-                return lhs;
-            }
-            return (uint64_t)((int64_t)lhs / (int64_t)rhs);
-        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_SRL_SRA): /* DIVU */
-            return rhs == 0 ? UINT64_MAX : lhs / rhs;
-        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_OR): /* REM */
-            if (rhs == 0)
-            {
-                return lhs;
-            }
-            if (lhs == (uint64_t)INT64_MIN && rhs == UINT64_MAX)
-            {
-                return 0;
-            }
-            return (uint64_t)((int64_t)lhs % (int64_t)rhs);
-        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_AND): /* REMU */
-            return rhs == 0 ? lhs : lhs % rhs;
-        default:
-            return 0;
-        }
-    }
-
-    if (opcode == RV64_OPCODE_OP_32)
-    {
-        const int32_t lhs_s = (int32_t)lhs;
-        const int32_t rhs_s = (int32_t)rhs;
-        const uint32_t lhs_u = (uint32_t)lhs;
-        const uint32_t rhs_u = (uint32_t)rhs;
-
-        switch (key)
-        {
-        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_XOR): /* DIVW */
-            if (rhs_s == 0)
-            {
-                return UINT64_MAX;
-            }
-            if (lhs_s == INT32_MIN && rhs_s == -1)
-            {
-                return jit_sext32((uint32_t)lhs_s);
-            }
-            return jit_sext32((uint32_t)(lhs_s / rhs_s));
-        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_SRL_SRA): /* DIVUW */
-            return rhs_u == 0 ? UINT64_MAX : jit_sext32(lhs_u / rhs_u);
-        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_OR): /* REMW */
-            if (rhs_s == 0)
-            {
-                return jit_sext32((uint32_t)lhs_s);
-            }
-            if (lhs_s == INT32_MIN && rhs_s == -1)
-            {
-                return 0;
-            }
-            return jit_sext32((uint32_t)(lhs_s % rhs_s));
-        case RV64_OP_KEY(RV64_FUNCT7_MULDIV, RV64_FUNCT3_AND): /* REMUW */
-            return rhs_u == 0 ? jit_sext32(lhs_u) : jit_sext32(lhs_u % rhs_u);
-        default:
-            return 0;
-        }
-    }
-
-    return 0;
 }
 
 /*

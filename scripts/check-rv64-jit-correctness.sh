@@ -15,9 +15,16 @@ DEFAULT_DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit_defconfig"
 DEFCONFIG="$NEMU_HOME/configs/riscv64-am-headless-jit-stats_defconfig"
 RV64_FPU_JIT_TEST=riscv64-fpu-jit-fallback
 RV64_FPU_TRAP_TEST=riscv64-fpu-traps
+RV64_FPU_EXACT_TEST=riscv64-fpu-transfer
+RV64_FPU_MEMORY_NATIVE_TEST=riscv64-fpu-memory-native
+RV64_FPU_MMIO_BOUNDARY_TEST=riscv64-fpu-mmio-boundary
+RV64_MMIO_BOUNDARY_TEST=riscv64-jit-mmio-boundary
 TESTS=(
   riscv64-jit-stable-loop riscv64-jit-multibranch-loop
-  "$RV64_FPU_JIT_TEST" "$RV64_FPU_TRAP_TEST" riscv64-jit-strict
+  "$RV64_FPU_JIT_TEST" "$RV64_FPU_TRAP_TEST" "$RV64_FPU_EXACT_TEST"
+  "$RV64_FPU_MEMORY_NATIVE_TEST"
+  "$RV64_FPU_MMIO_BOUNDARY_TEST"
+  riscv64-jit-strict
   riscv64-jit-smc riscv64-jit-negative-cache
   riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast
   riscv64-jit-return-link riscv64-jit-indirect-link
@@ -31,18 +38,77 @@ fail() {
   exit 1
 }
 
+require_mmio_cross_map_rejection() {
+  local out
+  local run_status
+
+  out=$(mktemp)
+  trap 'rm -f "$out"' EXIT
+
+  # This is an expected host-side rejection rather than a successful guest
+  # trap. The CPU-test wrapper records an inner emulator failure in its output
+  # and may itself return success, so check the precise diagnostic as well as
+  # ensuring that the guest never reached HIT GOOD TRAP.
+  if NEMU_JIT_STATS=1 make -C am-kernels/tests/cpu-tests \
+      ARCH="$ARCH" ALL="$RV64_MMIO_BOUNDARY_TEST" run >"$out" 2>&1; then
+    run_status=0
+  else
+    run_status=$?
+  fi
+
+  if grep -q 'with len=8 is out of bound {audio}' "$out" &&
+      ! grep -q 'HIT GOOD TRAP' "$out"; then
+    rm -f "$out"
+    trap - EXIT
+    return
+  fi
+
+  echo "Expected a whole-span MMIO boundary rejection; wrapper status=$run_status" >&2
+  cat "$out" >&2
+  exit 1
+}
+
 require_good_trap() {
   local log=$1
   local test_name=$2
+  local good_trap_count
+  local bad_trap_count
+  local stats_header_count
 
   # A normal process exit is not proof that the CPU test reached its
-  # architectural success trap. An early quit can occur after plausible JIT
-  # statistics have already accumulated.
-  if ! grep -q 'HIT GOOD TRAP' "$log"; then
-    echo "Expected $test_name to reach HIT GOOD TRAP" >&2
+  # architectural success trap. Require one complete execution and one report;
+  # otherwise a duplicated run could hide an earlier failure behind plausible
+  # statistics from the final run.
+  good_trap_count=$(grep -c 'HIT GOOD TRAP' "$log" || true)
+  bad_trap_count=$(grep -c 'HIT BAD TRAP' "$log" || true)
+  stats_header_count=$(grep -c 'jit: RV64 JIT statistics' "$log" || true)
+
+  if [ "$good_trap_count" -ne 1 ] ||
+    [ "$bad_trap_count" -ne 0 ] ||
+    [ "$stats_header_count" -ne 1 ]; then
+    echo "Expected one unambiguous successful execution for $test_name;" \
+      "got good-traps=$good_trap_count bad-traps=$bad_trap_count" \
+      "statistics-reports=$stats_header_count" >&2
     cat "$log" >&2
     exit 1
   fi
+}
+
+parse_single_stat_value() {
+  local log=$1
+  local expression=$2
+  local label=$3
+  local test_name=$4
+  local -a values
+
+  mapfile -t values < <(sed -n "$expression" "$log")
+  if [ "${#values[@]}" -ne 1 ]; then
+    echo "Expected exactly one $label for $test_name, got ${#values[@]}" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  printf "%s\n" "${values[0]}"
 }
 
 require_count_expectation() {
@@ -122,6 +188,103 @@ require_fp_helper_stats() {
   require_count_expectation "$continuations" "$expected_continuations" "helper continuations" "$test_name" "$log"
   require_count_expectation "$trap_exits" "$expected_trap_exits" "helper trap exits" "$test_name" "$log"
   require_count_expectation "$memory_exits" "$expected_memory_exits" "helper memory exits" "$test_name" "$log"
+}
+
+require_all_native_fp_exact_executions() {
+  local log=$1
+  local test_name=$2
+  local expected_total=$3
+  local operation
+  local count
+  local total=0
+  local operations=(
+    FMV.X.W FMV.W.X FMV.X.D FMV.D.X
+    FSGNJ.S FSGNJN.S FSGNJX.S
+    FSGNJ.D FSGNJN.D FSGNJX.D
+    FCLASS.S FCLASS.D
+  )
+
+  for operation in "${operations[@]}"; do
+    count=$(sed -n \
+      "s/.*native exact FP ${operation} executions = \\([0-9][0-9]*\\).*/\\1/p" \
+      "$log" | tail -n 1)
+
+    if [ -z "$count" ]; then
+      echo "Failed to find native exact FP $operation execution stats for $test_name" >&2
+      cat "$log" >&2
+      exit 2
+    fi
+
+    if [ "$count" -le 0 ]; then
+      echo "Expected native exact FP $operation execution for $test_name, got $count" >&2
+      cat "$log" >&2
+      exit 2
+    fi
+
+    total=$((total + count))
+  done
+
+  if [ "$total" -ne "$expected_total" ]; then
+    echo "Expected exactly $expected_total native exact-FP executions for" \
+      "$test_name, got $total" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_all_native_fp_memory_executions() {
+  local log=$1
+  local test_name=$2
+  local expected_flw=$3
+  local expected_fld=$4
+  local expected_fsw=$5
+  local expected_fsd=$6
+  local operation
+  local expected
+  local count
+
+  for operation in FLW FLD FSW FSD; do
+    case "$operation" in
+      FLW) expected=$expected_flw ;;
+      FLD) expected=$expected_fld ;;
+      FSW) expected=$expected_fsw ;;
+      FSD) expected=$expected_fsd ;;
+    esac
+
+    count=$(sed -n \
+      "s/.*native FP memory ${operation} executions = \\([0-9][0-9]*\\).*/\\1/p" \
+      "$log" | tail -n 1)
+
+    if [ -z "$count" ]; then
+      echo "Failed to find native FP memory $operation execution stats for $test_name" >&2
+      cat "$log" >&2
+      exit 2
+    fi
+
+    if [ "$count" -ne "$expected" ]; then
+      echo "Expected exactly $expected native FP memory $operation executions" \
+        "for $test_name, got $count" >&2
+      cat "$log" >&2
+      exit 1
+    fi
+  done
+}
+
+require_absent_block_end_reason() {
+  local log=$1
+  local test_name=$2
+  local reason=$3
+  local count
+
+  count=$(sed -n \
+    "s/.*block end $reason = \\([0-9][0-9]*\\).*/\\1/p" \
+    "$log" | tail -n 1)
+
+  if [ -n "$count" ] && [ "$count" -ne 0 ]; then
+    echo "Expected no $reason block endings for $test_name, got $count" >&2
+    cat "$log" >&2
+    exit 1
+  fi
 }
 
 require_positive_jit_instructions() {
@@ -222,6 +385,36 @@ require_positive_native_m_ops() {
     cat "$log" >&2
     exit 1
   fi
+}
+
+require_all_native_m_executions() {
+  local log=$1
+  local test_name=$2
+  local op
+  local count
+  local operations=(
+    MUL MULH MULHSU MULHU DIV DIVU REM REMU
+    MULW DIVW DIVUW REMW REMUW
+  )
+
+  for op in "${operations[@]}"; do
+    count=$(sed -n \
+      "s/.*native M ${op} executions = \\([0-9][0-9]*\\).*/\\1/p" \
+      "$log" | tail -n 1)
+
+    if [ -z "$count" ]; then
+      echo "Failed to find native M ${op} execution stats for $test_name" >&2
+      cat "$log" >&2
+      exit 2
+    fi
+
+    if [ "$count" -le 0 ]; then
+      echo "Expected positive native M ${op} executions for $test_name," \
+        "got $count" >&2
+      cat "$log" >&2
+      exit 1
+    fi
+  done
 }
 
 require_positive_translated_blocks() {
@@ -374,6 +567,68 @@ require_positive_stable_register_loops() {
   fi
 }
 
+require_native_fp_stable_loop() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local stable_loops
+  local preloaded_registers
+
+  summary=$(sed -n \
+    's/.*stable register loops = \([0-9][0-9]*\), preloaded registers = \([0-9][0-9]*\).*/\1 \2/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$summary" ]; then
+    echo "Failed to find FP stable-register-loop stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  read -r stable_loops preloaded_registers <<<"$summary"
+
+  # This focused binary has exactly one backedge which the stable-loop scanner
+  # may accept, and that exact-FP loop carries four GPRs. Pinning both values
+  # prevents an unrelated loop from masking loss of its stable register map.
+  if [ "$stable_loops" -ne 1 ] ||
+    [ "$preloaded_registers" -ne 4 ]; then
+    echo "Expected exactly one four-register native exact-FP stable loop for $test_name," \
+      "got loops=$stable_loops" \
+      "preloaded=$preloaded_registers" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_native_m_stable_loop() {
+  local log=$1
+  local test_name=$2
+  local summary
+  local stable_loops
+  local preloaded_registers
+
+  summary=$(sed -n \
+    's/.*stable register loops = \([0-9][0-9]*\), preloaded registers = \([0-9][0-9]*\).*/\1 \2/p' \
+    "$log" | tail -n 1)
+
+  if [ -z "$summary" ]; then
+    echo "Failed to find M stable-loop stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  read -r stable_loops preloaded_registers <<<"$summary"
+
+  # The focused guest contains exactly one six-register self-backedge. Before
+  # all M operations became helper-free, that same loop compiled without a
+  # stable mapping and both counters were zero.
+  if [ "$stable_loops" -ne 1 ] || [ "$preloaded_registers" -ne 6 ]; then
+    echo "Expected one six-register native M stable loop for $test_name," \
+      "got loops=$stable_loops preloaded=$preloaded_registers" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 require_zero_stable_register_loops() {
   local log=$1
   local test_name=$2
@@ -429,21 +684,18 @@ require_mmio_store_continuation_stats() {
   local continuations
   local boundary_exits
 
-  summary=$(sed -n \
+  summary=$(parse_single_stat_value \
+    "$log" \
     's/.*bare MMIO store calls = \([0-9][0-9]*\), continuations = \([0-9][0-9]*\), boundary exits = \([0-9][0-9]*\).*/\1 \2 \3/p' \
-    "$log" | tail -n 1)
-
-  if [ -z "$summary" ]; then
-    echo "Failed to find exact bare-MMIO store stats for $test_name" >&2
-    cat "$log" >&2
-    exit 2
-  fi
+    "bare-MMIO store summary" "$test_name")
 
   read -r calls continuations boundary_exits <<<"$summary"
 
-  # Every helper call must have exactly one outcome. This fixture also proves
-  # that an ordinary RTC write can continue to the following native ADDI.
-  if [ "$calls" -lt 8 ] ||
+  # The focused fixture performs one helper-backed eight-byte VGACTL staging
+  # write, two adjacent-word writes, two command writes, one dynamically
+  # recompiled unsupported-width SD, sixteen RTC writes, and two serial writes.
+  # Every helper call must have exactly one outcome.
+  if [ "$calls" -ne 24 ] ||
     [ "$continuations" -le 0 ] ||
     [ "$boundary_exits" -lt 2 ] ||
     [ "$calls" -ne $((continuations + boundary_exits)) ]; then
@@ -455,9 +707,122 @@ require_mmio_store_continuation_stats() {
   fi
 }
 
-require_positive_cpu_boundary_breaks() {
+require_direct_mmio_store_routing_stats() {
   local log=$1
   local test_name=$2
+  local direct_hits
+
+  direct_hits=$(parse_single_stat_value \
+    "$log" \
+    's/.*inline direct MMIO store hits = \([0-9][0-9]*\).*/\1/p' \
+    "inline direct-MMIO store total" "$test_name")
+
+  # The original site contributes one direct SW. The dedicated route site adds
+  # seven committed SW accesses; its PMEM, command, misaligned, and SD cases do
+  # not qualify for the direct-write contract.
+  if [ "$direct_hits" -ne 8 ]; then
+    echo "Expected exactly eight direct MMIO stores for $test_name, got $direct_hits" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_bare_mmio_load_routing_stats() {
+  local log=$1
+  local test_name=$2
+  local calls
+  local direct_hits
+
+  calls=$(parse_single_stat_value \
+    "$log" \
+    's/.*bare MMIO load calls = \([0-9][0-9]*\).*/\1/p' \
+    "bare-MMIO load total" "$test_name")
+  direct_hits=$(parse_single_stat_value \
+    "$log" \
+    's/.*inline direct MMIO load hits = \([0-9][0-9]*\).*/\1/p' \
+    "inline direct-MMIO load total" "$test_name")
+
+  # RTC and two destructive mouse reads remain callback-driven, so exactly
+  # those three accesses reach paddr_read().
+  if [ "$calls" -ne 3 ]; then
+    echo "Expected exactly three helper-backed MMIO loads for $test_name, got $calls" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+
+  # The route fixture also switches between two contracted direct addresses,
+  # forcing two run-time refills after its compile-time seed.
+  if [ "$direct_hits" -ne 25 ]; then
+    echo "Expected exactly twenty-five inline direct-MMIO loads for $test_name, got $direct_hits" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_direct_mmio_route_cache_stats() {
+  local log=$1
+  local test_name=$2
+  local load_summary
+  local store_summary
+  local direct_loads
+  local direct_stores
+  local load_hits
+  local load_misses
+  local load_fills
+  local store_hits
+  local store_misses
+  local store_fills
+
+  load_summary=$(parse_single_stat_value \
+    "$log" \
+    's/.*direct MMIO load routes: warm hits = \([0-9][0-9]*\), misses = \([0-9][0-9]*\), fills = \([0-9][0-9]*\).*/\1 \2 \3/p' \
+    "direct-MMIO load-route summary" "$test_name")
+  store_summary=$(parse_single_stat_value \
+    "$log" \
+    's/.*direct MMIO store routes: warm hits = \([0-9][0-9]*\), misses = \([0-9][0-9]*\), fills = \([0-9][0-9]*\).*/\1 \2 \3/p' \
+    "direct-MMIO store-route summary" "$test_name")
+  direct_loads=$(parse_single_stat_value \
+    "$log" \
+    's/.*inline direct MMIO load hits = \([0-9][0-9]*\).*/\1/p' \
+    "inline direct-MMIO load total" "$test_name")
+  direct_stores=$(parse_single_stat_value \
+    "$log" \
+    's/.*inline direct MMIO store hits = \([0-9][0-9]*\).*/\1/p' \
+    "inline direct-MMIO store total" "$test_name")
+
+  read -r load_hits load_misses load_fills <<<"$load_summary"
+  read -r store_hits store_misses store_fills <<<"$store_summary"
+
+  # Every selected route starts with a valid exact compile-time seed. The
+  # forced direct-address change performs two refills, while seven other direct
+  # operations intentionally retain the uncached classifier.
+  if [ "$load_hits" -ne 15 ] ||
+    [ "$load_misses" -ne 6 ] ||
+    [ "$load_fills" -ne 2 ] ||
+    [ "$direct_loads" -ne $((load_hits + load_fills + 8)) ]; then
+    echo "Expected load routes hits=15 misses=6 fills=2 and eight uncached directs" \
+      "for $test_name; got hits=$load_hits misses=$load_misses" \
+      "fills=$load_fills direct=$direct_loads" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+
+  if [ "$store_hits" -ne 8 ] ||
+    [ "$store_misses" -ne 5 ] ||
+    [ "$store_fills" -ne 0 ] ||
+    [ "$direct_stores" -ne $((store_hits + store_fills)) ]; then
+    echo "Expected store routes hits=8 misses=5 fills=0 and direct=fills+hits" \
+      "for $test_name; got hits=$store_hits misses=$store_misses" \
+      "fills=$store_fills direct=$direct_stores" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
+require_cpu_boundary_breaks() {
+  local log=$1
+  local test_name=$2
+  local expectation=$3
   local boundary_breaks
 
   boundary_breaks=$(sed -n \
@@ -470,12 +835,9 @@ require_positive_cpu_boundary_breaks() {
     exit 2
   fi
 
-  if [ "$boundary_breaks" -le 0 ]; then
-    echo "Expected a positive CPU-boundary-break count for $test_name," \
-      "got $boundary_breaks" >&2
-    cat "$log" >&2
-    exit 1
-  fi
+  require_count_expectation \
+    "$boundary_breaks" "$expectation" "CPU boundary breaks" \
+    "$test_name" "$log"
 }
 
 require_exact_serial_mmio_marker() {
@@ -876,6 +1238,30 @@ require_positive_side_exit_reason() {
   fi
 }
 
+require_exact_side_exit_reason() {
+  local log=$1
+  local test_name=$2
+  local reason=$3
+  local expected=$4
+  local count
+
+  count=$(sed -n \
+    "s/.*side exit $reason = \\([0-9][0-9]*\\).*/\\1/p" \
+    "$log" | tail -n 1)
+
+  if [ -z "$count" ]; then
+    echo "Failed to find side-exit $reason stats for $test_name" >&2
+    cat "$log" >&2
+    exit 2
+  fi
+
+  if [ "$count" -ne "$expected" ]; then
+    echo "Expected side-exit $reason count $expected for $test_name, got $count" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
+
 require_direct_link_stats() {
   local log=$1
   local test_name=$2
@@ -1037,6 +1423,11 @@ for test_name in "${TESTS[@]}"; do
     # instruction-generation and outer CPU boundaries deterministically.
     run_env+=(NEMU_RV64_JIT_TEST_MMIO_BOUNDARIES=1)
   fi
+  if [ "$test_name" = "$RV64_FPU_MMIO_BOUNDARY_TEST" ]; then
+    # The statistics-only hook makes the successful FP MMIO helper raise one
+    # deterministic interrupt edge after its device callback has returned.
+    run_env+=(NEMU_RV64_JIT_TEST_FP_MMIO_BOUNDARY=1)
+  fi
 
   if ! env "${run_env[@]}" make -C am-kernels/tests/cpu-tests ARCH="$ARCH" ALL="$test_name" run >"$out" 2>&1; then
     echo "$test_name failed" >&2
@@ -1058,11 +1449,47 @@ for test_name in "${TESTS[@]}"; do
   fi
 
   if [ "$test_name" = "$RV64_FPU_JIT_TEST" ]; then
-    require_fp_helper_stats "$out" "$test_name" positive 40 23 zero 17
+    require_fp_helper_stats "$out" "$test_name" positive 16 16 zero zero
+    require_all_native_fp_memory_executions \
+      "$out" "$test_name" 0 6 0 10
+    require_positive_source_reverse_invalidations "$out" "$test_name"
+    require_positive_side_exit_reason \
+      "$out" "$test_name" "store-source"
   fi
 
   if [ "$test_name" = "$RV64_FPU_TRAP_TEST" ]; then
-    require_fp_helper_stats "$out" "$test_name" positive 22 14 8 zero
+    require_fp_helper_stats "$out" "$test_name" positive 10 zero 10 zero
+    require_all_native_fp_memory_executions \
+      "$out" "$test_name" 1 1 1 1
+    require_exact_side_exit_reason \
+      "$out" "$test_name" "fp-fs-off" 23
+    require_exact_side_exit_reason \
+      "$out" "$test_name" "load-guard" 9
+    require_exact_side_exit_reason \
+      "$out" "$test_name" "store-guard" 9
+  fi
+
+  if [ "$test_name" = "$RV64_FPU_EXACT_TEST" ]; then
+    require_fp_helper_stats "$out" "$test_name" positive 14 14 zero zero
+    require_all_native_fp_exact_executions "$out" "$test_name" 471
+    require_all_native_fp_memory_executions \
+      "$out" "$test_name" 0 0 1 0
+    require_native_fp_stable_loop "$out" "$test_name"
+  fi
+
+  if [ "$test_name" = "$RV64_FPU_MEMORY_NATIVE_TEST" ]; then
+    require_all_native_fp_memory_executions \
+      "$out" "$test_name" 66 66 66 66
+    require_fp_helper_stats "$out" "$test_name" positive zero zero zero zero
+    require_absent_block_end_reason "$out" "$test_name" "fp-memory"
+    require_positive_block_end_reason "$out" "$test_name" "chained-loop"
+  fi
+
+  if [ "$test_name" = "$RV64_FPU_MMIO_BOUNDARY_TEST" ]; then
+    require_fp_helper_stats "$out" "$test_name" positive 4 zero zero 4
+    require_all_native_fp_memory_executions \
+      "$out" "$test_name" 0 0 0 0
+    require_cpu_boundary_breaks "$out" "$test_name" 1
   fi
 
   if [ "$test_name" = "riscv64-jit-load-fast" ]; then
@@ -1109,6 +1536,8 @@ for test_name in "${TESTS[@]}"; do
 
   if [ "$test_name" = "riscv64-jit-m-fast" ]; then
     require_positive_native_m_ops "$out" "$test_name"
+    require_all_native_m_executions "$out" "$test_name"
+    require_native_m_stable_loop "$out" "$test_name"
   fi
 
   if [ "$test_name" = "riscv64-jit-sv39-remap" ]; then
@@ -1137,8 +1566,11 @@ for test_name in "${TESTS[@]}"; do
     require_positive_zero_side_exits "$out" "$test_name"
     require_positive_helper_loads "$out" "$test_name"
     require_positive_helper_stores "$out" "$test_name"
+    require_bare_mmio_load_routing_stats "$out" "$test_name"
     require_mmio_store_continuation_stats "$out" "$test_name"
-    require_positive_cpu_boundary_breaks "$out" "$test_name"
+    require_direct_mmio_store_routing_stats "$out" "$test_name"
+    require_direct_mmio_route_cache_stats "$out" "$test_name"
+    require_cpu_boundary_breaks "$out" "$test_name" positive
     require_exact_serial_mmio_marker "$out" "$test_name"
     require_positive_side_exit_reason "$out" "$test_name" "load-guard"
     require_positive_side_exit_reason "$out" "$test_name" "store-source"
@@ -1148,7 +1580,16 @@ for test_name in "${TESTS[@]}"; do
     require_positive_translated_blocks "$out" "$test_name"
     require_positive_native_paged_loads "$out" "$test_name"
     require_positive_native_paged_stores "$out" "$test_name"
+    require_all_native_fp_memory_executions \
+      "$out" "$test_name" 131 129 129 129
+    require_fp_helper_stats "$out" "$test_name" zero zero zero zero zero
+    require_positive_inline_paged_load_hits "$out" "$test_name"
+    require_positive_inline_paged_store_hits "$out" "$test_name"
     require_positive_guarded_direct_links "$out" "$test_name"
+    require_exact_side_exit_reason \
+      "$out" "$test_name" "load-guard" 2
+    require_exact_side_exit_reason \
+      "$out" "$test_name" "store-source" 3
   fi
 
   if [ "$test_name" = "riscv64-jit-sv39-dtlb" ]; then
@@ -1173,6 +1614,8 @@ for test_name in "${TESTS[@]}"; do
   rm -f "$out"
   trap - EXIT
 done
+
+require_mmio_cross_map_rejection
 
 make -C "$NEMU_HOME" riscv64-am-headless-jit_defconfig >/dev/null
 echo "RISC-V64 JIT correctness gate passed: ${TESTS[*]}"

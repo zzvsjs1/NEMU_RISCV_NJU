@@ -20,17 +20,32 @@
 #define MSTATUS_MPP_MASK (3ull << 11)
 #define MSTATUS_MPP_MPIE_MASK (MSTATUS_MPP_MASK | (1ull << 7))
 #define MSTATUS_MPP_S (1ull << 11)
+#define MSTATUS_MPRV (1ull << 17)
+#define MSTATUS_FS_MASK (3ull << 13)
+#define MSTATUS_FS_INITIAL (1ull << 13)
+#define MSTATUS_FS_CLEAN (2ull << 13)
+#define MSTATUS_FS_DIRTY (3ull << 13)
+#define MSTATUS_SD (1ull << 63)
 
 #define IDENTITY_BASE 0x80000000ull
 #define IDENTITY_PAGES 32768ull
 #define IDENTITY_L1_ENTRIES (IDENTITY_PAGES / 512ull)
 #define DATA_ALIAS_VA 0x80400000ull
+#define FP_ALIAS_VA (DATA_ALIAS_VA + PAGE_SIZE)
+#define PTE_ALIAS_VA (DATA_ALIAS_VA + 2ull * PAGE_SIZE)
 
 static uint64_t root_pt[512] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t identity_l1[512] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t identity_l0[IDENTITY_L1_ENTRIES][512] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t data_alias_l0[512] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t data_page[WORDS_PER_PAGE] __attribute__((aligned(PAGE_SIZE)));
+static uint64_t fp_data_page_a[WORDS_PER_PAGE] __attribute__((aligned(PAGE_SIZE)));
+static uint64_t fp_data_page_b[WORDS_PER_PAGE] __attribute__((aligned(PAGE_SIZE)));
+
+_Static_assert(((FP_ALIAS_VA >> 12) & 0x1ffull) == 1ull,
+               "FP alias must use leaf PTE slot one");
+_Static_assert(((PTE_ALIAS_VA >> 12) & 0x1ffull) == 2ull,
+               "PTE alias must use leaf PTE slot two");
 
 /*
  * Unexpected traps are test failures.  Encoding mcause into the bad-trap code
@@ -39,10 +54,134 @@ static uint64_t data_page[WORDS_PER_PAGE] __attribute__((aligned(PAGE_SIZE)));
 asm(".globl rv64_sv39_data_unexpected_trap\n"
     "rv64_sv39_data_unexpected_trap:\n"
     "  csrr a0, mcause\n"
+    "  csrr a1, mepc\n"
     "  addi a0, a0, 16\n"
     "  .word 0x0000006b\n");
 
 extern void rv64_sv39_data_unexpected_trap(void);
+
+asm(".section .text\n"
+    ".align 2\n"
+    ".option push\n"
+    ".option norvc\n"
+    ".option arch, +f\n"
+    ".option arch, +d\n"
+    ".globl rv64_sv39_fp_memory_loop\n"
+    ".type rv64_sv39_fp_memory_loop, @function\n"
+    "rv64_sv39_fp_memory_loop:\n"
+    "1:\n"
+    "  flw f0, 40(a0)\n"
+    "  fld f1, 48(a0)\n"
+    "  fsw f0, 56(a0)\n"
+    "  fsd f1, 64(a0)\n"
+    "  addi a1, a1, -1\n"
+    "  bne a1, zero, 1b\n"
+    "  fmv.x.d a2, f0\n"
+    "  fmv.x.d a3, f1\n"
+    "  xor a0, a2, a3\n"
+    "  ret\n"
+    ".size rv64_sv39_fp_memory_loop, "
+    ".-rv64_sv39_fp_memory_loop\n"
+
+    /*
+     * A cold DTLB probe exits after materialising the uncached a0 base. Six
+     * dirty GPRs make that read evict one live mapping; the suffix proves the
+     * post-read cache snapshot reaches the side exit without corruption.
+     */
+    ".globl rv64_sv39_fp_cold_load_eviction\n"
+    ".type rv64_sv39_fp_cold_load_eviction, @function\n"
+    "rv64_sv39_fp_cold_load_eviction:\n"
+    "  addi t2, zero, 0x112\n"
+    "  addi t3, zero, 0x223\n"
+    "  addi t4, zero, 0x334\n"
+    "  addi t5, zero, 0x445\n"
+    "  addi t6, zero, 0x556\n"
+    "  addi a2, zero, 0x667\n"
+    "  flw f7, 0(a0)\n"
+    "  sd t2, 0(a1)\n"
+    "  sd t3, 8(a1)\n"
+    "  sd t4, 16(a1)\n"
+    "  sd t5, 24(a1)\n"
+    "  sd t6, 32(a1)\n"
+    "  sd a2, 40(a1)\n"
+    "  fmv.x.d t0, f7\n"
+    "  sd t0, 48(a1)\n"
+    "  ret\n"
+    ".size rv64_sv39_fp_cold_load_eviction, "
+    ".-rv64_sv39_fp_cold_load_eviction\n"
+
+    ".globl rv64_sv39_fp_load_state\n"
+    ".type rv64_sv39_fp_load_state, @function\n"
+    "rv64_sv39_fp_load_state:\n"
+    "  flw f8, 0(a0)\n"
+    "  fld f9, 8(a0)\n"
+    "  fmv.x.d t0, f8\n"
+    "  sd t0, 0(a1)\n"
+    "  fmv.x.d t0, f9\n"
+    "  sd t0, 8(a1)\n"
+    "  ret\n"
+    ".size rv64_sv39_fp_load_state, .-rv64_sv39_fp_load_state\n"
+
+    ".globl rv64_sv39_fp_seed_stores\n"
+    ".type rv64_sv39_fp_seed_stores, @function\n"
+    "rv64_sv39_fp_seed_stores:\n"
+    "  fmv.d.x f10, a0\n"
+    "  fmv.d.x f11, a1\n"
+    "  ret\n"
+    ".size rv64_sv39_fp_seed_stores, .-rv64_sv39_fp_seed_stores\n"
+
+    ".globl rv64_sv39_fp_store_state\n"
+    ".type rv64_sv39_fp_store_state, @function\n"
+    "rv64_sv39_fp_store_state:\n"
+    "  fsw f10, 16(a0)\n"
+    "  fsd f11, 24(a0)\n"
+    "  ret\n"
+    ".size rv64_sv39_fp_store_state, .-rv64_sv39_fp_store_state\n"
+
+    ".globl rv64_sv39_fp_seed_pte\n"
+    ".type rv64_sv39_fp_seed_pte, @function\n"
+    "rv64_sv39_fp_seed_pte:\n"
+    "  fmv.d.x f12, a0\n"
+    "  ret\n"
+    ".size rv64_sv39_fp_seed_pte, .-rv64_sv39_fp_seed_pte\n"
+
+    /*
+     * PTE_ALIAS_VA maps the active leaf-table page itself. The leading LD via
+     * a3 warms its DTLB entry without caching the later a0 store base, so FSD
+     * reaches the translated-store dependency guard with the eviction shape
+     * intact and exits before the interpreter commits the new PTE.
+     */
+    ".globl rv64_sv39_fp_patch_pte_eviction\n"
+    ".type rv64_sv39_fp_patch_pte_eviction, @function\n"
+    "rv64_sv39_fp_patch_pte_eviction:\n"
+    "  ld t0, 8(a3)\n"
+    "  addi t2, zero, 0x112\n"
+    "  addi t3, zero, 0x223\n"
+    "  addi t4, zero, 0x334\n"
+    "  addi t5, zero, 0x445\n"
+    "  addi t6, zero, 0x556\n"
+    "  addi a2, zero, 0x667\n"
+    "  fsd f12, 8(a0)\n"
+    "  sd t2, 0(a1)\n"
+    "  sd t3, 8(a1)\n"
+    "  sd t4, 16(a1)\n"
+    "  sd t5, 24(a1)\n"
+    "  sd t6, 32(a1)\n"
+    "  sd a2, 40(a1)\n"
+    "  ret\n"
+    ".size rv64_sv39_fp_patch_pte_eviction, "
+    ".-rv64_sv39_fp_patch_pte_eviction\n"
+    ".option pop\n");
+
+extern uint64_t rv64_sv39_fp_memory_loop(uint8_t *, uint64_t);
+extern void rv64_sv39_fp_cold_load_eviction(
+    uint8_t *, uint64_t observed[7]);
+extern void rv64_sv39_fp_load_state(uint8_t *, uint64_t observed[2]);
+extern void rv64_sv39_fp_seed_stores(uint64_t, uint64_t);
+extern void rv64_sv39_fp_store_state(uint8_t *);
+extern void rv64_sv39_fp_seed_pte(uint64_t);
+extern void rv64_sv39_fp_patch_pte_eviction(
+    uint8_t *, uint64_t observed[6], uint64_t, uint8_t *);
 
 /* Return the Sv39 root-table index for a canonical virtual address. */
 static uint64_t vpn2(uint64_t va)
@@ -98,8 +237,12 @@ static void map_identity_window(void)
     }
 }
 
-/* Install one alias leaf that points DATA_ALIAS_VA at data_page. */
-static void map_data_alias(void)
+/*
+ * Install separate aliases for integer data, FP data, and the active leaf
+ * table itself. Keeping FP_ALIAS_VA on its own VPN prevents earlier integer
+ * probes from accidentally warming the FP-memory DTLB entry.
+ */
+static void map_data_aliases(void)
 {
     const uint64_t leaf_flags = PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
     const uint64_t table_flags = PTE_V;
@@ -114,6 +257,10 @@ static void map_data_alias(void)
 
     identity_l1[vpn1(DATA_ALIAS_VA)] = pte_for_page(data_alias_l0, table_flags);
     data_alias_l0[vpn0(DATA_ALIAS_VA)] = pte_for_page(data_page, leaf_flags);
+    data_alias_l0[vpn0(FP_ALIAS_VA)] =
+        pte_for_page(fp_data_page_a, leaf_flags);
+    data_alias_l0[vpn0(PTE_ALIAS_VA)] =
+        pte_for_page(data_alias_l0, leaf_flags);
 }
 
 /* Install a three-level Sv39 tree with identity code and one data alias. */
@@ -129,7 +276,7 @@ static void install_page_tables(void)
     }
 
     map_identity_window();
-    map_data_alias();
+    map_data_aliases();
     root_pt[vpn2(IDENTITY_BASE)] = pte_for_page(identity_l1, PTE_V);
 }
 
@@ -140,6 +287,63 @@ static void enable_sv39(void)
     const uint64_t satp = SATP_MODE_SV39 | (uint64_t)root_ppn;
 
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
+}
+
+/* Enable scalar FP state before entering S-mode, where mstatus is not writable. */
+static void enable_fp_state(void)
+{
+    uintptr_t mstatus;
+
+    asm volatile("csrr %0, mstatus" : "=r"(mstatus));
+    mstatus = (mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL;
+    asm volatile("csrw mstatus, %0" : : "r"(mstatus) : "memory");
+}
+
+static uintptr_t read_mstatus(void)
+{
+    uintptr_t value;
+    asm volatile("csrr %0, mstatus" : "=r"(value));
+    return value;
+}
+
+static void write_mstatus(uintptr_t value)
+{
+    asm volatile("csrw mstatus, %0" : : "r"(value) : "memory");
+}
+
+static uintptr_t read_fflags(void)
+{
+    uintptr_t value;
+    asm volatile("csrr %0, 0x001" : "=r"(value));
+    return value;
+}
+
+static void write_fflags(uintptr_t value)
+{
+    asm volatile("csrw 0x001, %0" : : "r"(value) : "memory");
+}
+
+static void set_machine_fp_state(uintptr_t fs)
+{
+    const uintptr_t next =
+        (read_mstatus() & ~MSTATUS_FS_MASK) | fs;
+
+    write_mstatus(next);
+}
+
+/*
+ * Keep instruction fetch in M-mode while making explicit data accesses use
+ * the S-mode Sv39 permissions. This permits precise mstatus FS/SD assertions
+ * even though NEMU's deliberately small CSR model does not expose sstatus.
+ */
+static uintptr_t enable_mprv_supervisor_data(void)
+{
+    const uintptr_t old = read_mstatus();
+    const uintptr_t next =
+        (old & ~MSTATUS_MPP_MASK) | MSTATUS_MPP_S | MSTATUS_MPRV;
+
+    write_mstatus(next);
+    return old;
 }
 
 /* Execute a global SFENCE.VMA; 0x12000073 encodes sfence.vma x0, x0. */
@@ -303,6 +507,182 @@ static void test_sv39_data_memory(void)
     check(linked_sum == data_page[2] * 64u);
 }
 
+static void clear_fp_page(uint64_t *page)
+{
+    for (uint32_t i = 0; i < WORDS_PER_PAGE; i++)
+    {
+        page[i] = 0;
+    }
+}
+
+static void seed_fp_page(uint64_t *page, uint32_t word,
+                         uint64_t doubleword)
+{
+    uint8_t *const raw = (uint8_t *)page;
+
+    *(uint32_t *)(void *)&raw[0] = word;
+    *(uint64_t *)(void *)&raw[8] = doubleword;
+    *(uint32_t *)(void *)&raw[40] = word;
+    *(uint64_t *)(void *)&raw[48] = doubleword;
+}
+
+static void check_eviction_values(const uint64_t *observed)
+{
+    static const uint64_t expected[6] = {
+        UINT64_C(0x112),
+        UINT64_C(0x223),
+        UINT64_C(0x334),
+        UINT64_C(0x445),
+        UINT64_C(0x556),
+        UINT64_C(0x667),
+    };
+
+    for (uint32_t i = 0; i < 6; i++)
+    {
+        check(observed[i] == expected[i]);
+    }
+}
+
+static void check_fp_dirty_state(void)
+{
+    const uintptr_t state = read_mstatus();
+
+    check((state & MSTATUS_FS_MASK) == MSTATUS_FS_DIRTY);
+    check((state & MSTATUS_SD) != 0);
+    check(read_fflags() == UINT64_C(0x1f));
+}
+
+static void check_fp_clean_state(void)
+{
+    const uintptr_t state = read_mstatus();
+
+    check((state & MSTATUS_FS_MASK) == MSTATUS_FS_CLEAN);
+    check((state & MSTATUS_SD) == 0);
+    check(read_fflags() == UINT64_C(0x1f));
+}
+
+/*
+ * Exercise the FP-only cold DTLB probe, a warmed native state transition,
+ * raw paged stores, an FP write to an active PTE page, and remapping to a
+ * second physical page through the same compiled PCs.
+ */
+static void test_sv39_fp_memory(void)
+{
+    const uint32_t word_a = UINT32_C(0x7f800123);
+    const uint64_t double_a = UINT64_C(0x7ff0000000000456);
+    const uint64_t boxed_word_a = UINT64_C(0xffffffff7f800123);
+    const uint32_t word_b = UINT32_C(0xff800321);
+    const uint64_t double_b = UINT64_C(0xfff8000000000789);
+    const uint64_t boxed_word_b = UINT64_C(0xffffffffff800321);
+    const uint64_t malformed_box = UINT64_C(0x012345677f800abc);
+    const uint64_t raw_store_double = UINT64_C(0xfff0000000000abc);
+    const uint64_t leaf_flags =
+        PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    uint8_t *const alias = (uint8_t *)(uintptr_t)FP_ALIAS_VA;
+    uint8_t *const pte_alias = (uint8_t *)(uintptr_t)PTE_ALIAS_VA;
+    uint8_t *const raw_a = (uint8_t *)fp_data_page_a;
+    uint8_t *const raw_b = (uint8_t *)fp_data_page_b;
+    uint64_t cold_observed[7] = {0};
+    uint64_t load_observed[2] = {0};
+    uint64_t patch_observed[6] = {0};
+
+    clear_fp_page(fp_data_page_a);
+    clear_fp_page(fp_data_page_b);
+    seed_fp_page(fp_data_page_a, word_a, double_a);
+    seed_fp_page(fp_data_page_b, word_b, double_b);
+
+    /*
+     * No earlier access has touched FP_ALIAS_VA. The generated FLW therefore
+     * probes and exits before the instruction; the warmed retry commits the
+     * one load, and the suffix exposes every live GPR.
+     */
+    write_fflags(UINT64_C(0x1f));
+    set_machine_fp_state(MSTATUS_FS_INITIAL);
+    rv64_sv39_fp_cold_load_eviction(alias, cold_observed);
+    check_eviction_values(cold_observed);
+    check(cold_observed[6] == boxed_word_a);
+    check_fp_dirty_state();
+
+    /*
+     * The cold probe filled this VPN, so both loads now execute through the
+     * native paged body. Only successful loads may make FS Dirty and set SD.
+     */
+    write_fflags(UINT64_C(0x1f));
+    set_machine_fp_state(MSTATUS_FS_INITIAL);
+    rv64_sv39_fp_load_state(alias, load_observed);
+    check(load_observed[0] == boxed_word_a);
+    check(load_observed[1] == double_a);
+    check_fp_dirty_state();
+
+    /*
+     * Seed a deliberately malformed binary32 box, then restore FS Clean
+     * before the stores. FSW must copy its raw low word and neither store may
+     * make FS Dirty or change fflags.
+     */
+    rv64_sv39_fp_seed_stores(malformed_box, raw_store_double);
+    write_fflags(UINT64_C(0x1f));
+    set_machine_fp_state(MSTATUS_FS_CLEAN);
+    rv64_sv39_fp_store_state(alias);
+    check(*(uint32_t *)(void *)&raw_a[16] ==
+          (uint32_t)malformed_box);
+    check(*(uint64_t *)(void *)&raw_a[24] == raw_store_double);
+    check_fp_clean_state();
+
+    write_fflags(UINT64_C(0x1f));
+    set_machine_fp_state(MSTATUS_FS_INITIAL);
+    const uint64_t checksum_a =
+        rv64_sv39_fp_memory_loop(alias, 64);
+    check(checksum_a == (boxed_word_a ^ double_a));
+    check(*(uint32_t *)(void *)&raw_a[56] == word_a);
+    check(*(uint64_t *)(void *)&raw_a[64] == double_a);
+    check_fp_dirty_state();
+
+    /*
+     * FSD writes the active FP leaf through a virtual alias of the page-table
+     * page. The leading integer LD warms that alias, so the native store must
+     * hit its dependency guard, preserve all six dirty GPRs, and let the
+     * interpreter commit and invalidate the PTE exactly once.
+     */
+    const uint64_t pte_b = pte_for_page(fp_data_page_b, leaf_flags);
+    rv64_sv39_fp_seed_pte(pte_b);
+    write_fflags(UINT64_C(0x1f));
+    set_machine_fp_state(MSTATUS_FS_CLEAN);
+    rv64_sv39_fp_patch_pte_eviction(
+        pte_alias, patch_observed, 0, pte_alias);
+    check_eviction_values(patch_observed);
+    check(data_alias_l0[vpn0(FP_ALIAS_VA)] == pte_b);
+    check_fp_clean_state();
+
+    sfence_vma_all();
+
+    for (uint32_t i = 0; i < 7; i++)
+    {
+        cold_observed[i] = 0;
+    }
+
+    /*
+     * Reusing the compiled cold-probe PC after SFENCE must miss the old entry
+     * and observe page B. The probe warms the replacement translation before
+     * its retry and the same native loop execute on B.
+     */
+    write_fflags(UINT64_C(0x1f));
+    set_machine_fp_state(MSTATUS_FS_INITIAL);
+    rv64_sv39_fp_cold_load_eviction(alias, cold_observed);
+    check_eviction_values(cold_observed);
+    check(cold_observed[6] == boxed_word_b);
+    check_fp_dirty_state();
+
+    const uint64_t checksum_b =
+        rv64_sv39_fp_memory_loop(alias, 64);
+    check(checksum_b == (boxed_word_b ^ double_b));
+    check(*(uint32_t *)(void *)&raw_b[56] == word_b);
+    check(*(uint64_t *)(void *)&raw_b[64] == double_b);
+
+    /* Page A must remain unchanged after the remap and second loop. */
+    check(*(uint32_t *)(void *)&raw_a[56] == word_a);
+    check(*(uint64_t *)(void *)&raw_a[64] == double_a);
+}
+
 #endif
 
 /* Keep the source buildable outside RV64 while exercising the RV64-only path. */
@@ -311,8 +691,13 @@ int main(void)
 #if defined(__riscv) && __riscv_xlen == 64
     install_page_tables();
     install_unexpected_trap_handler();
+    enable_fp_state();
     enable_sv39();
     sfence_vma_all();
+    const uintptr_t pre_mprv_mstatus =
+        enable_mprv_supervisor_data();
+    test_sv39_fp_memory();
+    write_mstatus(pre_mprv_mstatus);
     enter_supervisor_mode();
     test_sv39_data_memory();
 #endif

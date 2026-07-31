@@ -52,12 +52,57 @@ static const rv64_jit_reason_name_t
         [RV64_JIT_SIDE_EXIT_LOAD_GUARD] = {
             "load-guard", "load alignment, range, or translation guard"},
         [RV64_JIT_SIDE_EXIT_STORE_GUARD] = {"store-guard", "store alignment, range, or translation guard"},
-        [RV64_JIT_SIDE_EXIT_STORE_SOURCE] = {"store-source", "store may modify compiled source bytes"},
+        [RV64_JIT_SIDE_EXIT_STORE_SOURCE] = {
+            "store-source",
+            "store may modify compiled source or a translation dependency"},
         [RV64_JIT_SIDE_EXIT_STORE_HELPER] = {"store-helper", "bare store completed through a helper"},
         [RV64_JIT_SIDE_EXIT_PAGED_STORE_HELPER] = {"paged-store-helper", "translated store completed through a helper"},
         [RV64_JIT_SIDE_EXIT_BRANCH_TAKEN] = {"branch-taken", "taken branch returned to the dispatcher"},
         [RV64_JIT_SIDE_EXIT_CHAINED_OVER_BUDGET] = {"chained-over-budget", "another native loop lap exceeded its budget"},
         [RV64_JIT_SIDE_EXIT_JALR_MISALIGNED] = {"jalr-misaligned", "JALR target failed the IALIGN check"},
+        [RV64_JIT_SIDE_EXIT_FP_FS_OFF] = {
+            "fp-fs-off", "native exact or memory FP instruction observed FS=Off"},
+};
+
+static const char *const
+    jit_m_operation_names[RV64_JIT_M_OP_COUNT] = {
+        [RV64_JIT_M_OP_MUL] = "MUL",
+        [RV64_JIT_M_OP_MULH] = "MULH",
+        [RV64_JIT_M_OP_MULHSU] = "MULHSU",
+        [RV64_JIT_M_OP_MULHU] = "MULHU",
+        [RV64_JIT_M_OP_DIV] = "DIV",
+        [RV64_JIT_M_OP_DIVU] = "DIVU",
+        [RV64_JIT_M_OP_REM] = "REM",
+        [RV64_JIT_M_OP_REMU] = "REMU",
+        [RV64_JIT_M_OP_MULW] = "MULW",
+        [RV64_JIT_M_OP_DIVW] = "DIVW",
+        [RV64_JIT_M_OP_DIVUW] = "DIVUW",
+        [RV64_JIT_M_OP_REMW] = "REMW",
+        [RV64_JIT_M_OP_REMUW] = "REMUW",
+};
+
+static const char *const
+    jit_fp_exact_operation_names[RV64_JIT_FP_EXACT_OP_COUNT] = {
+        [RV64_JIT_FP_EXACT_FMV_X_W] = "FMV.X.W",
+        [RV64_JIT_FP_EXACT_FMV_W_X] = "FMV.W.X",
+        [RV64_JIT_FP_EXACT_FMV_X_D] = "FMV.X.D",
+        [RV64_JIT_FP_EXACT_FMV_D_X] = "FMV.D.X",
+        [RV64_JIT_FP_EXACT_FSGNJ_S] = "FSGNJ.S",
+        [RV64_JIT_FP_EXACT_FSGNJN_S] = "FSGNJN.S",
+        [RV64_JIT_FP_EXACT_FSGNJX_S] = "FSGNJX.S",
+        [RV64_JIT_FP_EXACT_FSGNJ_D] = "FSGNJ.D",
+        [RV64_JIT_FP_EXACT_FSGNJN_D] = "FSGNJN.D",
+        [RV64_JIT_FP_EXACT_FSGNJX_D] = "FSGNJX.D",
+        [RV64_JIT_FP_EXACT_FCLASS_S] = "FCLASS.S",
+        [RV64_JIT_FP_EXACT_FCLASS_D] = "FCLASS.D",
+};
+
+static const char *const
+    jit_fp_memory_operation_names[RV64_JIT_FP_MEMORY_OP_COUNT] = {
+        [RV64_JIT_FP_MEMORY_FLW] = "FLW",
+        [RV64_JIT_FP_MEMORY_FLD] = "FLD",
+        [RV64_JIT_FP_MEMORY_FSW] = "FSW",
+        [RV64_JIT_FP_MEMORY_FSD] = "FSD",
 };
 
 /* Multiply in 128 bits so long-running profiles cannot overflow before division. */
@@ -334,6 +379,45 @@ static void jit_dump_dispatch_stats(void)
         rv64_jit_stats.cpu_boundary_breaks);
 }
 
+/* Report actual generated M operations separately from emitted M sites. */
+static void jit_dump_native_m_execution_stats(void)
+{
+    jit_log_section("Run time: native RV64M execution");
+
+    for (uint32_t op = 0; op < RV64_JIT_M_OP_COUNT; op++)
+    {
+        Log("jit: native M %s executions = %" PRIu64,
+            jit_m_operation_names[op],
+            rv64_jit_stats.native_m_executions[op]);
+    }
+}
+
+/* Report exact FP bit operations which completed without entering C. */
+static void jit_dump_native_fp_exact_execution_stats(void)
+{
+    jit_log_section("Run time: native exact floating-point execution");
+
+    for (uint32_t op = 0; op < RV64_JIT_FP_EXACT_OP_COUNT; op++)
+    {
+        Log("jit: native exact FP %s executions = %" PRIu64,
+            jit_fp_exact_operation_names[op],
+            rv64_jit_stats.native_fp_exact_executions[op]);
+    }
+}
+
+/* Report FP memory operations which completed through a guarded native path. */
+static void jit_dump_native_fp_memory_execution_stats(void)
+{
+    jit_log_section("Run time: native floating-point memory execution");
+
+    for (uint32_t op = 0; op < RV64_JIT_FP_MEMORY_OP_COUNT; op++)
+    {
+        Log("jit: native FP memory %s executions = %" PRIu64,
+            jit_fp_memory_operation_names[op],
+            rv64_jit_stats.native_fp_memory_executions[op]);
+    }
+}
+
 /* Compile-stop reasons are normal compilation outcomes, not all fallbacks. */
 static void jit_dump_block_end_stats(void)
 {
@@ -405,8 +489,12 @@ static void jit_dump_compilation_stats(void)
         ", native stores = %" PRIu64,
         rv64_jit_stats.native_loads, rv64_jit_stats.native_stores);
     Log("jit:   emitted guest sites: native jumps = %" PRIu64
-        ", native M ops = %" PRIu64,
-        rv64_jit_stats.native_jumps, rv64_jit_stats.native_m_ops);
+        ", native M ops = %" PRIu64
+        ", native exact FP ops = %" PRIu64
+        ", native FP memory ops = %" PRIu64,
+        rv64_jit_stats.native_jumps, rv64_jit_stats.native_m_ops,
+        rv64_jit_stats.native_fp_exact_sites,
+        rv64_jit_stats.native_fp_memory_sites);
     Log("jit:   emitted Sv39 sites: native paged loads = %" PRIu64
         ", native paged stores = %" PRIu64,
         rv64_jit_stats.native_paged_loads,
@@ -417,6 +505,12 @@ static void jit_dump_compilation_stats(void)
         ", inline paged stores = %" PRIu64 " emitted sites",
         rv64_jit_stats.inline_paged_loads,
         rv64_jit_stats.inline_paged_stores);
+    Log("jit:   inline direct MMIO load sites = %" PRIu64
+        " emitted sites",
+        rv64_jit_stats.direct_mmio_load_sites);
+    Log("jit:   inline direct MMIO store sites = %" PRIu64
+        " emitted sites",
+        rv64_jit_stats.direct_mmio_store_sites);
     Log("jit:   reg cache spills = %" PRIu64 " emitted spill sequences",
         rv64_jit_stats.reg_cache_spills);
     Log("jit:   stable register loops = %" PRIu64
@@ -464,9 +558,25 @@ static void jit_dump_memory_stats(void)
         ", inline paged store hits = %" PRIu64 " successful accesses",
         rv64_jit_stats.inline_paged_load_hits,
         rv64_jit_stats.inline_paged_store_hits);
+    Log("jit:   inline direct MMIO load hits = %" PRIu64,
+        rv64_jit_stats.inline_direct_mmio_load_hits);
+    Log("jit:   inline direct MMIO store hits = %" PRIu64,
+        rv64_jit_stats.inline_direct_mmio_store_hits);
+    Log("jit:   direct MMIO load routes: warm hits = %" PRIu64
+        ", misses = %" PRIu64 ", fills = %" PRIu64,
+        rv64_jit_stats.direct_mmio_load_route_hits,
+        rv64_jit_stats.direct_mmio_load_route_misses,
+        rv64_jit_stats.direct_mmio_load_route_fills);
+    Log("jit:   direct MMIO store routes: warm hits = %" PRIu64
+        ", misses = %" PRIu64 ", fills = %" PRIu64,
+        rv64_jit_stats.direct_mmio_store_route_hits,
+        rv64_jit_stats.direct_mmio_store_route_misses,
+        rv64_jit_stats.direct_mmio_store_route_fills);
     Log("jit:   helper loads = %" PRIu64 ", helper stores = %" PRIu64,
         rv64_jit_stats.helper_load_count,
         rv64_jit_stats.helper_store_count);
+    Log("jit:   bare MMIO load calls = %" PRIu64,
+        rv64_jit_stats.bare_mmio_load_calls);
     Log("jit:   bare MMIO store calls = %" PRIu64
         ", continuations = %" PRIu64 ", boundary exits = %" PRIu64,
         rv64_jit_stats.bare_mmio_store_calls,
@@ -589,6 +699,9 @@ void rv64_jit_dump_stats_report(void)
     Log("jit: ============================================================");
 
     jit_dump_dispatch_stats();
+    jit_dump_native_m_execution_stats();
+    jit_dump_native_fp_exact_execution_stats();
+    jit_dump_native_fp_memory_execution_stats();
     jit_dump_compilation_stats();
     jit_dump_fp_helper_stats();
     jit_dump_memory_stats();

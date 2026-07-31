@@ -176,6 +176,37 @@
     RV64_JIT_DIRECT_LINK_GUARD_COUNT
 #define RV64_JIT_DTLB_MAX_SLOW_PATCHES 6u
 /*
+ * Each direct-MMIO candidate adds a range guard and a full native load arm to
+ * every eligible Bare load site.  Bound that expansion; later maps simply keep
+ * using the correct helper path.
+ */
+#define RV64_JIT_DIRECT_MMIO_MAX_MAPS 4u
+/*
+ * Direct-write guards are emitted at each eligible Bare store site. Keep the
+ * expansion bounded independently from direct-readable maps; excess regions
+ * retain the correct helper path.
+ */
+#define RV64_JIT_DIRECT_MMIO_MAX_REGIONS 4u
+/*
+ * A compiled block may cache four exact direct-MMIO routes in one trailing
+ * cache line.  Limiting the sidecar keeps allocation and fixup metadata
+ * bounded; later eligible sites retain the complete uncached classifier.
+ */
+#define RV64_JIT_MMIO_ROUTE_MAX_SITES 4u
+#define RV64_JIT_MMIO_ROUTE_LINE_SIZE 64u
+#define RV64_JIT_MMIO_ROUTE_NO_SITE UINT8_MAX
+#define RV64_JIT_DIRECT_MMIO_MAX_CLASSIFIERS                           \
+    ((RV64_JIT_DIRECT_MMIO_MAX_MAPS >                                  \
+      RV64_JIT_DIRECT_MMIO_MAX_REGIONS)                                \
+         ? RV64_JIT_DIRECT_MMIO_MAX_MAPS                               \
+         : RV64_JIT_DIRECT_MMIO_MAX_REGIONS)
+#define RV64_JIT_MMIO_ROUTE_MAX_FIXUPS                                  \
+    (RV64_JIT_MMIO_ROUTE_MAX_SITES *                                    \
+     (2u + 3u * RV64_JIT_DIRECT_MMIO_MAX_CLASSIFIERS))
+#define RV64_JIT_MMIO_ROUTE_MAX_ALLOCATION                              \
+    ((RV64_JIT_MMIO_ROUTE_LINE_SIZE - 1u) +                             \
+     RV64_JIT_MMIO_ROUTE_LINE_SIZE)
+/*
  * Keep the helper data TLB intentionally small: 256 direct-mapped entries cover
  * common hot pages while keeping the inline index mask to one byte of entropy.
  */
@@ -288,6 +319,52 @@ typedef struct
     /* Distinguish arena exhaustion from an unsupported guest encoding. */
     bool overflowed;
 } rv64_jit_writer_t;
+
+/*
+ * One site cache stores routing metadata, never a device value. `host_ptr`
+ * points at the exact byte selected by `guest_addr_tag`. Every emitted route is
+ * initialised from a complete compile-time direct-MMIO match; the generated
+ * full-width tag comparison remains authoritative if the runtime address
+ * differs. Width, signedness, and direction remain properties of generated
+ * code. The current single execution thread publishes host first and tag last;
+ * concurrent vCPUs must instead use per-vCPU sidecars or synchronised versioned
+ * publication.
+ */
+typedef struct
+{
+    uint64_t guest_addr_tag;
+    uint64_t host_ptr;
+} rv64_jit_mmio_route_t;
+
+typedef enum
+{
+    RV64_JIT_MMIO_ROUTE_TAG,
+    RV64_JIT_MMIO_ROUTE_HOST,
+} rv64_jit_mmio_route_field_t;
+
+typedef struct
+{
+    uint8_t *disp32;
+    const uint8_t *next_ip;
+    uint8_t site;
+    uint8_t field;
+} rv64_jit_mmio_route_fixup_t;
+
+typedef struct
+{
+    uint8_t site_count;
+    uint8_t fixup_count;
+    rv64_jit_mmio_route_t initial_routes[RV64_JIT_MMIO_ROUTE_MAX_SITES];
+    rv64_jit_mmio_route_fixup_t
+        fixups[RV64_JIT_MMIO_ROUTE_MAX_FIXUPS];
+} rv64_jit_mmio_route_builder_t;
+
+_Static_assert(sizeof(rv64_jit_mmio_route_t) == 16u,
+               "RV64 JIT MMIO route entries must be 16 bytes");
+_Static_assert(RV64_JIT_MMIO_ROUTE_MAX_SITES *
+                       sizeof(rv64_jit_mmio_route_t) ==
+                   RV64_JIT_MMIO_ROUTE_LINE_SIZE,
+               "RV64 JIT MMIO route entries must fill one cache line");
 
 typedef enum
 {
@@ -413,8 +490,72 @@ typedef enum
     RV64_JIT_SIDE_EXIT_BRANCH_TAKEN,
     RV64_JIT_SIDE_EXIT_CHAINED_OVER_BUDGET,
     RV64_JIT_SIDE_EXIT_JALR_MISALIGNED,
+    RV64_JIT_SIDE_EXIT_FP_FS_OFF,
     RV64_JIT_SIDE_EXIT_COUNT,
 } rv64_jit_side_exit_reason_t;
+
+/*
+ * These OP-FP instructions are exact bit operations: they neither consult a
+ * rounding mode nor change fflags.  A single decoder is shared by the loop
+ * pre-scan and real emitter so an encoding cannot be considered helper-free by
+ * one stage and then take a helper in the other.
+ */
+typedef enum
+{
+    RV64_JIT_FP_EXACT_FMV_X_W,
+    RV64_JIT_FP_EXACT_FMV_W_X,
+    RV64_JIT_FP_EXACT_FMV_X_D,
+    RV64_JIT_FP_EXACT_FMV_D_X,
+    RV64_JIT_FP_EXACT_FSGNJ_S,
+    RV64_JIT_FP_EXACT_FSGNJN_S,
+    RV64_JIT_FP_EXACT_FSGNJX_S,
+    RV64_JIT_FP_EXACT_FSGNJ_D,
+    RV64_JIT_FP_EXACT_FSGNJN_D,
+    RV64_JIT_FP_EXACT_FSGNJX_D,
+    RV64_JIT_FP_EXACT_FCLASS_S,
+    RV64_JIT_FP_EXACT_FCLASS_D,
+    RV64_JIT_FP_EXACT_OP_COUNT,
+    RV64_JIT_FP_EXACT_INVALID = RV64_JIT_FP_EXACT_OP_COUNT,
+} rv64_jit_fp_exact_op_t;
+
+/*
+ * FP loads and stores use the same width field, but loads name an FPR
+ * destination while stores name an FPR source. Keeping all four operations
+ * distinct makes run-time statistics sensitive to missing boxing, writeback,
+ * or store lowering.
+ */
+typedef enum
+{
+    RV64_JIT_FP_MEMORY_FLW,
+    RV64_JIT_FP_MEMORY_FLD,
+    RV64_JIT_FP_MEMORY_FSW,
+    RV64_JIT_FP_MEMORY_FSD,
+    RV64_JIT_FP_MEMORY_OP_COUNT,
+    RV64_JIT_FP_MEMORY_INVALID = RV64_JIT_FP_MEMORY_OP_COUNT,
+} rv64_jit_fp_memory_op_t;
+
+/*
+ * Keep the complete RV64M instruction set in architectural funct3 order where
+ * possible. Run-time counters use these identities to prove that each native
+ * lowering actually executed, rather than merely counting a compiled site.
+ */
+typedef enum
+{
+    RV64_JIT_M_OP_MUL,
+    RV64_JIT_M_OP_MULH,
+    RV64_JIT_M_OP_MULHSU,
+    RV64_JIT_M_OP_MULHU,
+    RV64_JIT_M_OP_DIV,
+    RV64_JIT_M_OP_DIVU,
+    RV64_JIT_M_OP_REM,
+    RV64_JIT_M_OP_REMU,
+    RV64_JIT_M_OP_MULW,
+    RV64_JIT_M_OP_DIVW,
+    RV64_JIT_M_OP_DIVUW,
+    RV64_JIT_M_OP_REMW,
+    RV64_JIT_M_OP_REMUW,
+    RV64_JIT_M_OP_COUNT,
+} rv64_jit_m_op_t;
 
 typedef struct
 {
@@ -452,6 +593,8 @@ typedef struct
     uint64_t native_stores;
     uint64_t native_jumps;
     uint64_t native_m_ops;
+    uint64_t native_fp_exact_sites;
+    uint64_t native_fp_memory_sites;
     uint64_t reg_cache_spills;
     uint64_t stable_loop_blocks;
     uint64_t stable_loop_preloaded_regs;
@@ -460,6 +603,8 @@ typedef struct
     uint64_t native_paged_stores;
     uint64_t inline_paged_loads;
     uint64_t inline_paged_stores;
+    uint64_t direct_mmio_load_sites;
+    uint64_t direct_mmio_store_sites;
     uint64_t fp_helper_sites;
 
     /* Run-time side exits, helper calls, and Sv39 data-TLB activity. */
@@ -473,8 +618,17 @@ typedef struct
     uint64_t data_tlb_direct_stores;
     uint64_t inline_paged_load_hits;
     uint64_t inline_paged_store_hits;
+    uint64_t inline_direct_mmio_load_hits;
+    uint64_t inline_direct_mmio_store_hits;
+    uint64_t direct_mmio_load_route_hits;
+    uint64_t direct_mmio_load_route_misses;
+    uint64_t direct_mmio_load_route_fills;
+    uint64_t direct_mmio_store_route_hits;
+    uint64_t direct_mmio_store_route_misses;
+    uint64_t direct_mmio_store_route_fills;
     uint64_t helper_load_count;
     uint64_t helper_store_count;
+    uint64_t bare_mmio_load_calls;
     uint64_t bare_mmio_store_calls;
     uint64_t bare_mmio_store_continuations;
     uint64_t bare_mmio_store_boundary_exits;
@@ -482,6 +636,9 @@ typedef struct
     uint64_t fp_helper_continuations;
     uint64_t fp_helper_trap_exits;
     uint64_t fp_helper_memory_exits;
+    uint64_t native_m_executions[RV64_JIT_M_OP_COUNT];
+    uint64_t native_fp_exact_executions[RV64_JIT_FP_EXACT_OP_COUNT];
+    uint64_t native_fp_memory_executions[RV64_JIT_FP_MEMORY_OP_COUNT];
 
     /* Direct-link outcomes are incremented by the running generated code. */
     uint64_t direct_link_taken_count;
@@ -575,6 +732,127 @@ static inline uint32_t rv64_instr_shamt5(uint32_t instr)
     return bits(instr, 24, 20);
 }
 
+#ifdef CONFIG_RISCV_FPU
+/*
+ * Decode only complete, architecturally valid encodings in the first native
+ * exact-FP tier.  In particular, move/class instructions reserve rs2=0 and
+ * sign injection defines only funct3 values 0-2.
+ */
+static inline rv64_jit_fp_exact_op_t
+rv64_jit_decode_fp_exact(uint32_t instr)
+{
+    if ((instr & RV64_OPCODE_MASK) != RV64_FP_OPCODE_OP)
+    {
+        return RV64_JIT_FP_EXACT_INVALID;
+    }
+
+    const uint32_t funct7 = rv64_instr_funct7(instr);
+    const uint32_t funct3 = rv64_instr_funct3(instr);
+    const uint32_t rs2 = rv64_instr_rs2(instr);
+
+    switch (funct7)
+    {
+    case 0x10u: /* FSGNJ.S, FSGNJN.S, FSGNJX.S. */
+        switch (funct3)
+        {
+        case 0:
+            return RV64_JIT_FP_EXACT_FSGNJ_S;
+        case 1:
+            return RV64_JIT_FP_EXACT_FSGNJN_S;
+        case 2:
+            return RV64_JIT_FP_EXACT_FSGNJX_S;
+        default:
+            return RV64_JIT_FP_EXACT_INVALID;
+        }
+    case 0x70u: /* FMV.X.W and FCLASS.S share funct7. */
+        if (rs2 != 0)
+        {
+            return RV64_JIT_FP_EXACT_INVALID;
+        }
+        if (funct3 == 0)
+        {
+            return RV64_JIT_FP_EXACT_FMV_X_W;
+        }
+        return funct3 == 1
+                   ? RV64_JIT_FP_EXACT_FCLASS_S
+                   : RV64_JIT_FP_EXACT_INVALID;
+    case 0x78u: /* FMV.W.X. */
+        return rs2 == 0 && funct3 == 0
+                   ? RV64_JIT_FP_EXACT_FMV_W_X
+                   : RV64_JIT_FP_EXACT_INVALID;
+#ifdef CONFIG_RISCV_D
+    case 0x11u: /* FSGNJ.D, FSGNJN.D, FSGNJX.D. */
+        switch (funct3)
+        {
+        case 0:
+            return RV64_JIT_FP_EXACT_FSGNJ_D;
+        case 1:
+            return RV64_JIT_FP_EXACT_FSGNJN_D;
+        case 2:
+            return RV64_JIT_FP_EXACT_FSGNJX_D;
+        default:
+            return RV64_JIT_FP_EXACT_INVALID;
+        }
+    case 0x71u: /* FMV.X.D and FCLASS.D share funct7. */
+        if (rs2 != 0)
+        {
+            return RV64_JIT_FP_EXACT_INVALID;
+        }
+        if (funct3 == 0)
+        {
+            return RV64_JIT_FP_EXACT_FMV_X_D;
+        }
+        return funct3 == 1
+                   ? RV64_JIT_FP_EXACT_FCLASS_D
+                   : RV64_JIT_FP_EXACT_INVALID;
+    case 0x79u: /* FMV.D.X. */
+        return rs2 == 0 && funct3 == 0
+                   ? RV64_JIT_FP_EXACT_FMV_D_X
+                   : RV64_JIT_FP_EXACT_INVALID;
+#endif
+    default:
+        return RV64_JIT_FP_EXACT_INVALID;
+    }
+}
+
+/* Decode only the F/D memory widths implemented by the scalar interpreter. */
+static inline rv64_jit_fp_memory_op_t
+rv64_jit_decode_fp_memory(uint32_t instr)
+{
+    const uint32_t opcode = instr & RV64_OPCODE_MASK;
+    const uint32_t width = rv64_instr_funct3(instr);
+
+    if (opcode == RV64_FP_OPCODE_LOAD)
+    {
+        if (width == RV64_FUNCT3_LW)
+        {
+            return RV64_JIT_FP_MEMORY_FLW;
+        }
+#ifdef CONFIG_RISCV_D
+        if (width == RV64_FUNCT3_LD)
+        {
+            return RV64_JIT_FP_MEMORY_FLD;
+        }
+#endif
+    }
+    else if (opcode == RV64_FP_OPCODE_STORE)
+    {
+        if (width == RV64_FUNCT3_SW)
+        {
+            return RV64_JIT_FP_MEMORY_FSW;
+        }
+#ifdef CONFIG_RISCV_D
+        if (width == RV64_FUNCT3_SD)
+        {
+            return RV64_JIT_FP_MEMORY_FSD;
+        }
+#endif
+    }
+
+    return RV64_JIT_FP_MEMORY_INVALID;
+}
+#endif
+
 /* Sign-extend an instruction field whose sign bit is at width - 1. */
 static inline int64_t sext(uint32_t value, unsigned width)
 {
@@ -642,6 +920,19 @@ static inline uint32_t jit_gpr_offset(uint32_t reg)
 {
     return (uint32_t)(offsetof(CPU_state, gpr) + reg * sizeof(cpu.gpr[0]));
 }
+
+#ifdef CONFIG_RISCV_FPU
+/* Return byte offsets for raw FLEN=64 state reached through the fixed R11 base. */
+static inline uint32_t jit_fpr_offset(uint32_t reg)
+{
+    return (uint32_t)(offsetof(CPU_state, fpr) + reg * sizeof(cpu.fpr[0]));
+}
+
+static inline uint32_t jit_mstatus_offset(void)
+{
+    return (uint32_t)offsetof(CPU_state, csr.mstatus);
+}
+#endif
 
 /* Return the byte offset of the guest PC inside CPU_state. */
 static inline uint32_t jit_pc_offset(void)
@@ -716,11 +1007,18 @@ void rv64_jit_stat_block_end(rv64_jit_block_end_reason_t reason);
 void rv64_jit_dump_stats_report(void);
 bool rv64_jit_direct_link_enabled(void);
 bool rv64_jit_return_link_enabled(void);
+void rv64_jit_perf_map_init(bool requested);
+void rv64_jit_perf_map_reset(void);
+void rv64_jit_perf_map_publish(const rv64_jit_block_t *block,
+                               const uint8_t *native_start,
+                               size_t native_size);
 void rv64_jit_ifetch_generation_bump(void);
 void rv64_jit_data_tlb_flush(void);
 bool rv64_jit_write_may_touch_data_tlb_page_table(paddr_t addr, int len);
 bool rv64_jit_write_may_touch_ifetch_page_table(paddr_t addr, int len);
 uint32_t rv64_jit_data_tlb_state(int type);
+bool rv64_jit_data_tlb_probe_read(vaddr_t addr, uint32_t len);
+bool rv64_jit_data_tlb_probe_write(vaddr_t addr, uint32_t len);
 uint32_t rv64_jit_ifetch_state(void);
 uint64_t rv64_jit_load_i8(vaddr_t addr);
 uint64_t rv64_jit_load_i16(vaddr_t addr);
@@ -729,11 +1027,17 @@ uint64_t rv64_jit_load_u64(vaddr_t addr);
 uint64_t rv64_jit_load_u8(vaddr_t addr);
 uint64_t rv64_jit_load_u16(vaddr_t addr);
 uint64_t rv64_jit_load_u32(vaddr_t addr);
+uint64_t rv64_jit_load_bare_i8(paddr_t addr);
+uint64_t rv64_jit_load_bare_i16(paddr_t addr);
+uint64_t rv64_jit_load_bare_i32(paddr_t addr);
+uint64_t rv64_jit_load_bare_u64(paddr_t addr);
+uint64_t rv64_jit_load_bare_u8(paddr_t addr);
+uint64_t rv64_jit_load_bare_u16(paddr_t addr);
+uint64_t rv64_jit_load_bare_u32(paddr_t addr);
 void rv64_jit_store_vaddr(vaddr_t addr, uint32_t len, uint64_t data);
 uint32_t rv64_jit_store_bare_continue(paddr_t addr, uint32_t len,
                                       uint64_t data);
 uint32_t rv64_jit_store_pmem_continue(paddr_t addr, uint32_t len, uint64_t data);
-uint64_t rv64_jit_m_result(uint64_t lhs, uint64_t rhs, uint32_t instr);
 size_t rv64_jit_align_up(size_t value, size_t align);
 bool rv64_jit_source_chunk_range(paddr_t addr, uint32_t len,
                                  size_t *first, size_t *last);
@@ -785,12 +1089,16 @@ bool rv64_jit_emit_jump_instr(rv64_jit_writer_t *w,
 bool rv64_jit_emit_load_instr(rv64_jit_writer_t *w,
                               rv64_jit_reg_cache_t *regs,
                               uint32_t instr, vaddr_t pc,
-                              uint32_t completed_count);
+                              uint32_t completed_count,
+                              rv64_jit_mmio_route_builder_t *mmio_routes);
 bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w,
                                rv64_jit_reg_cache_t *regs,
                                uint32_t instr, vaddr_t pc,
                                vaddr_t next_pc,
-                               uint32_t completed_count);
+                               uint32_t completed_count,
+                               rv64_jit_mmio_route_builder_t *mmio_routes);
+bool rv64_jit_finalise_mmio_routes(
+    rv64_jit_writer_t *w, rv64_jit_mmio_route_builder_t *mmio_routes);
 #ifdef CONFIG_RISCV_FPU
 bool rv64_jit_emit_fp_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs, uint32_t instr, vaddr_t pc, uint32_t completed_count,
                             bool *ends_block);
