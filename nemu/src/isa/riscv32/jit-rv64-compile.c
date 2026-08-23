@@ -434,132 +434,34 @@ jit_prescan_gpr_liveness(vaddr_t pc, uint32_t max_insns,
  * the final profile as usable emitted sites.
  */
 #if RV64_JIT_STATS
-typedef struct
-{
-    uint64_t native_loads;
-    uint64_t native_stores;
-    uint64_t native_jumps;
-    uint64_t native_m_ops;
-    uint64_t native_fp_exact_sites;
-    uint64_t native_fp_memory_sites;
-    uint64_t indirect_pic_sites;
-    uint64_t indirect_jump_cache_sites;
-    uint64_t reg_cache_spills;
-    uint64_t reg_cache_dead_victims;
-    uint64_t reg_cache_live_lru_avoided;
-    uint64_t native_store_continuations;
-    uint64_t native_paged_loads;
-    uint64_t native_paged_stores;
-    uint64_t inline_paged_loads;
-    uint64_t inline_paged_stores;
-    uint64_t direct_mmio_load_sites;
-    uint64_t direct_mmio_store_sites;
-    uint64_t fp_helper_sites;
-    uint64_t fp_helper_gpr_effect_sites;
-    uint64_t fp_helper_gpr_mappings_preserved;
-    uint64_t fp_helper_gpr_selective_invalidations;
-    uint64_t fp_helper_gpr_input_flushes;
-    uint64_t fp_helper_gpr_dirty_mappings_preserved;
-    uint64_t fp_helper_gpr_trap_stores;
-} rv64_jit_emitted_site_stats_t;
+typedef rv64_jit_emitted_site_stats_t rv64_jit_emitted_site_snapshot_t;
 
-static rv64_jit_emitted_site_stats_t jit_snapshot_emitted_site_stats(void)
+static rv64_jit_emitted_site_snapshot_t
+jit_snapshot_emitted_site_stats(void)
 {
-    return (rv64_jit_emitted_site_stats_t){
-        .native_loads = rv64_jit_stats.native_loads,
-        .native_stores = rv64_jit_stats.native_stores,
-        .native_jumps = rv64_jit_stats.native_jumps,
-        .native_m_ops = rv64_jit_stats.native_m_ops,
-        .native_fp_exact_sites = rv64_jit_stats.native_fp_exact_sites,
-        .native_fp_memory_sites = rv64_jit_stats.native_fp_memory_sites,
-        .indirect_pic_sites = rv64_jit_stats.indirect_pic_sites,
-        .indirect_jump_cache_sites =
-            rv64_jit_stats.indirect_jump_cache_sites,
-        .reg_cache_spills = rv64_jit_stats.reg_cache_spills,
-        .reg_cache_dead_victims =
-            rv64_jit_stats.reg_cache_dead_victims,
-        .reg_cache_live_lru_avoided =
-            rv64_jit_stats.reg_cache_live_lru_avoided,
-        .native_store_continuations = rv64_jit_stats.native_store_continuations,
-        .native_paged_loads = rv64_jit_stats.native_paged_loads,
-        .native_paged_stores = rv64_jit_stats.native_paged_stores,
-        .inline_paged_loads = rv64_jit_stats.inline_paged_loads,
-        .inline_paged_stores = rv64_jit_stats.inline_paged_stores,
-        .direct_mmio_load_sites = rv64_jit_stats.direct_mmio_load_sites,
-        .direct_mmio_store_sites = rv64_jit_stats.direct_mmio_store_sites,
-        .fp_helper_sites = rv64_jit_stats.fp_helper_sites,
-        .fp_helper_gpr_effect_sites =
-            rv64_jit_stats.fp_helper_gpr_effect_sites,
-        .fp_helper_gpr_mappings_preserved =
-            rv64_jit_stats.fp_helper_gpr_mappings_preserved,
-        .fp_helper_gpr_selective_invalidations =
-            rv64_jit_stats.fp_helper_gpr_selective_invalidations,
-        .fp_helper_gpr_input_flushes =
-            rv64_jit_stats.fp_helper_gpr_input_flushes,
-        .fp_helper_gpr_dirty_mappings_preserved =
-            rv64_jit_stats.fp_helper_gpr_dirty_mappings_preserved,
-        .fp_helper_gpr_trap_stores =
-            rv64_jit_stats.fp_helper_gpr_trap_stores,
-    };
+    return rv64_jit_stats.emitted_sites;
 }
 
 static void jit_restore_emitted_site_stats(
-    const rv64_jit_emitted_site_stats_t *snapshot)
+    const rv64_jit_emitted_site_snapshot_t *snapshot)
 {
-    rv64_jit_stats.native_loads = snapshot->native_loads;
-    rv64_jit_stats.native_stores = snapshot->native_stores;
-    rv64_jit_stats.native_jumps = snapshot->native_jumps;
-    rv64_jit_stats.native_m_ops = snapshot->native_m_ops;
-    rv64_jit_stats.native_fp_exact_sites =
-        snapshot->native_fp_exact_sites;
-    rv64_jit_stats.native_fp_memory_sites =
-        snapshot->native_fp_memory_sites;
-    rv64_jit_stats.indirect_pic_sites = snapshot->indirect_pic_sites;
-    rv64_jit_stats.indirect_jump_cache_sites =
-        snapshot->indirect_jump_cache_sites;
-    rv64_jit_stats.reg_cache_spills = snapshot->reg_cache_spills;
-    rv64_jit_stats.reg_cache_dead_victims =
-        snapshot->reg_cache_dead_victims;
-    rv64_jit_stats.reg_cache_live_lru_avoided =
-        snapshot->reg_cache_live_lru_avoided;
-    rv64_jit_stats.native_store_continuations =
-        snapshot->native_store_continuations;
-    rv64_jit_stats.native_paged_loads = snapshot->native_paged_loads;
-    rv64_jit_stats.native_paged_stores = snapshot->native_paged_stores;
-    rv64_jit_stats.inline_paged_loads = snapshot->inline_paged_loads;
-    rv64_jit_stats.inline_paged_stores = snapshot->inline_paged_stores;
-    rv64_jit_stats.direct_mmio_load_sites =
-        snapshot->direct_mmio_load_sites;
-    rv64_jit_stats.direct_mmio_store_sites =
-        snapshot->direct_mmio_store_sites;
-    rv64_jit_stats.fp_helper_sites = snapshot->fp_helper_sites;
-    rv64_jit_stats.fp_helper_gpr_effect_sites =
-        snapshot->fp_helper_gpr_effect_sites;
-    rv64_jit_stats.fp_helper_gpr_mappings_preserved =
-        snapshot->fp_helper_gpr_mappings_preserved;
-    rv64_jit_stats.fp_helper_gpr_selective_invalidations =
-        snapshot->fp_helper_gpr_selective_invalidations;
-    rv64_jit_stats.fp_helper_gpr_input_flushes =
-        snapshot->fp_helper_gpr_input_flushes;
-    rv64_jit_stats.fp_helper_gpr_dirty_mappings_preserved =
-        snapshot->fp_helper_gpr_dirty_mappings_preserved;
-    rv64_jit_stats.fp_helper_gpr_trap_stores =
-        snapshot->fp_helper_gpr_trap_stores;
+    rv64_jit_stats.emitted_sites = *snapshot;
 }
 #else
 /* Keep call sites uniform; the optimiser removes this one-byte no-op snapshot. */
 typedef struct
 {
     uint8_t unused;
-} rv64_jit_emitted_site_stats_t;
+} rv64_jit_emitted_site_snapshot_t;
 
-static rv64_jit_emitted_site_stats_t jit_snapshot_emitted_site_stats(void)
+static rv64_jit_emitted_site_snapshot_t
+jit_snapshot_emitted_site_stats(void)
 {
-    return (rv64_jit_emitted_site_stats_t){0};
+    return (rv64_jit_emitted_site_snapshot_t){0};
 }
 
 static void jit_restore_emitted_site_stats(
-    const rv64_jit_emitted_site_stats_t *snapshot)
+    const rv64_jit_emitted_site_snapshot_t *snapshot)
 {
     (void)snapshot;
 }
@@ -571,7 +473,7 @@ typedef struct
     rv64_jit_reg_cache_t regs;
     rv64_jit_source_builder_t source;
     rv64_jit_ifetch_ref_builder_t ifetch_refs;
-    rv64_jit_emitted_site_stats_t emitted_site_stats;
+    rv64_jit_emitted_site_snapshot_t emitted_site_stats;
     uint8_t mmio_route_site_count;
     uint8_t mmio_route_fixup_count;
     uint8_t indirect_pic_fixup_count;
@@ -851,7 +753,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         return NULL;
     }
 
-    const rv64_jit_emitted_site_stats_t attempt_site_stats =
+    const rv64_jit_emitted_site_snapshot_t attempt_site_stats =
         jit_snapshot_emitted_site_stats();
 
     if (rv64_jit_code_used + RV64_JIT_BLOCK_CODE_HEADROOM +

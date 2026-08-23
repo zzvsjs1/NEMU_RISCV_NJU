@@ -206,6 +206,15 @@
  * code or metadata allocation.
  */
 #define RV64_JIT_INDIRECT_PIC_WAYS 2u
+/*
+ * The selector route encoding, primary/secondary hit statistics, and the
+ * cache-line-sized hot header all deliberately describe exactly two ways.
+ * Changing the constant therefore requires redesigning those three consumers,
+ * rather than merely enlarging their arrays.
+ */
+_Static_assert(
+    RV64_JIT_INDIRECT_PIC_WAYS == 2u,
+    "RV64 JIT indirect PIC route ABI requires exactly two ways");
 #define RV64_JIT_INDIRECT_PIC_MAX_FIXUPS 2u
 #define RV64_JIT_INDIRECT_PIC_LINE_SIZE 64u
 /*
@@ -756,6 +765,42 @@ typedef enum
     RV64_JIT_M_OP_COUNT,
 } rv64_jit_m_op_t;
 
+/*
+ * Native sites are counted while a block is still being emitted.  A failed
+ * compilation must therefore roll every field below back together with the
+ * writer, otherwise the report would describe bytes which were never
+ * published.  Keeping the complete transactional schema in one type makes a
+ * newly added emitted-site counter part of snapshot and restore by default.
+ */
+typedef struct
+{
+    uint64_t native_loads;
+    uint64_t native_stores;
+    uint64_t native_jumps;
+    uint64_t native_m_ops;
+    uint64_t native_fp_exact_sites;
+    uint64_t native_fp_memory_sites;
+    uint64_t indirect_pic_sites;
+    uint64_t indirect_jump_cache_sites;
+    uint64_t reg_cache_spills;
+    uint64_t reg_cache_dead_victims;
+    uint64_t reg_cache_live_lru_avoided;
+    uint64_t native_store_continuations;
+    uint64_t native_paged_loads;
+    uint64_t native_paged_stores;
+    uint64_t inline_paged_loads;
+    uint64_t inline_paged_stores;
+    uint64_t direct_mmio_load_sites;
+    uint64_t direct_mmio_store_sites;
+    uint64_t fp_helper_sites;
+    uint64_t fp_helper_gpr_effect_sites;
+    uint64_t fp_helper_gpr_mappings_preserved;
+    uint64_t fp_helper_gpr_selective_invalidations;
+    uint64_t fp_helper_gpr_input_flushes;
+    uint64_t fp_helper_gpr_dirty_mappings_preserved;
+    uint64_t fp_helper_gpr_trap_stores;
+} rv64_jit_emitted_site_stats_t;
+
 typedef struct
 {
     /* Dispatcher and native-entry activity measured while the guest runs. */
@@ -785,36 +830,15 @@ typedef struct
     uint64_t block_end_by_reason[RV64_JIT_BLOCK_END_COUNT];
 
     /*
-     * Native sites emitted while compiling blocks.  One site may execute many
-     * times, so none of these values is a run-time instruction count.
+     * One emitted site may execute many times, so these values are not
+     * run-time instruction counts.  Compilation snapshots this member as one
+     * transaction while a candidate native block is still speculative.
      */
-    uint64_t native_loads;
-    uint64_t native_stores;
-    uint64_t native_jumps;
-    uint64_t native_m_ops;
-    uint64_t native_fp_exact_sites;
-    uint64_t native_fp_memory_sites;
-    uint64_t indirect_pic_sites;
-    uint64_t indirect_jump_cache_sites;
-    uint64_t reg_cache_spills;
-    uint64_t reg_cache_dead_victims;
-    uint64_t reg_cache_live_lru_avoided;
+    rv64_jit_emitted_site_stats_t emitted_sites;
+
+    /* These counters are recorded only after a block has been published. */
     uint64_t stable_loop_blocks;
     uint64_t stable_loop_preloaded_regs;
-    uint64_t native_store_continuations;
-    uint64_t native_paged_loads;
-    uint64_t native_paged_stores;
-    uint64_t inline_paged_loads;
-    uint64_t inline_paged_stores;
-    uint64_t direct_mmio_load_sites;
-    uint64_t direct_mmio_store_sites;
-    uint64_t fp_helper_sites;
-    uint64_t fp_helper_gpr_effect_sites;
-    uint64_t fp_helper_gpr_mappings_preserved;
-    uint64_t fp_helper_gpr_selective_invalidations;
-    uint64_t fp_helper_gpr_input_flushes;
-    uint64_t fp_helper_gpr_dirty_mappings_preserved;
-    uint64_t fp_helper_gpr_trap_stores;
 
     /* Run-time side exits, helper calls, and Sv39 data-TLB activity. */
     uint64_t side_exit_by_reason[RV64_JIT_SIDE_EXIT_COUNT];

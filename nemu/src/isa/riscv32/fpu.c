@@ -171,6 +171,54 @@ enum riscv_fp_funct7
 };
 
 /*
+ * Execution and JIT register-cache effects must agree on every recognised
+ * OP-FP family.  Decode the architectural funct7 once into both properties so
+ * adding an instruction cannot update one independent switch and miss the
+ * other.  The all-zero descriptor is deliberately conservative for unknown
+ * encodings.
+ */
+typedef enum
+{
+    FP_OP_INVALID = 0,
+    FP_OP_ADD,
+    FP_OP_SUB,
+    FP_OP_MUL,
+    FP_OP_DIV,
+    FP_OP_SIGN,
+    FP_OP_MIN_MAX,
+    FP_OP_CROSS_PRECISION,
+    FP_OP_SQRT,
+    FP_OP_COMPARE,
+    FP_OP_FLOAT_TO_INTEGER,
+    FP_OP_INTEGER_TO_FLOAT,
+    FP_OP_MOVE_OR_CLASS,
+} fp_op_kind_t;
+
+typedef enum
+{
+    FP_GPR_ACCESS_UNKNOWN = 0,
+    FP_GPR_ACCESS_NONE,
+    FP_GPR_ACCESS_READ_RS1,
+    FP_GPR_ACCESS_WRITE_RD,
+} fp_gpr_access_t;
+
+typedef struct
+{
+    fp_op_kind_t kind;
+    fp_gpr_access_t gpr_access;
+    /* Cross-precision conversion uses this as its destination precision. */
+    bool is_double;
+} fp_op_decode_t;
+
+/* Every decode row must state its operation, GPR access, and precision. */
+#define FP_OP_DECODE(kind_value, access_value, double_value) \
+    ((fp_op_decode_t){                                      \
+        .kind = (kind_value),                               \
+        .gpr_access = (access_value),                       \
+        .is_double = (double_value),                        \
+    })
+
+/*
  * Table 28 defines a one-hot ten-bit FCLASS result.  Naming the destination
  * positions avoids a dense collection of conditional shift counts in the two
  * IEEE-format classifiers.
@@ -1371,131 +1419,189 @@ static void fp_exec_fused(Decode *s, uint32_t inst)
     }
 }
 
-static void fp_exec_op(Decode *s, uint32_t inst)
+static inline fp_op_decode_t fp_decode_op(uint32_t inst)
 {
-    const uint32_t funct7 = fp_funct7(inst);
-
-    switch (funct7)
+    switch (fp_funct7(inst))
     {
     case RISCV_FP_FUNCT7_FADD_S:
-        fp_exec_add(s, inst, false);
-        return;
+        return FP_OP_DECODE(FP_OP_ADD, FP_GPR_ACCESS_NONE, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FADD_D:
-        fp_exec_add(s, inst, true);
-        return;
+        return FP_OP_DECODE(FP_OP_ADD, FP_GPR_ACCESS_NONE, true);
 #endif
     case RISCV_FP_FUNCT7_FSUB_S:
-        fp_exec_binary_arithmetic(s, inst, false, FP_BINARY_SUB);
-        return;
+        return FP_OP_DECODE(FP_OP_SUB, FP_GPR_ACCESS_NONE, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FSUB_D:
-        fp_exec_binary_arithmetic(s, inst, true, FP_BINARY_SUB);
-        return;
+        return FP_OP_DECODE(FP_OP_SUB, FP_GPR_ACCESS_NONE, true);
 #endif
     case RISCV_FP_FUNCT7_FMUL_S:
-        fp_exec_binary_arithmetic(s, inst, false, FP_BINARY_MUL);
-        return;
+        return FP_OP_DECODE(FP_OP_MUL, FP_GPR_ACCESS_NONE, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FMUL_D:
-        fp_exec_binary_arithmetic(s, inst, true, FP_BINARY_MUL);
-        return;
+        return FP_OP_DECODE(FP_OP_MUL, FP_GPR_ACCESS_NONE, true);
 #endif
     case RISCV_FP_FUNCT7_FDIV_S:
-        fp_exec_binary_arithmetic(s, inst, false, FP_BINARY_DIV);
-        return;
+        return FP_OP_DECODE(FP_OP_DIV, FP_GPR_ACCESS_NONE, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FDIV_D:
-        fp_exec_binary_arithmetic(s, inst, true, FP_BINARY_DIV);
-        return;
+        return FP_OP_DECODE(FP_OP_DIV, FP_GPR_ACCESS_NONE, true);
 #endif
     case RISCV_FP_FUNCT7_FSGNJ_S:
-        fp_exec_sign_injection(s, inst, false);
-        return;
+        return FP_OP_DECODE(FP_OP_SIGN, FP_GPR_ACCESS_NONE, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FSGNJ_D:
-        fp_exec_sign_injection(s, inst, true);
-        return;
+        return FP_OP_DECODE(FP_OP_SIGN, FP_GPR_ACCESS_NONE, true);
 #endif
     case RISCV_FP_FUNCT7_FMIN_MAX_S:
-        fp_exec_min_max(s, inst, false);
-        return;
+        return FP_OP_DECODE(FP_OP_MIN_MAX, FP_GPR_ACCESS_NONE, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FMIN_MAX_D:
-        fp_exec_min_max(s, inst, true);
-        return;
+        return FP_OP_DECODE(FP_OP_MIN_MAX, FP_GPR_ACCESS_NONE, true);
     case RISCV_FP_FUNCT7_FCVT_S_D:
-        fp_exec_cross_precision(s, inst, false);
-        return;
+        return FP_OP_DECODE(
+            FP_OP_CROSS_PRECISION, FP_GPR_ACCESS_NONE, false);
     case RISCV_FP_FUNCT7_FCVT_D_S:
-        fp_exec_cross_precision(s, inst, true);
-        return;
+        return FP_OP_DECODE(
+            FP_OP_CROSS_PRECISION, FP_GPR_ACCESS_NONE, true);
 #endif
     case RISCV_FP_FUNCT7_FSQRT_S:
-        fp_exec_sqrt(s, inst, false);
-        return;
+        return FP_OP_DECODE(FP_OP_SQRT, FP_GPR_ACCESS_NONE, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FSQRT_D:
-        fp_exec_sqrt(s, inst, true);
-        return;
+        return FP_OP_DECODE(FP_OP_SQRT, FP_GPR_ACCESS_NONE, true);
 #endif
     case RISCV_FP_FUNCT7_FCOMPARE_S:
-        fp_exec_compare(s, inst, false);
-        return;
+        return FP_OP_DECODE(
+            FP_OP_COMPARE, FP_GPR_ACCESS_WRITE_RD, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FCOMPARE_D:
-        fp_exec_compare(s, inst, true);
-        return;
+        return FP_OP_DECODE(
+            FP_OP_COMPARE, FP_GPR_ACCESS_WRITE_RD, true);
 #endif
     case RISCV_FP_FUNCT7_FCVT_INT_S:
-        fp_exec_float_to_integer(s, inst, false);
-        return;
+        return FP_OP_DECODE(
+            FP_OP_FLOAT_TO_INTEGER, FP_GPR_ACCESS_WRITE_RD, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FCVT_INT_D:
-        fp_exec_float_to_integer(s, inst, true);
-        return;
+        return FP_OP_DECODE(
+            FP_OP_FLOAT_TO_INTEGER, FP_GPR_ACCESS_WRITE_RD, true);
 #endif
     case RISCV_FP_FUNCT7_FCVT_S_INT:
-        fp_exec_integer_to_float(s, inst, false);
-        return;
+        return FP_OP_DECODE(
+            FP_OP_INTEGER_TO_FLOAT, FP_GPR_ACCESS_READ_RS1, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FCVT_D_INT:
-        fp_exec_integer_to_float(s, inst, true);
-        return;
+        return FP_OP_DECODE(
+            FP_OP_INTEGER_TO_FLOAT, FP_GPR_ACCESS_READ_RS1, true);
 #endif
     case RISCV_FP_FUNCT7_FMV_X_W_FCLASS_S:
+        return FP_OP_DECODE(
+            FP_OP_MOVE_OR_CLASS, FP_GPR_ACCESS_WRITE_RD, false);
     case RISCV_FP_FUNCT7_FMV_W_X:
+        return FP_OP_DECODE(
+            FP_OP_MOVE_OR_CLASS, FP_GPR_ACCESS_READ_RS1, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FMV_X_D_FCLASS_D:
-#if defined(CONFIG_RISCV_D) && defined(CONFIG_RV64)
+        return FP_OP_DECODE(
+            FP_OP_MOVE_OR_CLASS, FP_GPR_ACCESS_WRITE_RD, true);
+#ifdef CONFIG_RV64
     case RISCV_FP_FUNCT7_FMV_D_X:
+        return FP_OP_DECODE(
+            FP_OP_MOVE_OR_CLASS, FP_GPR_ACCESS_READ_RS1, true);
 #endif
 #endif
+    default:
+        return (fp_op_decode_t){0};
+    }
+}
+
+static void fp_exec_op(Decode *s, uint32_t inst)
+{
+    const fp_op_decode_t decoded = fp_decode_op(inst);
+
+    switch (decoded.kind)
+    {
+    case FP_OP_ADD:
+        fp_exec_add(s, inst, decoded.is_double);
+        return;
+    case FP_OP_SUB:
+        fp_exec_binary_arithmetic(
+            s, inst, decoded.is_double, FP_BINARY_SUB);
+        return;
+    case FP_OP_MUL:
+        fp_exec_binary_arithmetic(
+            s, inst, decoded.is_double, FP_BINARY_MUL);
+        return;
+    case FP_OP_DIV:
+        fp_exec_binary_arithmetic(
+            s, inst, decoded.is_double, FP_BINARY_DIV);
+        return;
+    case FP_OP_SIGN:
+        fp_exec_sign_injection(s, inst, decoded.is_double);
+        return;
+    case FP_OP_MIN_MAX:
+        fp_exec_min_max(s, inst, decoded.is_double);
+        return;
+#ifdef CONFIG_RISCV_D
+    case FP_OP_CROSS_PRECISION:
+        fp_exec_cross_precision(s, inst, decoded.is_double);
+        return;
+#endif
+    case FP_OP_SQRT:
+        fp_exec_sqrt(s, inst, decoded.is_double);
+        return;
+    case FP_OP_COMPARE:
+        fp_exec_compare(s, inst, decoded.is_double);
+        return;
+    case FP_OP_FLOAT_TO_INTEGER:
+        fp_exec_float_to_integer(s, inst, decoded.is_double);
+        return;
+    case FP_OP_INTEGER_TO_FLOAT:
+        fp_exec_integer_to_float(s, inst, decoded.is_double);
+        return;
+    case FP_OP_MOVE_OR_CLASS:
         fp_exec_move_or_class(s, inst);
         return;
+    case FP_OP_INVALID:
     default:
         fp_raise_illegal(s);
         return;
     }
 }
 
+static bool fp_opcode_is_fused(uint32_t opcode)
+{
+    switch (opcode)
+    {
+    case RISCV_FP_OPCODE_FMADD:
+    case RISCV_FP_OPCODE_FMSUB:
+    case RISCV_FP_OPCODE_FNMSUB:
+    case RISCV_FP_OPCODE_FNMADD:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void fp_exec_dispatch(Decode *s)
 {
     const uint32_t inst = s->isa.inst;
+    const uint32_t opcode = fp_opcode(inst);
 
-    switch (fp_opcode(inst))
+    if (fp_opcode_is_fused(opcode))
+    {
+        fp_exec_fused(s, inst);
+        return;
+    }
+
+    switch (opcode)
     {
     case RISCV_FP_OPCODE_LOAD:
         fp_exec_load(s, inst);
         return;
     case RISCV_FP_OPCODE_STORE:
         fp_exec_store(s, inst);
-        return;
-    case RISCV_FP_OPCODE_FMADD:
-    case RISCV_FP_OPCODE_FMSUB:
-    case RISCV_FP_OPCODE_FNMSUB:
-    case RISCV_FP_OPCODE_FNMADD:
-        fp_exec_fused(s, inst);
         return;
     case RISCV_FP_OPCODE_OP:
         fp_exec_op(s, inst);
@@ -1555,15 +1661,16 @@ static uint32_t fp_gpr_mask(uint32_t reg)
 /*
  * Classify every integer-register observation made by the shared FP helper.
  *
- * This table deliberately follows the architectural decoder above. Fine
- * sub-encoding validation remains in each executor: a malformed instruction
- * may trap, but its broad family still conservatively describes every GPR read
- * that can occur before validation. In particular, integer-to-FP conversion
- * reads rs1 before validating its type selector and rounding mode.
+ * The shared OP-FP descriptor above is also consumed by execution, so its
+ * broad family and register effect cannot drift into independent funct7 lists.
+ * Fine sub-encoding validation remains in each executor: a malformed
+ * instruction may trap, but its broad family still conservatively describes
+ * every GPR read that can occur before validation. In particular,
+ * integer-to-FP conversion reads rs1 before validating its type selector and
+ * rounding mode.
  *
  * Recognised non-memory helpers do not modify a GPR on a trap. A JIT may
- * therefore defer unrelated dirty stores to its terminal trap stub. Any new
- * family must be audited here in the same change as its decoder; the zero
+ * therefore defer unrelated dirty stores to its terminal trap stub. The zero
  * descriptor keeps unknown instructions on the full barrier/reset path.
  */
 riscv_fpu_gpr_effect_t riscv_fpu_gpr_effect(uint32_t inst)
@@ -1572,69 +1679,42 @@ riscv_fpu_gpr_effect_t riscv_fpu_gpr_effect(uint32_t inst)
         .precise = true,
         .trap_preserves_gprs = true,
     };
+    const uint32_t opcode = fp_opcode(inst);
 
-    switch (fp_opcode(inst))
+    if (fp_opcode_is_fused(opcode))
     {
-    case RISCV_FP_OPCODE_FMADD:
-    case RISCV_FP_OPCODE_FMSUB:
-    case RISCV_FP_OPCODE_FNMSUB:
-    case RISCV_FP_OPCODE_FNMADD:
         return preserve;
-    case RISCV_FP_OPCODE_OP:
-        break;
-    default:
+    }
+
+    if (opcode != RISCV_FP_OPCODE_OP)
+    {
         return (riscv_fpu_gpr_effect_t){0};
     }
 
-    switch (fp_funct7(inst))
+    const fp_op_decode_t decoded = fp_decode_op(inst);
+    if (decoded.kind == FP_OP_INVALID ||
+        decoded.gpr_access == FP_GPR_ACCESS_UNKNOWN)
     {
-    case RISCV_FP_FUNCT7_FCOMPARE_S:
-    case RISCV_FP_FUNCT7_FCVT_INT_S:
-    case RISCV_FP_FUNCT7_FMV_X_W_FCLASS_S:
-#ifdef CONFIG_RISCV_D
-    case RISCV_FP_FUNCT7_FCOMPARE_D:
-    case RISCV_FP_FUNCT7_FCVT_INT_D:
-    case RISCV_FP_FUNCT7_FMV_X_D_FCLASS_D:
-#endif
+        return (riscv_fpu_gpr_effect_t){0};
+    }
+
+    switch (decoded.gpr_access)
+    {
+    case FP_GPR_ACCESS_WRITE_RD:
         return (riscv_fpu_gpr_effect_t){
             .success_write_mask = fp_gpr_mask(fp_rd(inst)),
             .precise = true,
             .trap_preserves_gprs = true,
         };
-
-    case RISCV_FP_FUNCT7_FCVT_S_INT:
-    case RISCV_FP_FUNCT7_FMV_W_X:
-#ifdef CONFIG_RISCV_D
-    case RISCV_FP_FUNCT7_FCVT_D_INT:
-#if defined(CONFIG_RV64)
-    case RISCV_FP_FUNCT7_FMV_D_X:
-#endif
-#endif
+    case FP_GPR_ACCESS_READ_RS1:
         return (riscv_fpu_gpr_effect_t){
             .read_mask = fp_gpr_mask(fp_rs1(inst)),
             .precise = true,
             .trap_preserves_gprs = true,
         };
-
-    case RISCV_FP_FUNCT7_FADD_S:
-    case RISCV_FP_FUNCT7_FSUB_S:
-    case RISCV_FP_FUNCT7_FMUL_S:
-    case RISCV_FP_FUNCT7_FDIV_S:
-    case RISCV_FP_FUNCT7_FSGNJ_S:
-    case RISCV_FP_FUNCT7_FMIN_MAX_S:
-    case RISCV_FP_FUNCT7_FSQRT_S:
-#ifdef CONFIG_RISCV_D
-    case RISCV_FP_FUNCT7_FADD_D:
-    case RISCV_FP_FUNCT7_FSUB_D:
-    case RISCV_FP_FUNCT7_FMUL_D:
-    case RISCV_FP_FUNCT7_FDIV_D:
-    case RISCV_FP_FUNCT7_FSGNJ_D:
-    case RISCV_FP_FUNCT7_FMIN_MAX_D:
-    case RISCV_FP_FUNCT7_FCVT_S_D:
-    case RISCV_FP_FUNCT7_FCVT_D_S:
-    case RISCV_FP_FUNCT7_FSQRT_D:
-#endif
+    case FP_GPR_ACCESS_NONE:
         return preserve;
+    case FP_GPR_ACCESS_UNKNOWN:
     default:
         return (riscv_fpu_gpr_effect_t){0};
     }

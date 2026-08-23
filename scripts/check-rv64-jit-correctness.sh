@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+# shellcheck source=scripts/rv64-jit-stats.sh
+source "$SCRIPT_DIR/rv64-jit-stats.sh"
 export AM_HOME="$ROOT/abstract-machine"
 export NEMU_HOME="$ROOT/nemu"
 export NAVY_HOME="$ROOT/navy-apps"
@@ -22,24 +24,9 @@ RV64_FPU_MEMORY_NATIVE_TEST=riscv64-fpu-memory-native
 RV64_FPU_MMIO_BOUNDARY_TEST=riscv64-fpu-mmio-boundary
 RV64_MMIO_BOUNDARY_TEST=riscv64-jit-mmio-boundary
 RV64_MMIO_STORE_BOUNDARY_TEST=riscv64-jit-mmio-store-boundary
-TESTS=(
-  riscv64-jit-stable-loop riscv64-jit-multibranch-loop
-  "$RV64_FPU_JIT_TEST" "$RV64_FPU_TRAP_TEST" "$RV64_FPU_EXACT_TEST"
-  "$RV64_FPU_MEMORY_NATIVE_TEST"
-  "$RV64_FPU_MMIO_BOUNDARY_TEST"
-  riscv64-jit-strict
-  riscv64-jit-smc riscv64-jit-pic-source-teardown
-  riscv64-jit-negative-cache
-  riscv64-jit-load-fast riscv64-jit-store-fast riscv64-jit-jump-fast
-  riscv64-jit-return-link riscv64-jit-indirect-link
-  riscv64-jit-pic-megamorphic riscv64-jit-pic-jump-guarded
-  riscv64-jit-pic-alt-return
-  riscv64-jit-indirect-budget
-  riscv64-jit-jump-cache-budget
-  riscv64-jit-direct-link riscv64-jit-trace
-  riscv64-jit-m-fast riscv64-jit-sv39-remap riscv64-jit-sv39-cross-page riscv64-jit-mprv-ifetch
-  riscv64-jit-reg-cache riscv64-jit-memory-entry riscv64-jit-sv39-data riscv64-jit-sv39-dtlb
-)
+# The runner appends each declaration here so the final success message is
+# generated from the same ordered source that binds tests to validators.
+TESTS=()
 
 cleanup() {
   local status=$?
@@ -1633,22 +1620,12 @@ require_positive_direct_jalr_links() {
   local log=$1
   local test_name=$2
   local minimum_taken=7000
-  local summary
   local taken
   local misses
   local attempts
 
-  summary=$(sed -n \
-    's/.*direct JALR links taken = \([0-9][0-9]*\), misses = \([0-9][0-9]*\).*/\1 \2/p' \
-    "$log" | tail -n 1)
-
-  if [ -z "$summary" ]; then
-    echo "Failed to find direct-JALR-link stats for $test_name" >&2
-    cat "$log" >&2
-    exit 2
-  fi
-
-  read -r taken misses <<<"$summary"
+  taken=$(rv64_jit_stat direct_jalr_link.taken "$test_name" "$log")
+  misses=$(rv64_jit_stat direct_jalr_link.misses "$test_name" "$log")
   attempts=$((taken + misses))
 
   # The focused guest executes 8,212 eligible non-canonical JALRs. Requiring
@@ -1666,38 +1643,6 @@ require_positive_direct_jalr_links() {
   fi
 }
 
-parse_indirect_pic_stats() {
-  local log=$1
-  local test_name=$2
-  local subset=$3
-
-  parse_single_stat_value \
-    "$log" \
-    "s/.*direct ${subset} PIC hits = \\([0-9][0-9]*\\), secondary hits = \\([0-9][0-9]*\\), misses = \\([0-9][0-9]*\\), fills = \\([0-9][0-9]*\\), replacements = \\([0-9][0-9]*\\), stale rejections = \\([0-9][0-9]*\\), budget rejects = \\([0-9][0-9]*\\).*/\\1 \\2 \\3 \\4 \\5 \\6 \\7/p" \
-    "direct ${subset} PIC summary" "$test_name"
-}
-
-parse_indirect_jump_cache_stats() {
-  local log=$1
-  local test_name=$2
-
-  parse_single_stat_value \
-    "$log" \
-    's/.*indirect jump cache sites = \([0-9][0-9]*\), hits = \([0-9][0-9]*\), misses = \([0-9][0-9]*\), fills = \([0-9][0-9]*\), replacements = \([0-9][0-9]*\), stale rejections = \([0-9][0-9]*\), budget rejects = \([0-9][0-9]*\).*/\1 \2 \3 \4 \5 \6 \7/p' \
-    "indirect jump cache summary" "$test_name"
-}
-
-parse_indirect_pic_patch_stats() {
-  local log=$1
-  local test_name=$2
-  local subset=$3
-
-  parse_single_stat_value \
-    "$log" \
-    "s/.*direct ${subset} PIC patches = \([0-9][0-9]*\), unlinks = \([0-9][0-9]*\), source detaches = \([0-9][0-9]*\), target detaches = \([0-9][0-9]*\), patched entries = \([0-9][0-9]*\).*/\1 \2 \3 \4 \5/p" \
-    "direct ${subset} PIC patch summary" "$test_name"
-}
-
 require_indirect_pic_patches() {
   local log=$1
   local test_name=$2
@@ -1707,16 +1652,22 @@ require_indirect_pic_patches() {
   local minimum_source_detaches=$6
   local minimum_target_detaches=$7
   local minimum_patched_entries=$8
-  local summary
+  local subset_key=${subset,,}
+  local prefix="indirect_pic.${subset_key}"
   local patches
   local unlinks
   local source_detaches
   local target_detaches
   local patched_entries
 
-  summary=$(parse_indirect_pic_patch_stats "$log" "$test_name" "$subset")
-  read -r patches unlinks source_detaches target_detaches \
-    patched_entries <<<"$summary"
+  patches=$(rv64_jit_stat "$prefix.patch_resolutions" "$test_name" "$log")
+  unlinks=$(rv64_jit_stat "$prefix.patch_unlinks" "$test_name" "$log")
+  source_detaches=$(rv64_jit_stat \
+    "$prefix.source_detaches" "$test_name" "$log")
+  target_detaches=$(rv64_jit_stat \
+    "$prefix.target_detaches" "$test_name" "$log")
+  patched_entries=$(rv64_jit_stat \
+    "$prefix.patched_entries" "$test_name" "$log")
 
   # A learned way is useful only after its selector reaches the target-owned
   # chain entry. Replacement and SMC must restore that selector before reuse;
@@ -1743,8 +1694,7 @@ require_indirect_pic_patches() {
 require_bounded_megamorphic_jalr_patching() {
   local log=$1
   local test_name=$2
-  local pic_summary
-  local patch_summary
+  local prefix=indirect_pic.jalr
   local hits
   local secondary_hits
   local misses
@@ -1759,16 +1709,26 @@ require_bounded_megamorphic_jalr_patching() {
   local patched_entries
   local churn_downgrades
 
-  pic_summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
-  read -r hits secondary_hits misses fills replacements \
-    stale_rejections budget_rejects <<<"$pic_summary"
-  patch_summary=$(parse_indirect_pic_patch_stats "$log" "$test_name" JALR)
-  read -r patches unlinks source_detaches target_detaches \
-    patched_entries <<<"$patch_summary"
-  churn_downgrades=$(parse_single_stat_value \
-    "$log" \
-    's/.*direct JALR PIC patches = .*churn downgrades = \([0-9][0-9]*\).*/\1/p' \
-    "direct JALR PIC churn downgrade count" "$test_name")
+  hits=$(rv64_jit_stat "$prefix.hits" "$test_name" "$log")
+  secondary_hits=$(rv64_jit_stat \
+    "$prefix.secondary_hits" "$test_name" "$log")
+  misses=$(rv64_jit_stat "$prefix.misses" "$test_name" "$log")
+  fills=$(rv64_jit_stat "$prefix.fills" "$test_name" "$log")
+  replacements=$(rv64_jit_stat "$prefix.replacements" "$test_name" "$log")
+  stale_rejections=$(rv64_jit_stat \
+    "$prefix.stale_rejections" "$test_name" "$log")
+  budget_rejects=$(rv64_jit_stat \
+    "$prefix.budget_rejections" "$test_name" "$log")
+  patches=$(rv64_jit_stat "$prefix.patch_resolutions" "$test_name" "$log")
+  unlinks=$(rv64_jit_stat "$prefix.patch_unlinks" "$test_name" "$log")
+  source_detaches=$(rv64_jit_stat \
+    "$prefix.source_detaches" "$test_name" "$log")
+  target_detaches=$(rv64_jit_stat \
+    "$prefix.target_detaches" "$test_name" "$log")
+  patched_entries=$(rv64_jit_stat \
+    "$prefix.patched_entries" "$test_name" "$log")
+  churn_downgrades=$(rv64_jit_stat \
+    "$prefix.patch_downgrades" "$test_name" "$log")
 
   # A link-producing five-target source remains eligible for the two-way PIC.
   # It must collect enough replacement evidence to downgrade exactly once;
@@ -1794,8 +1754,7 @@ require_bounded_megamorphic_jalr_patching() {
 require_alternate_return_hint_pic() {
   local log=$1
   local test_name=$2
-  local pic_summary
-  local patch_summary
+  local prefix=indirect_pic.jalr
   local hits
   local secondary_hits
   local misses
@@ -1810,16 +1769,26 @@ require_alternate_return_hint_pic() {
   local patched_entries
   local churn_downgrades
 
-  pic_summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
-  read -r hits secondary_hits misses fills replacements \
-    stale_rejections budget_rejects <<<"$pic_summary"
-  patch_summary=$(parse_indirect_pic_patch_stats "$log" "$test_name" JALR)
-  read -r patches unlinks source_detaches target_detaches \
-    patched_entries <<<"$patch_summary"
-  churn_downgrades=$(parse_single_stat_value \
-    "$log" \
-    's/.*direct JALR PIC patches = .*churn downgrades = \([0-9][0-9]*\).*/\1/p' \
-    "direct JALR PIC churn downgrade count" "$test_name")
+  hits=$(rv64_jit_stat "$prefix.hits" "$test_name" "$log")
+  secondary_hits=$(rv64_jit_stat \
+    "$prefix.secondary_hits" "$test_name" "$log")
+  misses=$(rv64_jit_stat "$prefix.misses" "$test_name" "$log")
+  fills=$(rv64_jit_stat "$prefix.fills" "$test_name" "$log")
+  replacements=$(rv64_jit_stat "$prefix.replacements" "$test_name" "$log")
+  stale_rejections=$(rv64_jit_stat \
+    "$prefix.stale_rejections" "$test_name" "$log")
+  budget_rejects=$(rv64_jit_stat \
+    "$prefix.budget_rejections" "$test_name" "$log")
+  patches=$(rv64_jit_stat "$prefix.patch_resolutions" "$test_name" "$log")
+  unlinks=$(rv64_jit_stat "$prefix.patch_unlinks" "$test_name" "$log")
+  source_detaches=$(rv64_jit_stat \
+    "$prefix.source_detaches" "$test_name" "$log")
+  target_detaches=$(rv64_jit_stat \
+    "$prefix.target_detaches" "$test_name" "$log")
+  patched_entries=$(rv64_jit_stat \
+    "$prefix.patched_entries" "$test_name" "$log")
+  churn_downgrades=$(rv64_jit_stat \
+    "$prefix.patch_downgrades" "$test_name" "$log")
 
   # x5 is the ISA's alternate link register. Even with a non-zero immediate,
   # this monomorphic rd=x0 source is a return-stack hint and should spend nearly
@@ -1847,10 +1816,8 @@ require_alternate_return_hint_pic() {
 require_guarded_jump_cache() {
   local log=$1
   local test_name=$2
-  local cache_summary
-  local pic_summary
-  local patch_summary
-  local direct_summary
+  local cache_prefix=indirect_jump_cache
+  local pic_prefix=indirect_pic.jalr
   local sites
   local cache_hits
   local cache_misses
@@ -1875,24 +1842,40 @@ require_guarded_jump_cache() {
   local direct_misses
   local direct_attempts
 
-  cache_summary=$(parse_indirect_jump_cache_stats "$log" "$test_name")
-  read -r sites cache_hits cache_misses cache_fills cache_replacements \
-    cache_stale_rejections cache_budget_rejects <<<"$cache_summary"
-  pic_summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
-  read -r hits secondary_hits misses fills replacements \
-    stale_rejections budget_rejects <<<"$pic_summary"
-  patch_summary=$(parse_indirect_pic_patch_stats "$log" "$test_name" JALR)
-  read -r patches unlinks source_detaches target_detaches \
-    patched_entries <<<"$patch_summary"
-  churn_downgrades=$(parse_single_stat_value \
-    "$log" \
-    's/.*direct JALR PIC patches = .*churn downgrades = \([0-9][0-9]*\).*/\1/p' \
-    "direct JALR PIC churn downgrade count" "$test_name")
-  direct_summary=$(parse_single_stat_value \
-    "$log" \
-    's/.*direct JALR links taken = \([0-9][0-9]*\), misses = \([0-9][0-9]*\).*/\1 \2/p' \
-    "direct JALR link summary" "$test_name")
-  read -r direct_taken direct_misses <<<"$direct_summary"
+  sites=$(rv64_jit_stat "$cache_prefix.sites" "$test_name" "$log")
+  cache_hits=$(rv64_jit_stat "$cache_prefix.hits" "$test_name" "$log")
+  cache_misses=$(rv64_jit_stat "$cache_prefix.misses" "$test_name" "$log")
+  cache_fills=$(rv64_jit_stat "$cache_prefix.fills" "$test_name" "$log")
+  cache_replacements=$(rv64_jit_stat \
+    "$cache_prefix.replacements" "$test_name" "$log")
+  cache_stale_rejections=$(rv64_jit_stat \
+    "$cache_prefix.stale_rejections" "$test_name" "$log")
+  cache_budget_rejects=$(rv64_jit_stat \
+    "$cache_prefix.budget_rejections" "$test_name" "$log")
+  hits=$(rv64_jit_stat "$pic_prefix.hits" "$test_name" "$log")
+  secondary_hits=$(rv64_jit_stat \
+    "$pic_prefix.secondary_hits" "$test_name" "$log")
+  misses=$(rv64_jit_stat "$pic_prefix.misses" "$test_name" "$log")
+  fills=$(rv64_jit_stat "$pic_prefix.fills" "$test_name" "$log")
+  replacements=$(rv64_jit_stat \
+    "$pic_prefix.replacements" "$test_name" "$log")
+  stale_rejections=$(rv64_jit_stat \
+    "$pic_prefix.stale_rejections" "$test_name" "$log")
+  budget_rejects=$(rv64_jit_stat \
+    "$pic_prefix.budget_rejections" "$test_name" "$log")
+  patches=$(rv64_jit_stat \
+    "$pic_prefix.patch_resolutions" "$test_name" "$log")
+  unlinks=$(rv64_jit_stat "$pic_prefix.patch_unlinks" "$test_name" "$log")
+  source_detaches=$(rv64_jit_stat \
+    "$pic_prefix.source_detaches" "$test_name" "$log")
+  target_detaches=$(rv64_jit_stat \
+    "$pic_prefix.target_detaches" "$test_name" "$log")
+  patched_entries=$(rv64_jit_stat \
+    "$pic_prefix.patched_entries" "$test_name" "$log")
+  churn_downgrades=$(rv64_jit_stat \
+    "$pic_prefix.patch_downgrades" "$test_name" "$log")
+  direct_taken=$(rv64_jit_stat direct_jalr_link.taken "$test_name" "$log")
+  direct_misses=$(rv64_jit_stat direct_jalr_link.misses "$test_name" "$log")
   direct_attempts=$((direct_taken + direct_misses))
 
   # The first eight targets occupy distinct raw 16-way entries and the ninth
@@ -1945,7 +1928,7 @@ require_guarded_jump_cache() {
 require_stale_indirect_jump_cache_rejection() {
   local log=$1
   local test_name=$2
-  local summary
+  local prefix=indirect_jump_cache
   local sites
   local hits
   local misses
@@ -1954,9 +1937,15 @@ require_stale_indirect_jump_cache_rejection() {
   local stale_rejections
   local budget_rejects
 
-  summary=$(parse_indirect_jump_cache_stats "$log" "$test_name")
-  read -r sites hits misses fills replacements stale_rejections \
-    budget_rejects <<<"$summary"
+  sites=$(rv64_jit_stat "$prefix.sites" "$test_name" "$log")
+  hits=$(rv64_jit_stat "$prefix.hits" "$test_name" "$log")
+  misses=$(rv64_jit_stat "$prefix.misses" "$test_name" "$log")
+  fills=$(rv64_jit_stat "$prefix.fills" "$test_name" "$log")
+  replacements=$(rv64_jit_stat "$prefix.replacements" "$test_name" "$log")
+  stale_rejections=$(rv64_jit_stat \
+    "$prefix.stale_rejections" "$test_name" "$log")
+  budget_rejects=$(rv64_jit_stat \
+    "$prefix.budget_rejections" "$test_name" "$log")
 
   if [ "$sites" -le 0 ] || [ "$hits" -le 0 ] || [ "$fills" -le 0 ] ||
     [ "$stale_rejections" -le 0 ] || [ "$budget_rejects" -ne 0 ] ||
@@ -1973,7 +1962,7 @@ require_stale_indirect_jump_cache_rejection() {
 require_unprobed_indirect_jump_cache() {
   local log=$1
   local test_name=$2
-  local summary
+  local prefix=indirect_jump_cache
   local sites
   local hits
   local misses
@@ -1982,9 +1971,15 @@ require_unprobed_indirect_jump_cache() {
   local stale_rejections
   local budget_rejects
 
-  summary=$(parse_indirect_jump_cache_stats "$log" "$test_name")
-  read -r sites hits misses fills replacements stale_rejections \
-    budget_rejects <<<"$summary"
+  sites=$(rv64_jit_stat "$prefix.sites" "$test_name" "$log")
+  hits=$(rv64_jit_stat "$prefix.hits" "$test_name" "$log")
+  misses=$(rv64_jit_stat "$prefix.misses" "$test_name" "$log")
+  fills=$(rv64_jit_stat "$prefix.fills" "$test_name" "$log")
+  replacements=$(rv64_jit_stat "$prefix.replacements" "$test_name" "$log")
+  stale_rejections=$(rv64_jit_stat \
+    "$prefix.stale_rejections" "$test_name" "$log")
+  budget_rejects=$(rv64_jit_stat \
+    "$prefix.budget_rejections" "$test_name" "$log")
 
   if [ "$sites" -lt 1 ] || [ "$hits" -ne 0 ] || [ "$misses" -ne 0 ] ||
     [ "$fills" -ne 0 ] || [ "$replacements" -ne 0 ] ||
@@ -2001,9 +1996,8 @@ require_unprobed_indirect_jump_cache() {
 require_exact_indirect_jump_cache_budget_rejection() {
   local log=$1
   local test_name=$2
-  local summary
-  local pic_summary
-  local patch_summary
+  local cache_prefix=indirect_jump_cache
+  local pic_prefix=indirect_pic.jalr
   local sites
   local hits
   local misses
@@ -2025,20 +2019,38 @@ require_exact_indirect_jump_cache_budget_rejection() {
   local patched_entries
   local churn_downgrades
 
-  summary=$(parse_indirect_jump_cache_stats "$log" "$test_name")
-  read -r sites hits misses fills replacements stale_rejections \
-    budget_rejects <<<"$summary"
-  pic_summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
-  read -r pic_hits pic_secondary_hits pic_misses pic_fills \
-    pic_replacements pic_stale_rejections pic_budget_rejects \
-    <<<"$pic_summary"
-  patch_summary=$(parse_indirect_pic_patch_stats "$log" "$test_name" JALR)
-  read -r patches unlinks source_detaches target_detaches patched_entries \
-    <<<"$patch_summary"
-  churn_downgrades=$(parse_single_stat_value \
-    "$log" \
-    's/.*direct JALR PIC patches = .*churn downgrades = \([0-9][0-9]*\).*/\1/p' \
-    "direct JALR PIC churn downgrade count" "$test_name")
+  sites=$(rv64_jit_stat "$cache_prefix.sites" "$test_name" "$log")
+  hits=$(rv64_jit_stat "$cache_prefix.hits" "$test_name" "$log")
+  misses=$(rv64_jit_stat "$cache_prefix.misses" "$test_name" "$log")
+  fills=$(rv64_jit_stat "$cache_prefix.fills" "$test_name" "$log")
+  replacements=$(rv64_jit_stat \
+    "$cache_prefix.replacements" "$test_name" "$log")
+  stale_rejections=$(rv64_jit_stat \
+    "$cache_prefix.stale_rejections" "$test_name" "$log")
+  budget_rejects=$(rv64_jit_stat \
+    "$cache_prefix.budget_rejections" "$test_name" "$log")
+  pic_hits=$(rv64_jit_stat "$pic_prefix.hits" "$test_name" "$log")
+  pic_secondary_hits=$(rv64_jit_stat \
+    "$pic_prefix.secondary_hits" "$test_name" "$log")
+  pic_misses=$(rv64_jit_stat "$pic_prefix.misses" "$test_name" "$log")
+  pic_fills=$(rv64_jit_stat "$pic_prefix.fills" "$test_name" "$log")
+  pic_replacements=$(rv64_jit_stat \
+    "$pic_prefix.replacements" "$test_name" "$log")
+  pic_stale_rejections=$(rv64_jit_stat \
+    "$pic_prefix.stale_rejections" "$test_name" "$log")
+  pic_budget_rejects=$(rv64_jit_stat \
+    "$pic_prefix.budget_rejections" "$test_name" "$log")
+  patches=$(rv64_jit_stat \
+    "$pic_prefix.patch_resolutions" "$test_name" "$log")
+  unlinks=$(rv64_jit_stat "$pic_prefix.patch_unlinks" "$test_name" "$log")
+  source_detaches=$(rv64_jit_stat \
+    "$pic_prefix.source_detaches" "$test_name" "$log")
+  target_detaches=$(rv64_jit_stat \
+    "$pic_prefix.target_detaches" "$test_name" "$log")
+  patched_entries=$(rv64_jit_stat \
+    "$pic_prefix.patched_entries" "$test_name" "$log")
+  churn_downgrades=$(rv64_jit_stat \
+    "$pic_prefix.patch_downgrades" "$test_name" "$log")
 
   if [ "$sites" -ne 1 ] || [ "$hits" -le 0 ] || [ "$misses" -le 0 ] ||
     [ "$fills" -le 0 ] || [ "$replacements" -ne 0 ] ||
@@ -2070,16 +2082,11 @@ require_exact_indirect_pic_target_detaches() {
   local test_name=$2
   local subset=$3
   local expected=$4
-  local summary
-  local patches
-  local unlinks
-  local source_detaches
+  local subset_key=${subset,,}
   local target_detaches
-  local patched_entries
 
-  summary=$(parse_indirect_pic_patch_stats "$log" "$test_name" "$subset")
-  read -r patches unlinks source_detaches target_detaches \
-    patched_entries <<<"$summary"
+  target_detaches=$(rv64_jit_stat \
+    "indirect_pic.${subset_key}.target_detaches" "$test_name" "$log")
 
   if [ "$target_detaches" -ne "$expected" ]; then
     echo "Expected direct $subset PIC target detaches=$expected for" \
@@ -2092,7 +2099,7 @@ require_exact_indirect_pic_target_detaches() {
 require_two_target_return_pic() {
   local log=$1
   local test_name=$2
-  local summary
+  local prefix=indirect_pic.return
   local hits
   local secondary_hits
   local misses
@@ -2101,9 +2108,16 @@ require_two_target_return_pic() {
   local stale_rejections
   local budget_rejects
 
-  summary=$(parse_indirect_pic_stats "$log" "$test_name" return)
-  read -r hits secondary_hits misses fills replacements \
-    stale_rejections budget_rejects <<<"$summary"
+  hits=$(rv64_jit_stat "$prefix.hits" "$test_name" "$log")
+  secondary_hits=$(rv64_jit_stat \
+    "$prefix.secondary_hits" "$test_name" "$log")
+  misses=$(rv64_jit_stat "$prefix.misses" "$test_name" "$log")
+  fills=$(rv64_jit_stat "$prefix.fills" "$test_name" "$log")
+  replacements=$(rv64_jit_stat "$prefix.replacements" "$test_name" "$log")
+  stale_rejections=$(rv64_jit_stat \
+    "$prefix.stale_rejections" "$test_name" "$log")
+  budget_rejects=$(rv64_jit_stat \
+    "$prefix.budget_rejections" "$test_name" "$log")
 
   # The shared RET alternates between two return PCs for 4,096 laps. A large
   # secondary-way count proves that the optimisation is genuinely polymorphic.
@@ -2127,7 +2141,7 @@ require_two_target_return_pic() {
 require_polymorphic_jalr_pic() {
   local log=$1
   local test_name=$2
-  local summary
+  local prefix=indirect_pic.jalr
   local hits
   local secondary_hits
   local misses
@@ -2136,9 +2150,16 @@ require_polymorphic_jalr_pic() {
   local stale_rejections
   local budget_rejects
 
-  summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
-  read -r hits secondary_hits misses fills replacements \
-    stale_rejections budget_rejects <<<"$summary"
+  hits=$(rv64_jit_stat "$prefix.hits" "$test_name" "$log")
+  secondary_hits=$(rv64_jit_stat \
+    "$prefix.secondary_hits" "$test_name" "$log")
+  misses=$(rv64_jit_stat "$prefix.misses" "$test_name" "$log")
+  fills=$(rv64_jit_stat "$prefix.fills" "$test_name" "$log")
+  replacements=$(rv64_jit_stat "$prefix.replacements" "$test_name" "$log")
+  stale_rejections=$(rv64_jit_stat \
+    "$prefix.stale_rejections" "$test_name" "$log")
+  budget_rejects=$(rv64_jit_stat \
+    "$prefix.budget_rejections" "$test_name" "$log")
 
   # Two alternating targets must occupy both ways and the third target must
   # force bounded replacement at that same shared exit.
@@ -2163,7 +2184,7 @@ require_polymorphic_jalr_pic() {
 require_exact_jalr_pic_budget_rejection() {
   local log=$1
   local test_name=$2
-  local summary
+  local prefix=indirect_pic.jalr
   local hits
   local secondary_hits
   local misses
@@ -2172,9 +2193,16 @@ require_exact_jalr_pic_budget_rejection() {
   local stale_rejections
   local budget_rejects
 
-  summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
-  read -r hits secondary_hits misses fills replacements \
-    stale_rejections budget_rejects <<<"$summary"
+  hits=$(rv64_jit_stat "$prefix.hits" "$test_name" "$log")
+  secondary_hits=$(rv64_jit_stat \
+    "$prefix.secondary_hits" "$test_name" "$log")
+  misses=$(rv64_jit_stat "$prefix.misses" "$test_name" "$log")
+  fills=$(rv64_jit_stat "$prefix.fills" "$test_name" "$log")
+  replacements=$(rv64_jit_stat "$prefix.replacements" "$test_name" "$log")
+  stale_rejections=$(rv64_jit_stat \
+    "$prefix.stale_rejections" "$test_name" "$log")
+  budget_rejects=$(rv64_jit_stat \
+    "$prefix.budget_rejections" "$test_name" "$log")
 
   # The final warmed edge fits by source count alone but not after adding its
   # 181-instruction destination, which reaches FENCE before any later JALR.
@@ -2197,18 +2225,17 @@ require_exact_jalr_pic_budget_rejection() {
 require_stale_jalr_pic_rejection() {
   local log=$1
   local test_name=$2
-  local summary
+  local prefix=indirect_pic.jalr
   local hits
-  local secondary_hits
   local misses
   local fills
-  local replacements
   local stale_rejections
-  local budget_rejects
 
-  summary=$(parse_indirect_pic_stats "$log" "$test_name" JALR)
-  read -r hits secondary_hits misses fills replacements \
-    stale_rejections budget_rejects <<<"$summary"
+  hits=$(rv64_jit_stat "$prefix.hits" "$test_name" "$log")
+  misses=$(rv64_jit_stat "$prefix.misses" "$test_name" "$log")
+  fills=$(rv64_jit_stat "$prefix.fills" "$test_name" "$log")
+  stale_rejections=$(rv64_jit_stat \
+    "$prefix.stale_rejections" "$test_name" "$log")
 
   if [ "$hits" -le 0 ] || [ "$fills" -le 0 ] ||
     [ "$stale_rejections" -le 0 ] ||
@@ -2244,8 +2271,8 @@ require_positive_guarded_direct_links() {
 require_disabled_indirect_jump_cache() {
   local test_name=$1
   local out
-  local summary
-  local direct_summary
+  local stats_test_name="$test_name direct-link-disabled"
+  local prefix=indirect_jump_cache
   local sites
   local hits
   local misses
@@ -2259,7 +2286,8 @@ require_disabled_indirect_jump_cache() {
   out=$(mktemp)
   TEMP_FILES+=("$out")
 
-  if ! env NEMU_JIT_STATS=1 NEMU_DISABLE_RV64_JIT_DIRECT_LINK=1 \
+  if ! env NEMU_JIT_STATS=1 NEMU_RV64_JIT_STATS_KV=1 \
+      NEMU_DISABLE_RV64_JIT_DIRECT_LINK=1 \
       make -C am-kernels/tests/cpu-tests ARCH="$ARCH" ALL="$test_name" \
       run >"$out" 2>&1; then
     echo "$test_name failed with direct linking disabled" >&2
@@ -2267,17 +2295,23 @@ require_disabled_indirect_jump_cache() {
     exit 2
   fi
 
-  require_good_trap "$out" "$test_name direct-link-disabled"
-  require_positive_jit_instructions "$out" "$test_name direct-link-disabled"
-  summary=$(parse_indirect_jump_cache_stats \
-    "$out" "$test_name direct-link-disabled")
-  read -r sites hits misses fills replacements stale_rejections \
-    budget_rejects <<<"$summary"
-  direct_summary=$(parse_single_stat_value \
-    "$out" \
-    's/.*direct JALR links taken = \([0-9][0-9]*\), misses = \([0-9][0-9]*\).*/\1 \2/p' \
-    "direct JALR link summary" "$test_name direct-link-disabled")
-  read -r direct_taken direct_misses <<<"$direct_summary"
+  require_good_trap "$out" "$stats_test_name"
+  require_positive_jit_instructions "$out" "$stats_test_name"
+  load_rv64_jit_stats "$out" "$stats_test_name"
+  sites=$(rv64_jit_stat "$prefix.sites" "$stats_test_name" "$out")
+  hits=$(rv64_jit_stat "$prefix.hits" "$stats_test_name" "$out")
+  misses=$(rv64_jit_stat "$prefix.misses" "$stats_test_name" "$out")
+  fills=$(rv64_jit_stat "$prefix.fills" "$stats_test_name" "$out")
+  replacements=$(rv64_jit_stat \
+    "$prefix.replacements" "$stats_test_name" "$out")
+  stale_rejections=$(rv64_jit_stat \
+    "$prefix.stale_rejections" "$stats_test_name" "$out")
+  budget_rejects=$(rv64_jit_stat \
+    "$prefix.budget_rejections" "$stats_test_name" "$out")
+  direct_taken=$(rv64_jit_stat \
+    direct_jalr_link.taken "$stats_test_name" "$out")
+  direct_misses=$(rv64_jit_stat \
+    direct_jalr_link.misses "$stats_test_name" "$out")
 
   if [ "$sites" -ne 0 ] || [ "$hits" -ne 0 ] || [ "$misses" -ne 0 ] ||
     [ "$fills" -ne 0 ] || [ "$replacements" -ne 0 ] ||
@@ -2295,6 +2329,323 @@ require_disabled_indirect_jump_cache() {
   rm -f "$out"
 }
 
+check_generic_only() {
+  : "$1" "$2"
+}
+
+check_stable_loop() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_stable_register_loops "$log" "$test_name"
+  require_positive_side_exit_reason \
+    "$log" "$test_name" "chained-over-budget"
+}
+
+check_multibranch_loop() {
+  local log=$1
+  local test_name=$2
+
+  require_zero_stable_register_loops "$log" "$test_name"
+}
+
+check_fp_jit_fallback() {
+  local log=$1
+  local test_name=$2
+
+  require_fp_helper_stats "$log" "$test_name" positive 28 28 zero zero
+  # The S and D round-trips each have four classified sites. Six loaded
+  # mappings survive the conversion and addition, then two destinations are
+  # selectively discarded. The exact aggregate also includes the fixture's
+  # other recognised non-memory helpers; pinning it makes an accidental
+  # width-specific full barrier or redundant emitted store observable.
+  require_fp_helper_gpr_effect_stats \
+    "$log" "$test_name" 15 51 4 2 39 41
+  require_all_native_fp_memory_executions \
+    "$log" "$test_name" 0 6 0 10
+  require_positive_source_reverse_invalidations "$log" "$test_name"
+  require_positive_side_exit_reason "$log" "$test_name" "store-source"
+}
+
+check_fp_traps() {
+  local log=$1
+  local test_name=$2
+
+  require_fp_helper_stats "$log" "$test_name" positive 12 zero 12 zero
+  # The reserved-rounding probe carries six dirty mappings into one
+  # classified arithmetic helper. Its executed trap arm must have a store
+  # for every mapping before the guest trap handler can resume the suffix.
+  require_fp_helper_gpr_effect_stats \
+    "$log" "$test_name" 12 12 1 0 6 7
+  require_all_native_fp_memory_executions \
+    "$log" "$test_name" 1 1 1 1
+  require_exact_side_exit_reason "$log" "$test_name" "fp-fs-off" 23
+  require_exact_side_exit_reason "$log" "$test_name" "load-guard" 9
+  require_exact_side_exit_reason "$log" "$test_name" "store-guard" 9
+}
+
+check_fp_exact() {
+  local log=$1
+  local test_name=$2
+
+  require_fp_helper_stats "$log" "$test_name" positive 14 14 zero zero
+  # The state-effect check includes one FMV.X.W readback after changing the
+  # self-aliased FSGNJN.S destination, making 472 exact native operations.
+  require_all_native_fp_exact_executions "$log" "$test_name" 472
+  require_all_native_fp_memory_executions \
+    "$log" "$test_name" 0 0 1 0
+  require_native_fp_stable_loop "$log" "$test_name"
+}
+
+check_fp_memory_native() {
+  local log=$1
+  local test_name=$2
+
+  require_all_native_fp_memory_executions \
+    "$log" "$test_name" 66 66 66 66
+  require_fp_helper_stats "$log" "$test_name" positive zero zero zero zero
+  require_absent_block_end_reason "$log" "$test_name" "fp-memory"
+  require_positive_block_end_reason "$log" "$test_name" "chained-loop"
+}
+
+check_fp_mmio_boundary() {
+  local log=$1
+  local test_name=$2
+
+  require_fp_helper_stats "$log" "$test_name" positive 4 zero zero 4
+  require_all_native_fp_memory_executions "$log" "$test_name" 0 0 0 0
+  require_cpu_boundary_breaks "$log" "$test_name" 1
+}
+
+check_load_fast() {
+  require_positive_native_loads "$1" "$2"
+}
+
+check_store_fast() {
+  require_positive_native_stores "$1" "$2"
+}
+
+check_smc() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_direct_link_unlinks "$log" "$test_name"
+  require_stale_jalr_pic_rejection "$log" "$test_name"
+  require_stale_indirect_jump_cache_rejection "$log" "$test_name"
+  require_indirect_pic_patches "$log" "$test_name" JALR 2 1 0 1 7
+}
+
+check_pic_source_teardown() {
+  local log=$1
+  local test_name=$2
+
+  require_indirect_pic_patches "$log" "$test_name" JALR 2 1 1 0 8
+  require_exact_indirect_pic_target_detaches "$log" "$test_name" JALR 0
+  require_lazy_source_reverse_map_nodes "$log" "$test_name"
+}
+
+check_negative_cache() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_invalidated_blocks "$log" "$test_name"
+  require_positive_source_reverse_invalidations "$log" "$test_name"
+  require_positive_unsupported_opcode "$log" "$test_name" "0x0f"
+  require_direct_link_stats "$log" "$test_name"
+}
+
+check_jump_fast() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_native_jumps "$log" "$test_name"
+  require_positive_block_end_reason "$log" "$test_name" "jump"
+}
+
+check_return_link() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_native_jumps "$log" "$test_name"
+  require_positive_direct_return_links "$log" "$test_name"
+  require_two_target_return_pic "$log" "$test_name"
+  require_indirect_pic_patches "$log" "$test_name" return 2 0 0 0 4000
+}
+
+check_indirect_link() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_native_jumps "$log" "$test_name"
+  require_positive_direct_jalr_links "$log" "$test_name"
+  require_polymorphic_jalr_pic "$log" "$test_name"
+  require_indirect_pic_patches "$log" "$test_name" JALR 3 1 0 0 8000
+  require_positive_side_exit_reason "$log" "$test_name" "jalr-misaligned"
+  require_unprobed_indirect_jump_cache "$log" "$test_name"
+}
+
+check_pic_megamorphic() {
+  require_bounded_megamorphic_jalr_patching "$1" "$2"
+}
+
+check_pic_jump_guarded() {
+  require_guarded_jump_cache "$1" "$2"
+}
+
+check_pic_alt_return() {
+  require_alternate_return_hint_pic "$1" "$2"
+}
+
+check_indirect_budget() {
+  local log=$1
+  local test_name=$2
+
+  require_exact_jalr_pic_budget_rejection "$log" "$test_name"
+  require_indirect_pic_patches "$log" "$test_name" JALR 1 0 0 0 1
+  require_absent_side_exit_reason "$log" "$test_name" "chained-over-budget"
+}
+
+check_jump_cache_budget() {
+  local log=$1
+  local test_name=$2
+
+  require_exact_indirect_jump_cache_budget_rejection "$log" "$test_name"
+  require_absent_side_exit_reason "$log" "$test_name" "chained-over-budget"
+}
+
+check_direct_link() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_native_jumps "$log" "$test_name"
+  require_positive_direct_links "$log" "$test_name"
+  require_positive_direct_branch_links "$log" "$test_name"
+  require_positive_patched_direct_links "$log" "$test_name"
+}
+
+check_trace() {
+  require_positive_trace_blocks "$1" "$2"
+}
+
+check_m_fast() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_native_m_ops "$log" "$test_name"
+  require_all_native_m_executions "$log" "$test_name"
+  require_native_m_stable_loop "$log" "$test_name"
+}
+
+check_translated_only() {
+  require_positive_translated_blocks "$1" "$2"
+}
+
+check_sv39_cross_page() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_translated_blocks "$log" "$test_name"
+  require_positive_translated_cross_page_blocks "$log" "$test_name"
+  require_positive_segmented_source_blocks "$log" "$test_name"
+}
+
+check_reg_cache() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_reg_cache_spills "$log" "$test_name"
+  require_reg_cache_spills_at_most "$log" "$test_name" 15
+  require_positive_liveness_victim_avoidance "$log" "$test_name"
+}
+
+check_memory_entry() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_native_loads "$log" "$test_name"
+  require_positive_native_stores "$log" "$test_name"
+  require_positive_store_continuations "$log" "$test_name"
+  require_positive_zero_side_exits "$log" "$test_name"
+  require_positive_helper_loads "$log" "$test_name"
+  require_positive_helper_stores "$log" "$test_name"
+  require_bare_mmio_load_routing_stats "$log" "$test_name"
+  require_mmio_store_continuation_stats "$log" "$test_name"
+  require_direct_mmio_store_routing_stats "$log" "$test_name"
+  require_direct_mmio_route_cache_stats "$log" "$test_name"
+  require_cpu_boundary_breaks "$log" "$test_name" positive
+  require_exact_serial_mmio_marker "$log" "$test_name"
+  require_positive_side_exit_reason "$log" "$test_name" "load-guard"
+  require_positive_side_exit_reason "$log" "$test_name" "store-source"
+}
+
+check_sv39_data() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_translated_blocks "$log" "$test_name"
+  require_positive_native_paged_loads "$log" "$test_name"
+  require_positive_native_paged_stores "$log" "$test_name"
+  require_all_native_fp_memory_executions \
+    "$log" "$test_name" 131 129 129 129
+  require_fp_helper_stats "$log" "$test_name" zero zero zero zero zero
+  require_positive_inline_paged_load_hits "$log" "$test_name"
+  require_positive_inline_paged_store_hits "$log" "$test_name"
+  require_positive_guarded_direct_links "$log" "$test_name"
+  require_exact_side_exit_reason "$log" "$test_name" "load-guard" 2
+  require_exact_side_exit_reason "$log" "$test_name" "store-source" 3
+}
+
+check_sv39_dtlb() {
+  local log=$1
+  local test_name=$2
+
+  require_positive_translated_blocks "$log" "$test_name"
+  require_positive_ifetch_generation_fast_hits "$log" "$test_name"
+  require_positive_avoided_ifetch_generation_bumps "$log" "$test_name"
+  require_positive_native_paged_loads "$log" "$test_name"
+  require_positive_native_paged_stores "$log" "$test_name"
+  require_positive_helper_loads "$log" "$test_name"
+  require_positive_helper_stores "$log" "$test_name"
+  require_positive_data_tlb_hits "$log" "$test_name"
+  require_positive_data_tlb_fills "$log" "$test_name"
+  require_positive_data_tlb_flushes "$log" "$test_name"
+  require_positive_data_tlb_page_table_flushes "$log" "$test_name"
+  require_positive_paged_store_helper_continuations "$log" "$test_name"
+  require_positive_inline_paged_loads "$log" "$test_name"
+  require_positive_inline_paged_stores "$log" "$test_name"
+  require_positive_inline_paged_load_hits "$log" "$test_name"
+  require_positive_inline_paged_store_hits "$log" "$test_name"
+  require_positive_side_exit_reason \
+    "$log" "$test_name" "paged-store-helper"
+  require_positive_invalidated_blocks "$log" "$test_name"
+}
+
+run_jit_test() {
+  local test_name=$1
+  local validator=$2
+  local out
+  local -a run_env=(NEMU_JIT_STATS=1 NEMU_RV64_JIT_STATS_KV=1)
+
+  shift 2
+  run_env+=("$@")
+  TESTS+=("$test_name")
+  out=$(mktemp)
+  TEMP_FILES+=("$out")
+
+  if ! env "${run_env[@]}" make -C am-kernels/tests/cpu-tests \
+      ARCH="$ARCH" ALL="$test_name" run >"$out" 2>&1; then
+    echo "$test_name failed" >&2
+    cat "$out" >&2
+    exit 2
+  fi
+
+  require_good_trap "$out" "$test_name"
+  require_positive_jit_instructions "$out" "$test_name"
+  load_rv64_jit_stats "$out" "$test_name"
+  "$validator" "$out" "$test_name"
+  rm -f "$out"
+}
+
 cd "$ROOT"
 
 [ -f "$DEFAULT_DEFCONFIG" ] || fail "missing $DEFAULT_DEFCONFIG"
@@ -2303,272 +2654,44 @@ bash "$SCRIPT_DIR/check-rv64-new-interpreter.sh"
 make -C "$NEMU_HOME" riscv64-am-headless-jit-stats_defconfig >/dev/null
 STATS_CONFIG_ACTIVE=1
 
-for test_name in "${TESTS[@]}"; do
-  out=$(mktemp)
-  TEMP_FILES+=("$out")
-
-  run_env=(NEMU_JIT_STATS=1)
-  if [ "$test_name" = "riscv64-jit-memory-entry" ]; then
-    # The statistics-only hook exercises source invalidation and an outer CPU
-    # boundary on the first two bare MMIO stores, then resets the arena on the
-    # final helper store without perturbing the earlier route-cache samples.
-    run_env+=(NEMU_RV64_JIT_TEST_MMIO_BOUNDARIES=1)
-    # Poison allocator storage so the initial VGACTL read proves that device
-    # reset state comes from explicit initialisation rather than fresh pages.
-    run_env+=(MALLOC_PERTURB_=165)
-  fi
-  if [ "$test_name" = "$RV64_FPU_MMIO_BOUNDARY_TEST" ]; then
-    # The statistics-only hook makes the successful FP MMIO helper raise one
-    # deterministic interrupt edge after its device callback has returned.
-    run_env+=(NEMU_RV64_JIT_TEST_FP_MMIO_BOUNDARY=1)
-  fi
-
-  if ! env "${run_env[@]}" make -C am-kernels/tests/cpu-tests ARCH="$ARCH" ALL="$test_name" run >"$out" 2>&1; then
-    echo "$test_name failed" >&2
-    cat "$out" >&2
-    exit 2
-  fi
-
-  require_good_trap "$out" "$test_name"
-  require_positive_jit_instructions "$out" "$test_name"
-
-  if [ "$test_name" = "riscv64-jit-stable-loop" ]; then
-    require_positive_stable_register_loops "$out" "$test_name"
-    require_positive_side_exit_reason \
-      "$out" "$test_name" "chained-over-budget"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-multibranch-loop" ]; then
-    require_zero_stable_register_loops "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "$RV64_FPU_JIT_TEST" ]; then
-    require_fp_helper_stats "$out" "$test_name" positive 28 28 zero zero
-    # The S and D round-trips each have four classified sites. Six loaded
-    # mappings survive the conversion and addition, then two destinations are
-    # selectively discarded. The exact aggregate also includes the fixture's
-    # other recognised non-memory helpers; pinning it makes an accidental
-    # width-specific full barrier or redundant emitted store observable.
-    require_fp_helper_gpr_effect_stats \
-      "$out" "$test_name" 15 51 4 2 39 41
-    require_all_native_fp_memory_executions \
-      "$out" "$test_name" 0 6 0 10
-    require_positive_source_reverse_invalidations "$out" "$test_name"
-    require_positive_side_exit_reason \
-      "$out" "$test_name" "store-source"
-  fi
-
-  if [ "$test_name" = "$RV64_FPU_TRAP_TEST" ]; then
-    require_fp_helper_stats "$out" "$test_name" positive 12 zero 12 zero
-    # The reserved-rounding probe carries six dirty mappings into one
-    # classified arithmetic helper. Its executed trap arm must have a store
-    # for every mapping before the guest trap handler can resume the suffix.
-    require_fp_helper_gpr_effect_stats \
-      "$out" "$test_name" 12 12 1 0 6 7
-    require_all_native_fp_memory_executions \
-      "$out" "$test_name" 1 1 1 1
-    require_exact_side_exit_reason \
-      "$out" "$test_name" "fp-fs-off" 23
-    require_exact_side_exit_reason \
-      "$out" "$test_name" "load-guard" 9
-    require_exact_side_exit_reason \
-      "$out" "$test_name" "store-guard" 9
-  fi
-
-  if [ "$test_name" = "$RV64_FPU_EXACT_TEST" ]; then
-    require_fp_helper_stats "$out" "$test_name" positive 14 14 zero zero
-    # The state-effect check includes one FMV.X.W readback after changing the
-    # self-aliased FSGNJN.S destination, making 472 exact native operations.
-    require_all_native_fp_exact_executions "$out" "$test_name" 472
-    require_all_native_fp_memory_executions \
-      "$out" "$test_name" 0 0 1 0
-    require_native_fp_stable_loop "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "$RV64_FPU_MEMORY_NATIVE_TEST" ]; then
-    require_all_native_fp_memory_executions \
-      "$out" "$test_name" 66 66 66 66
-    require_fp_helper_stats "$out" "$test_name" positive zero zero zero zero
-    require_absent_block_end_reason "$out" "$test_name" "fp-memory"
-    require_positive_block_end_reason "$out" "$test_name" "chained-loop"
-  fi
-
-  if [ "$test_name" = "$RV64_FPU_MMIO_BOUNDARY_TEST" ]; then
-    require_fp_helper_stats "$out" "$test_name" positive 4 zero zero 4
-    require_all_native_fp_memory_executions \
-      "$out" "$test_name" 0 0 0 0
-    require_cpu_boundary_breaks "$out" "$test_name" 1
-  fi
-
-  if [ "$test_name" = "riscv64-jit-load-fast" ]; then
-    require_positive_native_loads "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-store-fast" ]; then
-    require_positive_native_stores "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-smc" ]; then
-    require_positive_direct_link_unlinks "$out" "$test_name"
-    require_stale_jalr_pic_rejection "$out" "$test_name"
-    require_stale_indirect_jump_cache_rejection "$out" "$test_name"
-    require_indirect_pic_patches "$out" "$test_name" JALR 2 1 0 1 7
-  fi
-
-  if [ "$test_name" = "riscv64-jit-pic-source-teardown" ]; then
-    require_indirect_pic_patches "$out" "$test_name" JALR 2 1 1 0 8
-    require_exact_indirect_pic_target_detaches \
-      "$out" "$test_name" JALR 0
-    require_lazy_source_reverse_map_nodes "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-negative-cache" ]; then
-    require_positive_invalidated_blocks "$out" "$test_name"
-    require_positive_source_reverse_invalidations "$out" "$test_name"
-    require_positive_unsupported_opcode "$out" "$test_name" "0x0f"
-    require_direct_link_stats "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-jump-fast" ]; then
-    require_positive_native_jumps "$out" "$test_name"
-    require_positive_block_end_reason "$out" "$test_name" "jump"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-return-link" ]; then
-    require_positive_native_jumps "$out" "$test_name"
-    require_positive_direct_return_links "$out" "$test_name"
-    require_two_target_return_pic "$out" "$test_name"
-    require_indirect_pic_patches "$out" "$test_name" return 2 0 0 0 4000
-  fi
-
-  if [ "$test_name" = "riscv64-jit-indirect-link" ]; then
-    require_positive_native_jumps "$out" "$test_name"
-    require_positive_direct_jalr_links "$out" "$test_name"
-    require_polymorphic_jalr_pic "$out" "$test_name"
-    require_indirect_pic_patches "$out" "$test_name" JALR 3 1 0 0 8000
-    require_positive_side_exit_reason \
-      "$out" "$test_name" "jalr-misaligned"
-    require_unprobed_indirect_jump_cache "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-pic-megamorphic" ]; then
-    require_bounded_megamorphic_jalr_patching "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-pic-jump-guarded" ]; then
-    require_guarded_jump_cache "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-pic-alt-return" ]; then
-    require_alternate_return_hint_pic "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-indirect-budget" ]; then
-    require_exact_jalr_pic_budget_rejection "$out" "$test_name"
-    require_indirect_pic_patches "$out" "$test_name" JALR 1 0 0 0 1
-    require_absent_side_exit_reason \
-      "$out" "$test_name" "chained-over-budget"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-jump-cache-budget" ]; then
-    require_exact_indirect_jump_cache_budget_rejection "$out" "$test_name"
-    require_absent_side_exit_reason \
-      "$out" "$test_name" "chained-over-budget"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-direct-link" ]; then
-    require_positive_native_jumps "$out" "$test_name"
-    require_positive_direct_links "$out" "$test_name"
-    require_positive_direct_branch_links "$out" "$test_name"
-    require_positive_patched_direct_links "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-trace" ]; then
-    require_positive_trace_blocks "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-m-fast" ]; then
-    require_positive_native_m_ops "$out" "$test_name"
-    require_all_native_m_executions "$out" "$test_name"
-    require_native_m_stable_loop "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-sv39-remap" ]; then
-    require_positive_translated_blocks "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-sv39-cross-page" ]; then
-    require_positive_translated_blocks "$out" "$test_name"
-    require_positive_translated_cross_page_blocks "$out" "$test_name"
-    require_positive_segmented_source_blocks "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-mprv-ifetch" ]; then
-    require_positive_translated_blocks "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-reg-cache" ]; then
-    require_positive_reg_cache_spills "$out" "$test_name"
-    require_reg_cache_spills_at_most "$out" "$test_name" 15
-    require_positive_liveness_victim_avoidance "$out" "$test_name"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-memory-entry" ]; then
-    require_positive_native_loads "$out" "$test_name"
-    require_positive_native_stores "$out" "$test_name"
-    require_positive_store_continuations "$out" "$test_name"
-    require_positive_zero_side_exits "$out" "$test_name"
-    require_positive_helper_loads "$out" "$test_name"
-    require_positive_helper_stores "$out" "$test_name"
-    require_bare_mmio_load_routing_stats "$out" "$test_name"
-    require_mmio_store_continuation_stats "$out" "$test_name"
-    require_direct_mmio_store_routing_stats "$out" "$test_name"
-    require_direct_mmio_route_cache_stats "$out" "$test_name"
-    require_cpu_boundary_breaks "$out" "$test_name" positive
-    require_exact_serial_mmio_marker "$out" "$test_name"
-    require_positive_side_exit_reason "$out" "$test_name" "load-guard"
-    require_positive_side_exit_reason "$out" "$test_name" "store-source"
-  fi
-
-  if [ "$test_name" = "riscv64-jit-sv39-data" ]; then
-    require_positive_translated_blocks "$out" "$test_name"
-    require_positive_native_paged_loads "$out" "$test_name"
-    require_positive_native_paged_stores "$out" "$test_name"
-    require_all_native_fp_memory_executions \
-      "$out" "$test_name" 131 129 129 129
-    require_fp_helper_stats "$out" "$test_name" zero zero zero zero zero
-    require_positive_inline_paged_load_hits "$out" "$test_name"
-    require_positive_inline_paged_store_hits "$out" "$test_name"
-    require_positive_guarded_direct_links "$out" "$test_name"
-    require_exact_side_exit_reason \
-      "$out" "$test_name" "load-guard" 2
-    require_exact_side_exit_reason \
-      "$out" "$test_name" "store-source" 3
-  fi
-
-  if [ "$test_name" = "riscv64-jit-sv39-dtlb" ]; then
-    require_positive_translated_blocks "$out" "$test_name"
-    require_positive_ifetch_generation_fast_hits "$out" "$test_name"
-    require_positive_avoided_ifetch_generation_bumps "$out" "$test_name"
-    require_positive_native_paged_loads "$out" "$test_name"
-    require_positive_native_paged_stores "$out" "$test_name"
-    require_positive_helper_loads "$out" "$test_name"
-    require_positive_helper_stores "$out" "$test_name"
-    require_positive_data_tlb_hits "$out" "$test_name"
-    require_positive_data_tlb_fills "$out" "$test_name"
-    require_positive_data_tlb_flushes "$out" "$test_name"
-    require_positive_data_tlb_page_table_flushes "$out" "$test_name"
-    require_positive_paged_store_helper_continuations "$out" "$test_name"
-    require_positive_inline_paged_loads "$out" "$test_name"
-    require_positive_inline_paged_stores "$out" "$test_name"
-    require_positive_inline_paged_load_hits "$out" "$test_name"
-    require_positive_inline_paged_store_hits "$out" "$test_name"
-    require_positive_side_exit_reason "$out" "$test_name" "paged-store-helper"
-    require_positive_invalidated_blocks "$out" "$test_name"
-  fi
-
-  rm -f "$out"
-done
+run_jit_test riscv64-jit-stable-loop check_stable_loop
+run_jit_test riscv64-jit-multibranch-loop check_multibranch_loop
+run_jit_test "$RV64_FPU_JIT_TEST" check_fp_jit_fallback
+run_jit_test "$RV64_FPU_TRAP_TEST" check_fp_traps
+run_jit_test "$RV64_FPU_EXACT_TEST" check_fp_exact
+run_jit_test "$RV64_FPU_MEMORY_NATIVE_TEST" check_fp_memory_native
+# The statistics-only hook makes the successful FP MMIO helper raise one
+# deterministic interrupt edge after its device callback has returned.
+run_jit_test "$RV64_FPU_MMIO_BOUNDARY_TEST" check_fp_mmio_boundary \
+  NEMU_RV64_JIT_TEST_FP_MMIO_BOUNDARY=1
+run_jit_test riscv64-jit-strict check_generic_only
+run_jit_test riscv64-jit-smc check_smc
+run_jit_test riscv64-jit-pic-source-teardown check_pic_source_teardown
+run_jit_test riscv64-jit-negative-cache check_negative_cache
+run_jit_test riscv64-jit-load-fast check_load_fast
+run_jit_test riscv64-jit-store-fast check_store_fast
+run_jit_test riscv64-jit-jump-fast check_jump_fast
+run_jit_test riscv64-jit-return-link check_return_link
+run_jit_test riscv64-jit-indirect-link check_indirect_link
+run_jit_test riscv64-jit-pic-megamorphic check_pic_megamorphic
+run_jit_test riscv64-jit-pic-jump-guarded check_pic_jump_guarded
+run_jit_test riscv64-jit-pic-alt-return check_pic_alt_return
+run_jit_test riscv64-jit-indirect-budget check_indirect_budget
+run_jit_test riscv64-jit-jump-cache-budget check_jump_cache_budget
+run_jit_test riscv64-jit-direct-link check_direct_link
+run_jit_test riscv64-jit-trace check_trace
+run_jit_test riscv64-jit-m-fast check_m_fast
+run_jit_test riscv64-jit-sv39-remap check_translated_only
+run_jit_test riscv64-jit-sv39-cross-page check_sv39_cross_page
+run_jit_test riscv64-jit-mprv-ifetch check_translated_only
+run_jit_test riscv64-jit-reg-cache check_reg_cache
+# These statistics-only hooks exercise source invalidation and an outer CPU
+# boundary on the first two bare MMIO stores, then poison allocator storage so
+# the initial VGACTL read proves device reset uses explicit initialisation.
+run_jit_test riscv64-jit-memory-entry check_memory_entry \
+  NEMU_RV64_JIT_TEST_MMIO_BOUNDARIES=1 MALLOC_PERTURB_=165
+run_jit_test riscv64-jit-sv39-data check_sv39_data
+run_jit_test riscv64-jit-sv39-dtlb check_sv39_dtlb
 
 require_disabled_indirect_jump_cache riscv64-jit-pic-jump-guarded
 

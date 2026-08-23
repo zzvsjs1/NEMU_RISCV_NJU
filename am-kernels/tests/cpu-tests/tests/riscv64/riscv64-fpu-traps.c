@@ -233,17 +233,19 @@ asm(".section .text\n"
     "  fmv.w.x f2, a2\n"
     ".globl rv64_fpu_bad_static_rm_insn\n"
     "rv64_fpu_bad_static_rm_insn:\n"
-    "  .word 0x0020d053\n" /* FADD.S f0, f1, f2 with reserved rm=101 */
+    "  .word 0x0020d053\n" /* FADD.S; NEMU chooses to trap reserved rm=101 */
     "  fmv.x.d a0, f0\n"
     "  ret\n"
     ".size rv64_fpu_bad_static_rm, .-rv64_fpu_bad_static_rm\n"
 
     /*
      * A classified arithmetic helper reads no GPR, so the optimised path may
-     * carry these six dirty values through the C call.  Reserved rm=101 then
-     * forces the generated trap-only stub to publish them before the guest
-     * handler and resumed suffix run from separate native entries.  The trap
-     * handler intentionally uses only t0/t1.
+     * carry these six dirty values through the C call.  The specification
+     * reserves rm=101 rather than mandating one outcome; NEMU's permitted
+     * policy is to raise an illegal-instruction trap.  The generated trap-only
+     * stub must therefore publish the values before the guest handler and
+     * resumed suffix run from separate native entries.  The trap handler
+     * intentionally uses only t0/t1.
      */
     ".globl rv64_fpu_bad_static_rm_dirty\n"
     ".type rv64_fpu_bad_static_rm_dirty, @function\n"
@@ -256,7 +258,7 @@ asm(".section .text\n"
     "  addi a2, zero, 0x667\n"
     ".globl rv64_fpu_bad_static_rm_dirty_insn\n"
     "rv64_fpu_bad_static_rm_dirty_insn:\n"
-    "  .word 0x0020d053\n" /* FADD.S f0, f1, f2, reserved rm=101 */
+    "  .word 0x0020d053\n" /* FADD.S; NEMU chooses to trap reserved rm=101 */
     "  add a0, t2, t3\n"
     "  add a0, a0, t4\n"
     "  add a0, a0, t5\n"
@@ -267,9 +269,10 @@ asm(".section .text\n"
     ".-rv64_fpu_bad_static_rm_dirty\n"
 
     /*
-     * The potential success edge writes t2, but reserved rm traps before that
-     * writeback.  The trap stub must therefore publish the dirty old t2 value
-     * before success-only cache invalidation is applied to compiler metadata.
+     * The potential success edge writes t2, but NEMU's permitted policy traps
+     * on reserved rm=101 before that writeback.  The trap stub must therefore
+     * publish the dirty old t2 value before success-only cache invalidation is
+     * applied to compiler metadata.
      */
     ".globl rv64_fpu_bad_fcvt_dirty_rd\n"
     ".type rv64_fpu_bad_fcvt_dirty_rd, @function\n"
@@ -277,7 +280,7 @@ asm(".section .text\n"
     "  addi t2, zero, 0x345\n"
     ".globl rv64_fpu_bad_fcvt_dirty_rd_insn\n"
     "rv64_fpu_bad_fcvt_dirty_rd_insn:\n"
-    "  .word 0xc20053d3\n" /* FCVT.W.D t2, f0, reserved rm=101 */
+    "  .word 0xc20053d3\n" /* FCVT.W.D; NEMU traps reserved rm=101 */
     "  addi a0, t2, 0\n"
     "  ret\n"
     ".size rv64_fpu_bad_fcvt_dirty_rd, "

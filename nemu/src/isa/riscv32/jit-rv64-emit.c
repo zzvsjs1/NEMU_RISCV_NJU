@@ -1697,14 +1697,15 @@ static void jit_reg_apply_fp_helper_effect(
         }
     }
 
-    JIT_STAT_INC(fp_helper_gpr_effect_sites);
-    JIT_STAT_ADD(fp_helper_gpr_mappings_preserved,
+    JIT_STAT_INC(emitted_sites.fp_helper_gpr_effect_sites);
+    JIT_STAT_ADD(emitted_sites.fp_helper_gpr_mappings_preserved,
                  jit_reg_loaded_mapping_count(regs));
-    JIT_STAT_ADD(fp_helper_gpr_selective_invalidations, invalidated);
-    JIT_STAT_ADD(fp_helper_gpr_input_flushes, input_flushes);
-    JIT_STAT_ADD(fp_helper_gpr_dirty_mappings_preserved,
+    JIT_STAT_ADD(emitted_sites.fp_helper_gpr_selective_invalidations,
+                 invalidated);
+    JIT_STAT_ADD(emitted_sites.fp_helper_gpr_input_flushes, input_flushes);
+    JIT_STAT_ADD(emitted_sites.fp_helper_gpr_dirty_mappings_preserved,
                  jit_reg_dirty_mapping_count(regs));
-    JIT_STAT_ADD(fp_helper_gpr_trap_stores, trap_stores);
+    JIT_STAT_ADD(emitted_sites.fp_helper_gpr_trap_stores, trap_stores);
 }
 
 /*
@@ -1864,14 +1865,14 @@ static rv64_jit_reg_slot_t *jit_reg_choose_slot(rv64_jit_reg_cache_t *regs)
 
     if (oldest_dead != NULL)
     {
-        JIT_STAT_INC(reg_cache_dead_victims);
+        JIT_STAT_INC(emitted_sites.reg_cache_dead_victims);
 
         if (oldest_unpinned != oldest_dead &&
             oldest_unpinned != NULL &&
             (regs->live_after_mask &
              (1u << oldest_unpinned->guest_reg)) != 0)
         {
-            JIT_STAT_INC(reg_cache_live_lru_avoided);
+            JIT_STAT_INC(emitted_sites.reg_cache_live_lru_avoided);
         }
 
         return oldest_dead;
@@ -1909,7 +1910,7 @@ static rv64_jit_reg_slot_t *jit_reg_alloc(rv64_jit_writer_t *w,
 
     if (spill)
     {
-        JIT_STAT_INC(reg_cache_spills);
+        JIT_STAT_INC(emitted_sites.reg_cache_spills);
     }
 
     slot->valid = true;
@@ -2332,13 +2333,13 @@ enum
     RV64_JIT_CHAIN_STATS_JALR_SECONDARY,
 };
 
-/* Emit `xor esi, esi`, tagging a primary PIC hit in statistics builds. */
+/* Clear the ESI route/way discriminator used by statistics-only branches. */
 static bool emit_zero_esi(rv64_jit_writer_t *w)
 {
     return emit_u8(w, 0x31) && emit_u8(w, 0xf6);
 }
 
-/* Emit `test esi, esi`, selecting the secondary-way statistics increment. */
+/* Test whether the statistics route/way discriminator is zero. */
 static bool emit_test_esi_esi(rv64_jit_writer_t *w)
 {
     return emit_u8(w, 0x85) && emit_u8(w, 0xf6);
@@ -3386,7 +3387,7 @@ static bool emit_fp_memory_helper_terminal(rv64_jit_writer_t *w,
         return false;
     }
 
-    JIT_STAT_INC(fp_helper_sites);
+    JIT_STAT_INC(emitted_sites.fp_helper_sites);
     return true;
 }
 
@@ -3730,8 +3731,8 @@ static bool emit_native_fp_memory_paged_load(
     }
 
     patch_rel32(done_disp, w->cur);
-    JIT_STAT_INC(native_paged_loads);
-    JIT_STAT_INC(inline_paged_loads);
+    JIT_STAT_INC(emitted_sites.native_paged_loads);
+    JIT_STAT_INC(emitted_sites.inline_paged_loads);
     return true;
 }
 
@@ -3835,8 +3836,8 @@ static bool emit_native_fp_memory_paged_store(
     }
 
     patch_rel32(done_disp, w->cur);
-    JIT_STAT_INC(native_paged_stores);
-    JIT_STAT_INC(inline_paged_stores);
+    JIT_STAT_INC(emitted_sites.native_paged_stores);
+    JIT_STAT_INC(emitted_sites.inline_paged_stores);
     return true;
 }
 
@@ -3896,7 +3897,7 @@ bool rv64_jit_emit_fp_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs, ui
             return false;
         }
 
-        JIT_STAT_INC(native_fp_exact_sites);
+        JIT_STAT_INC(emitted_sites.native_fp_exact_sites);
         return true;
     }
 
@@ -3917,7 +3918,7 @@ bool rv64_jit_emit_fp_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs, ui
             return false;
         }
 
-        JIT_STAT_INC(native_fp_memory_sites);
+        JIT_STAT_INC(emitted_sites.native_fp_memory_sites);
         return true;
     }
 
@@ -4035,7 +4036,7 @@ bool rv64_jit_emit_fp_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs, ui
         }
     }
 
-    JIT_STAT_INC(fp_helper_sites);
+    JIT_STAT_INC(emitted_sites.fp_helper_sites);
     return true;
 }
 #endif
@@ -4075,6 +4076,76 @@ static bool emit_direct_link_miss_jcc(rv64_jit_writer_t *w, uint8_t jcc_opcode,
            "jit: RV64 direct-link miss patch list overflow");
     return emit_jcc_rel32_placeholder(w, jcc_opcode, &miss_disps[(*miss_count)++]);
 }
+
+/*
+ * A known direct edge keeps its block-cache slot in RDX, while a dynamic JALR
+ * computes a slot in R8 and preserves the architectural target in R9.  The
+ * distinction is an emitter-time choice: both forms must implement one safety
+ * policy without adding a generated run-time mode branch.
+ */
+typedef enum
+{
+    RV64_JIT_LINK_CANDIDATE_KNOWN_RDX,
+    RV64_JIT_LINK_CANDIDATE_RUNTIME_R8,
+} rv64_jit_link_candidate_kind_t;
+
+typedef struct
+{
+    rv64_jit_link_candidate_kind_t kind;
+
+    /* Used only by the known-target form. */
+    rv64_jit_block_t *known_slot;
+    vaddr_t target_pc;
+
+    /* Used only by the runtime-target form. */
+    uint32_t context_mix;
+} rv64_jit_link_candidate_t;
+
+typedef struct
+{
+    word_t satp;
+    uint32_t ifetch_state;
+    uint32_t data_state;
+    uint32_t completed_count;
+    bool source_uses_data_state;
+    bool count_already_accumulated;
+} rv64_jit_link_guard_config_t;
+
+typedef struct
+{
+    uint8_t *disps[RV64_JIT_DIRECT_LINK_MAX_MISS_PATCHES];
+    uint32_t count;
+} rv64_jit_link_guard_fixups_t;
+
+static bool emit_link_guard_miss_jcc(
+    rv64_jit_writer_t *w, uint8_t jcc_opcode,
+    rv64_jit_link_guard_fixups_t *fixups)
+{
+    return emit_direct_link_miss_jcc(
+        w, jcc_opcode, fixups->disps, &fixups->count);
+}
+
+static void patch_link_guard_misses(
+    const rv64_jit_link_guard_fixups_t *fixups,
+    const uint8_t *miss_path)
+{
+    for (uint32_t i = 0; i < fixups->count; i++)
+    {
+        patch_rel32(fixups->disps[i], miss_path);
+    }
+}
+
+static bool emit_link_target_guards(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_candidate_t *candidate,
+    const rv64_jit_link_guard_config_t *config,
+    rv64_jit_link_guard_fixups_t *fixups);
+
+#if RV64_JIT_STATS
+static bool emit_guarded_link_taken_stats(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_candidate_t *candidate);
+#endif
 
 /* Emit the conservative block exit used when cross-block direct links are off. */
 bool rv64_jit_emit_plain_block_exit(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
@@ -4293,127 +4364,36 @@ static bool emit_guarded_direct_link_exit(
     const uint32_t ifetch_state = rv64_jit_ifetch_state();
     rv64_jit_block_t *target =
         rv64_jit_cache_slot_context(target_pc, satp, ifetch_state);
-    uint8_t *miss_disps[RV64_JIT_DIRECT_LINK_MAX_MISS_PATCHES];
-    uint32_t miss_count = 0;
-
-    const uint32_t valid_off = (uint32_t)offsetof(rv64_jit_block_t, valid);
-    const uint32_t translated_off = (uint32_t)offsetof(rv64_jit_block_t, translated);
-    const uint32_t uses_data_state_off =
-        (uint32_t)offsetof(rv64_jit_block_t, uses_data_state);
-    const uint32_t pc_off = (uint32_t)offsetof(rv64_jit_block_t, pc);
-    const uint32_t satp_off = (uint32_t)offsetof(rv64_jit_block_t, satp);
-    const uint32_t ifetch_state_off =
-        (uint32_t)offsetof(rv64_jit_block_t, ifetch_state);
-    const uint32_t data_state_off =
-        (uint32_t)offsetof(rv64_jit_block_t, data_state);
-    const uint32_t ifetch_generation_off =
-        (uint32_t)offsetof(rv64_jit_block_t, ifetch_generation);
-    const uint32_t insn_count_off =
-        (uint32_t)offsetof(rv64_jit_block_t, insn_count);
     const uint32_t body_entry_off =
         (uint32_t)offsetof(rv64_jit_block_t, body_entry);
-    const uint32_t data_state = rv64_jit_data_tlb_state(MEM_TYPE_READ);
-    uint8_t *data_state_ok_disp = NULL;
-    uint8_t *ifetch_generation_ok_disp = NULL;
+    const rv64_jit_link_candidate_t candidate = {
+        .kind = RV64_JIT_LINK_CANDIDATE_KNOWN_RDX,
+        .known_slot = target,
+        .target_pc = target_pc,
+    };
+    const rv64_jit_link_guard_config_t guard_config = {
+        .satp = satp,
+        .ifetch_state = ifetch_state,
+        .data_state = rv64_jit_data_tlb_state(MEM_TYPE_READ),
+        .completed_count = completed_count,
+        .source_uses_data_state = source_uses_data_state,
+        .count_already_accumulated = count_already_accumulated,
+    };
+    rv64_jit_link_guard_fixups_t guard_fixups = {0};
 
-    /*
-     * The source block itself has already been matched by the C dispatcher.
-     * Direct links duplicate only the cheap part of that validation.  If a
-     * translated target may need source-page revalidation, the generation guard
-     * misses back to C so rv64_jit_block_matches() owns the full page walk.
-     * Keep this guard policy in lockstep with emit_indirect_link_exit(); the
-     * paired exact-count assertions catch additions made to only one path.
-     */
     if ((!registers_already_flushed &&
          !jit_reg_emit_flush_all_dirty(w, regs)) ||
-        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)target) ||
-        !emit_cmp_rdxb_field_imm8(w, valid_off, 1) ||
-        !emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count) ||
-        !emit_movabs_rax(w, target_pc) ||
-        !emit_cmp_rdxq_field_rax(w, pc_off) ||
-        !emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count) ||
-        !emit_movabs_rax(w, satp) ||
-        !emit_cmp_rdxq_field_rax(w, satp_off) ||
-        !emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count) ||
-        !emit_cmp_rdxd_field_imm32(w, ifetch_state_off, ifetch_state) ||
-        !emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count) ||
-        !emit_cmp_rdxb_field_imm8(w, uses_data_state_off, 0))
+        !emit_link_target_guards(
+            w, &candidate, &guard_config, &guard_fixups))
     {
         return false;
     }
-
-    if (source_uses_data_state)
-    {
-        if (!emit_jcc_rel32_placeholder(w, HOST_JCC_E, &data_state_ok_disp) ||
-            !emit_cmp_rdxd_field_imm32(w, data_state_off, data_state) ||
-            !emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count))
-        {
-            return false;
-        }
-
-        patch_rel32(data_state_ok_disp, w->cur);
-    }
-    else if (!emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count))
-    {
-        return false;
-    }
-
-    if (!emit_cmp_rdxb_field_imm8(w, translated_off, 0) ||
-        !emit_jcc_rel32_placeholder(w, HOST_JCC_E, &ifetch_generation_ok_disp) ||
-        !emit_movabs_rax(w, (uint64_t)(uintptr_t)&rv64_jit_ifetch_generation) ||
-        !emit_mov_rax_m64_rax(w) ||
-        !emit_cmp_rdxq_field_rax(w, ifetch_generation_off) ||
-        !emit_direct_link_miss_jcc(w, HOST_JCC_NE, miss_disps, &miss_count))
-    {
-        return false;
-    }
-
-    patch_rel32(ifetch_generation_ok_disp, w->cur);
-
-    if (!emit_cmp_rdxq_field_imm8(w, body_entry_off, 0) ||
-        !emit_direct_link_miss_jcc(w, HOST_JCC_E, miss_disps, &miss_count) ||
-        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
-        !emit_mov_eax_m32_rdx(w) ||
-        (!count_already_accumulated &&
-         !emit_add_eax_imm32(w, completed_count)) ||
-        !emit_mov_ecx_eax(w) ||
-        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)target) ||
-        !emit_add_ecx_rdxd_field(w, insn_count_off) ||
-        !emit_movabs_rdx(w, (uint64_t)(uintptr_t)&rv64_jit_entry_budget) ||
-        !emit_cmp_ecx_m32_rdx(w) ||
-        !emit_direct_link_miss_jcc(w, HOST_JCC_A, miss_disps, &miss_count) ||
-        (!count_already_accumulated &&
-         (!emit_movabs_rdx(
-              w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
-          !emit_mov_m32_rdx_eax(w))))
-    {
-        return false;
-    }
-
-    Assert(miss_count == RV64_JIT_DIRECT_LINK_GUARD_COUNT,
-           "jit: known-target direct-link guard policy drifted");
 
 #if RV64_JIT_STATS
-    uint8_t *guarded_taken_disp = NULL;
-    uint8_t *guarded_done_disp = NULL;
-
-    if (!emit_movabs_rdx(w, (uint64_t)(uintptr_t)target) ||
-        !emit_cmp_rdxb_field_imm8(w, translated_off, 0) ||
-        !emit_jcc_rel32_placeholder(w, HOST_JCC_NE, &guarded_taken_disp) ||
-        !emit_cmp_rdxb_field_imm8(w, uses_data_state_off, 0) ||
-        !emit_jcc_rel32_placeholder(w, HOST_JCC_E, &guarded_done_disp))
+    if (!emit_guarded_link_taken_stats(w, &candidate))
     {
         return false;
     }
-
-    patch_rel32(guarded_taken_disp, w->cur);
-
-    if (!emit_inc_jit_stat_counter(w, &rv64_jit_stats.direct_guarded_link_taken_count))
-    {
-        return false;
-    }
-
-    patch_rel32(guarded_done_disp, w->cur);
 #endif
 
     if (!emit_inc_jit_stat_counter(w, &rv64_jit_stats.direct_link_taken_count) ||
@@ -4426,10 +4406,7 @@ static bool emit_guarded_direct_link_exit(
         return false;
     }
 
-    for (uint32_t i = 0; i < miss_count; i++)
-    {
-        patch_rel32(miss_disps[i], w->cur);
-    }
+    patch_link_guard_misses(&guard_fixups, w->cur);
 
     return emit_store_pc_imm(w, target_pc) &&
            emit_inc_jit_stat_counter(w, &rv64_jit_stats.direct_link_miss_count) &&
@@ -4560,6 +4537,911 @@ static bool emit_indirect_target_budget(rv64_jit_writer_t *w,
            emit_mov_m32_rdx_eax(w);
 }
 
+/* Materialise the cache slot while preserving each path's established ABI. */
+static bool emit_link_candidate_address(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_candidate_t *candidate)
+{
+    switch (candidate->kind)
+    {
+    case RV64_JIT_LINK_CANDIDATE_KNOWN_RDX:
+        Assert(candidate->known_slot != NULL,
+               "jit: missing known RV64 direct-link slot");
+        return emit_movabs_rdx(
+            w, (uint64_t)(uintptr_t)candidate->known_slot);
+    case RV64_JIT_LINK_CANDIDATE_RUNTIME_R8:
+        /* Match rv64_jit_cache_hash_context() using the target in R9. */
+        return emit_mov_rdx_r9(w) &&
+               emit_shr_rdx_imm(w, RV64_JIT_CACHE_PC_SHIFT) &&
+               emit_xor_edx_imm32(w, candidate->context_mix) &&
+               emit_and_edx_imm32(w, RV64_JIT_CACHE_SIZE - 1u) &&
+               emit_imul_rdx_imm32(
+                   w, (uint32_t)sizeof(rv64_jit_block_t)) &&
+               emit_movabs_reg(
+                   w, HOST_REG_R8,
+                   (uint64_t)(uintptr_t)rv64_jit_cache) &&
+               emit_add_r8_rdx(w);
+    default:
+        Assert(false, "jit: invalid RV64 direct-link candidate kind %u",
+               (unsigned)candidate->kind);
+        return false;
+    }
+}
+
+static bool emit_link_candidate_cmp_byte_imm(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_candidate_t *candidate,
+    uint32_t offset, uint8_t value)
+{
+    if (candidate->kind == RV64_JIT_LINK_CANDIDATE_KNOWN_RDX)
+    {
+        return emit_cmp_rdxb_field_imm8(w, offset, value);
+    }
+
+    Assert(candidate->kind == RV64_JIT_LINK_CANDIDATE_RUNTIME_R8,
+           "jit: invalid RV64 byte-guard candidate kind %u",
+           (unsigned)candidate->kind);
+    return emit_cmp_r8b_field_imm8(w, offset, value);
+}
+
+static bool emit_link_candidate_cmp_dword_imm(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_candidate_t *candidate,
+    uint32_t offset, uint32_t value)
+{
+    if (candidate->kind == RV64_JIT_LINK_CANDIDATE_KNOWN_RDX)
+    {
+        return emit_cmp_rdxd_field_imm32(w, offset, value);
+    }
+
+    Assert(candidate->kind == RV64_JIT_LINK_CANDIDATE_RUNTIME_R8,
+           "jit: invalid RV64 dword-guard candidate kind %u",
+           (unsigned)candidate->kind);
+    return emit_cmp_r8d_field_imm32(w, offset, value);
+}
+
+static bool emit_link_candidate_cmp_qword_rax(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_candidate_t *candidate,
+    uint32_t offset)
+{
+    if (candidate->kind == RV64_JIT_LINK_CANDIDATE_KNOWN_RDX)
+    {
+        return emit_cmp_rdxq_field_rax(w, offset);
+    }
+
+    Assert(candidate->kind == RV64_JIT_LINK_CANDIDATE_RUNTIME_R8,
+           "jit: invalid RV64 qword-guard candidate kind %u",
+           (unsigned)candidate->kind);
+    return emit_cmp_r8q_field_rax(w, offset);
+}
+
+static bool emit_link_candidate_cmp_qword_imm8(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_candidate_t *candidate,
+    uint32_t offset, uint8_t value)
+{
+    if (candidate->kind == RV64_JIT_LINK_CANDIDATE_KNOWN_RDX)
+    {
+        return emit_cmp_rdxq_field_imm8(w, offset, value);
+    }
+
+    Assert(candidate->kind == RV64_JIT_LINK_CANDIDATE_RUNTIME_R8,
+           "jit: invalid RV64 qword-guard candidate kind %u",
+           (unsigned)candidate->kind);
+    return emit_cmp_r8q_field_imm8(w, offset, value);
+}
+
+static bool emit_link_candidate_pc(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_candidate_t *candidate,
+    uint32_t pc_offset)
+{
+    if (candidate->kind == RV64_JIT_LINK_CANDIDATE_KNOWN_RDX)
+    {
+        return emit_movabs_rax(w, candidate->target_pc) &&
+               emit_cmp_rdxq_field_rax(w, pc_offset);
+    }
+
+    Assert(candidate->kind == RV64_JIT_LINK_CANDIDATE_RUNTIME_R8,
+           "jit: invalid RV64 PC-guard candidate kind %u",
+           (unsigned)candidate->kind);
+    return emit_cmp_r8q_field_r9(w, pc_offset);
+}
+
+static bool emit_link_candidate_satp(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_candidate_t *candidate,
+    uint32_t satp_offset, word_t satp)
+{
+    if (candidate->kind == RV64_JIT_LINK_CANDIDATE_KNOWN_RDX)
+    {
+        return emit_movabs_rax(w, satp) &&
+               emit_cmp_rdxq_field_rax(w, satp_offset);
+    }
+
+    Assert(candidate->kind == RV64_JIT_LINK_CANDIDATE_RUNTIME_R8,
+           "jit: invalid RV64 satp-guard candidate kind %u",
+           (unsigned)candidate->kind);
+    return emit_movabs_rdx(w, satp) &&
+           emit_cmp_r8q_field_rdx(w, satp_offset);
+}
+
+/* Emit the path-specific form of the final whole-target budget guard. */
+static bool emit_link_target_budget_guard(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_candidate_t *candidate,
+    const rv64_jit_link_guard_config_t *config,
+    rv64_jit_link_guard_fixups_t *fixups)
+{
+    if (candidate->kind == RV64_JIT_LINK_CANDIDATE_KNOWN_RDX)
+    {
+        const uint32_t insn_count_off =
+            (uint32_t)offsetof(rv64_jit_block_t, insn_count);
+
+        if (!emit_movabs_rdx(
+                w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
+            !emit_mov_eax_m32_rdx(w))
+        {
+            return false;
+        }
+
+        /*
+         * A loop fallthrough may already have published this source count.
+         * Add it only on ordinary exits so one direct link cannot retire the
+         * same guest instructions twice.
+         */
+        if (!config->count_already_accumulated &&
+            !emit_add_eax_imm32(w, config->completed_count))
+        {
+            return false;
+        }
+
+        if (!emit_mov_ecx_eax(w) ||
+            !emit_movabs_rdx(
+                w, (uint64_t)(uintptr_t)candidate->known_slot) ||
+            !emit_add_ecx_rdxd_field(w, insn_count_off) ||
+            !emit_movabs_rdx(
+                w, (uint64_t)(uintptr_t)&rv64_jit_entry_budget) ||
+            !emit_cmp_ecx_m32_rdx(w) ||
+            !emit_link_guard_miss_jcc(w, HOST_JCC_A, fixups))
+        {
+            return false;
+        }
+
+        /* Commit the new source count only after the complete target fits. */
+        if (!config->count_already_accumulated &&
+            (!emit_movabs_rdx(
+                 w, (uint64_t)(uintptr_t)&rv64_jit_loop_extra) ||
+             !emit_mov_m32_rdx_eax(w)))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    Assert(candidate->kind == RV64_JIT_LINK_CANDIDATE_RUNTIME_R8,
+           "jit: invalid RV64 budget-guard candidate kind %u",
+           (unsigned)candidate->kind);
+    Assert(!config->count_already_accumulated,
+           "jit: runtime RV64 direct link received an accumulated count");
+
+    uint8_t *over_budget_disp = NULL;
+    if (!emit_indirect_target_budget(
+            w, config->completed_count, &over_budget_disp))
+    {
+        return false;
+    }
+
+    Assert(fixups->count < RV64_JIT_DIRECT_LINK_MAX_MISS_PATCHES,
+           "jit: runtime-target budget guard list overflow");
+    fixups->disps[fixups->count++] = over_budget_disp;
+    return true;
+}
+
+/*
+ * Emit the one authoritative direct-link safety policy for both operand ABIs.
+ * Each candidate differs only in how its slot and comparison operands are
+ * encoded; the order and number of rejection checks are shared here.
+ */
+static bool emit_link_target_guards(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_candidate_t *candidate,
+    const rv64_jit_link_guard_config_t *config,
+    rv64_jit_link_guard_fixups_t *fixups)
+{
+    const uint32_t valid_off =
+        (uint32_t)offsetof(rv64_jit_block_t, valid);
+    const uint32_t translated_off =
+        (uint32_t)offsetof(rv64_jit_block_t, translated);
+    const uint32_t uses_data_state_off =
+        (uint32_t)offsetof(rv64_jit_block_t, uses_data_state);
+    const uint32_t pc_off = (uint32_t)offsetof(rv64_jit_block_t, pc);
+    const uint32_t satp_off = (uint32_t)offsetof(rv64_jit_block_t, satp);
+    const uint32_t ifetch_state_off =
+        (uint32_t)offsetof(rv64_jit_block_t, ifetch_state);
+    const uint32_t data_state_off =
+        (uint32_t)offsetof(rv64_jit_block_t, data_state);
+    const uint32_t ifetch_generation_off =
+        (uint32_t)offsetof(rv64_jit_block_t, ifetch_generation);
+    const uint32_t body_entry_off =
+        (uint32_t)offsetof(rv64_jit_block_t, body_entry);
+    uint8_t *data_state_ok_disp = NULL;
+    uint8_t *ifetch_generation_ok_disp = NULL;
+
+    Assert(candidate != NULL, "jit: missing RV64 direct-link candidate");
+    Assert(config != NULL, "jit: missing RV64 direct-link guard config");
+    Assert(fixups != NULL, "jit: missing RV64 direct-link guard fixups");
+    *fixups = (rv64_jit_link_guard_fixups_t){0};
+
+    if (!emit_link_candidate_address(w, candidate) ||
+        !emit_link_candidate_cmp_byte_imm(
+            w, candidate, valid_off, 1) ||
+        !emit_link_guard_miss_jcc(w, HOST_JCC_NE, fixups) ||
+        !emit_link_candidate_pc(w, candidate, pc_off) ||
+        !emit_link_guard_miss_jcc(w, HOST_JCC_NE, fixups) ||
+        !emit_link_candidate_satp(
+            w, candidate, satp_off, config->satp) ||
+        !emit_link_guard_miss_jcc(w, HOST_JCC_NE, fixups) ||
+        !emit_link_candidate_cmp_dword_imm(
+            w, candidate, ifetch_state_off,
+            config->ifetch_state) ||
+        !emit_link_guard_miss_jcc(w, HOST_JCC_NE, fixups) ||
+        !emit_link_candidate_cmp_byte_imm(
+            w, candidate, uses_data_state_off, 0))
+    {
+        return false;
+    }
+
+    if (config->source_uses_data_state)
+    {
+        /*
+         * A source that captures data-translation state proves the current
+         * value for a sensitive target. An insensitive target needs no such
+         * comparison and takes the short branch around it.
+         */
+        if (!emit_jcc_rel32_placeholder(
+                w, HOST_JCC_E, &data_state_ok_disp) ||
+            !emit_link_candidate_cmp_dword_imm(
+                w, candidate, data_state_off, config->data_state) ||
+            !emit_link_guard_miss_jcc(
+                w, HOST_JCC_NE, fixups))
+        {
+            return false;
+        }
+
+        patch_rel32(data_state_ok_disp, w->cur);
+    }
+    else
+    {
+        /*
+         * A source without this dependency survives a data-state change, so
+         * it may link only to a target that is data-state insensitive.
+         */
+        if (!emit_link_guard_miss_jcc(w, HOST_JCC_NE, fixups))
+        {
+            return false;
+        }
+    }
+
+    /*
+     * A changed translated-fetch generation returns to C, where
+     * rv64_jit_block_matches() owns the slower page-table and source proof.
+     */
+    if (!emit_link_candidate_cmp_byte_imm(
+            w, candidate, translated_off, 0) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_E, &ifetch_generation_ok_disp) ||
+        !emit_movabs_rax(
+            w, (uint64_t)(uintptr_t)&rv64_jit_ifetch_generation) ||
+        !emit_mov_rax_m64_rax(w) ||
+        !emit_link_candidate_cmp_qword_rax(
+            w, candidate, ifetch_generation_off) ||
+        !emit_link_guard_miss_jcc(
+            w, HOST_JCC_NE, fixups))
+    {
+        return false;
+    }
+
+    patch_rel32(ifetch_generation_ok_disp, w->cur);
+
+    if (!emit_link_candidate_cmp_qword_imm8(
+            w, candidate, body_entry_off, 0) ||
+        !emit_link_guard_miss_jcc(w, HOST_JCC_E, fixups) ||
+        !emit_link_target_budget_guard(
+            w, candidate, config, fixups))
+    {
+        return false;
+    }
+
+    Assert(fixups->count == RV64_JIT_DIRECT_LINK_GUARD_COUNT,
+           "jit: shared RV64 direct-link guard policy drifted");
+    return true;
+}
+
+#if RV64_JIT_STATS
+/* Count links whose target requires translation or data-state validation. */
+static bool emit_guarded_link_taken_stats(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_candidate_t *candidate)
+{
+    const uint32_t translated_off =
+        (uint32_t)offsetof(rv64_jit_block_t, translated);
+    const uint32_t uses_data_state_off =
+        (uint32_t)offsetof(rv64_jit_block_t, uses_data_state);
+    uint8_t *guarded_taken_disp = NULL;
+    uint8_t *guarded_done_disp = NULL;
+
+    if ((candidate->kind == RV64_JIT_LINK_CANDIDATE_KNOWN_RDX &&
+         !emit_link_candidate_address(w, candidate)) ||
+        !emit_link_candidate_cmp_byte_imm(
+            w, candidate, translated_off, 0) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_NE, &guarded_taken_disp) ||
+        !emit_link_candidate_cmp_byte_imm(
+            w, candidate, uses_data_state_off, 0) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_E, &guarded_done_disp))
+    {
+        return false;
+    }
+
+    patch_rel32(guarded_taken_disp, w->cur);
+
+    if (!emit_inc_jit_stat_counter(
+            w, &rv64_jit_stats.direct_guarded_link_taken_count))
+    {
+        return false;
+    }
+
+    patch_rel32(guarded_done_disp, w->cur);
+    return true;
+}
+#endif
+
+/*
+ * Relocations which connect one generated PIC-way probe to its neighbouring
+ * probe, the shared miss path, and the later hot-hit region.  Keeping these
+ * four exits together makes the loop which owns their final destinations the
+ * only place where cross-way control flow is assembled.
+ */
+typedef struct
+{
+    uint8_t *tag_miss_disp;
+    uint8_t *empty_disp;
+    uint8_t *stale_to_miss_disp;
+    uint8_t *hit_disp;
+} rv64_jit_indirect_pic_way_fixups_t;
+
+/*
+ * Emit one way of the guarded indirect PIC probe.
+ *
+ * RDX already contains the sidecar base and must remain live for every later
+ * way.  A matching tag enters the mutable selector, whose initial destination
+ * is this way's guarded path.  That path accepts only a non-empty, live slot
+ * with the exact generation published by the refill; all other outcomes stay
+ * unresolved for the wrapper to route either to the next way or to the one
+ * common miss path.  The instruction order intentionally matches the former
+ * hand-written way-zero and way-one sequences byte for byte.
+ */
+static bool emit_indirect_pic_way_probe(
+    rv64_jit_writer_t *w, uint32_t way,
+    rv64_jit_indirect_pic_kind_t pic_kind,
+    rv64_jit_indirect_pic_way_fixups_t *fixups)
+{
+    Assert(w->indirect_pic != NULL && w->indirect_pic->used,
+           "jit: missing active RV64 indirect PIC builder");
+    Assert(way < RV64_JIT_INDIRECT_PIC_WAYS,
+           "jit: invalid RV64 indirect PIC way %u", way);
+    Assert(pic_kind < RV64_JIT_INDIRECT_PIC_KIND_COUNT,
+           "jit: invalid RV64 indirect PIC kind %u", pic_kind);
+    Assert(fixups != NULL, "jit: missing RV64 indirect PIC way fixups");
+
+    const uint32_t way_base =
+        (uint32_t)offsetof(rv64_jit_indirect_pic_t, ways) +
+        way * (uint32_t)sizeof(rv64_jit_indirect_pic_entry_t);
+    const uint32_t target_pc_off =
+        (uint32_t)offsetof(rv64_jit_indirect_pic_entry_t, target_pc);
+    const uint32_t target_generation_off =
+        (uint32_t)offsetof(
+            rv64_jit_indirect_pic_entry_t, target_generation);
+    const uint32_t target_slot_off =
+        (uint32_t)offsetof(rv64_jit_indirect_pic_entry_t, target_slot);
+    const uint32_t valid_off =
+        (uint32_t)offsetof(rv64_jit_block_t, valid);
+    const uint32_t generation_off =
+        (uint32_t)offsetof(rv64_jit_block_t, generation);
+    uint8_t *stale_disp = NULL;
+
+    *fixups = (rv64_jit_indirect_pic_way_fixups_t){0};
+
+    if (!emit_cmp_rdxq_field_r9(w, way_base + target_pc_off) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_NE, &fixups->tag_miss_disp) ||
+        !emit_jmp_rel32_placeholder(
+            w, &w->indirect_pic->selector_disps[way]))
+    {
+        return false;
+    }
+
+    w->indirect_pic->guarded_paths[way] = w->cur;
+    patch_rel32(w->indirect_pic->selector_disps[way], w->cur);
+
+    if (!emit_mov_r8_rdxq_field(w, way_base + target_slot_off) ||
+        !emit_test_r8_r8(w) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_E, &fixups->empty_disp) ||
+        !emit_cmp_r8b_field_imm8(w, valid_off, 1) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_NE, &stale_disp) ||
+        !emit_mov_rax_rdxq_field(
+            w, way_base + target_generation_off) ||
+        !emit_cmp_r8q_field_rax(w, generation_off) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_E, &fixups->hit_disp))
+    {
+        return false;
+    }
+
+    patch_rel32(stale_disp, w->cur);
+
+    return emit_inc_jit_stat_counter(
+               w, &rv64_jit_stats.indirect_pic_stale_rejections[pic_kind]) &&
+           emit_jmp_rel32_placeholder(
+               w, &fixups->stale_to_miss_disp);
+}
+
+/*
+ * Assemble the complete two-way probe around the uniform way emitter above.
+ * There is one sidecar-address fixup, as before: RDX remains the base while a
+ * tag miss advances to the next generated way.  Empty entries and stale
+ * certificates bypass later tags and converge directly on the shared miss
+ * counter, while hit branches remain unresolved for the later primary and
+ * secondary hot-hit paths.
+ */
+static bool emit_indirect_pic_probe(
+    rv64_jit_writer_t *w, rv64_jit_indirect_pic_kind_t pic_kind,
+    uint8_t *hit_disps[RV64_JIT_INDIRECT_PIC_WAYS])
+{
+    rv64_jit_indirect_pic_way_fixups_t
+        way_fixups[RV64_JIT_INDIRECT_PIC_WAYS] = {0};
+
+    if (!emit_movabs_indirect_pic_address(w, HOST_REG_RDX))
+    {
+        return false;
+    }
+
+    for (uint32_t way = 0; way < RV64_JIT_INDIRECT_PIC_WAYS; way++)
+    {
+        if (way != 0u)
+        {
+            /* A tag miss alone is allowed to inspect the following way. */
+            patch_rel32(way_fixups[way - 1u].tag_miss_disp, w->cur);
+        }
+
+        if (!emit_indirect_pic_way_probe(
+                w, way, pic_kind, &way_fixups[way]))
+        {
+            return false;
+        }
+    }
+
+    const uint8_t *pic_miss = w->cur;
+
+    for (uint32_t way = 0; way < RV64_JIT_INDIRECT_PIC_WAYS; way++)
+    {
+        if (way + 1u == RV64_JIT_INDIRECT_PIC_WAYS)
+        {
+            patch_rel32(way_fixups[way].tag_miss_disp, pic_miss);
+        }
+
+        patch_rel32(way_fixups[way].empty_disp, pic_miss);
+        patch_rel32(way_fixups[way].stale_to_miss_disp, pic_miss);
+        hit_disps[way] = way_fixups[way].hit_disp;
+    }
+
+    return emit_inc_jit_stat_counter(
+        w, &rv64_jit_stats.indirect_pic_misses[pic_kind]);
+}
+
+/*
+ * Probe the data-only direct-mapped jump cache for the target held in R9.
+ *
+ * RDI is deliberately left pointing at the selected cache entry on every
+ * non-terminal route.  The authoritative-success region can therefore fill
+ * that exact entry without repeating the index calculation.  A valid hit is
+ * terminal; empty entries and tag misses join the authoritative lookup, while
+ * stale certificates first account for their rejection.  Only the budget
+ * rejection bypasses the lookup and remains unresolved for the common miss.
+ */
+static bool emit_indirect_jump_cache_probe(
+    rv64_jit_writer_t *w, uint32_t completed_count,
+    uint64_t *subset_taken_counter,
+    uint8_t **budget_to_miss_disp)
+{
+    const uint32_t cache_generation_off =
+        (uint32_t)offsetof(
+            rv64_jit_indirect_jump_cache_entry_t, target_generation);
+    const uint32_t cache_slot_off =
+        (uint32_t)offsetof(
+            rv64_jit_indirect_jump_cache_entry_t, target_slot);
+    const uint32_t valid_off =
+        (uint32_t)offsetof(rv64_jit_block_t, valid);
+    const uint32_t generation_off =
+        (uint32_t)offsetof(rv64_jit_block_t, generation);
+    const uint32_t pc_off =
+        (uint32_t)offsetof(rv64_jit_block_t, pc);
+    const uint32_t body_entry_off =
+        (uint32_t)offsetof(rv64_jit_block_t, body_entry);
+    uint8_t *empty_disp = NULL;
+    uint8_t *tag_miss_disp = NULL;
+    uint8_t *invalid_stale_disp = NULL;
+    uint8_t *zero_generation_stale_disp = NULL;
+    uint8_t *changed_generation_stale_disp = NULL;
+    uint8_t *budget_disp = NULL;
+
+    Assert(w->indirect_jump_cache != NULL &&
+               w->indirect_jump_cache->used,
+           "jit: missing active RV64 indirect jump cache builder");
+    Assert(budget_to_miss_disp != NULL,
+           "jit: missing RV64 jump-cache budget fixup result");
+    *budget_to_miss_disp = NULL;
+
+    /*
+     * Compute (((target >> 2) & 15) << 4) as
+     * ((target & 0x3c) << 2). RISC-V instruction alignment makes these
+     * expressions identical, while the latter removes one hot shift and uses
+     * compact 32-bit operations whose result is a zero-extended sidecar byte
+     * offset.  Keeping RDI live through all miss routes is part of this
+     * helper's interface, not incidental scratch-register behaviour.
+     */
+    if (!emit_mov_rdx_r9(w) ||
+        !emit_and_edx_imm8(
+            w, RV64_JIT_INDIRECT_JUMP_CACHE_BYTE_MASK) ||
+        !emit_shl_edx_imm(
+            w, RV64_JIT_INDIRECT_JUMP_CACHE_OFFSET_SHIFT) ||
+        !emit_movabs_indirect_jump_cache_address(
+            w, HOST_REG_RDI) ||
+        !emit_add_rdi_rdx(w) ||
+        !emit_mov_r8_rdiq_field(w, cache_slot_off) ||
+        !emit_test_r8_r8(w) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_E, &empty_disp) ||
+        !emit_cmp_r8q_field_r9(w, pc_off) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_NE, &tag_miss_disp) ||
+        !emit_cmp_r8b_field_imm8(w, valid_off, 1) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_NE, &invalid_stale_disp) ||
+        !emit_mov_rax_rdiq_field(w, cache_generation_off) ||
+        !emit_test_rax_rax(w) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_E, &zero_generation_stale_disp) ||
+        !emit_cmp_r8q_field_rax(w, generation_off) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_NE, &changed_generation_stale_disp) ||
+        !emit_indirect_target_budget(
+            w, completed_count, &budget_disp) ||
+        !emit_inc_jit_stat_counter(
+            w, &rv64_jit_stats.indirect_jump_cache_hits) ||
+        !emit_inc_jit_stat_counter(
+            w, &rv64_jit_stats.direct_link_taken_count) ||
+        !(subset_taken_counter == NULL ||
+          emit_inc_jit_stat_counter(w, subset_taken_counter)) ||
+        !emit_mov_rax_r8q_field(w, body_entry_off) ||
+        !emit_jmp_rax(w))
+    {
+        return false;
+    }
+
+    patch_rel32(budget_disp, w->cur);
+
+    if (!emit_inc_jit_stat_counter(
+            w, &rv64_jit_stats.indirect_jump_cache_budget_rejections) ||
+        !emit_jmp_rel32_placeholder(
+            w, budget_to_miss_disp))
+    {
+        return false;
+    }
+
+    const uint8_t *stale_path = w->cur;
+    patch_rel32(invalid_stale_disp, stale_path);
+    patch_rel32(zero_generation_stale_disp, stale_path);
+    patch_rel32(changed_generation_stale_disp, stale_path);
+
+    if (!emit_inc_jit_stat_counter(
+            w, &rv64_jit_stats.indirect_jump_cache_stale_rejections))
+    {
+        return false;
+    }
+
+    const uint8_t *cache_miss = w->cur;
+    patch_rel32(empty_disp, cache_miss);
+    patch_rel32(tag_miss_disp, cache_miss);
+
+    return emit_inc_jit_stat_counter(
+        w, &rv64_jit_stats.indirect_jump_cache_misses);
+}
+
+/*
+ * Emit the terminal success reached after the authoritative R8 slot passes
+ * every shared link guard and the whole-target budget check.
+ *
+ * R9 remains the architectural target.  A PIC-enabled site calls its cold
+ * refill helper and jumps through the returned body pointer.  A jump-cache
+ * site consumes the RDI entry retained by its probe and publishes the slot
+ * before the non-zero generation certificate.  A site with neither sidecar
+ * simply enters the authoritative body.  Every generated route is terminal.
+ */
+static bool emit_indirect_authoritative_hit(
+    rv64_jit_writer_t *w, bool pic_enabled,
+    bool jump_cache_enabled, uint64_t *subset_taken_counter)
+{
+    const uint32_t generation_off =
+        (uint32_t)offsetof(rv64_jit_block_t, generation);
+    const uint32_t body_entry_off =
+        (uint32_t)offsetof(rv64_jit_block_t, body_entry);
+
+    Assert(!(pic_enabled && jump_cache_enabled),
+           "jit: authoritative RV64 hit selected both indirect caches");
+
+    if (pic_enabled)
+    {
+        Assert(w->indirect_pic != NULL && w->indirect_pic->used,
+               "jit: missing active RV64 indirect PIC builder");
+
+        /*
+         * Refill is cold: hot hits never cross the C ABI. Preserve the returned
+         * body pointer in R9 while restoring R10/R11 and updating statistics.
+         */
+        return emit_mov_rsi_r9(w) &&
+               emit_mov_rdx_r8(w) &&
+               emit_movabs_indirect_pic_address(w, HOST_REG_RDI) &&
+               emit_call_abs(
+                   w, (uintptr_t)rv64_jit_indirect_pic_refill) &&
+               emit_mov_r9_rax(w) &&
+               emit_load_jit_bases(w) &&
+               emit_inc_jit_stat_counter(
+                   w, &rv64_jit_stats.direct_link_taken_count) &&
+               (subset_taken_counter == NULL ||
+                emit_inc_jit_stat_counter(
+                    w, subset_taken_counter)) &&
+               emit_jmp_r9(w);
+    }
+
+    if (jump_cache_enabled)
+    {
+        const uint32_t cache_generation_off =
+            (uint32_t)offsetof(
+                rv64_jit_indirect_jump_cache_entry_t,
+                target_generation);
+        const uint32_t cache_slot_off =
+            (uint32_t)offsetof(
+                rv64_jit_indirect_jump_cache_entry_t,
+                target_slot);
+
+        Assert(w->indirect_jump_cache != NULL &&
+                   w->indirect_jump_cache->used,
+               "jit: missing active RV64 indirect jump cache builder");
+
+#if RV64_JIT_STATS
+        uint8_t *empty_entry_disp = NULL;
+
+        /* Count any occupied direct-map entry overwritten by this fill. */
+        if (!emit_mov_rax_rdiq_field(w, cache_slot_off) ||
+            !emit_test_rax_rax(w) ||
+            !emit_jcc_rel32_placeholder(
+                w, HOST_JCC_E, &empty_entry_disp) ||
+            !emit_inc_jit_stat_counter(
+                w, &rv64_jit_stats.indirect_jump_cache_replacements))
+        {
+            return false;
+        }
+
+        patch_rel32(empty_entry_disp, w->cur);
+#endif
+
+        /*
+         * Generated code and its sidecar currently execute on one vCPU
+         * thread. Clear the certificate, install the stable slot, then
+         * publish the exact non-zero generation last. A future concurrent
+         * implementation must make this release/acquire or per-vCPU.
+         */
+        if (!emit_zero_rax(w) ||
+            !emit_mov_rdiq_field_rax(w, cache_generation_off) ||
+            !emit_mov_rdiq_field_r8(w, cache_slot_off) ||
+            !emit_inc_jit_stat_counter(
+                w, &rv64_jit_stats.indirect_jump_cache_fills) ||
+            !emit_mov_rax_r8q_field(w, generation_off) ||
+            !emit_mov_rdiq_field_rax(w, cache_generation_off))
+        {
+            return false;
+        }
+    }
+
+    return emit_inc_jit_stat_counter(
+               w, &rv64_jit_stats.direct_link_taken_count) &&
+           (subset_taken_counter == NULL ||
+            emit_inc_jit_stat_counter(
+                w, subset_taken_counter)) &&
+           emit_mov_rax_r8q_field(w, body_entry_off) &&
+           emit_jmp_rax(w);
+}
+
+/*
+ * Emit the later hot-hit adapters reached by the unresolved PIC-way branches.
+ * R8 still holds the matching authoritative slot.  Statistics builds assign
+ * ESI route zero/one before converging, so the primary and secondary counters
+ * retain their existing layout; non-statistics builds converge immediately.
+ * A successful budget check is terminal, while its one rejection is returned
+ * unresolved for the shared architectural miss path.
+ */
+static bool emit_indirect_pic_fast_hits(
+    rv64_jit_writer_t *w,
+    uint8_t *hit_disps[RV64_JIT_INDIRECT_PIC_WAYS],
+    uint32_t completed_count, uint64_t *subset_taken_counter,
+    rv64_jit_indirect_pic_kind_t pic_kind,
+    uint8_t **budget_to_miss_disp)
+{
+    const uint32_t body_entry_off =
+        (uint32_t)offsetof(rv64_jit_block_t, body_entry);
+    uint8_t *budget_disp = NULL;
+
+    Assert(w->indirect_pic != NULL && w->indirect_pic->used,
+           "jit: missing active RV64 indirect PIC builder");
+    Assert(hit_disps != NULL && hit_disps[0] != NULL &&
+               hit_disps[1] != NULL,
+           "jit: missing RV64 indirect PIC hit fixups");
+    Assert(budget_to_miss_disp != NULL,
+           "jit: missing RV64 indirect PIC budget fixup result");
+    *budget_to_miss_disp = NULL;
+
+#if RV64_JIT_STATS
+    uint8_t *secondary_to_common_disp = NULL;
+    uint8_t *no_secondary_stat_disp = NULL;
+    const uint8_t *secondary_hit = w->cur;
+
+    if (!emit_mov_esi_imm32(w, 1) ||
+        !emit_jmp_rel32_placeholder(
+            w, &secondary_to_common_disp))
+    {
+        return false;
+    }
+
+    const uint8_t *primary_hit = w->cur;
+
+    if (!emit_zero_esi(w))
+    {
+        return false;
+    }
+
+    const uint8_t *fast_hit = w->cur;
+    patch_rel32(hit_disps[0], primary_hit);
+    patch_rel32(hit_disps[1], secondary_hit);
+    patch_rel32(secondary_to_common_disp, fast_hit);
+#else
+    const uint8_t *fast_hit = w->cur;
+    patch_rel32(hit_disps[0], fast_hit);
+    patch_rel32(hit_disps[1], fast_hit);
+#endif
+
+    if (!emit_indirect_target_budget(
+            w, completed_count, &budget_disp) ||
+        !emit_inc_jit_stat_counter(
+            w, &rv64_jit_stats.indirect_pic_hits[pic_kind]))
+    {
+        return false;
+    }
+
+#if RV64_JIT_STATS
+    if (!emit_test_esi_esi(w) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_E, &no_secondary_stat_disp) ||
+        !emit_inc_jit_stat_counter(
+            w, &rv64_jit_stats.indirect_pic_secondary_hits[pic_kind]))
+    {
+        return false;
+    }
+
+    patch_rel32(no_secondary_stat_disp, w->cur);
+#endif
+
+    if (!emit_inc_jit_stat_counter(
+            w, &rv64_jit_stats.direct_link_taken_count) ||
+        !(subset_taken_counter == NULL ||
+          emit_inc_jit_stat_counter(w, subset_taken_counter)) ||
+        !emit_mov_rax_r8q_field(w, body_entry_off) ||
+        !emit_jmp_rax(w))
+    {
+        return false;
+    }
+
+    patch_rel32(budget_disp, w->cur);
+
+    return emit_inc_jit_stat_counter(
+               w, &rv64_jit_stats.indirect_pic_budget_rejections[pic_kind]) &&
+           emit_jmp_rel32_placeholder(
+               w, budget_to_miss_disp);
+}
+
+/*
+ * Resolve every non-terminal rejection to the one architectural JALR miss.
+ * R9 has survived every probe and guard and is therefore the value committed
+ * to cpu.pc.  Returning completed_count includes the already-executed JALR so
+ * the dispatcher resumes at that target rather than repeating the transfer.
+ */
+static bool emit_indirect_miss_path(
+    rv64_jit_writer_t *w,
+    const rv64_jit_link_guard_fixups_t *guard_fixups,
+    uint8_t *pic_budget_to_miss_disp,
+    uint8_t *jump_cache_budget_to_miss_disp,
+    uint32_t completed_count, uint64_t *subset_miss_counter)
+{
+    const uint8_t *miss_path = w->cur;
+
+    Assert(guard_fixups != NULL,
+           "jit: missing RV64 indirect guard fixups");
+    patch_link_guard_misses(guard_fixups, miss_path);
+
+    if (pic_budget_to_miss_disp != NULL)
+    {
+        patch_rel32(pic_budget_to_miss_disp, miss_path);
+    }
+
+    if (jump_cache_budget_to_miss_disp != NULL)
+    {
+        patch_rel32(jump_cache_budget_to_miss_disp, miss_path);
+    }
+
+    return emit_mov_rax_r9(w) &&
+           emit_store_rax_pc(w) &&
+           emit_inc_jit_stat_counter(
+               w, &rv64_jit_stats.direct_link_miss_count) &&
+           (subset_miss_counter == NULL ||
+            emit_inc_jit_stat_counter(
+                w, subset_miss_counter)) &&
+           emit_return_total_retired(w, completed_count);
+}
+
+/*
+ * Append the unreachable mutable-PIC patch thunks after the ordinary miss.
+ * Each way records the thunk start, commits this source's retired count, and
+ * leaves one target-owned rel32 displacement for publication.  In statistics
+ * builds ESI carries the stable route value expected by the destination chain
+ * entry; the selector and target displacement arrays must stay index-aligned.
+ */
+static bool emit_indirect_pic_patch_thunks(
+    rv64_jit_writer_t *w, uint32_t completed_count,
+    rv64_jit_indirect_pic_kind_t pic_kind)
+{
+    Assert(w->indirect_pic != NULL && w->indirect_pic->used,
+           "jit: missing active RV64 indirect PIC builder");
+
+#if !RV64_JIT_STATS
+    (void)pic_kind;
+#endif
+
+    for (uint32_t i = 0; i < RV64_JIT_INDIRECT_PIC_WAYS; i++)
+    {
+        w->indirect_pic->patched_paths[i] = w->cur;
+
+        if (!emit_accumulate_loop_extra(w, completed_count)
+#if RV64_JIT_STATS
+            || !emit_mov_esi_imm32(
+                w, 1u + (uint32_t)pic_kind *
+                             RV64_JIT_INDIRECT_PIC_WAYS + i)
+#endif
+            || !emit_jmp_rel32_placeholder(
+                w, &w->indirect_pic->target_disps[i]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 /*
  * Probe and enter the native block named by an aligned runtime JALR target.
  *
@@ -4594,24 +5476,6 @@ static bool emit_indirect_link_exit(
     const uint32_t ifetch_state = rv64_jit_ifetch_state();
     const uint32_t context_mix =
         rv64_jit_cache_context_mix(satp, ifetch_state);
-    const uint32_t valid_off = (uint32_t)offsetof(rv64_jit_block_t, valid);
-    const uint32_t translated_off =
-        (uint32_t)offsetof(rv64_jit_block_t, translated);
-    const uint32_t uses_data_state_off =
-        (uint32_t)offsetof(rv64_jit_block_t, uses_data_state);
-    const uint32_t generation_off =
-        (uint32_t)offsetof(rv64_jit_block_t, generation);
-    const uint32_t pc_off = (uint32_t)offsetof(rv64_jit_block_t, pc);
-    const uint32_t satp_off = (uint32_t)offsetof(rv64_jit_block_t, satp);
-    const uint32_t ifetch_state_off =
-        (uint32_t)offsetof(rv64_jit_block_t, ifetch_state);
-    const uint32_t data_state_off =
-        (uint32_t)offsetof(rv64_jit_block_t, data_state);
-    const uint32_t ifetch_generation_off =
-        (uint32_t)offsetof(rv64_jit_block_t, ifetch_generation);
-    const uint32_t body_entry_off =
-        (uint32_t)offsetof(rv64_jit_block_t, body_entry);
-    const uint32_t data_state = rv64_jit_data_tlb_state(MEM_TYPE_READ);
     const bool bare_context =
         (satp >> RV64_JIT_SATP_MODE_SHIFT) ==
         RV64_JIT_SATP_MODE_BARE;
@@ -4621,10 +5485,19 @@ static bool emit_indirect_link_exit(
     const bool jump_cache_enabled =
         w->indirect_jump_cache != NULL && !pic_eligible &&
         !source_uses_data_state && bare_context;
-    uint8_t *miss_disps[RV64_JIT_DIRECT_LINK_MAX_MISS_PATCHES];
-    uint32_t miss_count = 0;
-    uint8_t *data_state_ok_disp = NULL;
-    uint8_t *ifetch_generation_ok_disp = NULL;
+    const rv64_jit_link_candidate_t candidate = {
+        .kind = RV64_JIT_LINK_CANDIDATE_RUNTIME_R8,
+        .context_mix = context_mix,
+    };
+    const rv64_jit_link_guard_config_t guard_config = {
+        .satp = satp,
+        .ifetch_state = ifetch_state,
+        .data_state = rv64_jit_data_tlb_state(MEM_TYPE_READ),
+        .completed_count = completed_count,
+        .source_uses_data_state = source_uses_data_state,
+        .count_already_accumulated = false,
+    };
+    rv64_jit_link_guard_fixups_t guard_fixups = {0};
     uint8_t *pic_hit_disps[RV64_JIT_INDIRECT_PIC_WAYS] = {0};
     uint8_t *jump_cache_budget_to_miss_disp = NULL;
 
@@ -4639,7 +5512,7 @@ static bool emit_indirect_link_exit(
                "jit: more than one indirect PIC in an RV64 block");
         w->indirect_pic->used = true;
         w->indirect_pic->kind = (uint8_t)pic_kind;
-        JIT_STAT_INC(indirect_pic_sites);
+        JIT_STAT_INC(emitted_sites.indirect_pic_sites);
     }
 
     if (jump_cache_enabled)
@@ -4647,7 +5520,7 @@ static bool emit_indirect_link_exit(
         Assert(!w->indirect_jump_cache->used,
                "jit: more than one indirect jump cache in an RV64 block");
         w->indirect_jump_cache->used = true;
-        JIT_STAT_INC(indirect_jump_cache_sites);
+        JIT_STAT_INC(emitted_sites.indirect_jump_cache_sites);
     }
 
     if (!emit_mov_r9_rax(w) ||
@@ -4659,95 +5532,9 @@ static bool emit_indirect_link_exit(
 
     if (jump_cache_enabled)
     {
-        const uint32_t cache_generation_off =
-            (uint32_t)offsetof(
-                rv64_jit_indirect_jump_cache_entry_t,
-                target_generation);
-        const uint32_t cache_slot_off =
-            (uint32_t)offsetof(
-                rv64_jit_indirect_jump_cache_entry_t,
-                target_slot);
-        uint8_t *empty_disp = NULL;
-        uint8_t *tag_miss_disp = NULL;
-        uint8_t *invalid_stale_disp = NULL;
-        uint8_t *zero_generation_stale_disp = NULL;
-        uint8_t *changed_generation_stale_disp = NULL;
-        uint8_t *budget_disp = NULL;
-
-        /*
-         * Compute (((target >> 2) & 15) << 4) as
-         * ((target & 0x3c) << 2). RISC-V instruction alignment makes these
-         * expressions identical, while the latter removes one hot shift and
-         * uses compact 32-bit operations whose result is a zero-extended
-         * sidecar byte offset. RDI retains the selected entry address through
-         * the authoritative lookup below, allowing an inline refill on success.
-         */
-        if (!emit_mov_rdx_r9(w) ||
-            !emit_and_edx_imm8(
-                w, RV64_JIT_INDIRECT_JUMP_CACHE_BYTE_MASK) ||
-            !emit_shl_edx_imm(
-                w, RV64_JIT_INDIRECT_JUMP_CACHE_OFFSET_SHIFT) ||
-            !emit_movabs_indirect_jump_cache_address(
-                w, HOST_REG_RDI) ||
-            !emit_add_rdi_rdx(w) ||
-            !emit_mov_r8_rdiq_field(w, cache_slot_off) ||
-            !emit_test_r8_r8(w) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_E, &empty_disp) ||
-            !emit_cmp_r8q_field_r9(w, pc_off) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_NE, &tag_miss_disp) ||
-            !emit_cmp_r8b_field_imm8(w, valid_off, 1) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_NE, &invalid_stale_disp) ||
-            !emit_mov_rax_rdiq_field(w, cache_generation_off) ||
-            !emit_test_rax_rax(w) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_E, &zero_generation_stale_disp) ||
-            !emit_cmp_r8q_field_rax(w, generation_off) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_NE, &changed_generation_stale_disp) ||
-            !emit_indirect_target_budget(
-                w, completed_count, &budget_disp) ||
-            !emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.indirect_jump_cache_hits) ||
-            !emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.direct_link_taken_count) ||
-            !(subset_taken_counter == NULL ||
-              emit_inc_jit_stat_counter(w, subset_taken_counter)) ||
-            !emit_mov_rax_r8q_field(w, body_entry_off) ||
-            !emit_jmp_rax(w))
-        {
-            return false;
-        }
-
-        patch_rel32(budget_disp, w->cur);
-
-        if (!emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.indirect_jump_cache_budget_rejections) ||
-            !emit_jmp_rel32_placeholder(
-                w, &jump_cache_budget_to_miss_disp))
-        {
-            return false;
-        }
-
-        const uint8_t *stale_path = w->cur;
-        patch_rel32(invalid_stale_disp, stale_path);
-        patch_rel32(zero_generation_stale_disp, stale_path);
-        patch_rel32(changed_generation_stale_disp, stale_path);
-
-        if (!emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.indirect_jump_cache_stale_rejections))
-        {
-            return false;
-        }
-
-        const uint8_t *cache_miss = w->cur;
-        patch_rel32(empty_disp, cache_miss);
-        patch_rel32(tag_miss_disp, cache_miss);
-
-        if (!emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.indirect_jump_cache_misses))
+        if (!emit_indirect_jump_cache_probe(
+                w, completed_count, subset_taken_counter,
+                &jump_cache_budget_to_miss_disp))
         {
             return false;
         }
@@ -4755,449 +5542,58 @@ static bool emit_indirect_link_exit(
 
     if (pic_enabled)
     {
-        const uint32_t way0_base =
-            (uint32_t)offsetof(rv64_jit_indirect_pic_t, ways);
-        const uint32_t way1_base =
-            way0_base + sizeof(rv64_jit_indirect_pic_entry_t);
-        const uint32_t target_pc_off =
-            (uint32_t)offsetof(rv64_jit_indirect_pic_entry_t, target_pc);
-        const uint32_t target_generation_off =
-            (uint32_t)offsetof(
-                rv64_jit_indirect_pic_entry_t, target_generation);
-        const uint32_t target_slot_off =
-            (uint32_t)offsetof(
-                rv64_jit_indirect_pic_entry_t, target_slot);
-        uint8_t *way0_next_disp = NULL;
-        uint8_t *way0_empty_disp = NULL;
-        uint8_t *way0_stale_disp = NULL;
-        uint8_t *way0_stale_miss_disp = NULL;
-        uint8_t *way1_tag_miss_disp = NULL;
-        uint8_t *way1_empty_disp = NULL;
-        uint8_t *way1_stale_disp = NULL;
-        uint8_t *way1_stale_miss_disp = NULL;
-
-        if (!emit_movabs_indirect_pic_address(w, HOST_REG_RDX) ||
-            !emit_cmp_rdxq_field_r9(w, way0_base + target_pc_off) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_NE, &way0_next_disp) ||
-            !emit_jmp_rel32_placeholder(
-                w, &w->indirect_pic->selector_disps[0]))
-        {
-            return false;
-        }
-
-        w->indirect_pic->guarded_paths[0] = w->cur;
-        patch_rel32(w->indirect_pic->selector_disps[0], w->cur);
-
-        if (!emit_mov_r8_rdxq_field(w, way0_base + target_slot_off) ||
-            !emit_test_r8_r8(w) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_E, &way0_empty_disp) ||
-            !emit_cmp_r8b_field_imm8(w, valid_off, 1) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_NE, &way0_stale_disp) ||
-            !emit_mov_rax_rdxq_field(
-                w, way0_base + target_generation_off) ||
-            !emit_cmp_r8q_field_rax(w, generation_off) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_E, &pic_hit_disps[0]))
-        {
-            return false;
-        }
-
-        patch_rel32(way0_stale_disp, w->cur);
-
-        if (!emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.indirect_pic_stale_rejections[pic_kind]) ||
-            !emit_jmp_rel32_placeholder(w, &way0_stale_miss_disp))
-        {
-            return false;
-        }
-
-        patch_rel32(way0_next_disp, w->cur);
-
-        if (!emit_cmp_rdxq_field_r9(w, way1_base + target_pc_off) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_NE, &way1_tag_miss_disp) ||
-            !emit_jmp_rel32_placeholder(
-                w, &w->indirect_pic->selector_disps[1]))
-        {
-            return false;
-        }
-
-        w->indirect_pic->guarded_paths[1] = w->cur;
-        patch_rel32(w->indirect_pic->selector_disps[1], w->cur);
-
-        if (!emit_mov_r8_rdxq_field(w, way1_base + target_slot_off) ||
-            !emit_test_r8_r8(w) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_E, &way1_empty_disp) ||
-            !emit_cmp_r8b_field_imm8(w, valid_off, 1) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_NE, &way1_stale_disp) ||
-            !emit_mov_rax_rdxq_field(
-                w, way1_base + target_generation_off) ||
-            !emit_cmp_r8q_field_rax(w, generation_off) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_E, &pic_hit_disps[1]))
-        {
-            return false;
-        }
-
-        patch_rel32(way1_stale_disp, w->cur);
-
-        if (!emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.indirect_pic_stale_rejections[pic_kind]) ||
-            !emit_jmp_rel32_placeholder(w, &way1_stale_miss_disp))
-        {
-            return false;
-        }
-
-        const uint8_t *pic_miss = w->cur;
-        patch_rel32(way0_empty_disp, pic_miss);
-        patch_rel32(way0_stale_miss_disp, pic_miss);
-        patch_rel32(way1_tag_miss_disp, pic_miss);
-        patch_rel32(way1_empty_disp, pic_miss);
-        patch_rel32(way1_stale_miss_disp, pic_miss);
-
-        if (!emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.indirect_pic_misses[pic_kind]))
+        if (!emit_indirect_pic_probe(w, pic_kind, pic_hit_disps))
         {
             return false;
         }
     }
 
-    /*
-     * The emitted arithmetic exactly mirrors rv64_jit_cache_hash_context():
-     *   ((target >> 2) ^ context_mix) & (cache_size - 1).
-     * The 32-bit XOR and mask intentionally zero RDX's high half before the
-     * 64-bit structure-size multiply.
-     */
-    if (!emit_mov_rdx_r9(w) ||
-        !emit_shr_rdx_imm(w, RV64_JIT_CACHE_PC_SHIFT) ||
-        !emit_xor_edx_imm32(w, context_mix) ||
-        !emit_and_edx_imm32(w, RV64_JIT_CACHE_SIZE - 1u) ||
-        !emit_imul_rdx_imm32(w, (uint32_t)sizeof(rv64_jit_block_t)) ||
-        !emit_movabs_reg(w, HOST_REG_R8,
-                         (uint64_t)(uintptr_t)rv64_jit_cache) ||
-        !emit_add_r8_rdx(w) ||
-        !emit_cmp_r8b_field_imm8(w, valid_off, 1) ||
-        !emit_direct_link_miss_jcc(
-            w, HOST_JCC_NE, miss_disps, &miss_count) ||
-        !emit_cmp_r8q_field_r9(w, pc_off) ||
-        !emit_direct_link_miss_jcc(
-            w, HOST_JCC_NE, miss_disps, &miss_count) ||
-        !emit_movabs_rdx(w, satp) ||
-        !emit_cmp_r8q_field_rdx(w, satp_off) ||
-        !emit_direct_link_miss_jcc(
-            w, HOST_JCC_NE, miss_disps, &miss_count) ||
-        !emit_cmp_r8d_field_imm32(w, ifetch_state_off, ifetch_state) ||
-        !emit_direct_link_miss_jcc(
-            w, HOST_JCC_NE, miss_disps, &miss_count) ||
-        !emit_cmp_r8b_field_imm8(w, uses_data_state_off, 0))
+    if (!emit_link_target_guards(
+            w, &candidate, &guard_config, &guard_fixups))
     {
         return false;
     }
-
-    /*
-     * Match the known-target policy exactly.  A source that itself captures
-     * data-translation state proves the current value for a data-sensitive
-     * target; a source without that dependency may link only to an insensitive
-     * target, because its own cache validity would survive a data-state change.
-     * Keep this sequence paired with rv64_jit_emit_direct_link_exit().
-     */
-    if (source_uses_data_state)
-    {
-        if (!emit_jcc_rel32_placeholder(
-                w, HOST_JCC_E, &data_state_ok_disp) ||
-            !emit_cmp_r8d_field_imm32(w, data_state_off, data_state) ||
-            !emit_direct_link_miss_jcc(
-                w, HOST_JCC_NE, miss_disps, &miss_count))
-        {
-            return false;
-        }
-
-        patch_rel32(data_state_ok_disp, w->cur);
-    }
-    else if (!emit_direct_link_miss_jcc(
-                 w, HOST_JCC_NE, miss_disps, &miss_count))
-    {
-        return false;
-    }
-
-    /*
-     * A changed translated-fetch generation returns to C, where
-     * rv64_jit_block_matches() owns the slower page-table and source proof.
-     */
-    if (!emit_cmp_r8b_field_imm8(w, translated_off, 0) ||
-        !emit_jcc_rel32_placeholder(
-            w, HOST_JCC_E, &ifetch_generation_ok_disp) ||
-        !emit_movabs_rax(
-            w, (uint64_t)(uintptr_t)&rv64_jit_ifetch_generation) ||
-        !emit_mov_rax_m64_rax(w) ||
-        !emit_cmp_r8q_field_rax(w, ifetch_generation_off) ||
-        !emit_direct_link_miss_jcc(
-            w, HOST_JCC_NE, miss_disps, &miss_count))
-    {
-        return false;
-    }
-
-    patch_rel32(ifetch_generation_ok_disp, w->cur);
-
-    uint8_t *authoritative_budget_disp = NULL;
-
-    if (!emit_cmp_r8q_field_imm8(w, body_entry_off, 0) ||
-        !emit_direct_link_miss_jcc(
-            w, HOST_JCC_E, miss_disps, &miss_count) ||
-        !emit_indirect_target_budget(
-            w, completed_count, &authoritative_budget_disp))
-    {
-        return false;
-    }
-
-    Assert(miss_count < RV64_JIT_DIRECT_LINK_MAX_MISS_PATCHES,
-           "jit: runtime-target budget guard list overflow");
-    miss_disps[miss_count++] = authoritative_budget_disp;
-
-    Assert(miss_count == RV64_JIT_DIRECT_LINK_GUARD_COUNT,
-           "jit: runtime-target direct-link guard policy drifted");
 
 #if RV64_JIT_STATS
-    uint8_t *guarded_taken_disp = NULL;
-    uint8_t *guarded_done_disp = NULL;
+    if (!emit_guarded_link_taken_stats(w, &candidate))
+    {
+        return false;
+    }
+#endif
 
-    if (!emit_cmp_r8b_field_imm8(w, translated_off, 0) ||
-        !emit_jcc_rel32_placeholder(
-            w, HOST_JCC_NE, &guarded_taken_disp) ||
-        !emit_cmp_r8b_field_imm8(w, uses_data_state_off, 0) ||
-        !emit_jcc_rel32_placeholder(
-            w, HOST_JCC_E, &guarded_done_disp))
+    if (!emit_indirect_authoritative_hit(
+            w, pic_enabled, jump_cache_enabled,
+            subset_taken_counter))
     {
         return false;
     }
 
-    patch_rel32(guarded_taken_disp, w->cur);
-
-    if (!emit_inc_jit_stat_counter(
-            w, &rv64_jit_stats.direct_guarded_link_taken_count))
-    {
-        return false;
-    }
-
-    patch_rel32(guarded_done_disp, w->cur);
-#endif
-
-    if (pic_enabled)
-    {
-        /*
-         * Refill is cold: hot hits never cross the C ABI. Preserve the returned
-         * body pointer in R9 while restoring R10/R11 and updating statistics.
-         */
-        if (!emit_mov_rsi_r9(w) ||
-            !emit_mov_rdx_r8(w) ||
-            !emit_movabs_indirect_pic_address(w, HOST_REG_RDI) ||
-            !emit_call_abs(w, (uintptr_t)rv64_jit_indirect_pic_refill) ||
-            !emit_mov_r9_rax(w) ||
-            !emit_load_jit_bases(w) ||
-            !emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.direct_link_taken_count) ||
-            !(subset_taken_counter == NULL ||
-              emit_inc_jit_stat_counter(w, subset_taken_counter)) ||
-            !emit_jmp_r9(w))
-        {
-            return false;
-        }
-    }
-    else
-    {
-        if (jump_cache_enabled)
-        {
-            const uint32_t cache_generation_off =
-                (uint32_t)offsetof(
-                    rv64_jit_indirect_jump_cache_entry_t,
-                    target_generation);
-            const uint32_t cache_slot_off =
-                (uint32_t)offsetof(
-                    rv64_jit_indirect_jump_cache_entry_t,
-                    target_slot);
-
-#if RV64_JIT_STATS
-            uint8_t *empty_entry_disp = NULL;
-
-            /* Count any occupied direct-map entry overwritten by this fill. */
-            if (!emit_mov_rax_rdiq_field(w, cache_slot_off) ||
-                !emit_test_rax_rax(w) ||
-                !emit_jcc_rel32_placeholder(
-                    w, HOST_JCC_E, &empty_entry_disp) ||
-                !emit_inc_jit_stat_counter(
-                    w, &rv64_jit_stats.indirect_jump_cache_replacements))
-            {
-                return false;
-            }
-
-            patch_rel32(empty_entry_disp, w->cur);
-#endif
-
-            /*
-             * Generated code and its sidecar currently execute on one vCPU
-             * thread. Clear the certificate, install the stable slot, then
-             * publish the exact non-zero generation last. A future concurrent
-             * implementation must make this release/acquire or per-vCPU.
-             */
-            if (!emit_zero_rax(w) ||
-                !emit_mov_rdiq_field_rax(w, cache_generation_off) ||
-                !emit_mov_rdiq_field_r8(w, cache_slot_off) ||
-                !emit_inc_jit_stat_counter(
-                    w, &rv64_jit_stats.indirect_jump_cache_fills) ||
-                !emit_mov_rax_r8q_field(w, generation_off) ||
-                !emit_mov_rdiq_field_rax(w, cache_generation_off))
-            {
-                return false;
-            }
-        }
-
-        if (!emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.direct_link_taken_count) ||
-            !(subset_taken_counter == NULL ||
-              emit_inc_jit_stat_counter(w, subset_taken_counter)) ||
-            !emit_mov_rax_r8q_field(w, body_entry_off) ||
-            !emit_jmp_rax(w))
-        {
-            return false;
-        }
-    }
-
-    uint8_t *pic_budget_disp = NULL;
     uint8_t *pic_budget_to_miss_disp = NULL;
 
     if (pic_enabled)
     {
-#if RV64_JIT_STATS
-        uint8_t *secondary_to_common_disp = NULL;
-        uint8_t *no_secondary_stat_disp = NULL;
-        const uint8_t *secondary_hit = w->cur;
-
-        if (!emit_mov_esi_imm32(w, 1) ||
-            !emit_jmp_rel32_placeholder(
-                w, &secondary_to_common_disp))
-        {
-            return false;
-        }
-
-        const uint8_t *primary_hit = w->cur;
-
-        if (!emit_zero_esi(w))
-        {
-            return false;
-        }
-
-        const uint8_t *fast_hit = w->cur;
-        patch_rel32(pic_hit_disps[0], primary_hit);
-        patch_rel32(pic_hit_disps[1], secondary_hit);
-        patch_rel32(secondary_to_common_disp, fast_hit);
-#else
-        const uint8_t *fast_hit = w->cur;
-        patch_rel32(pic_hit_disps[0], fast_hit);
-        patch_rel32(pic_hit_disps[1], fast_hit);
-#endif
-
-        if (!emit_indirect_target_budget(
-                w, completed_count, &pic_budget_disp) ||
-            !emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.indirect_pic_hits[pic_kind]))
-        {
-            return false;
-        }
-
-#if RV64_JIT_STATS
-        if (!emit_test_esi_esi(w) ||
-            !emit_jcc_rel32_placeholder(
-                w, HOST_JCC_E, &no_secondary_stat_disp) ||
-            !emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.indirect_pic_secondary_hits[pic_kind]))
-        {
-            return false;
-        }
-
-        patch_rel32(no_secondary_stat_disp, w->cur);
-#endif
-
-        if (!emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.direct_link_taken_count) ||
-            !(subset_taken_counter == NULL ||
-              emit_inc_jit_stat_counter(w, subset_taken_counter)) ||
-            !emit_mov_rax_r8q_field(w, body_entry_off) ||
-            !emit_jmp_rax(w))
-        {
-            return false;
-        }
-
-        patch_rel32(pic_budget_disp, w->cur);
-
-        if (!emit_inc_jit_stat_counter(
-                w, &rv64_jit_stats.indirect_pic_budget_rejections[pic_kind]) ||
-            !emit_jmp_rel32_placeholder(
-                w, &pic_budget_to_miss_disp))
+        if (!emit_indirect_pic_fast_hits(
+                w, pic_hit_disps, completed_count,
+                subset_taken_counter, pic_kind,
+                &pic_budget_to_miss_disp))
         {
             return false;
         }
     }
 
-    const uint8_t *miss_path = w->cur;
-    for (uint32_t i = 0; i < miss_count; i++)
-    {
-        patch_rel32(miss_disps[i], miss_path);
-    }
-
-    if (pic_budget_to_miss_disp != NULL)
-    {
-        patch_rel32(pic_budget_to_miss_disp, miss_path);
-    }
-
-    if (jump_cache_budget_to_miss_disp != NULL)
-    {
-        patch_rel32(jump_cache_budget_to_miss_disp, miss_path);
-    }
-
-    /*
-     * JALR has committed on every ordinary miss. Publish its dynamic target and
-     * include it in the returned count so the dispatcher resumes at the target
-     * rather than re-executing the transfer.
-     */
-    if (!emit_mov_rax_r9(w) ||
-        !emit_store_rax_pc(w) ||
-        !emit_inc_jit_stat_counter(
-            w, &rv64_jit_stats.direct_link_miss_count) ||
-        !(subset_miss_counter == NULL ||
-          emit_inc_jit_stat_counter(w, subset_miss_counter)) ||
-        !emit_return_total_retired(w, completed_count))
+    if (!emit_indirect_miss_path(
+            w, &guard_fixups, pic_budget_to_miss_disp,
+            jump_cache_budget_to_miss_disp, completed_count,
+            subset_miss_counter))
     {
         return false;
     }
 
-    if (pic_enabled)
+    if (pic_enabled &&
+        !emit_indirect_pic_patch_thunks(
+            w, completed_count, pic_kind))
     {
-        /*
-         * These thunks are unreachable from ordinary fall-through. A refill
-         * patches one matching selector to its thunk, whose final rel32 edge
-         * is published first and names the target-owned budgeted chain entry.
-         */
-        for (uint32_t i = 0; i < RV64_JIT_INDIRECT_PIC_WAYS; i++)
-        {
-            w->indirect_pic->patched_paths[i] = w->cur;
-
-            if (!emit_accumulate_loop_extra(w, completed_count)
-#if RV64_JIT_STATS
-                || !emit_mov_esi_imm32(
-                    w, 1u + (uint32_t)pic_kind *
-                                 RV64_JIT_INDIRECT_PIC_WAYS + i)
-#endif
-                || !emit_jmp_rel32_placeholder(
-                    w, &w->indirect_pic->target_disps[i]))
-            {
-                return false;
-            }
-        }
+        return false;
     }
 
     return true;
@@ -6057,9 +6453,9 @@ static bool emit_paged_load_instr(rv64_jit_writer_t *w,
         patch_rel32(done_disp, w->cur);
     }
 
-    JIT_STAT_INC(native_loads);
-    JIT_STAT_INC(native_paged_loads);
-    JIT_STAT_INC(inline_paged_loads);
+    JIT_STAT_INC(emitted_sites.native_loads);
+    JIT_STAT_INC(emitted_sites.native_paged_loads);
+    JIT_STAT_INC(emitted_sites.inline_paged_loads);
     return true;
 }
 
@@ -6250,10 +6646,10 @@ bool rv64_jit_emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         patch_rel32(done_disp, w->cur);
     }
 
-    JIT_STAT_INC(native_loads);
+    JIT_STAT_INC(emitted_sites.native_loads);
     if (direct_mmio_done_count != 0u)
     {
-        JIT_STAT_INC(direct_mmio_load_sites);
+        JIT_STAT_INC(emitted_sites.direct_mmio_load_sites);
     }
     return true;
 }
@@ -6371,9 +6767,9 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
         patch_rel32(done_disp, w->cur);
     }
 
-    JIT_STAT_INC(native_stores);
-    JIT_STAT_INC(native_paged_stores);
-    JIT_STAT_INC(inline_paged_stores);
+    JIT_STAT_INC(emitted_sites.native_stores);
+    JIT_STAT_INC(emitted_sites.native_paged_stores);
+    JIT_STAT_INC(emitted_sites.inline_paged_stores);
     return true;
 }
 
@@ -6609,12 +7005,12 @@ bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         patch_rel32(direct_mmio_done_disps[i], w->cur);
     }
 
-    JIT_STAT_INC(native_stores);
-    JIT_STAT_INC(native_store_continuations);
+    JIT_STAT_INC(emitted_sites.native_stores);
+    JIT_STAT_INC(emitted_sites.native_store_continuations);
 
     if (direct_mmio_done_count != 0u)
     {
-        JIT_STAT_INC(direct_mmio_store_sites);
+        JIT_STAT_INC(emitted_sites.direct_mmio_store_sites);
     }
 
     return true;
@@ -6634,7 +7030,7 @@ static bool emit_finish_native_m(rv64_jit_writer_t *w, rv64_jit_m_op_t op)
         return false;
     }
 
-    JIT_STAT_INC(native_m_ops);
+    JIT_STAT_INC(emitted_sites.native_m_ops);
     return true;
 }
 
@@ -7774,7 +8170,7 @@ bool rv64_jit_emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
                        w, regs, target, completed_count + 1u));
         if (emitted)
         {
-            JIT_STAT_INC(native_jumps);
+            JIT_STAT_INC(emitted_sites.native_jumps);
         }
 
         return emitted;
@@ -7867,7 +8263,7 @@ bool rv64_jit_emit_jump_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
         return false;
     }
 
-    JIT_STAT_INC(native_jumps);
+    JIT_STAT_INC(emitted_sites.native_jumps);
     return true;
 }
 
