@@ -24,6 +24,7 @@ RV64_FPU_MEMORY_NATIVE_TEST=riscv64-fpu-memory-native
 RV64_FPU_MMIO_BOUNDARY_TEST=riscv64-fpu-mmio-boundary
 RV64_MMIO_BOUNDARY_TEST=riscv64-jit-mmio-boundary
 RV64_MMIO_STORE_BOUNDARY_TEST=riscv64-jit-mmio-store-boundary
+RV64_EMITTER_ROLLBACK_TEST=riscv64-jit-emitter-rollback
 # The runner appends each declaration here so the final success message is
 # generated from the same ordered source that binds tests to validators.
 TESTS=()
@@ -2454,6 +2455,19 @@ check_negative_cache() {
   require_direct_link_stats "$log" "$test_name"
 }
 
+check_emitter_rollback() {
+  local log=$1
+  local test_name=$2
+
+  # The guest's reserved OP sub-case is recognised only after supported
+  # instructions have already emitted a dirty prefix.  Both counters therefore
+  # characterise the transactional rollback path rather than first-opcode
+  # negative caching.
+  require_positive_block_end_reason \
+    "$log" "$test_name" "unsupported-after-prefix"
+  require_positive_unsupported_opcode "$log" "$test_name" "0x33"
+}
+
 check_jump_fast() {
   local log=$1
   local test_name=$2
@@ -2575,6 +2589,7 @@ check_memory_entry() {
   require_cpu_boundary_breaks "$log" "$test_name" positive
   require_exact_serial_mmio_marker "$log" "$test_name"
   require_positive_side_exit_reason "$log" "$test_name" "load-guard"
+  require_positive_side_exit_reason "$log" "$test_name" "store-guard"
   require_positive_side_exit_reason "$log" "$test_name" "store-source"
 }
 
@@ -2668,6 +2683,7 @@ run_jit_test riscv64-jit-strict check_generic_only
 run_jit_test riscv64-jit-smc check_smc
 run_jit_test riscv64-jit-pic-source-teardown check_pic_source_teardown
 run_jit_test riscv64-jit-negative-cache check_negative_cache
+run_jit_test "$RV64_EMITTER_ROLLBACK_TEST" check_emitter_rollback
 run_jit_test riscv64-jit-load-fast check_load_fast
 run_jit_test riscv64-jit-store-fast check_store_fast
 run_jit_test riscv64-jit-jump-fast check_jump_fast

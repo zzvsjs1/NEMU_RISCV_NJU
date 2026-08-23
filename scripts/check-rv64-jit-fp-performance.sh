@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+# shellcheck source=scripts/rv64-jit-performance-common.sh
+source "$SCRIPT_DIR/rv64-jit-performance-common.sh"
 export AM_HOME="$ROOT/abstract-machine"
 export NEMU_HOME="$ROOT/nemu"
 export NAVY_HOME="$ROOT/navy-apps"
@@ -18,13 +20,16 @@ SAMPLE_COUNT=7
 # ample room for noisy hosts while still rejecting loss of the native fast path.
 MIN_PHASE_SPEEDUP=10
 
+rv64_jit_perf_enable_cleanup "$NEMU_HOME"
+
 fail() {
   echo "RISC-V64 JIT exact-FP performance check failed: $*" >&2
   exit 1
 }
 
 run_fpmark() {
-  local mode=$1
+  local result_variable=$1
+  local mode=$2
   local out
   local move_us
   local class_us
@@ -32,7 +37,7 @@ run_fpmark() {
   local checksum_hi
   local checksum_lo
 
-  out=$(mktemp)
+  rv64_jit_perf_make_temp_file out
 
   if [ "$mode" = "jit" ]; then
     env -u NEMU_DISABLE_JIT \
@@ -107,7 +112,7 @@ run_fpmark() {
   [ -n "$checksum_lo" ] || fail "could not parse $mode checksum low half"
   [ $((move_us + class_us)) -eq "$total_us" ] ||
     fail "$mode phase times do not add up to the reported total"
-  printf "%s %s %s %s %s\n" \
+  printf -v "$result_variable" "%s %s %s %s %s" \
     "$move_us" "$class_us" "$total_us" "$checksum_hi" "$checksum_lo"
 }
 
@@ -117,12 +122,12 @@ median_samples() {
 }
 
 cd "$ROOT"
-make -C "$NEMU_HOME" "$JIT_DEFCONFIG" >/dev/null
+rv64_jit_perf_use_defconfig "$JIT_DEFCONFIG"
 
 # Untimed cold runs populate build artefacts and verify both execution modes.
-jit_warm_line=$(run_fpmark jit)
+run_fpmark jit_warm_line jit
 read -r _ _ _ warm_jit_hi warm_jit_lo <<<"$jit_warm_line"
-interp_warm_line=$(run_fpmark interpreter)
+run_fpmark interp_warm_line interpreter
 read -r _ _ _ warm_interp_hi warm_interp_lo <<<"$interp_warm_line"
 
 [ "$warm_jit_hi" = "$warm_interp_hi" ] ||
@@ -139,17 +144,17 @@ interp_total_samples=()
 
 for ((sample = 0; sample < SAMPLE_COUNT; sample++)); do
   if [ $((sample % 2)) -eq 0 ]; then
-    jit_line=$(run_fpmark jit)
+    run_fpmark jit_line jit
     read -r jit_move_us jit_class_us jit_total_us jit_hi jit_lo \
       <<<"$jit_line"
-    interp_line=$(run_fpmark interpreter)
+    run_fpmark interp_line interpreter
     read -r interp_move_us interp_class_us interp_total_us \
       interp_hi interp_lo <<<"$interp_line"
   else
-    interp_line=$(run_fpmark interpreter)
+    run_fpmark interp_line interpreter
     read -r interp_move_us interp_class_us interp_total_us \
       interp_hi interp_lo <<<"$interp_line"
-    jit_line=$(run_fpmark jit)
+    run_fpmark jit_line jit
     read -r jit_move_us jit_class_us jit_total_us jit_hi jit_lo \
       <<<"$jit_line"
   fi

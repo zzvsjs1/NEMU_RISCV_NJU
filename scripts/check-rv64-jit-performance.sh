@@ -11,6 +11,9 @@ export ARCH=riscv64-nemu
 export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
 
+source "$SCRIPT_DIR/rv64-jit-performance-common.sh"
+rv64_jit_perf_enable_cleanup "$NEMU_HOME"
+
 BENCH_DIR="$ROOT/am-kernels/benchmarks/branchmark"
 INTERP_DEFCONFIG=riscv64-am-headless_defconfig
 JIT_DEFCONFIG=riscv64-am-headless-jit-stats_defconfig
@@ -22,25 +25,26 @@ fail() {
   exit 1
 }
 
+# Return the parsed line through a caller variable.  Keeping the function in
+# this shell also keeps its registered temporary file visible to the EXIT trap.
 run_branchmark() {
-  local label=$1
-  local defconfig=$2
-  local stats_env=$3
+  local result_var=$1
+  local label=$2
+  local defconfig=$3
+  local stats_env=$4
   local out
 
-  out=$(mktemp)
-  make -C "$NEMU_HOME" "$defconfig" >/dev/null
+  rv64_jit_perf_make_temp_file out
+  rv64_jit_perf_use_defconfig "$defconfig"
 
   if [ "$stats_env" = "jit" ]; then
     NEMU_JIT_STATS=1 make -C "$BENCH_DIR" ARCH="$ARCH" run >"$out" 2>&1 || {
       cat "$out" >&2
-      rm -f "$out"
       exit 2
     }
   else
     NEMU_DISABLE_JIT=1 make -C "$BENCH_DIR" ARCH="$ARCH" run >"$out" 2>&1 || {
       cat "$out" >&2
-      rm -f "$out"
       exit 2
     }
   fi
@@ -49,7 +53,6 @@ run_branchmark() {
   guest_us=$(sed -n 's/.*branchmark_total_us: \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
   [ -n "$guest_us" ] || {
     cat "$out" >&2
-    rm -f "$out"
     fail "could not parse BranchMark time for $label"
   }
 
@@ -57,7 +60,6 @@ run_branchmark() {
   checksum=$(sed -n 's/.*branchmark_checksum: \(0x[0-9a-fA-F][0-9a-fA-F]*\).*/\1/p' "$out" | tail -n 1)
   [ -n "$checksum" ] || {
     cat "$out" >&2
-    rm -f "$out"
     fail "could not parse BranchMark checksum for $label"
   }
 
@@ -68,26 +70,25 @@ run_branchmark() {
     jit_insns=$(sed -n 's/.*JIT instructions = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
     [ -n "$jit_insns" ] || {
       cat "$out" >&2
-      rm -f "$out"
       fail "could not parse JIT instruction count"
     }
 
     jit_blocks=$(sed -n 's/.*executed blocks = \([0-9][0-9]*\).*/\1/p' "$out" | tail -n 1)
     [ -n "$jit_blocks" ] || {
       cat "$out" >&2
-      rm -f "$out"
       fail "could not parse executed JIT block count"
     }
   fi
 
-  printf "%s guest_us=%s checksum=%s jit_insns=%s jit_blocks=%s\n" "$label" "$guest_us" "$checksum" "$jit_insns" "$jit_blocks"
-  rm -f "$out"
+  printf -v "$result_var" \
+    "%s guest_us=%s checksum=%s jit_insns=%s jit_blocks=%s" \
+    "$label" "$guest_us" "$checksum" "$jit_insns" "$jit_blocks"
 }
 
 cd "$ROOT"
 
-interp_line=$(run_branchmark interpreter "$INTERP_DEFCONFIG" nojit)
-jit_line=$(run_branchmark jit "$JIT_DEFCONFIG" jit)
+run_branchmark interp_line interpreter "$INTERP_DEFCONFIG" nojit
+run_branchmark jit_line jit "$JIT_DEFCONFIG" jit
 
 interp_us=$(printf "%s\n" "$interp_line" | sed -n 's/.*guest_us=\([0-9][0-9]*\).*/\1/p')
 jit_us=$(printf "%s\n" "$jit_line" | sed -n 's/.*guest_us=\([0-9][0-9]*\).*/\1/p')
@@ -123,5 +124,3 @@ printf "%s\n" "$interp_line"
 printf "%s\n" "$jit_line"
 printf "avg_jit_entry_insns=%s\n" "$avg_block"
 printf "speedup=%sx\n" "$speedup"
-
-make -C "$NEMU_HOME" riscv64-am-headless-jit_defconfig >/dev/null

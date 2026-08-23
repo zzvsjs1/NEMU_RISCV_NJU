@@ -11,6 +11,9 @@ export ARCH=riscv64-nemu
 export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
 
+source "$SCRIPT_DIR/rv64-jit-performance-common.sh"
+rv64_jit_perf_enable_cleanup "$NEMU_HOME"
+
 BENCH_DIR="$ROOT/am-kernels/benchmarks/fpmemmark"
 JIT_DEFCONFIG=riscv64-am-headless-jit_defconfig
 STATS_DEFCONFIG=riscv64-am-headless-jit-stats_defconfig
@@ -24,14 +27,17 @@ fail() {
   exit 1
 }
 
+# Return the parsed line through a caller variable.  Keeping the function in
+# this shell also keeps its registered temporary file visible to the EXIT trap.
 run_fpmemmark() {
-  local mode=$1
+  local result_var=$1
+  local mode=$2
   local out
   local elapsed_us
   local checksum_hi
   local checksum_lo
 
-  out=$(mktemp)
+  rv64_jit_perf_make_temp_file out
 
   if [ "$mode" = "jit" ]; then
     env -u NEMU_DISABLE_JIT \
@@ -41,7 +47,6 @@ run_fpmemmark() {
       -u NEMU_DISABLE_RV64_JIT_RETURN_LINK \
       make -C "$BENCH_DIR" ARCH="$ARCH" run >"$out" 2>&1 || {
       cat "$out" >&2
-      rm -f "$out"
       exit 2
     }
   else
@@ -52,32 +57,27 @@ run_fpmemmark() {
       NEMU_DISABLE_JIT=1 \
       make -C "$BENCH_DIR" ARCH="$ARCH" run >"$out" 2>&1 || {
       cat "$out" >&2
-      rm -f "$out"
       exit 2
     }
   fi
 
   grep -q 'FPMemMark PASS' "$out" || {
     cat "$out" >&2
-    rm -f "$out"
     fail "$mode FPMemMark did not pass"
   }
 
   if [ "$mode" = "jit" ]; then
     grep -q 'jit: RISC-V64 native code arena' "$out" || {
       cat "$out" >&2
-      rm -f "$out"
       fail "JIT mode did not initialise the RV64 native code arena"
     }
     if grep -q 'jit: disabled by NEMU_DISABLE_JIT=1' "$out"; then
       cat "$out" >&2
-      rm -f "$out"
       fail "JIT mode unexpectedly ran with the JIT disabled"
     fi
   else
     grep -q 'jit: disabled by NEMU_DISABLE_JIT=1' "$out" || {
       cat "$out" >&2
-      rm -f "$out"
       fail "interpreter mode did not report the JIT as disabled"
     }
   fi
@@ -91,14 +91,14 @@ run_fpmemmark() {
   checksum_lo=$(sed -n \
     's/.*fpmemmark_checksum_lo: \(0x[0-9a-fA-F][0-9a-fA-F]*\).*/\1/p' \
     "$out" | tail -n 1)
-  rm -f "$out"
 
   [ -n "$elapsed_us" ] || fail "could not parse $mode elapsed time"
   [ -n "$checksum_hi" ] || fail "could not parse $mode checksum high half"
   [ -n "$checksum_lo" ] || fail "could not parse $mode checksum low half"
   [ "$elapsed_us" -gt 0 ] ||
     fail "$mode elapsed time must be positive, got $elapsed_us"
-  printf "%s %s %s\n" "$elapsed_us" "$checksum_hi" "$checksum_lo"
+  printf -v "$result_var" "%s %s %s" \
+    "$elapsed_us" "$checksum_hi" "$checksum_lo"
 }
 
 median_samples() {
@@ -112,18 +112,16 @@ run_stats_smoke() {
   local count
   local helper_calls
 
-  make -C "$NEMU_HOME" "$STATS_DEFCONFIG" >/dev/null
-  out=$(mktemp)
+  rv64_jit_perf_use_defconfig "$STATS_DEFCONFIG"
+  rv64_jit_perf_make_temp_file out
 
   NEMU_JIT_STATS=1 make -C "$BENCH_DIR" ARCH="$ARCH" run >"$out" 2>&1 || {
     cat "$out" >&2
-    rm -f "$out"
     exit 2
   }
 
   grep -q 'FPMemMark PASS' "$out" || {
     cat "$out" >&2
-    rm -f "$out"
     fail "statistics FPMemMark did not pass"
   }
 
@@ -146,20 +144,17 @@ run_stats_smoke() {
 
   if grep -q 'block end fp-memory = ' "$out"; then
     cat "$out" >&2
-    rm -f "$out"
     fail "FPMemMark still compiled an FP-memory block ending"
   fi
-
-  rm -f "$out"
 }
 
 cd "$ROOT"
-make -C "$NEMU_HOME" "$JIT_DEFCONFIG" >/dev/null
+rv64_jit_perf_use_defconfig "$JIT_DEFCONFIG"
 
 # Untimed cold runs populate build artefacts and establish the checksum oracle.
-jit_warm_line=$(run_fpmemmark jit)
+run_fpmemmark jit_warm_line jit
 read -r _ warm_jit_hi warm_jit_lo <<<"$jit_warm_line"
-interp_warm_line=$(run_fpmemmark interpreter)
+run_fpmemmark interp_warm_line interpreter
 read -r _ warm_interp_hi warm_interp_lo <<<"$interp_warm_line"
 
 [ "$warm_jit_hi" = "$warm_interp_hi" ] ||
@@ -172,14 +167,14 @@ interp_samples=()
 
 for ((sample = 0; sample < SAMPLE_COUNT; sample++)); do
   if [ $((sample % 2)) -eq 0 ]; then
-    jit_line=$(run_fpmemmark jit)
+    run_fpmemmark jit_line jit
     read -r jit_us jit_hi jit_lo <<<"$jit_line"
-    interp_line=$(run_fpmemmark interpreter)
+    run_fpmemmark interp_line interpreter
     read -r interp_us interp_hi interp_lo <<<"$interp_line"
   else
-    interp_line=$(run_fpmemmark interpreter)
+    run_fpmemmark interp_line interpreter
     read -r interp_us interp_hi interp_lo <<<"$interp_line"
-    jit_line=$(run_fpmemmark jit)
+    run_fpmemmark jit_line jit
     read -r jit_us jit_hi jit_lo <<<"$jit_line"
   fi
 

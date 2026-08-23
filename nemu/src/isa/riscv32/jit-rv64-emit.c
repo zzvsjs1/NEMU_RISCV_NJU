@@ -476,9 +476,9 @@ static bool emit_movabs_indirect_pic_address(rv64_jit_writer_t *w,
 {
     rv64_jit_indirect_pic_builder_t *builder = w->indirect_pic;
 
-    Assert(builder != NULL && builder->used,
+    Assert(builder != NULL && builder->state.used,
            "jit: missing RV64 indirect PIC builder");
-    Assert(builder->fixup_count < RV64_JIT_INDIRECT_PIC_MAX_FIXUPS,
+    Assert(builder->state.fixup_count < RV64_JIT_INDIRECT_PIC_MAX_FIXUPS,
            "jit: too many RV64 indirect PIC address fixups");
 
     const uint8_t rex =
@@ -498,7 +498,7 @@ static bool emit_movabs_indirect_pic_address(rv64_jit_writer_t *w,
         return false;
     }
 
-    builder->address_immediates[builder->fixup_count++] = immediate;
+    builder->address_immediates[builder->state.fixup_count++] = immediate;
     return true;
 }
 
@@ -509,9 +509,9 @@ static bool emit_movabs_indirect_jump_cache_address(
     rv64_jit_indirect_jump_cache_builder_t *builder =
         w->indirect_jump_cache;
 
-    Assert(builder != NULL && builder->used,
+    Assert(builder != NULL && builder->state.used,
            "jit: missing RV64 indirect jump cache builder");
-    Assert(builder->fixup_count <
+    Assert(builder->state.fixup_count <
                RV64_JIT_INDIRECT_JUMP_CACHE_MAX_FIXUPS,
            "jit: too many RV64 indirect jump cache address fixups");
 
@@ -532,7 +532,7 @@ static bool emit_movabs_indirect_jump_cache_address(
         return false;
     }
 
-    builder->address_immediates[builder->fixup_count++] = immediate;
+    builder->address_immediates[builder->state.fixup_count++] = immediate;
     return true;
 }
 
@@ -1590,6 +1590,253 @@ void rv64_jit_reg_cache_restore(rv64_jit_reg_cache_t *regs,
     *regs = *snapshot;
 }
 
+/* Compare cache metadata field by field so structure padding is irrelevant. */
+static bool rv64_jit_reg_cache_matches(
+    const rv64_jit_reg_cache_t *regs,
+    const rv64_jit_reg_cache_t *expected)
+{
+    if (regs->slot_count != expected->slot_count ||
+        regs->next_age != expected->next_age ||
+        regs->current_use_mask != expected->current_use_mask ||
+        regs->live_after_mask != expected->live_after_mask)
+    {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < RV64_JIT_HREG_COUNT; i++)
+    {
+        const rv64_jit_reg_slot_t *actual_slot = &regs->slots[i];
+        const rv64_jit_reg_slot_t *expected_slot = &expected->slots[i];
+
+        if (actual_slot->valid != expected_slot->valid ||
+            actual_slot->loaded != expected_slot->loaded ||
+            actual_slot->dirty != expected_slot->dirty ||
+            actual_slot->guest_reg != expected_slot->guest_reg ||
+            actual_slot->age != expected_slot->age ||
+            actual_slot->hreg != expected_slot->hreg)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/*
+ * Snapshot only the speculative frontiers owned by instruction emission.
+ * Append-only records beyond those frontiers need not be copied because the
+ * next successful candidate overwrites them before making them observable.
+ */
+void rv64_jit_emitter_checkpoint_capture(
+    rv64_jit_emitter_checkpoint_t *checkpoint,
+    const rv64_jit_writer_t *w,
+    const rv64_jit_reg_cache_t *regs,
+    const rv64_jit_mmio_route_builder_t *mmio_routes)
+{
+    Assert(checkpoint != NULL, "jit: missing RV64 emitter checkpoint");
+    Assert(w != NULL, "jit: missing RV64 writer for checkpoint capture");
+    Assert(regs != NULL,
+           "jit: missing RV64 register cache for checkpoint capture");
+    Assert(w->links != NULL,
+           "jit: missing RV64 link builder for checkpoint capture");
+    Assert(w->indirect_pic != NULL,
+           "jit: missing RV64 indirect PIC builder for checkpoint capture");
+    Assert(w->indirect_jump_cache != NULL,
+           "jit: missing RV64 jump-cache builder for checkpoint capture");
+    Assert(mmio_routes != NULL,
+           "jit: missing RV64 MMIO builder for checkpoint capture");
+
+    *checkpoint = (rv64_jit_emitter_checkpoint_t){
+        .writer_cur = w->cur,
+        .regs = *regs,
+        .links = w->links->state,
+        .indirect_pic = w->indirect_pic->state,
+        .indirect_jump_cache = w->indirect_jump_cache->state,
+        .mmio_routes = mmio_routes->state,
+#if RV64_JIT_STATS
+        .emitted_sites = rv64_jit_stats.emitted_sites,
+#endif
+    };
+}
+
+/*
+ * Restore one failed candidate without clearing attempt-wide overflow state or
+ * disturbing the writer bounds and append-only builder payloads.
+ */
+void rv64_jit_emitter_checkpoint_restore(
+    const rv64_jit_emitter_checkpoint_t *checkpoint,
+    rv64_jit_writer_t *w,
+    rv64_jit_reg_cache_t *regs,
+    rv64_jit_mmio_route_builder_t *mmio_routes)
+{
+    Assert(checkpoint != NULL, "jit: missing RV64 emitter checkpoint");
+    Assert(w != NULL, "jit: missing RV64 writer for checkpoint restore");
+    Assert(regs != NULL,
+           "jit: missing RV64 register cache for checkpoint restore");
+    Assert(w->links != NULL,
+           "jit: missing RV64 link builder for checkpoint restore");
+    Assert(w->indirect_pic != NULL,
+           "jit: missing RV64 indirect PIC builder for checkpoint restore");
+    Assert(w->indirect_jump_cache != NULL,
+           "jit: missing RV64 jump-cache builder for checkpoint restore");
+    Assert(mmio_routes != NULL,
+           "jit: missing RV64 MMIO builder for checkpoint restore");
+
+    w->cur = checkpoint->writer_cur;
+    rv64_jit_reg_cache_restore(regs, &checkpoint->regs);
+    w->links->state = checkpoint->links;
+    w->indirect_pic->state = checkpoint->indirect_pic;
+    w->indirect_jump_cache->state = checkpoint->indirect_jump_cache;
+    mmio_routes->state = checkpoint->mmio_routes;
+#if RV64_JIT_STATS
+    rv64_jit_stats.emitted_sites = checkpoint->emitted_sites;
+#endif
+
+    /*
+     * These checks make the rollback contract executable. In particular, a
+     * newly edited restore cannot silently leave the byte cursor or a builder
+     * frontier ahead of the checkpoint while focused tests exercise the path.
+     */
+    Assert(w->cur == checkpoint->writer_cur,
+           "jit: RV64 emitter checkpoint did not restore the writer cursor");
+    Assert(rv64_jit_reg_cache_matches(regs, &checkpoint->regs),
+           "jit: RV64 emitter checkpoint did not restore register metadata");
+    Assert(w->links->state.count == checkpoint->links.count,
+           "jit: RV64 emitter checkpoint did not restore link progress");
+    Assert(w->indirect_pic->state.fixup_count ==
+               checkpoint->indirect_pic.fixup_count &&
+               w->indirect_pic->state.kind == checkpoint->indirect_pic.kind &&
+               w->indirect_pic->state.used == checkpoint->indirect_pic.used,
+           "jit: RV64 emitter checkpoint did not restore indirect PIC progress");
+    Assert(w->indirect_jump_cache->state.fixup_count ==
+               checkpoint->indirect_jump_cache.fixup_count &&
+               w->indirect_jump_cache->state.used ==
+                   checkpoint->indirect_jump_cache.used,
+           "jit: RV64 emitter checkpoint did not restore jump-cache progress");
+    Assert(mmio_routes->state.site_count ==
+               checkpoint->mmio_routes.site_count &&
+               mmio_routes->state.fixup_count ==
+                   checkpoint->mmio_routes.fixup_count,
+           "jit: RV64 emitter checkpoint did not restore MMIO route progress");
+#if RV64_JIT_STATS
+    Assert(memcmp(&rv64_jit_stats.emitted_sites,
+                  &checkpoint->emitted_sites,
+                  sizeof(checkpoint->emitted_sites)) == 0,
+           "jit: RV64 emitter checkpoint did not restore emitted-site "
+           "statistics");
+#endif
+}
+
+#if RV64_JIT_STATS
+/*
+ * Statistics builds execute this contract check before their first block.
+ * Ordinary rollback guests naturally advance the byte cursor and register
+ * cache, but do not necessarily touch every optional sidecar builder.  Seed
+ * and disturb each frontier here so removing any central restore assignment
+ * is caught by the same assertions, without adding work to production builds.
+ */
+void rv64_jit_emitter_checkpoint_validate_once(void)
+{
+    static bool validated = false;
+
+    if (validated)
+    {
+        return;
+    }
+
+    uint8_t native_bytes[16];
+    rv64_jit_link_builder_t links = {
+        .state = {.count = 2},
+    };
+    rv64_jit_indirect_pic_builder_t indirect_pic = {
+        .state = {.fixup_count = 2, .kind = 1, .used = true},
+    };
+    rv64_jit_indirect_jump_cache_builder_t indirect_jump_cache = {
+        .state = {
+            .fixup_count = RV64_JIT_INDIRECT_JUMP_CACHE_MAX_FIXUPS,
+            .used = true,
+        },
+    };
+    rv64_jit_mmio_route_builder_t mmio_routes = {
+        .state = {.site_count = 2, .fixup_count = 3},
+    };
+    rv64_jit_writer_t w = {
+        .start = native_bytes,
+        .cur = native_bytes + 1,
+        .end = native_bytes + sizeof(native_bytes),
+        .links = &links,
+        .indirect_pic = &indirect_pic,
+        .indirect_jump_cache = &indirect_jump_cache,
+    };
+    rv64_jit_reg_cache_t regs;
+    rv64_jit_reg_cache_init(&regs);
+    regs.next_age = 17;
+    regs.current_use_mask = UINT32_C(1) << 5;
+    regs.live_after_mask = UINT32_C(1) << 7;
+    regs.slots[0].valid = true;
+    regs.slots[0].loaded = true;
+    regs.slots[0].dirty = true;
+    regs.slots[0].guest_reg = 5;
+    regs.slots[0].age = 11;
+
+    const rv64_jit_emitted_site_stats_t saved_emitted_sites =
+        rv64_jit_stats.emitted_sites;
+    memset(&rv64_jit_stats.emitted_sites, 0xa5,
+           sizeof(rv64_jit_stats.emitted_sites));
+
+    rv64_jit_emitter_checkpoint_t checkpoint;
+    rv64_jit_emitter_checkpoint_capture(
+        &checkpoint, &w, &regs, &mmio_routes);
+
+    /* Validate capture independently before the live state is disturbed. */
+    Assert(checkpoint.writer_cur == w.cur,
+           "jit: RV64 emitter checkpoint did not capture the writer cursor");
+    Assert(rv64_jit_reg_cache_matches(&checkpoint.regs, &regs),
+           "jit: RV64 emitter checkpoint did not capture register metadata");
+    Assert(checkpoint.links.count == links.state.count,
+           "jit: RV64 emitter checkpoint did not capture link progress");
+    Assert(checkpoint.indirect_pic.fixup_count ==
+               indirect_pic.state.fixup_count &&
+               checkpoint.indirect_pic.kind == indirect_pic.state.kind &&
+               checkpoint.indirect_pic.used == indirect_pic.state.used,
+           "jit: RV64 emitter checkpoint did not capture indirect PIC progress");
+    Assert(checkpoint.indirect_jump_cache.fixup_count ==
+               indirect_jump_cache.state.fixup_count &&
+               checkpoint.indirect_jump_cache.used ==
+                   indirect_jump_cache.state.used,
+           "jit: RV64 emitter checkpoint did not capture jump-cache progress");
+    Assert(checkpoint.mmio_routes.site_count ==
+               mmio_routes.state.site_count &&
+               checkpoint.mmio_routes.fixup_count ==
+                   mmio_routes.state.fixup_count,
+           "jit: RV64 emitter checkpoint did not capture MMIO route progress");
+    Assert(memcmp(&checkpoint.emitted_sites,
+                  &rv64_jit_stats.emitted_sites,
+                  sizeof(checkpoint.emitted_sites)) == 0,
+           "jit: RV64 emitter checkpoint did not capture emitted-site "
+           "statistics");
+
+    w.cur = native_bytes + 9;
+    w.overflowed = true;
+    regs = (rv64_jit_reg_cache_t){0};
+    links.state = (rv64_jit_link_builder_state_t){0};
+    indirect_pic.state = (rv64_jit_indirect_pic_builder_state_t){0};
+    indirect_jump_cache.state =
+        (rv64_jit_indirect_jump_cache_builder_state_t){0};
+    mmio_routes.state = (rv64_jit_mmio_route_builder_state_t){0};
+    memset(&rv64_jit_stats.emitted_sites, 0x5a,
+           sizeof(rv64_jit_stats.emitted_sites));
+
+    rv64_jit_emitter_checkpoint_restore(
+        &checkpoint, &w, &regs, &mmio_routes);
+    Assert(w.overflowed,
+           "jit: RV64 emitter checkpoint cleared attempt overflow state");
+
+    rv64_jit_stats.emitted_sites = saved_emitted_sites;
+    validated = true;
+}
+#endif
+
 /* Install conservative per-instruction hints for register victim selection. */
 void rv64_jit_reg_cache_set_liveness(rv64_jit_reg_cache_t *regs,
                                      uint32_t current_use_mask,
@@ -2450,14 +2697,14 @@ static uint8_t mmio_route_reserve_site(
     uint64_t host_ptr)
 {
     if (routes == NULL ||
-        routes->site_count >= RV64_JIT_MMIO_ROUTE_MAX_SITES)
+        routes->state.site_count >= RV64_JIT_MMIO_ROUTE_MAX_SITES)
     {
         return RV64_JIT_MMIO_ROUTE_NO_SITE;
     }
 
     Assert(host_ptr != 0, "jit: direct-MMIO route has a null host pointer");
 
-    const uint8_t site = routes->site_count++;
+    const uint8_t site = routes->state.site_count++;
     routes->initial_routes[site] =
         (rv64_jit_mmio_route_t){
             .guest_addr_tag = guest_addr,
@@ -2472,15 +2719,15 @@ static bool mmio_route_record_fixup(
     rv64_jit_mmio_route_field_t field, uint8_t *disp32,
     const uint8_t *next_ip)
 {
-    Assert(routes != NULL && site < routes->site_count,
+    Assert(routes != NULL && site < routes->state.site_count,
            "jit: invalid direct-MMIO route site %u", site);
     Assert(field == RV64_JIT_MMIO_ROUTE_TAG ||
                field == RV64_JIT_MMIO_ROUTE_HOST,
            "jit: invalid direct-MMIO route field %u", field);
-    Assert(routes->fixup_count < RV64_JIT_MMIO_ROUTE_MAX_FIXUPS,
+    Assert(routes->state.fixup_count < RV64_JIT_MMIO_ROUTE_MAX_FIXUPS,
            "jit: too many direct-MMIO route fixups");
 
-    routes->fixups[routes->fixup_count++] =
+    routes->fixups[routes->state.fixup_count++] =
         (rv64_jit_mmio_route_fixup_t){
             .disp32 = disp32,
             .next_ip = next_ip,
@@ -2614,14 +2861,14 @@ bool rv64_jit_finalise_mmio_routes(
 {
     Assert(routes != NULL, "jit: missing direct-MMIO route builder");
 
-    if (routes->site_count == 0)
+    if (routes->state.site_count == 0)
     {
-        Assert(routes->fixup_count == 0,
+        Assert(routes->state.fixup_count == 0,
                "jit: route fixups exist without route sites");
         return true;
     }
 
-    Assert(routes->site_count <= RV64_JIT_MMIO_ROUTE_MAX_SITES,
+    Assert(routes->state.site_count <= RV64_JIT_MMIO_ROUTE_MAX_SITES,
            "jit: too many direct-MMIO route sites");
 
     const uintptr_t aligned =
@@ -2641,7 +2888,7 @@ bool rv64_jit_finalise_mmio_routes(
     for (uint32_t i = 0; i < RV64_JIT_MMIO_ROUTE_MAX_SITES; i++)
     {
         const rv64_jit_mmio_route_t initial =
-            i < routes->site_count
+            i < routes->state.site_count
                 ? routes->initial_routes[i]
                 : (rv64_jit_mmio_route_t){0};
 
@@ -2652,10 +2899,10 @@ bool rv64_jit_finalise_mmio_routes(
         }
     }
 
-    for (uint32_t i = 0; i < routes->fixup_count; i++)
+    for (uint32_t i = 0; i < routes->state.fixup_count; i++)
     {
         const rv64_jit_mmio_route_fixup_t *fixup = &routes->fixups[i];
-        Assert(fixup->site < routes->site_count,
+        Assert(fixup->site < routes->state.site_count,
                "jit: route fixup refers to absent site %u", fixup->site);
 
         const size_t field_offset =
@@ -2691,17 +2938,17 @@ bool rv64_jit_finalise_indirect_jump_cache(
     Assert(builder != NULL,
            "jit: missing RV64 indirect jump cache builder");
 
-    if (!builder->used)
+    if (!builder->state.used)
     {
-        Assert(builder->fixup_count == 0,
+        Assert(builder->state.fixup_count == 0,
                "jit: indirect jump cache fixup exists without a site");
         return true;
     }
 
-    Assert(builder->fixup_count ==
+    Assert(builder->state.fixup_count ==
                RV64_JIT_INDIRECT_JUMP_CACHE_MAX_FIXUPS,
            "jit: invalid RV64 indirect jump cache fixup count %u",
-           builder->fixup_count);
+           builder->state.fixup_count);
 
     const uintptr_t aligned =
         rv64_jit_align_up((uintptr_t)w->cur,
@@ -2743,19 +2990,21 @@ bool rv64_jit_finalise_indirect_pic(
     Assert(pic != NULL, "jit: missing RV64 indirect PIC result");
     *pic = NULL;
 
-    if (!builder->used)
+    if (!builder->state.used)
     {
-        Assert(builder->fixup_count == 0,
+        Assert(builder->state.fixup_count == 0,
                "jit: indirect PIC fixups exist without a site");
         return true;
     }
 
-    Assert(builder->kind < RV64_JIT_INDIRECT_PIC_KIND_COUNT,
-           "jit: invalid RV64 indirect PIC builder kind %u", builder->kind);
-    Assert(builder->fixup_count > 0 &&
-               builder->fixup_count <= RV64_JIT_INDIRECT_PIC_MAX_FIXUPS,
+    Assert(builder->state.kind < RV64_JIT_INDIRECT_PIC_KIND_COUNT,
+           "jit: invalid RV64 indirect PIC builder kind %u",
+           builder->state.kind);
+    Assert(builder->state.fixup_count > 0 &&
+               builder->state.fixup_count <=
+                   RV64_JIT_INDIRECT_PIC_MAX_FIXUPS,
            "jit: invalid RV64 indirect PIC fixup count %u",
-           builder->fixup_count);
+           builder->state.fixup_count);
 
     const uintptr_t aligned =
         rv64_jit_align_up((uintptr_t)w->cur,
@@ -2776,7 +3025,7 @@ bool rv64_jit_finalise_indirect_pic(
     rv64_jit_indirect_pic_t *persistent =
         (rv64_jit_indirect_pic_t *)w->cur;
     memset(persistent, 0, sizeof(*persistent));
-    persistent->kind = builder->kind;
+    persistent->kind = builder->state.kind;
 
     for (uint32_t i = 0; i < RV64_JIT_INDIRECT_PIC_WAYS; i++)
     {
@@ -2791,7 +3040,7 @@ bool rv64_jit_finalise_indirect_pic(
             .guarded_path = builder->guarded_paths[i],
             .patched_path = builder->patched_paths[i],
             .target_slot_index = UINT32_MAX,
-            .pic_kind = builder->kind,
+            .pic_kind = builder->state.kind,
             .pic_way = (uint8_t)i,
             .patch_eligible = true,
             .dynamic = true,
@@ -2802,7 +3051,7 @@ bool rv64_jit_finalise_indirect_pic(
 
     const uint64_t address = (uint64_t)(uintptr_t)persistent;
 
-    for (uint32_t i = 0; i < builder->fixup_count; i++)
+    for (uint32_t i = 0; i < builder->state.fixup_count; i++)
     {
         memcpy(builder->address_immediates[i], &address, sizeof(address));
     }
@@ -4425,7 +4674,7 @@ static bool emit_patchable_direct_link_exit(
     bool source_uses_data_state, uint64_t *extra_taken_counter)
 {
     Assert(w->links != NULL, "jit: missing RV64 direct-link builder");
-    Assert(w->links->count < RV64_JIT_BLOCK_MAX_LINKS,
+    Assert(w->links->state.count < RV64_JIT_BLOCK_MAX_LINKS,
            "jit: RV64 direct-link builder overflow");
 
     const word_t satp = cpu.csr.satp;
@@ -4473,7 +4722,7 @@ static bool emit_patchable_direct_link_exit(
     patch_rel32(selector_disp, guarded_path);
 
     rv64_jit_link_build_record_t *record =
-        &w->links->records[w->links->count++];
+        &w->links->records[w->links->state.count++];
     *record = (rv64_jit_link_build_record_t){
         .selector_disp = selector_disp,
         .target_disp = target_disp,
@@ -4500,7 +4749,7 @@ bool rv64_jit_emit_direct_link_exit(rv64_jit_writer_t *w,
         RV64_JIT_SATP_MODE_BARE;
 
     if (w->links != NULL &&
-        w->links->count < RV64_JIT_BLOCK_MAX_LINKS &&
+        w->links->state.count < RV64_JIT_BLOCK_MAX_LINKS &&
         bare_context && !source_uses_data_state)
     {
         return emit_patchable_direct_link_exit(
@@ -4930,7 +5179,7 @@ static bool emit_indirect_pic_way_probe(
     rv64_jit_indirect_pic_kind_t pic_kind,
     rv64_jit_indirect_pic_way_fixups_t *fixups)
 {
-    Assert(w->indirect_pic != NULL && w->indirect_pic->used,
+    Assert(w->indirect_pic != NULL && w->indirect_pic->state.used,
            "jit: missing active RV64 indirect PIC builder");
     Assert(way < RV64_JIT_INDIRECT_PIC_WAYS,
            "jit: invalid RV64 indirect PIC way %u", way);
@@ -5082,7 +5331,7 @@ static bool emit_indirect_jump_cache_probe(
     uint8_t *budget_disp = NULL;
 
     Assert(w->indirect_jump_cache != NULL &&
-               w->indirect_jump_cache->used,
+               w->indirect_jump_cache->state.used,
            "jit: missing active RV64 indirect jump cache builder");
     Assert(budget_to_miss_disp != NULL,
            "jit: missing RV64 jump-cache budget fixup result");
@@ -5188,7 +5437,7 @@ static bool emit_indirect_authoritative_hit(
 
     if (pic_enabled)
     {
-        Assert(w->indirect_pic != NULL && w->indirect_pic->used,
+        Assert(w->indirect_pic != NULL && w->indirect_pic->state.used,
                "jit: missing active RV64 indirect PIC builder");
 
         /*
@@ -5222,7 +5471,7 @@ static bool emit_indirect_authoritative_hit(
                 target_slot);
 
         Assert(w->indirect_jump_cache != NULL &&
-                   w->indirect_jump_cache->used,
+                   w->indirect_jump_cache->state.used,
                "jit: missing active RV64 indirect jump cache builder");
 
 #if RV64_JIT_STATS
@@ -5288,7 +5537,7 @@ static bool emit_indirect_pic_fast_hits(
         (uint32_t)offsetof(rv64_jit_block_t, body_entry);
     uint8_t *budget_disp = NULL;
 
-    Assert(w->indirect_pic != NULL && w->indirect_pic->used,
+    Assert(w->indirect_pic != NULL && w->indirect_pic->state.used,
            "jit: missing active RV64 indirect PIC builder");
     Assert(hit_disps != NULL && hit_disps[0] != NULL &&
                hit_disps[1] != NULL,
@@ -5415,7 +5664,7 @@ static bool emit_indirect_pic_patch_thunks(
     rv64_jit_writer_t *w, uint32_t completed_count,
     rv64_jit_indirect_pic_kind_t pic_kind)
 {
-    Assert(w->indirect_pic != NULL && w->indirect_pic->used,
+    Assert(w->indirect_pic != NULL && w->indirect_pic->state.used,
            "jit: missing active RV64 indirect PIC builder");
 
 #if !RV64_JIT_STATS
@@ -5508,18 +5757,18 @@ static bool emit_indirect_link_exit(
 
     if (pic_enabled)
     {
-        Assert(!w->indirect_pic->used,
+        Assert(!w->indirect_pic->state.used,
                "jit: more than one indirect PIC in an RV64 block");
-        w->indirect_pic->used = true;
-        w->indirect_pic->kind = (uint8_t)pic_kind;
+        w->indirect_pic->state.used = true;
+        w->indirect_pic->state.kind = (uint8_t)pic_kind;
         JIT_STAT_INC(emitted_sites.indirect_pic_sites);
     }
 
     if (jump_cache_enabled)
     {
-        Assert(!w->indirect_jump_cache->used,
+        Assert(!w->indirect_jump_cache->state.used,
                "jit: more than one indirect jump cache in an RV64 block");
-        w->indirect_jump_cache->used = true;
+        w->indirect_jump_cache->state.used = true;
         JIT_STAT_INC(emitted_sites.indirect_jump_cache_sites);
     }
 
@@ -5610,6 +5859,114 @@ static bool emit_indirect_link_exit(
  * walks, cross-page accesses and invalidation side effects remain centralised in
  * the C implementation.
  */
+
+/* Everything selected by decoding one integer load instruction. */
+typedef struct
+{
+    uint32_t rd;
+    uint32_t rs1;
+    uint32_t funct3;
+    int32_t imm;
+    uint32_t len;
+    uintptr_t paged_helper;
+    uintptr_t bare_helper;
+} rv64_jit_load_descriptor_t;
+
+/* Everything selected by decoding one integer store instruction. */
+typedef struct
+{
+    uint32_t rs1;
+    uint32_t rs2;
+    int32_t imm;
+    uint32_t len;
+} rv64_jit_store_descriptor_t;
+
+/* Decode one supported RV64 integer load without emitting host code. */
+static bool decode_load_descriptor(uint32_t instr,
+                                   rv64_jit_load_descriptor_t *desc)
+{
+    Assert(desc != NULL, "jit: missing RV64 load descriptor output");
+
+    *desc = (rv64_jit_load_descriptor_t){
+        .rd = rv64_instr_rd(instr),
+        .rs1 = rv64_instr_rs1(instr),
+        .funct3 = rv64_instr_funct3(instr),
+        .imm = (int32_t)imm_i(instr),
+    };
+
+    switch (desc->funct3)
+    {
+    case RV64_FUNCT3_LB:
+        desc->paged_helper = (uintptr_t)rv64_jit_load_i8;
+        desc->bare_helper = (uintptr_t)rv64_jit_load_bare_i8;
+        desc->len = 1;
+        return true;
+    case RV64_FUNCT3_LBU:
+        desc->paged_helper = (uintptr_t)rv64_jit_load_u8;
+        desc->bare_helper = (uintptr_t)rv64_jit_load_bare_u8;
+        desc->len = 1;
+        return true;
+    case RV64_FUNCT3_LH:
+        desc->paged_helper = (uintptr_t)rv64_jit_load_i16;
+        desc->bare_helper = (uintptr_t)rv64_jit_load_bare_i16;
+        desc->len = 2;
+        return true;
+    case RV64_FUNCT3_LHU:
+        desc->paged_helper = (uintptr_t)rv64_jit_load_u16;
+        desc->bare_helper = (uintptr_t)rv64_jit_load_bare_u16;
+        desc->len = 2;
+        return true;
+    case RV64_FUNCT3_LW:
+        desc->paged_helper = (uintptr_t)rv64_jit_load_i32;
+        desc->bare_helper = (uintptr_t)rv64_jit_load_bare_i32;
+        desc->len = 4;
+        return true;
+    case RV64_FUNCT3_LWU:
+        desc->paged_helper = (uintptr_t)rv64_jit_load_u32;
+        desc->bare_helper = (uintptr_t)rv64_jit_load_bare_u32;
+        desc->len = 4;
+        return true;
+    case RV64_FUNCT3_LD:
+        desc->paged_helper = (uintptr_t)rv64_jit_load_u64;
+        desc->bare_helper = (uintptr_t)rv64_jit_load_bare_u64;
+        desc->len = 8;
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* Decode one supported RV64 integer store without emitting host code. */
+static bool decode_store_descriptor(uint32_t instr,
+                                    rv64_jit_store_descriptor_t *desc)
+{
+    Assert(desc != NULL, "jit: missing RV64 store descriptor output");
+
+    *desc = (rv64_jit_store_descriptor_t){
+        .rs1 = rv64_instr_rs1(instr),
+        .rs2 = rv64_instr_rs2(instr),
+        .imm = (int32_t)imm_s(instr),
+    };
+
+    switch (rv64_instr_funct3(instr))
+    {
+    case RV64_FUNCT3_SB:
+        desc->len = 1;
+        return true;
+    case RV64_FUNCT3_SH:
+        desc->len = 2;
+        return true;
+    case RV64_FUNCT3_SW:
+        desc->len = 4;
+        return true;
+    case RV64_FUNCT3_SD:
+        desc->len = 8;
+        return true;
+    default:
+        return false;
+    }
+}
+
 /* Emit the x86 load instruction matching one RV64 load funct3 field. */
 static bool emit_direct_pmem_load_rax(rv64_jit_writer_t *w, uint32_t funct3)
 {
@@ -6364,14 +6721,105 @@ static bool emit_guard_bare_address_in_pmem(rv64_jit_writer_t *w, uint32_t len,
            emit_jcc_rel32_placeholder(w, HOST_JCC_A, slow_disp);
 }
 
-/* Emit one helper-backed RV64 load for non-Bare address translation modes. */
-static bool emit_paged_load_instr(rv64_jit_writer_t *w,
-                                  rv64_jit_reg_cache_t *regs,
-                                  uint32_t rd, uint32_t rs1,
-                                  uint32_t funct3,
-                                  int32_t imm, uint32_t len,
-                                  uintptr_t helper, vaddr_t pc,
-                                  uint32_t completed_count)
+/*
+ * Emit all successful Bare load value arms and merge them with the value in
+ * RAX. The caller owns address formation, alignment, RD allocation and the
+ * alignment side exit; keeping those outside gives every value arm the same
+ * pre-load register-cache mapping.
+ */
+static bool emit_bare_load_value_rax(
+    rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+    const rv64_jit_load_descriptor_t *desc, vaddr_t pc,
+    rv64_jit_mmio_route_builder_t *mmio_routes,
+    uint32_t *direct_mmio_done_count)
+{
+    uint8_t *range_slow_disp = NULL;
+    uint8_t *fast_done_disp = NULL;
+    uint8_t *cached_mmio_done_disp = NULL;
+    uint8_t *direct_mmio_done_disps[RV64_JIT_DIRECT_MMIO_MAX_MAPS] = {0};
+    uint8_t route_site = RV64_JIT_MMIO_ROUTE_NO_SITE;
+    uint64_t observed_addr;
+    uint64_t observed_host = 0;
+
+    Assert(desc != NULL, "jit: missing Bare load descriptor");
+    Assert(direct_mmio_done_count != NULL,
+           "jit: missing Bare load MMIO-site output");
+
+    observed_addr = observed_bare_address(desc->rs1, desc->imm);
+    *direct_mmio_done_count = 0;
+
+    if (direct_mmio_load_address_observed(
+            observed_addr, desc->len, &observed_host))
+    {
+        route_site = mmio_route_reserve_site(
+            mmio_routes, observed_addr, observed_host);
+    }
+
+    /*
+     * Only a site observed as direct MMIO at block entry gets this pre-PMEM
+     * specialisation. A changed tag falls through to the byte-for-byte PMEM
+     * proof and complete classifier/helper path.
+     */
+    if (route_site != RV64_JIT_MMIO_ROUTE_NO_SITE &&
+        !emit_direct_mmio_load_route_probe(
+            w, mmio_routes, route_site, desc->funct3,
+            &cached_mmio_done_disp))
+    {
+        return false;
+    }
+
+    if (!emit_mov_rdx_rax(w) ||
+        !emit_guard_bare_address_in_pmem(
+            w, desc->len, &range_slow_disp) ||
+        !emit_direct_pmem_load_rax(w, desc->funct3) ||
+        !emit_jmp_rel32_placeholder(w, &fast_done_disp))
+    {
+        return false;
+    }
+
+    patch_rel32(range_slow_disp, w->cur);
+
+    if (!emit_inline_direct_mmio_loads(
+            w, desc->funct3, desc->len, mmio_routes, route_site,
+            direct_mmio_done_disps, direct_mmio_done_count))
+    {
+        return false;
+    }
+
+    /*
+     * An aligned out-of-PMEM Bare-mode load may be MMIO. Enter at the physical
+     * helper because the emitted guards already completed the alignment, mode,
+     * and PMEM-range checks. paddr_read() still preserves device callbacks and
+     * invalid-address behaviour before native execution continues.
+     */
+    if (!jit_reg_emit_flush_all_dirty(w, regs) ||
+        !emit_mov_rdi_rax(w) ||
+        !emit_store_pc_imm(w, pc) ||
+        !emit_call_abs(w, desc->bare_helper) ||
+        !emit_load_jit_bases(w))
+    {
+        return false;
+    }
+
+    /* Every successful arm now has its architectural load value in RAX. */
+    patch_rel32(fast_done_disp, w->cur);
+    if (cached_mmio_done_disp != NULL)
+    {
+        patch_rel32(cached_mmio_done_disp, w->cur);
+    }
+    for (uint32_t i = 0; i < *direct_mmio_done_count; i++)
+    {
+        patch_rel32(direct_mmio_done_disps[i], w->cur);
+    }
+
+    return true;
+}
+
+/* Emit one RV64 load for a translated, non-Bare address mode. */
+static bool emit_paged_load_instr(
+    rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+    const rv64_jit_load_descriptor_t *desc, vaddr_t pc,
+    uint32_t completed_count)
 {
     uint8_t *align_slow_disp = NULL;
     uint8_t *fast_done_disp = NULL;
@@ -6379,15 +6827,15 @@ static bool emit_paged_load_instr(rv64_jit_writer_t *w,
     rv64_jit_tlb_guard_patch_t tlb_guard = {0};
     rv64_jit_reg_cache_t side_exit_regs;
 
-    if (!jit_reg_read_rax(w, regs, rs1) ||
-        !emit_add_rax_imm32(w, imm))
+    if (!jit_reg_read_rax(w, regs, desc->rs1) ||
+        !emit_add_rax_imm32(w, desc->imm))
     {
         return false;
     }
 
     side_exit_regs = *regs;
 
-    if (!emit_alignment_guard_al(w, len, &align_slow_disp))
+    if (!emit_alignment_guard_al(w, desc->len, &align_slow_disp))
     {
         return false;
     }
@@ -6399,7 +6847,8 @@ static bool emit_paged_load_instr(rv64_jit_writer_t *w,
      * TLB or reports faults/MMIO.
      */
     if (!emit_mov_rcx_rax(w) ||
-        !emit_inline_sv39_load_fast_path(w, funct3, len, &tlb_guard))
+        !emit_inline_sv39_load_fast_path(
+            w, desc->funct3, desc->len, &tlb_guard))
     {
         return false;
     }
@@ -6416,7 +6865,7 @@ static bool emit_paged_load_instr(rv64_jit_writer_t *w,
         !jit_reg_emit_flush_all_dirty(w, regs) ||
         !emit_mov_rdi_rax(w) ||
         !emit_store_pc_imm(w, pc) ||
-        !emit_call_abs(w, helper) ||
+        !emit_call_abs(w, desc->paged_helper) ||
         !emit_load_jit_bases(w))
     {
         return false;
@@ -6424,7 +6873,7 @@ static bool emit_paged_load_instr(rv64_jit_writer_t *w,
 
     patch_rel32(fast_done_disp, w->cur);
 
-    if (!jit_reg_write_rax(w, regs, rd))
+    if (!jit_reg_write_rax(w, regs, desc->rd))
     {
         return false;
     }
@@ -6459,167 +6908,40 @@ static bool emit_paged_load_instr(rv64_jit_writer_t *w,
     return true;
 }
 
-/* Emit one guarded bare-mode RV64 load that falls back before unsafe accesses. */
-bool rv64_jit_emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
-                              uint32_t instr, vaddr_t pc,
-                              uint32_t completed_count,
-                              rv64_jit_mmio_route_builder_t *mmio_routes)
+/* Emit one guarded Bare-mode RV64 load. */
+static bool emit_bare_load_instr(
+    rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+    const rv64_jit_load_descriptor_t *desc, vaddr_t pc,
+    uint32_t completed_count,
+    rv64_jit_mmio_route_builder_t *mmio_routes)
 {
-    const uint32_t rd = rv64_instr_rd(instr);
-    const uint32_t funct3 = rv64_instr_funct3(instr);
-    const uint32_t rs1 = rv64_instr_rs1(instr);
-    const int32_t imm = (int32_t)imm_i(instr);
-    uint32_t len = 0;
-    uintptr_t helper = 0;
-    uintptr_t bare_helper = 0;
     uint8_t *align_slow_disp = NULL;
-    uint8_t *range_slow_disp = NULL;
-    uint8_t *fast_done_disp = NULL;
-    uint8_t *cached_mmio_done_disp = NULL;
-    uint8_t *direct_mmio_done_disps[RV64_JIT_DIRECT_MMIO_MAX_MAPS] = {0};
     uint32_t direct_mmio_done_count = 0;
     uint8_t *done_disp = NULL;
     rv64_jit_reg_cache_t side_exit_regs;
 
-    switch (funct3)
-    {
-    case RV64_FUNCT3_LB:
-        helper = (uintptr_t)rv64_jit_load_i8;
-        bare_helper = (uintptr_t)rv64_jit_load_bare_i8;
-        len = 1;
-        break;
-    case RV64_FUNCT3_LBU:
-        helper = (uintptr_t)rv64_jit_load_u8;
-        bare_helper = (uintptr_t)rv64_jit_load_bare_u8;
-        len = 1;
-        break;
-    case RV64_FUNCT3_LH:
-        helper = (uintptr_t)rv64_jit_load_i16;
-        bare_helper = (uintptr_t)rv64_jit_load_bare_i16;
-        len = 2;
-        break;
-    case RV64_FUNCT3_LHU:
-        helper = (uintptr_t)rv64_jit_load_u16;
-        bare_helper = (uintptr_t)rv64_jit_load_bare_u16;
-        len = 2;
-        break;
-    case RV64_FUNCT3_LW:
-        helper = (uintptr_t)rv64_jit_load_i32;
-        bare_helper = (uintptr_t)rv64_jit_load_bare_i32;
-        len = 4;
-        break;
-    case RV64_FUNCT3_LWU:
-        helper = (uintptr_t)rv64_jit_load_u32;
-        bare_helper = (uintptr_t)rv64_jit_load_bare_u32;
-        len = 4;
-        break;
-    case RV64_FUNCT3_LD:
-        helper = (uintptr_t)rv64_jit_load_u64;
-        bare_helper = (uintptr_t)rv64_jit_load_bare_u64;
-        len = 8;
-        break;
-    default:
-        return false;
-    }
-
-    /*
-     * The direct PMEM tier is intentionally Bare-mode only.  Non-Bare modes use
-     * helper calls below, because Sv39 permission and effective-privilege checks
-     * are subtler than this physical-address range proof.
-     */
-    if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) !=
-        RV64_JIT_SATP_MODE_BARE)
-    {
-        return emit_paged_load_instr(w, regs, rd, rs1, funct3, imm, len, helper, pc,
-                                     completed_count);
-    }
-
-    if (!jit_reg_read_rax(w, regs, rs1) ||
-        !emit_add_rax_imm32(w, imm))
+    if (!jit_reg_read_rax(w, regs, desc->rs1) ||
+        !emit_add_rax_imm32(w, desc->imm))
     {
         return false;
     }
 
     side_exit_regs = *regs;
 
-    if (!emit_alignment_guard_al(w, len, &align_slow_disp))
-    {
-        return false;
-    }
-
-    uint8_t route_site = RV64_JIT_MMIO_ROUTE_NO_SITE;
-    const uint64_t observed_addr = observed_bare_address(rs1, imm);
-    uint64_t observed_host = 0;
-
-    if (direct_mmio_load_address_observed(
-            observed_addr, len, &observed_host))
-    {
-        route_site = mmio_route_reserve_site(
-            mmio_routes, observed_addr, observed_host);
-    }
-
-    /*
-     * Only a site observed as direct MMIO at block entry gets this pre-PMEM
-     * specialisation. A changed tag falls through to the byte-for-byte PMEM
-     * proof and complete classifier/helper path.
-     */
-    if (route_site != RV64_JIT_MMIO_ROUTE_NO_SITE &&
-        !emit_direct_mmio_load_route_probe(
-            w, mmio_routes, route_site, funct3,
-            &cached_mmio_done_disp))
-    {
-        return false;
-    }
-
-    if (!emit_mov_rdx_rax(w) ||
-        !emit_guard_bare_address_in_pmem(w, len, &range_slow_disp) ||
-        !emit_direct_pmem_load_rax(w, funct3) ||
-        !emit_jmp_rel32_placeholder(w, &fast_done_disp))
-    {
-        return false;
-    }
-
-    patch_rel32(range_slow_disp, w->cur);
-
-    if (!emit_inline_direct_mmio_loads(
-            w, funct3, len, mmio_routes, route_site,
-            direct_mmio_done_disps,
-            &direct_mmio_done_count))
+    if (!emit_alignment_guard_al(w, desc->len, &align_slow_disp))
     {
         return false;
     }
 
     /*
-     * An aligned out-of-PMEM Bare-mode load may be MMIO. Enter at the physical
-     * helper because the emitted guards already completed the alignment, mode,
-     * and PMEM-range checks. paddr_read() still preserves device callbacks and
-     * invalid-address behaviour before native execution continues.
-     */
-    if (!jit_reg_emit_flush_all_dirty(w, regs) ||
-        !emit_mov_rdi_rax(w) ||
-        !emit_store_pc_imm(w, pc) ||
-        !emit_call_abs(w, bare_helper) ||
-        !emit_load_jit_bases(w))
-    {
-        return false;
-    }
-
-    /*
-     * Both successful arms still describe the pre-load register mapping here.
+     * Every successful value arm still describes the pre-load register mapping.
      * Allocate and write RD only after they merge, so an LRU spill is emitted on
      * both paths instead of being hidden in the skipped direct-PMEM arm.
      */
-    patch_rel32(fast_done_disp, w->cur);
-    if (cached_mmio_done_disp != NULL)
-    {
-        patch_rel32(cached_mmio_done_disp, w->cur);
-    }
-    for (uint32_t i = 0; i < direct_mmio_done_count; i++)
-    {
-        patch_rel32(direct_mmio_done_disps[i], w->cur);
-    }
-
-    if (!jit_reg_write_rax(w, regs, rd))
+    if (!emit_bare_load_value_rax(
+            w, regs, desc, pc, mmio_routes,
+            &direct_mmio_done_count) ||
+        !jit_reg_write_rax(w, regs, desc->rd))
     {
         return false;
     }
@@ -6654,13 +6976,35 @@ bool rv64_jit_emit_load_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     return true;
 }
 
-/* Emit one helper-backed RV64 store for non-Bare address translation modes. */
-static bool emit_paged_store_instr(rv64_jit_writer_t *w,
-                                   rv64_jit_reg_cache_t *regs,
-                                   uint32_t rs1, uint32_t rs2,
-                                   int32_t imm, uint32_t len,
-                                   vaddr_t pc, vaddr_t next_pc,
-                                   uint32_t completed_count)
+/* Decode one integer load and select the address-translation emitter. */
+bool rv64_jit_emit_load_instr(rv64_jit_writer_t *w,
+                              rv64_jit_reg_cache_t *regs,
+                              uint32_t instr, vaddr_t pc,
+                              uint32_t completed_count,
+                              rv64_jit_mmio_route_builder_t *mmio_routes)
+{
+    rv64_jit_load_descriptor_t desc;
+
+    if (!decode_load_descriptor(instr, &desc))
+    {
+        return false;
+    }
+
+    if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) ==
+        RV64_JIT_SATP_MODE_BARE)
+    {
+        return emit_bare_load_instr(
+            w, regs, &desc, pc, completed_count, mmio_routes);
+    }
+
+    return emit_paged_load_instr(w, regs, &desc, pc, completed_count);
+}
+
+/* Emit one RV64 store for a translated, non-Bare address mode. */
+static bool emit_paged_store_instr(
+    rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+    const rv64_jit_store_descriptor_t *desc, vaddr_t pc,
+    vaddr_t next_pc, uint32_t completed_count)
 {
     uint8_t *align_slow_disp = NULL;
     uint8_t *cross_chunk_disp = NULL;
@@ -6674,15 +7018,15 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
     rv64_jit_tlb_guard_patch_t tlb_guard = {0};
     rv64_jit_reg_cache_t side_exit_regs;
 
-    if (!jit_reg_read_rax(w, regs, rs1) ||
-        !emit_add_rax_imm32(w, imm))
+    if (!jit_reg_read_rax(w, regs, desc->rs1) ||
+        !emit_add_rax_imm32(w, desc->imm))
     {
         return false;
     }
 
     side_exit_regs = *regs;
 
-    if (!emit_alignment_guard_al(w, len, &align_slow_disp))
+    if (!emit_alignment_guard_al(w, desc->len, &align_slow_disp))
     {
         return false;
     }
@@ -6695,14 +7039,14 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
      * sensitive writes, MMIO, and faults retain the dispatcher boundary.
      */
     if (!emit_mov_rdi_rax(w) ||
-        !jit_reg_read_rcx(w, regs, rs2) ||
-        !emit_inline_sv39_store_address(w, len, &tlb_guard) ||
-        !emit_guard_store_not_compiled_source(w, len, &cross_chunk_disp,
+        !jit_reg_read_rcx(w, regs, desc->rs2) ||
+        !emit_inline_sv39_store_address(w, desc->len, &tlb_guard) ||
+        !emit_guard_store_not_compiled_source(w, desc->len, &cross_chunk_disp,
                                               &source_chunk_disp) ||
         !emit_guard_store_not_translation_dependency(
             w, &data_page_table_disp, &ifetch_page_table_disp) ||
         !emit_inline_paged_store_hit_stats(w) ||
-        !emit_direct_pmem_store_from_rcx(w, len) ||
+        !emit_direct_pmem_store_from_rcx(w, desc->len) ||
         !emit_jmp_rel32_placeholder(w, &fast_done_disp))
     {
         return false;
@@ -6717,7 +7061,7 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
 
     if (!jit_reg_emit_flush_all_dirty(w, regs) ||
         !emit_mov_rdx_rcx(w) ||
-        !emit_mov_esi_imm32(w, len) ||
+        !emit_mov_esi_imm32(w, desc->len) ||
         !emit_store_pc_imm(w, pc) ||
         !emit_call_abs(
             w, (uintptr_t)rv64_jit_store_vaddr_continue) ||
@@ -6773,125 +7117,47 @@ static bool emit_paged_store_instr(rv64_jit_writer_t *w,
     return true;
 }
 
-/* Emit one guarded bare-mode RV64 store that normally commits inline. */
-bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
-                               uint32_t instr, vaddr_t pc,
-                               vaddr_t next_pc, uint32_t completed_count,
-                               rv64_jit_mmio_route_builder_t *mmio_routes)
+/* Later merge targets produced by the two Bare store regions. */
+typedef struct
 {
-    const uint32_t funct3 = rv64_instr_funct3(instr);
-    const uint32_t rs1 = rv64_instr_rs1(instr);
-    const uint32_t rs2 = rv64_instr_rs2(instr);
-    const int32_t imm = (int32_t)imm_s(instr);
-    uint32_t len = 0;
-    uint8_t *align_slow_disp = NULL;
-    uint8_t *range_slow_disp = NULL;
+    uint8_t *direct_pmem_done_disp;
+    uint8_t *pmem_helper_continue_disp;
+    uint8_t *cached_mmio_done_disp;
+    uint8_t *mmio_helper_continue_disp;
+    uint8_t *direct_mmio_done_disps[RV64_JIT_DIRECT_MMIO_MAX_REGIONS];
+    uint32_t direct_mmio_done_count;
+} rv64_jit_bare_store_continuation_fixups_t;
+
+/*
+ * Emit the in-PMEM Bare store region. Its direct and helper-success branches
+ * remain unpatched until the later MMIO region has been emitted.
+ */
+static bool emit_bare_store_pmem_region(
+    rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+    const rv64_jit_store_descriptor_t *desc, vaddr_t pc,
+    vaddr_t next_pc, uint32_t completed_count,
+    rv64_jit_bare_store_continuation_fixups_t *continuations)
+{
     uint8_t *cross_chunk_disp = NULL;
     uint8_t *source_chunk_disp = NULL;
     uint8_t *data_page_table_disp = NULL;
     uint8_t *ifetch_page_table_disp = NULL;
-    uint8_t *exit_disp = NULL;
-    uint8_t *bare_helper_exit_disp = NULL;
-    uint8_t *direct_done_disp = NULL;
-    uint8_t *cached_mmio_done_disp = NULL;
-    uint8_t *continue_disp = NULL;
-    uint8_t *bare_helper_continue_disp = NULL;
-    uint8_t *direct_mmio_done_disps[RV64_JIT_DIRECT_MMIO_MAX_REGIONS] = {0};
-    uint32_t direct_mmio_done_count = 0;
-    rv64_jit_reg_cache_t side_exit_regs;
-
-    switch (funct3)
-    {
-    case RV64_FUNCT3_SB:
-        len = 1;
-        break;
-    case RV64_FUNCT3_SH:
-        len = 2;
-        break;
-    case RV64_FUNCT3_SW:
-        len = 4;
-        break;
-    case RV64_FUNCT3_SD:
-        len = 8;
-        break;
-    default:
-        return false;
-    }
-
-    if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) !=
-        RV64_JIT_SATP_MODE_BARE)
-    {
-        return emit_paged_store_instr(w, regs, rs1, rs2, imm, len, pc, next_pc,
-                                      completed_count);
-    }
-
-    if (!jit_reg_read_rax(w, regs, rs1) ||
-        !emit_add_rax_imm32(w, imm))
-    {
-        return false;
-    }
+    uint8_t *helper_exit_disp = NULL;
 
     /*
-     * Both sides of the PMEM range guard must agree on which host register
-     * contains rs2. Materialise it before the branch; otherwise the compiler
-     * could record a load emitted only on the PMEM path and the MMIO path would
-     * read an uninitialised cache slot.
-     */
-    if (rs2 != RV64_GPR_ZERO &&
-        jit_reg_loaded_slot(w, regs, rs2) == NULL)
-    {
-        return false;
-    }
-
-    side_exit_regs = *regs;
-
-    if (!emit_alignment_guard_al(w, len, &align_slow_disp))
-    {
-        return false;
-    }
-
-    uint8_t route_site = RV64_JIT_MMIO_ROUTE_NO_SITE;
-    const uint64_t observed_addr = observed_bare_address(rs1, imm);
-    uint64_t observed_host = 0;
-
-    if (direct_mmio_store_address_observed(
-            observed_addr, len, &observed_host))
-    {
-        route_site = mmio_route_reserve_site(
-            mmio_routes, observed_addr, observed_host);
-    }
-
-    /*
-     * A warmed exact MMIO store bypasses the PMEM proof. Any changed address
-     * retains RAX and executes the complete established PMEM or MMIO path.
-     */
-    if (route_site != RV64_JIT_MMIO_ROUTE_NO_SITE &&
-        !emit_direct_mmio_store_route_probe(
-            w, regs, mmio_routes, route_site, rs2, len,
-            &cached_mmio_done_disp))
-    {
-        return false;
-    }
-
-    if (!emit_mov_rdx_rax(w) ||
-        !emit_guard_bare_address_in_pmem(w, len, &range_slow_disp))
-    {
-        return false;
-    }
-
-    /*
-     * Ordinary PMEM stores can write directly and keep executing.  Stores that
+     * Ordinary PMEM stores can write directly and keep executing. Stores that
      * cross a source-tracking chunk, overlap compiled source, or touch cached
      * page-table bytes use the helper so exact invalidation happens after the
      * write and before any later translated fetch.
      */
-    if (!jit_reg_read_rcx(w, regs, rs2) ||
-        !emit_guard_store_not_compiled_source(w, len, &cross_chunk_disp,
-                                              &source_chunk_disp) ||
+    if (!jit_reg_read_rcx(w, regs, desc->rs2) ||
+        !emit_guard_store_not_compiled_source(
+            w, desc->len, &cross_chunk_disp, &source_chunk_disp) ||
         !emit_guard_store_not_translation_dependency(
             w, &data_page_table_disp, &ifetch_page_table_disp) ||
-        !emit_direct_pmem_store_from_rcx(w, len) ||
-        !emit_jmp_rel32_placeholder(w, &direct_done_disp))
+        !emit_direct_pmem_store_from_rcx(w, desc->len) ||
+        !emit_jmp_rel32_placeholder(
+            w, &continuations->direct_pmem_done_disp))
     {
         return false;
     }
@@ -6903,33 +7169,180 @@ bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
     patch_rel32(ifetch_page_table_disp, helper_path);
 
     /*
-     * The helper's EAX result follows the named cross-unit store ABI.  `test
-     * eax,eax` therefore sends RV64_JIT_STORE_MUST_EXIT (zero) to the side exit
-     * and lets RV64_JIT_STORE_MAY_CONTINUE (one) rejoin native execution.
+     * Zero in EAX is RV64_JIT_STORE_MUST_EXIT; one is
+     * RV64_JIT_STORE_MAY_CONTINUE. Keep this branch direction explicit because
+     * reversing it would run native code after a sensitive source write.
      */
     if (!jit_reg_emit_flush_all_dirty(w, regs) ||
         !emit_mov_rdi_rdx(w) ||
         !emit_movabs_rax(w, (uint64_t)CONFIG_MBASE) ||
         !emit_add_rdi_rax(w) ||
         !emit_mov_rdx_rcx(w) ||
-        !emit_mov_esi_imm32(w, len) ||
+        !emit_mov_esi_imm32(w, desc->len) ||
         !emit_store_pc_imm(w, pc) ||
         !emit_call_abs(w, (uintptr_t)rv64_jit_store_pmem_continue) ||
         !emit_load_jit_bases(w) ||
         !emit_test_eax_eax(w) ||
-        !emit_jcc_rel32_placeholder(w, HOST_JCC_E, &exit_disp) ||
-        !emit_jmp_rel32_placeholder(w, &continue_disp))
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_E, &helper_exit_disp) ||
+        !emit_jmp_rel32_placeholder(
+            w, &continuations->pmem_helper_continue_disp))
     {
         return false;
     }
 
-    patch_rel32(exit_disp, w->cur);
+    patch_rel32(helper_exit_disp, w->cur);
 
-    if (!emit_load_cpu_base(w) ||
-        !emit_store_pc_imm(w, next_pc) ||
-        !emit_inc_jit_stat_counter(w,
-                                   &rv64_jit_stats.side_exit_by_reason[RV64_JIT_SIDE_EXIT_STORE_SOURCE]) ||
-        !emit_return_total_retired(w, completed_count + 1u))
+    return emit_load_cpu_base(w) &&
+           emit_store_pc_imm(w, next_pc) &&
+           emit_inc_jit_stat_counter(
+               w, &rv64_jit_stats.side_exit_by_reason[
+                      RV64_JIT_SIDE_EXIT_STORE_SOURCE]) &&
+           emit_return_total_retired(w, completed_count + 1u);
+}
+
+/*
+ * Emit the out-of-PMEM Bare store region. Entry requires the original physical
+ * address in RAX; every direct-range miss preserves it for the exact-once helper.
+ */
+static bool emit_bare_store_mmio_region(
+    rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+    const rv64_jit_store_descriptor_t *desc, vaddr_t pc,
+    vaddr_t next_pc, uint32_t completed_count,
+    rv64_jit_mmio_route_builder_t *mmio_routes, uint8_t route_site,
+    rv64_jit_bare_store_continuation_fixups_t *continuations)
+{
+    uint8_t *helper_exit_disp = NULL;
+
+    /*
+     * An explicit direct-write subregion can commit without exposing dirty GPRs
+     * to C. Every unmatched address and width retains RAX and falls through to
+     * the existing exact-once helper path.
+     */
+    if (!emit_inline_direct_mmio_stores(
+            w, regs, desc->rs2, desc->len, mmio_routes, route_site,
+            continuations->direct_mmio_done_disps,
+            &continuations->direct_mmio_done_count))
+    {
+        return false;
+    }
+
+    /*
+     * Commit the MMIO access exactly once through paddr_write(), then either
+     * rejoin the continuing native path or retire it at a safe boundary. As in
+     * the PMEM helper ABI, zero in EAX must take the exit.
+     */
+    if (!jit_reg_read_rcx(w, regs, desc->rs2) ||
+        !jit_reg_emit_flush_all_dirty(w, regs) ||
+        !emit_mov_rdi_rax(w) ||
+        !emit_mov_rdx_rcx(w) ||
+        !emit_mov_esi_imm32(w, desc->len) ||
+        !emit_store_pc_imm(w, pc) ||
+        !emit_call_abs(w, (uintptr_t)rv64_jit_store_bare_continue) ||
+        !emit_load_jit_bases(w) ||
+        !emit_test_eax_eax(w) ||
+        !emit_jcc_rel32_placeholder(
+            w, HOST_JCC_E, &helper_exit_disp) ||
+        !emit_jmp_rel32_placeholder(
+            w, &continuations->mmio_helper_continue_disp))
+    {
+        return false;
+    }
+
+    patch_rel32(helper_exit_disp, w->cur);
+
+    return emit_store_pc_imm(w, next_pc) &&
+           emit_inc_jit_stat_counter(
+               w, &rv64_jit_stats.side_exit_by_reason[
+                      RV64_JIT_SIDE_EXIT_STORE_HELPER]) &&
+           emit_return_total_retired(w, completed_count + 1u);
+}
+
+/* Patch every successful Bare store arm to the common native continuation. */
+static void patch_bare_store_continuations(
+    rv64_jit_writer_t *w,
+    const rv64_jit_bare_store_continuation_fixups_t *continuations)
+{
+    patch_rel32(continuations->direct_pmem_done_disp, w->cur);
+    patch_rel32(continuations->pmem_helper_continue_disp, w->cur);
+    patch_rel32(continuations->mmio_helper_continue_disp, w->cur);
+
+    if (continuations->cached_mmio_done_disp != NULL)
+    {
+        patch_rel32(continuations->cached_mmio_done_disp, w->cur);
+    }
+
+    for (uint32_t i = 0; i < continuations->direct_mmio_done_count; i++)
+    {
+        patch_rel32(continuations->direct_mmio_done_disps[i], w->cur);
+    }
+}
+
+/* Emit one guarded Bare-mode RV64 store that normally commits inline. */
+static bool emit_bare_store_instr(
+    rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+    const rv64_jit_store_descriptor_t *desc, vaddr_t pc,
+    vaddr_t next_pc, uint32_t completed_count,
+    rv64_jit_mmio_route_builder_t *mmio_routes)
+{
+    uint8_t *align_slow_disp = NULL;
+    uint8_t *range_slow_disp = NULL;
+    rv64_jit_bare_store_continuation_fixups_t continuations = {0};
+    rv64_jit_reg_cache_t side_exit_regs;
+
+    if (!jit_reg_read_rax(w, regs, desc->rs1) ||
+        !emit_add_rax_imm32(w, desc->imm))
+    {
+        return false;
+    }
+
+    /*
+     * Both sides of the PMEM range guard must agree on which host register
+     * contains rs2. Materialise it before capturing side-exit state; otherwise
+     * the MMIO path could read a cache slot loaded only on the PMEM path.
+     */
+    if (desc->rs2 != RV64_GPR_ZERO &&
+        jit_reg_loaded_slot(w, regs, desc->rs2) == NULL)
+    {
+        return false;
+    }
+
+    side_exit_regs = *regs;
+
+    if (!emit_alignment_guard_al(w, desc->len, &align_slow_disp))
+    {
+        return false;
+    }
+
+    uint8_t route_site = RV64_JIT_MMIO_ROUTE_NO_SITE;
+    const uint64_t observed_addr =
+        observed_bare_address(desc->rs1, desc->imm);
+    uint64_t observed_host = 0;
+
+    if (direct_mmio_store_address_observed(
+            observed_addr, desc->len, &observed_host))
+    {
+        route_site = mmio_route_reserve_site(
+            mmio_routes, observed_addr, observed_host);
+    }
+
+    /*
+     * A warmed exact MMIO store bypasses the PMEM proof. Any changed address
+     * retains RAX and executes the complete established PMEM or MMIO path.
+     */
+    if (route_site != RV64_JIT_MMIO_ROUTE_NO_SITE &&
+        !emit_direct_mmio_store_route_probe(
+            w, regs, mmio_routes, route_site, desc->rs2, desc->len,
+            &continuations.cached_mmio_done_disp))
+    {
+        return false;
+    }
+
+    if (!emit_mov_rdx_rax(w) ||
+        !emit_guard_bare_address_in_pmem(
+            w, desc->len, &range_slow_disp) ||
+        !emit_bare_store_pmem_region(
+            w, regs, desc, pc, next_pc, completed_count, &continuations))
     {
         return false;
     }
@@ -6948,72 +7361,49 @@ bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
 
     patch_rel32(range_slow_disp, w->cur);
 
-    /*
-     * An explicit direct-write subregion can commit without exposing dirty GPRs
-     * to C. Every unmatched address and width retains RAX and falls through to
-     * the existing exact-once helper path.
-     */
-    if (!emit_inline_direct_mmio_stores(
-            w, regs, rs2, len, mmio_routes, route_site,
-            direct_mmio_done_disps,
-            &direct_mmio_done_count))
+    if (!emit_bare_store_mmio_region(
+            w, regs, desc, pc, next_pc, completed_count,
+            mmio_routes, route_site, &continuations))
     {
         return false;
     }
 
-    /*
-     * The range guard leaves the original physical address in RAX. Commit the
-     * MMIO access exactly once through paddr_write(), then either rejoin the
-     * continuing native path or retire the completed store at a safe boundary.
-     */
-    if (!jit_reg_read_rcx(w, regs, rs2) ||
-        !jit_reg_emit_flush_all_dirty(w, regs) ||
-        !emit_mov_rdi_rax(w) ||
-        !emit_mov_rdx_rcx(w) ||
-        !emit_mov_esi_imm32(w, len) ||
-        !emit_store_pc_imm(w, pc) ||
-        !emit_call_abs(w, (uintptr_t)rv64_jit_store_bare_continue) ||
-        !emit_load_jit_bases(w) ||
-        !emit_test_eax_eax(w) ||
-        !emit_jcc_rel32_placeholder(w, HOST_JCC_E,
-                                    &bare_helper_exit_disp) ||
-        !emit_jmp_rel32_placeholder(w, &bare_helper_continue_disp))
-    {
-        return false;
-    }
-
-    patch_rel32(bare_helper_exit_disp, w->cur);
-
-    if (!emit_store_pc_imm(w, next_pc) ||
-        !emit_inc_jit_stat_counter(w,
-                                   &rv64_jit_stats.side_exit_by_reason[RV64_JIT_SIDE_EXIT_STORE_HELPER]) ||
-        !emit_return_total_retired(w, completed_count + 1u))
-    {
-        return false;
-    }
-
-    patch_rel32(direct_done_disp, w->cur);
-    patch_rel32(continue_disp, w->cur);
-    patch_rel32(bare_helper_continue_disp, w->cur);
-    if (cached_mmio_done_disp != NULL)
-    {
-        patch_rel32(cached_mmio_done_disp, w->cur);
-    }
-
-    for (uint32_t i = 0; i < direct_mmio_done_count; i++)
-    {
-        patch_rel32(direct_mmio_done_disps[i], w->cur);
-    }
+    patch_bare_store_continuations(w, &continuations);
 
     JIT_STAT_INC(emitted_sites.native_stores);
     JIT_STAT_INC(emitted_sites.native_store_continuations);
 
-    if (direct_mmio_done_count != 0u)
+    if (continuations.direct_mmio_done_count != 0u)
     {
         JIT_STAT_INC(emitted_sites.direct_mmio_store_sites);
     }
 
     return true;
+}
+
+/* Decode one integer store and select the address-translation emitter. */
+bool rv64_jit_emit_store_instr(rv64_jit_writer_t *w,
+                               rv64_jit_reg_cache_t *regs,
+                               uint32_t instr, vaddr_t pc,
+                               vaddr_t next_pc, uint32_t completed_count,
+                               rv64_jit_mmio_route_builder_t *mmio_routes)
+{
+    rv64_jit_store_descriptor_t desc;
+
+    if (!decode_store_descriptor(instr, &desc))
+    {
+        return false;
+    }
+
+    if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) ==
+        RV64_JIT_SATP_MODE_BARE)
+    {
+        return emit_bare_store_instr(
+            w, regs, &desc, pc, next_pc, completed_count, mmio_routes);
+    }
+
+    return emit_paged_store_instr(
+        w, regs, &desc, pc, next_pc, completed_count);
 }
 
 /*

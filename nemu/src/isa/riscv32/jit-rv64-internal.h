@@ -392,12 +392,22 @@ typedef struct
         entries[RV64_JIT_INDIRECT_JUMP_CACHE_ENTRIES];
 } rv64_jit_indirect_jump_cache_t;
 
+/*
+ * Only these cursors change while an indirect jump-cache site is emitted.
+ * Keeping them separate from the append-only fixup payload lets a failed
+ * candidate restore progress without copying or disturbing valid records.
+ */
+typedef struct
+{
+    uint8_t fixup_count;
+    bool used;
+} rv64_jit_indirect_jump_cache_builder_state_t;
+
 typedef struct
 {
     uint8_t *address_immediates[
         RV64_JIT_INDIRECT_JUMP_CACHE_MAX_FIXUPS];
-    uint8_t fixup_count;
-    bool used;
+    rv64_jit_indirect_jump_cache_builder_state_t state;
 } rv64_jit_indirect_jump_cache_builder_t;
 
 _Static_assert(
@@ -468,6 +478,18 @@ typedef struct
     rv64_jit_link_t links[RV64_JIT_INDIRECT_PIC_WAYS];
 } rv64_jit_indirect_pic_t;
 
+/*
+ * `kind` belongs to speculative builder progress as well as the count and
+ * usage flag: rolling back only the cursors could otherwise leave a later
+ * site labelled with the abandoned candidate's dispatch kind.
+ */
+typedef struct
+{
+    uint8_t fixup_count;
+    uint8_t kind;
+    bool used;
+} rv64_jit_indirect_pic_builder_state_t;
+
 typedef struct
 {
     uint8_t *address_immediates[RV64_JIT_INDIRECT_PIC_MAX_FIXUPS];
@@ -475,9 +497,7 @@ typedef struct
     uint8_t *target_disps[RV64_JIT_INDIRECT_PIC_WAYS];
     const uint8_t *guarded_paths[RV64_JIT_INDIRECT_PIC_WAYS];
     const uint8_t *patched_paths[RV64_JIT_INDIRECT_PIC_WAYS];
-    uint8_t fixup_count;
-    uint8_t kind;
-    bool used;
+    rv64_jit_indirect_pic_builder_state_t state;
 } rv64_jit_indirect_pic_builder_t;
 
 _Static_assert(offsetof(rv64_jit_indirect_pic_t, links) ==
@@ -498,10 +518,16 @@ typedef struct
     bool patch_eligible;
 } rv64_jit_link_build_record_t;
 
+/* The record array is append-only; only its committed frontier rolls back. */
+typedef struct
+{
+    uint32_t count;
+} rv64_jit_link_builder_state_t;
+
 typedef struct
 {
     rv64_jit_link_build_record_t records[RV64_JIT_BLOCK_MAX_LINKS];
-    uint32_t count;
+    rv64_jit_link_builder_state_t state;
 } rv64_jit_link_builder_t;
 
 typedef struct
@@ -546,10 +572,19 @@ typedef struct
     uint8_t field;
 } rv64_jit_mmio_route_fixup_t;
 
+/*
+ * Route entries and fixups are append-only payloads.  These two frontiers are
+ * the complete mutable state needed to discard a speculative MMIO route.
+ */
 typedef struct
 {
     uint8_t site_count;
     uint8_t fixup_count;
+} rv64_jit_mmio_route_builder_state_t;
+
+typedef struct
+{
+    rv64_jit_mmio_route_builder_state_t state;
     rv64_jit_mmio_route_t initial_routes[RV64_JIT_MMIO_ROUTE_MAX_SITES];
     rv64_jit_mmio_route_fixup_t
         fixups[RV64_JIT_MMIO_ROUTE_MAX_FIXUPS];
@@ -800,6 +835,26 @@ typedef struct
     uint64_t fp_helper_gpr_dirty_mappings_preserved;
     uint64_t fp_helper_gpr_trap_stores;
 } rv64_jit_emitted_site_stats_t;
+
+/*
+ * Capture every emitter-owned cursor which a failed compilation candidate may
+ * advance.  Builder payloads remain in place beyond the restored frontiers;
+ * the next successful append will overwrite them.  Writer bounds, builder
+ * pointers and `overflowed` describe the containing emission attempt rather
+ * than a candidate, so they deliberately do not form part of this checkpoint.
+ */
+typedef struct
+{
+    uint8_t *writer_cur;
+    rv64_jit_reg_cache_t regs;
+    rv64_jit_link_builder_state_t links;
+    rv64_jit_indirect_pic_builder_state_t indirect_pic;
+    rv64_jit_indirect_jump_cache_builder_state_t indirect_jump_cache;
+    rv64_jit_mmio_route_builder_state_t mmio_routes;
+#if RV64_JIT_STATS
+    rv64_jit_emitted_site_stats_t emitted_sites;
+#endif
+} rv64_jit_emitter_checkpoint_t;
 
 typedef struct
 {
@@ -1348,6 +1403,19 @@ void rv64_jit_reg_cache_restore(rv64_jit_reg_cache_t *regs,
 void rv64_jit_reg_cache_set_liveness(rv64_jit_reg_cache_t *regs,
                                      uint32_t current_use_mask,
                                      uint32_t live_after_mask);
+void rv64_jit_emitter_checkpoint_capture(
+    rv64_jit_emitter_checkpoint_t *checkpoint,
+    const rv64_jit_writer_t *w,
+    const rv64_jit_reg_cache_t *regs,
+    const rv64_jit_mmio_route_builder_t *mmio_routes);
+void rv64_jit_emitter_checkpoint_restore(
+    const rv64_jit_emitter_checkpoint_t *checkpoint,
+    rv64_jit_writer_t *w,
+    rv64_jit_reg_cache_t *regs,
+    rv64_jit_mmio_route_builder_t *mmio_routes);
+#if RV64_JIT_STATS
+void rv64_jit_emitter_checkpoint_validate_once(void);
+#endif
 bool rv64_jit_prepare_stable_loop_regs(rv64_jit_writer_t *w,
                                        rv64_jit_reg_cache_t *regs,
                                        uint32_t reg_mask,

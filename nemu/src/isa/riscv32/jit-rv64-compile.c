@@ -427,60 +427,11 @@ jit_prescan_gpr_liveness(vaddr_t pc, uint32_t max_insns,
     return scan;
 }
 
-/*
- * Counters in this snapshot describe native sites emitted while compiling.
- * They are transactional for the same reason as native bytes and register-cache
- * metadata: bytes which are rolled back or never published must not appear in
- * the final profile as usable emitted sites.
- */
-#if RV64_JIT_STATS
-typedef rv64_jit_emitted_site_stats_t rv64_jit_emitted_site_snapshot_t;
-
-static rv64_jit_emitted_site_snapshot_t
-jit_snapshot_emitted_site_stats(void)
-{
-    return rv64_jit_stats.emitted_sites;
-}
-
-static void jit_restore_emitted_site_stats(
-    const rv64_jit_emitted_site_snapshot_t *snapshot)
-{
-    rv64_jit_stats.emitted_sites = *snapshot;
-}
-#else
-/* Keep call sites uniform; the optimiser removes this one-byte no-op snapshot. */
 typedef struct
 {
-    uint8_t unused;
-} rv64_jit_emitted_site_snapshot_t;
-
-static rv64_jit_emitted_site_snapshot_t
-jit_snapshot_emitted_site_stats(void)
-{
-    return (rv64_jit_emitted_site_snapshot_t){0};
-}
-
-static void jit_restore_emitted_site_stats(
-    const rv64_jit_emitted_site_snapshot_t *snapshot)
-{
-    (void)snapshot;
-}
-#endif
-
-typedef struct
-{
-    uint8_t *writer_cur;
-    rv64_jit_reg_cache_t regs;
+    rv64_jit_emitter_checkpoint_t emitter;
     rv64_jit_source_builder_t source;
     rv64_jit_ifetch_ref_builder_t ifetch_refs;
-    rv64_jit_emitted_site_snapshot_t emitted_site_stats;
-    uint8_t mmio_route_site_count;
-    uint8_t mmio_route_fixup_count;
-    uint8_t indirect_pic_fixup_count;
-    bool indirect_pic_used;
-    uint8_t indirect_jump_cache_fixup_count;
-    bool indirect_jump_cache_used;
-    uint32_t link_count;
 } rv64_jit_compile_snapshot_t;
 
 typedef enum
@@ -529,19 +480,10 @@ static bool jit_handle_emit_failure(rv64_jit_writer_t *w,
                                     rv64_jit_block_end_reason_t *block_end_reason,
                                     bool *arena_overflowed)
 {
-    w->cur = snapshot->writer_cur;
-    rv64_jit_reg_cache_restore(regs, &snapshot->regs);
+    rv64_jit_emitter_checkpoint_restore(
+        &snapshot->emitter, w, regs, mmio_routes);
     *source = snapshot->source;
     *ifetch_refs = snapshot->ifetch_refs;
-    mmio_routes->site_count = snapshot->mmio_route_site_count;
-    mmio_routes->fixup_count = snapshot->mmio_route_fixup_count;
-    w->indirect_pic->fixup_count = snapshot->indirect_pic_fixup_count;
-    w->indirect_pic->used = snapshot->indirect_pic_used;
-    w->indirect_jump_cache->fixup_count =
-        snapshot->indirect_jump_cache_fixup_count;
-    w->indirect_jump_cache->used = snapshot->indirect_jump_cache_used;
-    w->links->count = snapshot->link_count;
-    jit_restore_emitted_site_stats(&snapshot->emitted_site_stats);
 
     /*
      * A full writer is a compiler resource failure, not an unsupported RISC-V
@@ -572,11 +514,11 @@ static bool jit_finalise_links(rv64_jit_writer_t *w,
 {
     Assert(links != NULL, "jit: missing RV64 direct-link builder");
     Assert(records != NULL, "jit: missing RV64 direct-link sidecar result");
-    Assert(links->count <= RV64_JIT_BLOCK_MAX_LINKS,
+    Assert(links->state.count <= RV64_JIT_BLOCK_MAX_LINKS,
            "jit: too many RV64 direct-link records");
     *records = NULL;
 
-    if (links->count == 0)
+    if (links->state.count == 0)
     {
         return true;
     }
@@ -585,7 +527,7 @@ static bool jit_finalise_links(rv64_jit_writer_t *w,
         rv64_jit_align_up((uintptr_t)w->cur, _Alignof(rv64_jit_link_t));
     const size_t padding = (size_t)(aligned - (uintptr_t)w->cur);
     const size_t record_bytes =
-        (size_t)links->count * sizeof(rv64_jit_link_t);
+        (size_t)links->state.count * sizeof(rv64_jit_link_t);
     const size_t available = (size_t)(w->end - w->cur);
 
     if (padding > available || record_bytes > available - padding)
@@ -599,7 +541,7 @@ static bool jit_finalise_links(rv64_jit_writer_t *w,
     rv64_jit_link_t *persistent = (rv64_jit_link_t *)w->cur;
     memset(persistent, 0, record_bytes);
 
-    for (uint32_t i = 0; i < links->count; i++)
+    for (uint32_t i = 0; i < links->state.count; i++)
     {
         const rv64_jit_link_build_record_t *build = &links->records[i];
         persistent[i] = (rv64_jit_link_t){
@@ -753,8 +695,9 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         return NULL;
     }
 
-    const rv64_jit_emitted_site_snapshot_t attempt_site_stats =
-        jit_snapshot_emitted_site_stats();
+#if RV64_JIT_STATS
+    rv64_jit_emitter_checkpoint_validate_once();
+#endif
 
     if (rv64_jit_code_used + RV64_JIT_BLOCK_CODE_HEADROOM +
         RV64_JIT_MMIO_ROUTE_MAX_ALLOCATION +
@@ -780,11 +723,12 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     }
 
     /*
-     * Only the count needs initialising: every consumed build record is fully
-     * assigned when its edge is emitted, avoiding a large per-block stack clear.
+     * Initialise the complete transactional state so future frontiers start
+     * safely at zero. Every consumed payload record is still fully assigned
+     * when emitted, avoiding a large per-block stack clear.
      */
     rv64_jit_link_builder_t links;
-    links.count = 0;
+    links.state = (rv64_jit_link_builder_state_t){0};
     rv64_jit_indirect_pic_builder_t indirect_pic = {0};
     rv64_jit_indirect_jump_cache_builder_t indirect_jump_cache = {0};
     rv64_jit_writer_t w = {
@@ -798,11 +742,15 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     rv64_jit_reg_cache_t regs;
     rv64_jit_reg_cache_init(&regs);
     rv64_jit_mmio_route_builder_t mmio_routes = {0};
+    rv64_jit_emitter_checkpoint_t attempt_checkpoint;
+    rv64_jit_emitter_checkpoint_capture(
+        &attempt_checkpoint, &w, &regs, &mmio_routes);
 
     if (!rv64_jit_emit_prologue(&w))
     {
         *arena_overflowed = w.overflowed;
-        jit_restore_emitted_site_stats(&attempt_site_stats);
+        rv64_jit_emitter_checkpoint_restore(
+            &attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -822,7 +770,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                 loop_scan.loop_insn_count))
         {
             *arena_overflowed = w.overflowed;
-            jit_restore_emitted_site_stats(&attempt_site_stats);
+            rv64_jit_emitter_checkpoint_restore(
+                &attempt_checkpoint, &w, &regs, &mmio_routes);
             return NULL;
         }
 
@@ -895,21 +844,12 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                 &regs, current_uses, UINT32_MAX);
         }
 
-        const rv64_jit_compile_snapshot_t instr_snapshot = {
-            .writer_cur = w.cur,
-            .regs = regs,
+        rv64_jit_compile_snapshot_t instr_snapshot = {
             .source = source,
             .ifetch_refs = ifetch_refs_start,
-            .emitted_site_stats = jit_snapshot_emitted_site_stats(),
-            .mmio_route_site_count = mmio_routes.site_count,
-            .mmio_route_fixup_count = mmio_routes.fixup_count,
-            .indirect_pic_fixup_count = indirect_pic.fixup_count,
-            .indirect_pic_used = indirect_pic.used,
-            .indirect_jump_cache_fixup_count =
-                indirect_jump_cache.fixup_count,
-            .indirect_jump_cache_used = indirect_jump_cache.used,
-            .link_count = links.count,
         };
+        rv64_jit_emitter_checkpoint_capture(
+            &instr_snapshot.emitter, &w, &regs, &mmio_routes);
         bool stop_after_instruction = false;
 
         if (!rv64_jit_source_builder_append(&source, instruction_paddr,
@@ -932,7 +872,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                         &instr_snapshot, instr, &block_end_reason,
                         arena_overflowed))
                 {
-                    jit_restore_emitted_site_stats(&attempt_site_stats);
+                    rv64_jit_emitter_checkpoint_restore(
+                        &attempt_checkpoint, &w, &regs, &mmio_routes);
                     return NULL;
                 }
                 break;
@@ -966,7 +907,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                         &instr_snapshot, instr, &block_end_reason,
                         arena_overflowed))
                 {
-                    jit_restore_emitted_site_stats(&attempt_site_stats);
+                    rv64_jit_emitter_checkpoint_restore(
+                        &attempt_checkpoint, &w, &regs, &mmio_routes);
                     return NULL;
                 }
                 break;
@@ -993,7 +935,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                         &instr_snapshot, instr, &block_end_reason,
                         arena_overflowed))
                 {
-                    jit_restore_emitted_site_stats(&attempt_site_stats);
+                    rv64_jit_emitter_checkpoint_restore(
+                        &attempt_checkpoint, &w, &regs, &mmio_routes);
                     return NULL;
                 }
                 break;
@@ -1028,7 +971,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                         &instr_snapshot, instr, &block_end_reason,
                         arena_overflowed))
                 {
-                    jit_restore_emitted_site_stats(&attempt_site_stats);
+                    rv64_jit_emitter_checkpoint_restore(
+                        &attempt_checkpoint, &w, &regs, &mmio_routes);
                     return NULL;
                 }
                 break;
@@ -1057,7 +1001,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                         &instr_snapshot, instr, &block_end_reason,
                         arena_overflowed))
                 {
-                    jit_restore_emitted_site_stats(&attempt_site_stats);
+                    rv64_jit_emitter_checkpoint_restore(
+                        &attempt_checkpoint, &w, &regs, &mmio_routes);
                     return NULL;
                 }
                 break;
@@ -1078,7 +1023,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                     &instr_snapshot, instr, &block_end_reason,
                     arena_overflowed))
             {
-                jit_restore_emitted_site_stats(&attempt_site_stats);
+                rv64_jit_emitter_checkpoint_restore(
+                    &attempt_checkpoint, &w, &regs, &mmio_routes);
                 return NULL;
             }
             break;
@@ -1108,7 +1054,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                                       uses_translated_ifetch);
         }
 
-        jit_restore_emitted_site_stats(&attempt_site_stats);
+        rv64_jit_emitter_checkpoint_restore(
+            &attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -1127,7 +1074,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
                     &w, &regs, guest_pc, compiled_insn_count)))
     {
         *arena_overflowed = w.overflowed;
-        jit_restore_emitted_site_stats(&attempt_site_stats);
+        rv64_jit_emitter_checkpoint_restore(
+            &attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -1146,7 +1094,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
             native_body_entry, &chain_entry))
     {
         *arena_overflowed = w.overflowed;
-        jit_restore_emitted_site_stats(&attempt_site_stats);
+        rv64_jit_emitter_checkpoint_restore(
+            &attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -1156,13 +1105,14 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
      */
     const uint8_t *native_code_end = w.cur;
 
-    Assert(!(indirect_pic.used && indirect_jump_cache.used),
+    Assert(!(indirect_pic.state.used && indirect_jump_cache.state.used),
            "jit: one RV64 block selected both indirect cache kinds");
 
     if (!rv64_jit_finalise_mmio_routes(&w, &mmio_routes))
     {
         *arena_overflowed = w.overflowed;
-        jit_restore_emitted_site_stats(&attempt_site_stats);
+        rv64_jit_emitter_checkpoint_restore(
+            &attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -1170,7 +1120,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
             &w, &indirect_jump_cache))
     {
         *arena_overflowed = w.overflowed;
-        jit_restore_emitted_site_stats(&attempt_site_stats);
+        rv64_jit_emitter_checkpoint_restore(
+            &attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -1180,7 +1131,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
             &w, &indirect_pic, &indirect_pic_sidecar))
     {
         *arena_overflowed = w.overflowed;
-        jit_restore_emitted_site_stats(&attempt_site_stats);
+        rv64_jit_emitter_checkpoint_restore(
+            &attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -1189,7 +1141,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     if (!jit_finalise_links(&w, &links, &link_records))
     {
         *arena_overflowed = w.overflowed;
-        jit_restore_emitted_site_stats(&attempt_site_stats);
+        rv64_jit_emitter_checkpoint_restore(
+            &attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -1207,7 +1160,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         .native_code_end = native_code_end,
         .allocation_end = w.cur,
         .link_records = link_records,
-        .link_count = links.count,
+        .link_count = links.state.count,
         .indirect_pic = indirect_pic_sidecar,
         .source = &source,
         .ifetch_refs = &ifetch_refs,
