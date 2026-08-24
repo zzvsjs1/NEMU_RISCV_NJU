@@ -35,13 +35,11 @@ extern void __am_switch(Context *context);
  * both pages with a non-zero pattern makes the test prove that AM explicitly
  * initialises page-table memory instead of relying on a zeroing allocator.
  */
-static uint8_t page_table_pages[PAGE_TABLE_PAGES][PAGE_SIZE]
-    __attribute__((aligned(PAGE_SIZE)));
+static uint8_t page_table_pages[PAGE_TABLE_PAGES][PAGE_SIZE] __attribute__((aligned(PAGE_SIZE)));
 static unsigned allocated_page_count;
 
 static uint8_t data_page[PAGE_SIZE] __attribute__((aligned(PAGE_SIZE)));
-static uint8_t context_stack[CONTEXT_STACK_SIZE]
-    __attribute__((aligned(16)));
+static uint8_t context_stack[CONTEXT_STACK_SIZE] __attribute__((aligned(16)));
 
 static void *allocate_page(int size)
 {
@@ -64,10 +62,8 @@ static void free_page(void *page)
  * compile-time register argument keeps the helpers usable with the MIPS
  * assembler while retaining a conventional C call at each test site.
  */
-#define MTC0(reg, value)                                                       \
-    asm volatile("mtc0 %0, $" #reg : : "r"((uint32_t)(value)) : "memory")
-#define MFC0(reg, value)                                                       \
-    asm volatile("mfc0 %0, $" #reg : "=r"(value) : : "memory")
+#define MTC0(reg, value) asm volatile("mtc0 %0, $" #reg : : "r"((uint32_t)(value)) : "memory")
+#define MFC0(reg, value) asm volatile("mfc0 %0, $" #reg : "=r"(value) : : "memory")
 
 static void install_global_tlb_entry(uint32_t index, uintptr_t virtual_address)
 {
@@ -164,8 +160,7 @@ int main(void)
 
     /* map() changes translation state, so it must invalidate every stale hit. */
     seed_all_tlb_slots(map_stale_vpn2_base);
-    map(&address_space, (void *)mapped_virtual_address, data_page,
-        MMAP_READ | MMAP_WRITE);
+    map(&address_space, (void *)mapped_virtual_address, data_page, MMAP_READ | MMAP_WRITE);
     check_all_tlb_slots_invalid(map_stale_vpn2_base);
     check(allocated_page_count == 2u);
 
@@ -174,21 +169,15 @@ int main(void)
      * bits, and twelve offset bits.  Inspecting both indexed words catches an
      * accidental one-level table or a shifted PTE representation.
      */
-    const unsigned directory_index =
-        (unsigned)PAGE_DIRECTORY_INDEX(mapped_virtual_address);
-    const unsigned table_index =
-        (unsigned)PAGE_TABLE_INDEX(mapped_virtual_address);
+    const unsigned directory_index = (unsigned)PAGE_DIRECTORY_INDEX(mapped_virtual_address);
+    const unsigned table_index = (unsigned)PAGE_TABLE_INDEX(mapped_virtual_address);
     const uintptr_t directory_entry = page_directory[directory_index];
 
     check((directory_entry & MIPS32_PTE_VALID) != 0u);
-    uintptr_t *const leaf_table =
-        (uintptr_t *)(directory_entry & MIPS32_PTE_ADDRESS_MASK);
+    uintptr_t *const leaf_table = (uintptr_t *)(directory_entry & MIPS32_PTE_ADDRESS_MASK);
     check(leaf_table == (uintptr_t *)page_table_pages[1]);
-    check((leaf_table[table_index] & MIPS32_PTE_ADDRESS_MASK) ==
-          ((uintptr_t)data_page & MIPS32_PTE_ADDRESS_MASK));
-    check((leaf_table[table_index] &
-           (MIPS32_PTE_VALID | MIPS32_PTE_DIRTY)) ==
-          (MIPS32_PTE_VALID | MIPS32_PTE_DIRTY));
+    check((leaf_table[table_index] & MIPS32_PTE_ADDRESS_MASK) == ((uintptr_t)data_page & MIPS32_PTE_ADDRESS_MASK));
+    check((leaf_table[table_index] & (MIPS32_PTE_VALID | MIPS32_PTE_DIRTY)) == (MIPS32_PTE_VALID | MIPS32_PTE_DIRTY));
 
     /* map() must also clear all untouched words in its newly allocated leaf. */
     for (unsigned i = 0; i < PAGE_WORDS; i++)
@@ -199,14 +188,11 @@ int main(void)
         }
     }
 
-    const Area kernel_stack =
-        RANGE(context_stack, context_stack + sizeof(context_stack));
-    Context *const user_context =
-        ucontext(&address_space, kernel_stack, (void *)user_entry);
+    const Area kernel_stack = RANGE(context_stack, context_stack + sizeof(context_stack));
+    Context *const user_context = ucontext(&address_space, kernel_stack, (void *)user_entry);
     check(user_context != NULL);
 
-    const uintptr_t aligned_stack_top =
-        (uintptr_t)kernel_stack.end & ~(uintptr_t)0x0fu;
+    const uintptr_t aligned_stack_top = (uintptr_t)kernel_stack.end & ~(uintptr_t)0x0fu;
     check((uintptr_t)user_context == aligned_stack_top - sizeof(Context));
     check(((uintptr_t)user_context & 0x7u) == 0u);
     check(user_context->pdir == address_space.ptr);

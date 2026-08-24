@@ -54,14 +54,12 @@ static void test_load_to_x0_still_consumes_mmio_event(void)
     uint32_t type = 0;
     uint32_t wheel_y = 0;
 
-    asm volatile(
-        "lw x0, 0(%[type_addr])\n"
-        "lw %[type], 0(%[type_addr])\n"
-        "lw %[wheel_y], 0(%[wheel_y_addr])\n"
-        : [type] "=&r"(type), [wheel_y] "=&r"(wheel_y)
-        : [type_addr] "r"(base + MOUSE_REG_TYPE),
-          [wheel_y_addr] "r"(base + MOUSE_REG_WHEEL_Y)
-        : "memory");
+    asm volatile("lw x0, 0(%[type_addr])\n"
+                 "lw %[type], 0(%[type_addr])\n"
+                 "lw %[wheel_y], 0(%[wheel_y_addr])\n"
+                 : [type] "=&r"(type), [wheel_y] "=&r"(wheel_y)
+                 : [type_addr] "r"(base + MOUSE_REG_TYPE), [wheel_y_addr] "r"(base + MOUSE_REG_WHEEL_Y)
+                 : "memory");
 
     check(type == 4u);
     check(mmio_read32(base + MOUSE_REG_X) == 31u);

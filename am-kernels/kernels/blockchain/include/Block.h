@@ -8,7 +8,9 @@
 class Block
 {
   public:
-    Block() {}
+    Block()
+    {
+    }
 
     void block_init(uint32_t nIndexIn, const char *sDataIn, const char *sPrevHashIn);
     const char *GetHash();               //·µ»Ø¹þÏ£Öµ

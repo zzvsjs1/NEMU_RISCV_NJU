@@ -13,8 +13,7 @@ enum
     KCONTEXT_STACK_SIZE = 512,
 };
 
-static uint8_t kcontext_stack[KCONTEXT_STACK_SIZE]
-    __attribute__((aligned(MIPS32_O32_STACK_ALIGNMENT)));
+static uint8_t kcontext_stack[KCONTEXT_STACK_SIZE] __attribute__((aligned(MIPS32_O32_STACK_ALIGNMENT)));
 
 static void kcontext_entry(void *arg)
 {
@@ -44,8 +43,7 @@ int main(void)
      */
     check((sizeof(Context) % MIPS32_O32_STACK_ALIGNMENT) == 0u);
 
-    const Area kstack = RANGE(kcontext_stack,
-                              kcontext_stack + sizeof(kcontext_stack));
+    const Area kstack = RANGE(kcontext_stack, kcontext_stack + sizeof(kcontext_stack));
     Context *const context = kcontext(kstack, kcontext_entry, NULL);
     check(((uintptr_t)context % MIPS32_O32_STACK_ALIGNMENT) == 0u);
     check(context->np == 0u);
@@ -57,8 +55,7 @@ int main(void)
      * those words below Context also prevents an entry prologue from replacing
      * the only saved state before the new kernel context has run.
      */
-    check(context->GPRSP ==
-          (uintptr_t)context - 4u * sizeof(uintptr_t));
+    check(context->GPRSP == (uintptr_t)context - 4u * sizeof(uintptr_t));
     check((context->GPRSP % MIPS32_O32_STACK_ALIGNMENT) == 0u);
 
     check(cte_init(handle_event));

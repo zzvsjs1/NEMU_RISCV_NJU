@@ -54,11 +54,9 @@ enum
  * documents exactly which state a reference model may exchange with the DUT.
  */
 #define RISCV_DIFFTEST_FPR_NUM 32
-#define RISCV_DIFFTEST_FPR_TYPE \
-    MUXDEF(CONFIG_RISCV_D, uint64_t, uint32_t)
+#define RISCV_DIFFTEST_FPR_TYPE MUXDEF(CONFIG_RISCV_D, uint64_t, uint32_t)
 #define RISCV_DIFFTEST_FCSR_IMPLEMENTED_WIDTH 8
-#define RISCV_DIFFTEST_FCSR_MASK \
-    ((UINT32_C(1) << RISCV_DIFFTEST_FCSR_IMPLEMENTED_WIDTH) - 1)
+#define RISCV_DIFFTEST_FCSR_MASK ((UINT32_C(1) << RISCV_DIFFTEST_FCSR_IMPLEMENTED_WIDTH) - 1)
 #endif
 
 typedef struct

@@ -22,11 +22,7 @@ static void run_store_sequence(void)
         "sw %[word_value], 8(%[base])\n"
         "sd %[dword_value], 16(%[base])\n"
         :
-        : [base] "r"(base),
-          [byte_value] "r"(byte_value),
-          [half_value] "r"(half_value),
-          [word_value] "r"(word_value),
-          [dword_value] "r"(dword_value)
+        : [base] "r"(base), [byte_value] "r"(byte_value), [half_value] "r"(half_value), [word_value] "r"(word_value), [dword_value] "r"(dword_value)
         : "t0", "memory");
 }
 

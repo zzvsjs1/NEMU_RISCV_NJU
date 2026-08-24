@@ -12,20 +12,19 @@ static uint32_t word_operand_loop(uint32_t iters)
      * Keep this as explicit IA-32 assembly so the test always exercises
      * operand-size override forms used by microbench's 16-bit data paths.
      */
-    asm volatile(
-        "movl %[cell], %%edx\n"
-        "movw $0, (%%edx)\n"
-        "movl %[iters], %%ecx\n"
-        "1:\n"
-        "incw (%%edx)\n"
-        "movzwl (%%edx), %%eax\n"
-        "cmpw $0x7fff, %%ax\n"
-        "decl %%ecx\n"
-        "jne 1b\n"
-        "movzwl (%%edx), %%eax\n"
-        : "=&a"(result)
-        : [cell] "r"(&cell), [iters] "r"(iters)
-        : "ecx", "edx", "cc", "memory");
+    asm volatile("movl %[cell], %%edx\n"
+                 "movw $0, (%%edx)\n"
+                 "movl %[iters], %%ecx\n"
+                 "1:\n"
+                 "incw (%%edx)\n"
+                 "movzwl (%%edx), %%eax\n"
+                 "cmpw $0x7fff, %%ax\n"
+                 "decl %%ecx\n"
+                 "jne 1b\n"
+                 "movzwl (%%edx), %%eax\n"
+                 : "=&a"(result)
+                 : [cell] "r"(&cell), [iters] "r"(iters)
+                 : "ecx", "edx", "cc", "memory");
 
     return result;
 }

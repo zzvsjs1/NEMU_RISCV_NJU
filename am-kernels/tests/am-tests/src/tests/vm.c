@@ -41,10 +41,7 @@ Context *vm_handler(Event ev, Context *ctx)
         printf("==== interrupt (%s)  ====\n", ev.msg);
         break;
     case EVENT_PAGEFAULT:
-        printf("PF: %x %s%s%s\n",
-               ev.ref,
-               (ev.cause == MMAP_NONE) ? "[not present]" : "",
-               (ev.cause & MMAP_READ) ? "[read fail]" : "",
+        printf("PF: %x %s%s%s\n", ev.ref, (ev.cause == MMAP_NONE) ? "[not present]" : "", (ev.cause & MMAP_READ) ? "[read fail]" : "",
                (ev.cause & MMAP_WRITE) ? "[write fail]" : "");
         break;
     case EVENT_SYSCALL:
@@ -80,12 +77,11 @@ uint8_t code[] = {
     // Non-native AM tests still use x86 bytes here; vm_test() rejects other ISAs
     // before execution. Keeping the blob local documents the historical x86-only
     // nature of this test.
-    0x31, 0xc0, // xor %eax, %eax
-    0x8d, 0xb6, // lea 0(%esi), %esi
-    0x00, 0x00, 0x00, 0x00,
-    0x83, 0xc0, 0x01, // add $1, %eax
-    0xcd, 0x80,       // int $0x80
-    0xeb, 0xf9,       // jmp 8
+    0x31, 0xc0,                               // xor %eax, %eax
+    0x8d, 0xb6,                               // lea 0(%esi), %esi
+    0x00, 0x00, 0x00, 0x00, 0x83, 0xc0, 0x01, // add $1, %eax
+    0xcd, 0x80,                               // int $0x80
+    0xeb, 0xf9,                               // jmp 8
 #endif
 
 };
@@ -96,8 +92,7 @@ void vm_test()
     // Unsupported ISAs return early so their test suites can still include the
     // source file without executing incompatible instruction bytes.
 
-    if (!strncmp(__ISA__, "x86", 3) == 0 &&
-        !strcmp(__ISA__, "native") == 0)
+    if (!strncmp(__ISA__, "x86", 3) == 0 && !strcmp(__ISA__, "native") == 0)
     {
         printf("Not supported architecture.\n");
         return;
@@ -106,8 +101,7 @@ void vm_test()
     protect(&prot);
     printf("Protected address space: [%p, %p)\n", prot.area.start, prot.area.end);
 
-    uint8_t *ptr = (void *)((uintptr_t)(prot.area.start) +
-                            ((uintptr_t)(prot.area.end) - (uintptr_t)(prot.area.start)) / 2);
+    uint8_t *ptr = (void *)((uintptr_t)(prot.area.start) + ((uintptr_t)(prot.area.end) - (uintptr_t)(prot.area.start)) / 2);
 
     void *pg = simple_pgalloc(prot.pgsize);
     memcpy(pg, code, sizeof(code));

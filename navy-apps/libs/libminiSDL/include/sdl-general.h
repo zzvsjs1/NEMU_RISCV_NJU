@@ -47,9 +47,15 @@ typedef struct SDL_mutex
 {
 } SDL_mutex;
 
-static inline SDL_mutex *SDL_CreateMutex() { return NULL; }
+static inline SDL_mutex *SDL_CreateMutex()
+{
+    return NULL;
+}
 
-static inline void SDL_DestroyMutex(SDL_mutex *mutex) { (void)mutex; }
+static inline void SDL_DestroyMutex(SDL_mutex *mutex)
+{
+    (void)mutex;
+}
 
 static inline int SDL_mutexP(SDL_mutex *mutex)
 {

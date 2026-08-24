@@ -25,8 +25,7 @@ typedef struct
  * Magic bytes identify files written by NEMU snapshots before we trust sizes.
  * The integer is built from ASCII "NEMU" so the value is not a bare hex number.
  */
-#define SNAPSHOT_MAGIC \
-    (((uint32_t)'N' << 0) | ((uint32_t)'E' << 8) | ((uint32_t)'M' << 16) | ((uint32_t)'U' << 24))
+#define SNAPSHOT_MAGIC (((uint32_t)'N' << 0) | ((uint32_t)'E' << 8) | ((uint32_t)'M' << 16) | ((uint32_t)'U' << 24))
 
 /* Bump this if SnapshotHeader layout or payload order changes. */
 #define SNAPSHOT_VERSION 1
@@ -68,9 +67,7 @@ void save_snapshot(const char *path)
     };
 
     /* Payload order is fixed by SNAPSHOT_VERSION: header, CPU, NEMU state, PMEM. */
-    bool ok = write_exact(fp, &header, sizeof(header)) &&
-              write_exact(fp, &cpu, sizeof(cpu)) &&
-              write_exact(fp, &nemu_state, sizeof(nemu_state)) &&
+    bool ok = write_exact(fp, &header, sizeof(header)) && write_exact(fp, &cpu, sizeof(cpu)) && write_exact(fp, &nemu_state, sizeof(nemu_state)) &&
               pmem_save(fp);
 
     if (fclose(fp) != 0)
@@ -100,22 +97,15 @@ void load_snapshot(const char *path)
     SnapshotHeader header;
     bool ok = read_exact(fp, &header, sizeof(header));
     /* Reject snapshots from a different format or physical-memory layout. */
-    ok = ok &&
-         header.magic == SNAPSHOT_MAGIC &&
-         header.version == SNAPSHOT_VERSION &&
-         header.mbase == (paddr_t)CONFIG_MBASE &&
-         header.msize == (paddr_t)CONFIG_MSIZE &&
-         header.cpu_size == sizeof(cpu) &&
-         header.nemu_state_size == sizeof(nemu_state);
+    ok = ok && header.magic == SNAPSHOT_MAGIC && header.version == SNAPSHOT_VERSION && header.mbase == (paddr_t)CONFIG_MBASE &&
+         header.msize == (paddr_t)CONFIG_MSIZE && header.cpu_size == sizeof(cpu) && header.nemu_state_size == sizeof(nemu_state);
 
     CPU_state saved_cpu;
     NEMUState saved_state;
 
     if (ok)
     {
-        ok = read_exact(fp, &saved_cpu, sizeof(saved_cpu)) &&
-             read_exact(fp, &saved_state, sizeof(saved_state)) &&
-             pmem_load(fp);
+        ok = read_exact(fp, &saved_cpu, sizeof(saved_cpu)) && read_exact(fp, &saved_state, sizeof(saved_state)) && pmem_load(fp);
     }
 
     if (fclose(fp) != 0)

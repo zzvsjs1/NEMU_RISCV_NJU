@@ -95,9 +95,7 @@ void device_update()
              */
             vga_translate_mouse_position(&x, &y);
 #endif
-            send_mouse_button(event.button.button,
-                              event.button.type == SDL_MOUSEBUTTONDOWN,
-                              x, y);
+            send_mouse_button(event.button.button, event.button.type == SDL_MOUSEBUTTONDOWN, x, y);
             break;
         }
         case SDL_MOUSEWHEEL:

@@ -107,8 +107,7 @@ static void install_page_tables(void)
 
     root_pt[IDENTITY_BASE >> 22] = pte_for_page(identity_l0, table_flags);
     root_pt[PROBE_VA >> 22] = pte_for_page(probe_l0, table_flags);
-    probe_l0[(PROBE_VA >> 12) & 0x3ffu] =
-        pte_for_page(translated_page, leaf_flags);
+    probe_l0[(PROBE_VA >> 12) & 0x3ffu] = pte_for_page(translated_page, leaf_flags);
 }
 
 static void enable_sv32(void)

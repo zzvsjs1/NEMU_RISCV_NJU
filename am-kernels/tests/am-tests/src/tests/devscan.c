@@ -24,7 +24,10 @@ static void timer_test()
 
 static uint8_t vmem[512 << 10];
 
-static inline gpuptr_t to_guest(void *ptr) { return ptr ? (uint8_t *)ptr - vmem : AM_GPU_NULL; }
+static inline gpuptr_t to_guest(void *ptr)
+{
+    return ptr ? (uint8_t *)ptr - vmem : AM_GPU_NULL;
+}
 
 static void video_test()
 {
@@ -45,11 +48,12 @@ static void video_test()
         .w1 = w / 2,
         .h1 = h - 100,
         .type = AM_GPU_TEXTURE,
-        .texture = (struct gpu_texturedesc){
-            .w = 37,
-            .h = 10,
-            .pixels = to_guest(&cv[8]),
-        },
+        .texture =
+            (struct gpu_texturedesc){
+                .w = 37,
+                .h = 10,
+                .pixels = to_guest(&cv[8]),
+            },
         .sibling = to_guest(NULL),
     };
 

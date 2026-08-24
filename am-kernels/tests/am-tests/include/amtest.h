@@ -6,8 +6,17 @@
 #include <klib-macros.h>
 
 #define IOE ({ ioe_init(); })
-#define CTE(h) ({ Context *h(Event, Context *); cte_init(h); })
-#define VME(f1, f2) ({ void *f1(int); void f2(void *); vme_init(f1, f2); })
+#define CTE(h) \
+    ({ \
+        Context *h(Event, Context *); \
+        cte_init(h); \
+    })
+#define VME(f1, f2) \
+    ({ \
+        void *f1(int); \
+        void f2(void *); \
+        vme_init(f1, f2); \
+    })
 #define MPE ({ mpe_init(entry); })
 
 extern void (*entry)();

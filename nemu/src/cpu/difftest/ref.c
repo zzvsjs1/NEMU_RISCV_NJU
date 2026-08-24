@@ -32,15 +32,12 @@ static bool ref_pmem_range(paddr_t addr, size_t n)
     }
 
     const uint64_t offset = (uint64_t)(addr - (paddr_t)CONFIG_MBASE);
-    return offset < (uint64_t)CONFIG_MSIZE &&
-           n <= (size_t)((uint64_t)CONFIG_MSIZE - offset);
+    return offset < (uint64_t)CONFIG_MSIZE && n <= (size_t)((uint64_t)CONFIG_MSIZE - offset);
 }
 
 __EXPORT void difftest_memcpy(paddr_t addr, void *buf, size_t n, bool direction)
 {
-    Assert(ref_pmem_range(addr, n),
-           "DiffTest reference memory copy out of PMEM: addr=" FMT_PADDR ", size=%zu",
-           addr, n);
+    Assert(ref_pmem_range(addr, n), "DiffTest reference memory copy out of PMEM: addr=" FMT_PADDR ", size=%zu", addr, n);
 
     if (n == 0)
     {

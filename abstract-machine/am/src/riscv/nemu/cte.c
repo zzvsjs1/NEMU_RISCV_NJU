@@ -44,9 +44,7 @@ Context *__am_irq_handle(Context *c)
             break;
         }
 
-        if (c->mcause == CAUSE_ECALL_U ||
-            c->mcause == CAUSE_ECALL_S ||
-            c->mcause == CAUSE_ECALL_M)
+        if (c->mcause == CAUSE_ECALL_U || c->mcause == CAUSE_ECALL_S || c->mcause == CAUSE_ECALL_M)
         {
             /*
              * AM uses GPR1 == -1 as its private yield request. Normal syscalls keep

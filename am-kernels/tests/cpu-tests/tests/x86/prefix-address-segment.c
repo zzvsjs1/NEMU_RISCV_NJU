@@ -34,52 +34,44 @@ static X86SegDesc seg_desc(uint32_t base, uint32_t limit, uint8_t type, uint8_t 
 static uint32_t read_with_cs_override(uint32_t *ptr)
 {
     uint32_t out;
-    asm volatile(".byte 0x2e, 0x8b, 0x00"
-                 : "=a"(out)
-                 : "a"(ptr)
-                 : "memory");
+    asm volatile(".byte 0x2e, 0x8b, 0x00" : "=a"(out) : "a"(ptr) : "memory");
     return out;
 }
 
 static uint32_t read_with_addr16(uint16_t offset)
 {
     uint32_t out;
-    asm volatile("movw %1, %%bx; .byte 0x67, 0x8b, 0x07"
-                 : "=a"(out)
-                 : "rm"(offset)
-                 : "ebx", "memory");
+    asm volatile("movw %1, %%bx; .byte 0x67, 0x8b, 0x07" : "=a"(out) : "rm"(offset) : "ebx", "memory");
     return out;
 }
 
 static uint32_t read_with_nonflat_ds(uint16_t selector)
 {
     uint32_t out;
-    asm volatile(
-        "movw %%ds, %%dx\n\t"
-        "movw %1, %%ax\n\t"
-        "movw %%ax, %%ds\n\t"
-        "movl 0x20, %%ecx\n\t"
-        "movw %%dx, %%ds\n\t"
-        "movl %%ecx, %%eax\n\t"
-        : "=a"(out)
-        : "rm"(selector)
-        : "ecx", "edx", "memory");
+    asm volatile("movw %%ds, %%dx\n\t"
+                 "movw %1, %%ax\n\t"
+                 "movw %%ax, %%ds\n\t"
+                 "movl 0x20, %%ecx\n\t"
+                 "movw %%dx, %%ds\n\t"
+                 "movl %%ecx, %%eax\n\t"
+                 : "=a"(out)
+                 : "rm"(selector)
+                 : "ecx", "edx", "memory");
     return out;
 }
 
 static uint32_t read_moffs_with_cs_override(uint16_t selector)
 {
     uint32_t out;
-    asm volatile(
-        "movw %%ds, %%dx\n\t"
-        "movw %1, %%ax\n\t"
-        "movw %%ax, %%ds\n\t"
-        ".byte 0x2e, 0xa1\n\t"
-        ".long 0x9000\n\t"
-        "movw %%dx, %%ds\n\t"
-        : "=a"(out)
-        : "r"(selector)
-        : "edx", "memory");
+    asm volatile("movw %%ds, %%dx\n\t"
+                 "movw %1, %%ax\n\t"
+                 "movw %%ax, %%ds\n\t"
+                 ".byte 0x2e, 0xa1\n\t"
+                 ".long 0x9000\n\t"
+                 "movw %%dx, %%ds\n\t"
+                 : "=a"(out)
+                 : "r"(selector)
+                 : "edx", "memory");
     return out;
 }
 

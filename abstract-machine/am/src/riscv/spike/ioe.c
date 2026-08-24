@@ -18,7 +18,10 @@ static void *lut[128] = {
     [AM_TIMER_UPTIME] = __am_timer_uptime,
 };
 
-static void fail(void *buf) { panic("access nonexist register"); }
+static void fail(void *buf)
+{
+    panic("access nonexist register");
+}
 
 bool ioe_init()
 {
@@ -30,6 +33,12 @@ bool ioe_init()
     return true;
 }
 
-void ioe_read(int reg, void *buf) { ((handler_t)lut[reg])(buf); }
+void ioe_read(int reg, void *buf)
+{
+    ((handler_t)lut[reg])(buf);
+}
 
-void ioe_write(int reg, void *buf) { ((handler_t)lut[reg])(buf); }
+void ioe_write(int reg, void *buf)
+{
+    ((handler_t)lut[reg])(buf);
+}

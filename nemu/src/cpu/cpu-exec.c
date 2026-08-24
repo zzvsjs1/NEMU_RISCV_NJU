@@ -89,8 +89,7 @@ static void trace_and_difftest(Decode *_this, vaddr_t dnpc)
  * computed function-pointer calls.
  */
 #define FILL_EXEC_TABLE(name) [concat(EXEC_ID_, name)] = concat(exec_, name),
-static const void *g_exec_table[TOTAL_INSTR] = {
-    MAP(INSTR_LIST, FILL_EXEC_TABLE)};
+static const void *g_exec_table[TOTAL_INSTR] = {MAP(INSTR_LIST, FILL_EXEC_TABLE)};
 
 #define EXEC_DECODED_CASE(name) \
     case concat(EXEC_ID_, name): \
@@ -151,8 +150,7 @@ static inline int fetch_decode_idx(Decode *s, vaddr_t pc)
     p += space_len;
 
     void disassemble(char *str, int size, uint64_t pc, uint8_t *code, int nbyte);
-    disassemble(p, s->logbuf + sizeof(s->logbuf) - p,
-                MUXDEF(CONFIG_ISA_x86, s->snpc, s->pc), (uint8_t *)&s->isa.instr.val, ilen);
+    disassemble(p, s->logbuf + sizeof(s->logbuf) - p, MUXDEF(CONFIG_ISA_x86, s->snpc, s->pc), (uint8_t *)&s->isa.instr.val, ilen);
 #endif
 
     return idx;
@@ -219,8 +217,7 @@ static inline void fetch_decode_exec_updatepc(Decode *s)
     p += space_len;
 
     void disassemble(char *str, int size, uint64_t pc, uint8_t *code, int nbyte);
-    disassemble(p, s->logbuf + sizeof(s->logbuf) - p,
-                s->pc, (uint8_t *)&s->isa.inst, ilen);
+    disassemble(p, s->logbuf + sizeof(s->logbuf) - p, s->pc, (uint8_t *)&s->isa.inst, ilen);
 #endif
 }
 #endif
@@ -242,22 +239,17 @@ static void statistic(void)
 #define STATISTIC_LABEL_FMT "  %-24s = "
     Log("execution statistics:");
     Log(STATISTIC_LABEL_FMT NUMERIC_FMT " us", "host time", g_timer);
-    Log(STATISTIC_LABEL_FMT NUMERIC_FMT, "total guest instructions",
-        g_nr_guest_instr);
+    Log(STATISTIC_LABEL_FMT NUMERIC_FMT, "total guest instructions", g_nr_guest_instr);
 
     if (g_timer > 0)
     {
         /* Multiply in 128 bits so a long run cannot overflow before division. */
-        const uint64_t simulation_frequency =
-            (uint64_t)(((unsigned __int128)g_nr_guest_instr * 1000000u) /
-                       g_timer);
-        Log(STATISTIC_LABEL_FMT NUMERIC_FMT " instr/s",
-            "simulation frequency", simulation_frequency);
+        const uint64_t simulation_frequency = (uint64_t)(((unsigned __int128)g_nr_guest_instr * 1000000u) / g_timer);
+        Log(STATISTIC_LABEL_FMT NUMERIC_FMT " instr/s", "simulation frequency", simulation_frequency);
     }
     else
     {
-        Log(STATISTIC_LABEL_FMT "n/a (run completed in less than 1 us)",
-            "simulation frequency");
+        Log(STATISTIC_LABEL_FMT "n/a (run completed in less than 1 us)", "simulation frequency");
     }
 
 #undef STATISTIC_LABEL_FMT
@@ -283,8 +275,7 @@ void assert_fail_msg()
 /* Only dump registers for failures; a good trap has already reported success. */
 static bool should_dump_failure_registers()
 {
-    return nemu_state.state == NEMU_ABORT ||
-           (nemu_state.state == NEMU_END && nemu_state.halt_ret != 0);
+    return nemu_state.state == NEMU_ABORT || (nemu_state.state == NEMU_END && nemu_state.halt_ret != 0);
 }
 
 static uint64_t diagnostic_instr_limit(void)
@@ -385,9 +376,8 @@ static inline bool should_update_device_after(uint32_t *counter, uint32_t execut
  */
 static inline bool can_jit_exec()
 {
-#if (defined(CONFIG_RV32_JIT) || defined(CONFIG_RV64_JIT) || defined(CONFIG_X86_JIT)) && !defined(CONFIG_TRACE) && \
-    !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
-    !defined(CONFIG_MTRACE) && !defined(CONFIG_FTRACE)
+#if (defined(CONFIG_RV32_JIT) || defined(CONFIG_RV64_JIT) || defined(CONFIG_X86_JIT)) && !defined(CONFIG_TRACE) && !defined(CONFIG_DIFFTEST) && \
+    !defined(CONFIG_WATCHPOINT) && !defined(CONFIG_MTRACE) && !defined(CONFIG_FTRACE)
     /*
      * The JIT bypasses per-instruction Decode objects, so keep it behind the
      * instrumentation boundary. If exact hooks are needed, the interpreter
@@ -558,8 +548,7 @@ void cpu_exec(uint64_t n)
 
         if (instr_limit != 0 && g_nr_guest_instr >= instr_limit)
         {
-            Log("diagnostic instruction limit reached at %" PRIu64 " guest instructions",
-                g_nr_guest_instr);
+            Log("diagnostic instruction limit reached at %" PRIu64 " guest instructions", g_nr_guest_instr);
             nemu_state.state = NEMU_QUIT;
             break;
         }
@@ -592,7 +581,9 @@ void cpu_exec(uint64_t n)
         /* NEMU_ABORT may not go through Assert(), so dump the ring here too. */
         IFDEF(CONFIG_IRINGBUF, trace_iringbuf_dump());
         Log("nemu: %s at pc = " FMT_WORD,
-            (nemu_state.state == NEMU_ABORT ? ANSI_FMT("ABORT", ANSI_FG_RED) : (nemu_state.halt_ret == 0 ? ANSI_FMT("HIT GOOD TRAP", ANSI_FG_GREEN) : ANSI_FMT("HIT BAD TRAP", ANSI_FG_RED))),
+            (nemu_state.state == NEMU_ABORT
+                 ? ANSI_FMT("ABORT", ANSI_FG_RED)
+                 : (nemu_state.halt_ret == 0 ? ANSI_FMT("HIT GOOD TRAP", ANSI_FG_GREEN) : ANSI_FMT("HIT BAD TRAP", ANSI_FG_RED))),
             nemu_state.halt_pc);
         if (should_dump_failure_registers())
         {

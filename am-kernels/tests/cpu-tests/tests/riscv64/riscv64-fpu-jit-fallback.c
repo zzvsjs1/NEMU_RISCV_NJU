@@ -147,10 +147,8 @@ asm(".section .text\n"
 
     ".option pop\n");
 
-extern uint64_t rv64_fpu_at_block_entry(uint64_t input,
-                                         uint64_t *counter);
-extern uint64_t rv64_fpu_after_integer_prefix(uint64_t input,
-                                              uint64_t *counter);
+extern uint64_t rv64_fpu_at_block_entry(uint64_t input, uint64_t *counter);
+extern uint64_t rv64_fpu_after_integer_prefix(uint64_t input, uint64_t *counter);
 extern void rv64_fpu_all_major_opcodes(const uint64_t *, uint64_t *);
 extern uint64_t rv64_fpu_gpr_cache_roundtrip(uint64_t input);
 extern uint64_t rv64_fpu_gpr_cache_roundtrip_s(uint64_t input);
@@ -170,8 +168,7 @@ static void write_mstatus(uintptr_t value)
 static uintptr_t enable_initial_fp_state(void)
 {
     const uintptr_t old = read_mstatus();
-    const uintptr_t next =
-        (old & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL;
+    const uintptr_t next = (old & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL;
 
     write_mstatus(next);
     return old;
@@ -240,8 +237,7 @@ static void test_fpu_jit_fallback_boundaries(void)
     check(rv64_fpu_at_block_entry(one_point_five, &entry_counter) == three);
     check(entry_counter == 1);
 
-    check(rv64_fpu_after_integer_prefix(one_point_five,
-                                        &prefix_counter) == three);
+    check(rv64_fpu_after_integer_prefix(one_point_five, &prefix_counter) == three);
     check(prefix_counter == 1);
 
     /*

@@ -3,10 +3,7 @@
 static uint32_t rcl32_once(uint32_t value, uint8_t *cf, uint8_t *of)
 {
     uint8_t carry, overflow;
-    asm volatile("stc; rcll $1, %0; setc %1; seto %2"
-                 : "+r"(value), "=qm"(carry), "=qm"(overflow)
-                 :
-                 : "cc");
+    asm volatile("stc; rcll $1, %0; setc %1; seto %2" : "+r"(value), "=qm"(carry), "=qm"(overflow) : : "cc");
     *cf = carry;
     *of = overflow;
     return value;
@@ -15,10 +12,7 @@ static uint32_t rcl32_once(uint32_t value, uint8_t *cf, uint8_t *of)
 static uint32_t rcr32_once(uint32_t value, uint8_t *cf, uint8_t *of)
 {
     uint8_t carry, overflow;
-    asm volatile("stc; rcrl $1, %0; setc %1; seto %2"
-                 : "+r"(value), "=qm"(carry), "=qm"(overflow)
-                 :
-                 : "cc");
+    asm volatile("stc; rcrl $1, %0; setc %1; seto %2" : "+r"(value), "=qm"(carry), "=qm"(overflow) : : "cc");
     *cf = carry;
     *of = overflow;
     return value;
@@ -27,10 +21,7 @@ static uint32_t rcr32_once(uint32_t value, uint8_t *cf, uint8_t *of)
 static uint16_t rcl16_cl(uint16_t value, uint8_t count, uint8_t *cf)
 {
     uint8_t carry;
-    asm volatile("clc; rclw %%cl, %0; setc %1"
-                 : "+r"(value), "=qm"(carry)
-                 : "c"(count)
-                 : "cc");
+    asm volatile("clc; rclw %%cl, %0; setc %1" : "+r"(value), "=qm"(carry) : "c"(count) : "cc");
     *cf = carry;
     return value;
 }
@@ -38,10 +29,7 @@ static uint16_t rcl16_cl(uint16_t value, uint8_t count, uint8_t *cf)
 static uint8_t rcr8_imm(uint8_t value, uint8_t *cf)
 {
     uint8_t carry;
-    asm volatile("stc; rcrb $2, %0; setc %1"
-                 : "+q"(value), "=qm"(carry)
-                 :
-                 : "cc");
+    asm volatile("stc; rcrb $2, %0; setc %1" : "+q"(value), "=qm"(carry) : : "cc");
     *cf = carry;
     return value;
 }

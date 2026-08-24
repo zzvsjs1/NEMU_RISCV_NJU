@@ -132,20 +132,14 @@ static inline word_t imm_s(uint32_t inst)
 /* Decode and sign-extend the B-format branch offset, including its implicit low zero bit. */
 static inline word_t imm_b(uint32_t inst)
 {
-    uint32_t raw = (BITS(inst, 31, 31) << 12) |
-                   (BITS(inst, 7, 7) << 11) |
-                   (BITS(inst, 30, 25) << 5) |
-                   (BITS(inst, 11, 8) << 1);
+    uint32_t raw = (BITS(inst, 31, 31) << 12) | (BITS(inst, 7, 7) << 11) | (BITS(inst, 30, 25) << 5) | (BITS(inst, 11, 8) << 1);
     return (word_t)SEXT(raw, 13);
 }
 
 /* Decode and sign-extend the J-format jump offset, including its implicit low zero bit. */
 static inline word_t imm_j(uint32_t inst)
 {
-    uint32_t raw = (BITS(inst, 31, 31) << 20) |
-                   (BITS(inst, 19, 12) << 12) |
-                   (BITS(inst, 20, 20) << 11) |
-                   (BITS(inst, 30, 21) << 1);
+    uint32_t raw = (BITS(inst, 31, 31) << 20) | (BITS(inst, 19, 12) << 12) | (BITS(inst, 20, 20) << 11) | (BITS(inst, 30, 21) << 1);
     return (word_t)SEXT(raw, 21);
 }
 
@@ -195,8 +189,7 @@ static inline bool riscv_reg_ok(Decode *s, uint32_t idx)
  * as a five-bit unsigned immediate, so TYPE_CSI intentionally stores `rs1`
  * itself in `src1` rather than reading a GPR.
  */
-static bool decode_operand(Decode *s, int *rd, int *rs1, int *rs2,
-                           word_t *src1, word_t *src2, word_t *imm, int type)
+static bool decode_operand(Decode *s, int *rd, int *rs1, int *rs2, word_t *src1, word_t *src2, word_t *imm, int type)
 {
     uint32_t inst = s->isa.inst;
     *rd = rd_idx(inst);
@@ -213,9 +206,7 @@ static bool decode_operand(Decode *s, int *rd, int *rs1, int *rs2,
          * Register-register arithmetic, logical, multiply/divide, and W-form
          * operations all read rs1/rs2 and may write rd.
          */
-        if (!riscv_reg_ok(s, *rd) ||
-            !riscv_reg_ok(s, *rs1) ||
-            !riscv_reg_ok(s, *rs2))
+        if (!riscv_reg_ok(s, *rd) || !riscv_reg_ok(s, *rs1) || !riscv_reg_ok(s, *rs2))
             return false;
         *src1 = R(*rs1);
         *src2 = R(*rs2);
@@ -225,8 +216,7 @@ static bool decode_operand(Decode *s, int *rd, int *rs1, int *rs2,
          * I-format instructions use rs1 plus a sign-extended 12-bit immediate:
          * loads, ALU-immediate operations, JALR, and some SYSTEM encodings.
          */
-        if (!riscv_reg_ok(s, *rd) ||
-            !riscv_reg_ok(s, *rs1))
+        if (!riscv_reg_ok(s, *rd) || !riscv_reg_ok(s, *rs1))
             return false;
         *src1 = R(*rs1);
         *imm = imm_i(inst);
@@ -245,8 +235,7 @@ static bool decode_operand(Decode *s, int *rd, int *rs1, int *rs2,
          * Stores read a base register and a data register.  They have no rd, so
          * a trapping store can return before any memory byte is changed.
          */
-        if (!riscv_reg_ok(s, *rs1) ||
-            !riscv_reg_ok(s, *rs2))
+        if (!riscv_reg_ok(s, *rs1) || !riscv_reg_ok(s, *rs2))
             return false;
         *src1 = R(*rs1);
         *src2 = R(*rs2);
@@ -257,8 +246,7 @@ static bool decode_operand(Decode *s, int *rd, int *rs1, int *rs2,
          * Branches compare two registers and use the scattered B-immediate.
          * They never write rd; the only visible effect is a possible dnpc change.
          */
-        if (!riscv_reg_ok(s, *rs1) ||
-            !riscv_reg_ok(s, *rs2))
+        if (!riscv_reg_ok(s, *rs1) || !riscv_reg_ok(s, *rs2))
             return false;
         *src1 = R(*rs1);
         *src2 = R(*rs2);
@@ -278,8 +266,7 @@ static bool decode_operand(Decode *s, int *rd, int *rs1, int *rs2,
          * Register CSR instructions read rs1 as the write/set/clear operand and
          * use rd to receive the old CSR value when rd is not x0.
          */
-        if (!riscv_reg_ok(s, *rd) ||
-            !riscv_reg_ok(s, *rs1))
+        if (!riscv_reg_ok(s, *rd) || !riscv_reg_ok(s, *rs1))
             return false;
         *src1 = R(*rs1);
         *imm = csr_addr(inst);
@@ -364,12 +351,9 @@ static inline bool riscv_csr_access_ok(Decode *s, word_t addr, bool will_write)
      * encoding.  Extracting them here makes an unimplemented or underprivileged
      * CSR access trap before any source or destination state is committed.
      */
-    const word_t required_priv =
-        (addr >> RISCV_CSR_PRIV_SHIFT) & RISCV_CSR_PRIV_MASK;
+    const word_t required_priv = (addr >> RISCV_CSR_PRIV_SHIFT) & RISCV_CSR_PRIV_MASK;
 
-    if (!isCSRImplemented(addr) ||
-        cpu.prvi < required_priv ||
-        (will_write && !isCSRWriteable(addr)))
+    if (!isCSRImplemented(addr) || cpu.prvi < required_priv || (will_write && !isCSRWriteable(addr)))
     {
         riscv_raise_trap(s, RISCV_CAUSE_ILLEGAL_INST, 0);
         return false;
@@ -380,8 +364,7 @@ static inline bool riscv_csr_access_ok(Decode *s, word_t addr, bool will_write)
      * FP control CSR addresses are unprivileged, but the privileged ISA adds a
      * separate FS gate: any read or write is illegal while mstatus.FS is Off.
      */
-    if (addr >= RISCV_CSR_FFLAGS && addr <= RISCV_CSR_FCSR &&
-        !riscv_mstatus_fp_enabled(cpu.csr.mstatus))
+    if (addr >= RISCV_CSR_FFLAGS && addr <= RISCV_CSR_FCSR && !riscv_mstatus_fp_enabled(cpu.csr.mstatus))
     {
         riscv_raise_trap(s, RISCV_CAUSE_ILLEGAL_INST, 0);
         return false;
@@ -453,9 +436,7 @@ static inline word_t riscv_mulhsu(word_t src1, word_t src2)
 #else
     int64_t lhs = (int32_t)src1;
     uint64_t rhs = (uint32_t)src2;
-    int64_t product = lhs < 0
-                          ? -(int64_t)((uint64_t)(-lhs) * rhs)
-                          : (int64_t)((uint64_t)lhs * rhs);
+    int64_t product = lhs < 0 ? -(int64_t)((uint64_t)(-lhs) * rhs) : (int64_t)((uint64_t)lhs * rhs);
     return (word_t)((uint64_t)product >> 32);
 #endif
 }
@@ -586,8 +567,7 @@ static inline void riscv_mret(Decode *s)
     }
 
     word_t mstatus = cpu.csr.mstatus;
-    const word_t mpp =
-        (mstatus & RISCV_MSTATUS_MPP_MASK) >> RISCV_MSTATUS_MPP_SHIFT;
+    const word_t mpp = (mstatus & RISCV_MSTATUS_MPP_MASK) >> RISCV_MSTATUS_MPP_SHIFT;
     const bool previous_mie = (mstatus & RISCV_MSTATUS_MPIE) != 0;
 
     if (mpp == RISCV_PRIV_RESERVED)
@@ -628,15 +608,12 @@ static inline void riscv_mret(Decode *s)
  */
 static inline void riscv_sfence_vma(Decode *s)
 {
-    if (!riscv_reg_ok(s, rs1_idx(s->isa.inst)) ||
-        !riscv_reg_ok(s, rs2_idx(s->isa.inst)))
+    if (!riscv_reg_ok(s, rs1_idx(s->isa.inst)) || !riscv_reg_ok(s, rs2_idx(s->isa.inst)))
     {
         return;
     }
 
-    if (cpu.prvi == RISCV_PRIV_U ||
-        (cpu.prvi == RISCV_PRIV_S &&
-         (cpu.csr.mstatus & RISCV_MSTATUS_TVM) != 0))
+    if (cpu.prvi == RISCV_PRIV_U || (cpu.prvi == RISCV_PRIV_S && (cpu.csr.mstatus & RISCV_MSTATUS_TVM) != 0))
     {
         riscv_raise_trap(s, RISCV_CAUSE_ILLEGAL_INST, 0);
         return;
@@ -687,25 +664,15 @@ static int decode_exec(Decode *s)
      *   touched, so a trap cannot partially commit a destination register.
      */
     INSTPAT("??????? ????? ????? 000 ????? 00000 11", lb, I, R(rd) = SEXT(Mr(src1 + imm, 1), 8));
-    INSTPAT("??????? ????? ????? 001 ????? 00000 11", lh, I,
-            if (riscv_check_load_alignment(s, src1 + imm, 2))
-                R(rd) = SEXT(Mr(src1 + imm, 2), 16));
-    INSTPAT("??????? ????? ????? 010 ????? 00000 11", lw, I,
-            if (riscv_check_load_alignment(s, src1 + imm, 4))
-                R(rd) = SEXT(Mr(src1 + imm, 4), 32));
+    INSTPAT("??????? ????? ????? 001 ????? 00000 11", lh, I, if (riscv_check_load_alignment(s, src1 + imm, 2)) R(rd) = SEXT(Mr(src1 + imm, 2), 16));
+    INSTPAT("??????? ????? ????? 010 ????? 00000 11", lw, I, if (riscv_check_load_alignment(s, src1 + imm, 4)) R(rd) = SEXT(Mr(src1 + imm, 4), 32));
 #ifdef CONFIG_RV64
-    INSTPAT("??????? ????? ????? 011 ????? 00000 11", ld, I,
-            if (riscv_check_load_alignment(s, src1 + imm, 8))
-                R(rd) = Mr(src1 + imm, 8));
+    INSTPAT("??????? ????? ????? 011 ????? 00000 11", ld, I, if (riscv_check_load_alignment(s, src1 + imm, 8)) R(rd) = Mr(src1 + imm, 8));
 #endif
     INSTPAT("??????? ????? ????? 100 ????? 00000 11", lbu, I, R(rd) = Mr(src1 + imm, 1));
-    INSTPAT("??????? ????? ????? 101 ????? 00000 11", lhu, I,
-            if (riscv_check_load_alignment(s, src1 + imm, 2))
-                R(rd) = Mr(src1 + imm, 2));
+    INSTPAT("??????? ????? ????? 101 ????? 00000 11", lhu, I, if (riscv_check_load_alignment(s, src1 + imm, 2)) R(rd) = Mr(src1 + imm, 2));
 #ifdef CONFIG_RV64
-    INSTPAT("??????? ????? ????? 110 ????? 00000 11", lwu, I,
-            if (riscv_check_load_alignment(s, src1 + imm, 4))
-                R(rd) = Mr(src1 + imm, 4));
+    INSTPAT("??????? ????? ????? 110 ????? 00000 11", lwu, I, if (riscv_check_load_alignment(s, src1 + imm, 4)) R(rd) = Mr(src1 + imm, 4));
 #endif
 
     /*
@@ -715,16 +682,10 @@ static int decode_exec(Decode *s)
      *   misaligned store raises the architectural trap without changing memory.
      */
     INSTPAT("??????? ????? ????? 000 ????? 01000 11", sb, S, Mw(src1 + imm, 1, src2));
-    INSTPAT("??????? ????? ????? 001 ????? 01000 11", sh, S,
-            if (riscv_check_store_alignment(s, src1 + imm, 2))
-                Mw(src1 + imm, 2, src2));
-    INSTPAT("??????? ????? ????? 010 ????? 01000 11", sw, S,
-            if (riscv_check_store_alignment(s, src1 + imm, 4))
-                Mw(src1 + imm, 4, src2));
+    INSTPAT("??????? ????? ????? 001 ????? 01000 11", sh, S, if (riscv_check_store_alignment(s, src1 + imm, 2)) Mw(src1 + imm, 2, src2));
+    INSTPAT("??????? ????? ????? 010 ????? 01000 11", sw, S, if (riscv_check_store_alignment(s, src1 + imm, 4)) Mw(src1 + imm, 4, src2));
 #ifdef CONFIG_RV64
-    INSTPAT("??????? ????? ????? 011 ????? 01000 11", sd, S,
-            if (riscv_check_store_alignment(s, src1 + imm, 8))
-                Mw(src1 + imm, 8, src2));
+    INSTPAT("??????? ????? ????? 011 ????? 01000 11", sd, S, if (riscv_check_store_alignment(s, src1 + imm, 8)) Mw(src1 + imm, 8, src2));
 #endif
 
 #ifdef CONFIG_RISCV_FPU
@@ -855,51 +816,43 @@ static int decode_exec(Decode *s)
      * either are reported to ftrace before architectural writeback, which is
      * skipped if target alignment traps.
      */
-    INSTPAT("??????? ????? ????? ??? ????? 11011 11", jal, J,
+    INSTPAT("??????? ????? ????? ??? ????? 11011 11", jal, J, {
+        word_t target = s->pc + imm;
+
+        if (riscv_check_jump_alignment(s, target))
+        {
+            if (rd == RISCV_GPR_LINK || rd == RISCV_GPR_ALTERNATE_LINK)
             {
-                word_t target = s->pc + imm;
+                ftrace_call(s->pc, target);
+            }
 
-                if (riscv_check_jump_alignment(s, target))
-                {
-                    if (rd == RISCV_GPR_LINK ||
-                        rd == RISCV_GPR_ALTERNATE_LINK)
-                    {
-                        ftrace_call(s->pc, target);
-                    }
-
-                    R(rd) = s->pc + RISCV_BASE_INSN_BYTES;
-                    s->dnpc = target;
-                }
-            });
+            R(rd) = s->pc + RISCV_BASE_INSN_BYTES;
+            s->dnpc = target;
+        }
+    });
     /*
      * JALR adds rs1 and the I-immediate, clears bit 0 as required by RISC-V,
      * then performs the same alignment and link-register handling as JAL.
      * A rd=x0, rs1=ra/t0, imm=0 form is treated as a return for ftrace.
      */
-    INSTPAT("??????? ????? ????? 000 ????? 11001 11", jalr, I,
+    INSTPAT("??????? ????? ????? 000 ????? 11001 11", jalr, I, {
+        word_t target = (src1 + imm) & ~(word_t)RISCV_JALR_TARGET_LSB_MASK;
+
+        if (riscv_check_jump_alignment(s, target))
+        {
+            if (rd == RISCV_GPR_ZERO && (rs1 == RISCV_GPR_LINK || rs1 == RISCV_GPR_ALTERNATE_LINK) && imm == 0)
             {
-                word_t target =
-                    (src1 + imm) & ~(word_t)RISCV_JALR_TARGET_LSB_MASK;
+                ftrace_ret(s->pc);
+            }
+            else if (rd == RISCV_GPR_LINK || rd == RISCV_GPR_ALTERNATE_LINK)
+            {
+                ftrace_call(s->pc, target);
+            }
 
-                if (riscv_check_jump_alignment(s, target))
-                {
-                    if (rd == RISCV_GPR_ZERO &&
-                        (rs1 == RISCV_GPR_LINK ||
-                         rs1 == RISCV_GPR_ALTERNATE_LINK) &&
-                        imm == 0)
-                    {
-                        ftrace_ret(s->pc);
-                    }
-                    else if (rd == RISCV_GPR_LINK ||
-                             rd == RISCV_GPR_ALTERNATE_LINK)
-                    {
-                        ftrace_call(s->pc, target);
-                    }
-
-                    R(rd) = s->pc + RISCV_BASE_INSN_BYTES;
-                    s->dnpc = target;
-                }
-            });
+            R(rd) = s->pc + RISCV_BASE_INSN_BYTES;
+            s->dnpc = target;
+        }
+    });
 
     /*
      * FENCE and FENCE.I are ordering hints for this single-threaded interpreter.
@@ -917,10 +870,8 @@ static int decode_exec(Decode *s)
      * - WFI is modelled as a DiffTest skip because it has no timing effect here.
      * - SFENCE.VMA validates privilege and flushes the JIT data TLB when present.
      */
-    INSTPAT("0000000 00000 00000 000 00000 11100 11", ecall, N,
-            riscv_raise_trap(s, riscv_ecall_cause_from_priv(cpu.prvi), 0));
-    INSTPAT("0000000 00001 00000 000 00000 11100 11", ebreak, N,
-            riscv_raise_trap(s, RISCV_CAUSE_BREAKPOINT, 0));
+    INSTPAT("0000000 00000 00000 000 00000 11100 11", ecall, N, riscv_raise_trap(s, riscv_ecall_cause_from_priv(cpu.prvi), 0));
+    INSTPAT("0000000 00001 00000 000 00000 11100 11", ebreak, N, riscv_raise_trap(s, RISCV_CAUSE_BREAKPOINT, 0));
     INSTPAT("0011000 00010 00000 000 00000 11100 11", mret, N, riscv_mret(s));
     INSTPAT("0001000 00101 00000 000 00000 11100 11", wfi, N, difftest_skip_ref());
     INSTPAT("0001001 ????? ????? 000 00000 11100 11", sfence_vma, N, riscv_sfence_vma(s));
@@ -930,123 +881,117 @@ static int decode_exec(Decode *s)
      * value to rd.  When rd is x0, the old value is not needed, but permission
      * checks still happen before the write.
      */
-    INSTPAT("??????? ????? ????? 001 ????? 11100 11", csrrw, CSR,
+    INSTPAT("??????? ????? ????? 001 ????? 11100 11", csrrw, CSR, {
+        if (riscv_csr_access_ok(s, imm, true))
+        {
+            if (rd != 0)
             {
-                if (riscv_csr_access_ok(s, imm, true))
-                {
-                    if (rd != 0)
-                    {
-                        word_t old = getCSRValue(imm);
-                        setCSRValue(imm, src1);
-                        R(rd) = old;
-                    }
-                    else
-                    {
-                        setCSRValue(imm, src1);
-                    }
-                }
-            });
+                word_t old = getCSRValue(imm);
+                setCSRValue(imm, src1);
+                R(rd) = old;
+            }
+            else
+            {
+                setCSRValue(imm, src1);
+            }
+        }
+    });
 
     /*
      * CSRRS reads the CSR into rd and sets bits selected by rs1.  rs1=x0 means
      * read-only behaviour, so read-only CSRs are legal in that case.
      */
-    INSTPAT("??????? ????? ????? 010 ????? 11100 11", csrrs, CSR,
+    INSTPAT("??????? ????? ????? 010 ????? 11100 11", csrrs, CSR, {
+        bool will_write = rs1 != 0;
+
+        if (riscv_csr_access_ok(s, imm, will_write))
+        {
+            word_t old = getCSRValue(imm);
+            R(rd) = old;
+
+            if (will_write)
             {
-                bool will_write = rs1 != 0;
-
-                if (riscv_csr_access_ok(s, imm, will_write))
-                {
-                    word_t old = getCSRValue(imm);
-                    R(rd) = old;
-
-                    if (will_write)
-                    {
-                        setCSRValue(imm, old | src1);
-                    }
-                }
-            });
+                setCSRValue(imm, old | src1);
+            }
+        }
+    });
 
     /*
      * CSRRC reads the CSR into rd and clears bits selected by rs1.  Like CSRRS,
      * rs1=x0 suppresses the write and therefore only needs read permission.
      */
-    INSTPAT("??????? ????? ????? 011 ????? 11100 11", csrrc, CSR,
+    INSTPAT("??????? ????? ????? 011 ????? 11100 11", csrrc, CSR, {
+        bool will_write = rs1 != 0;
+
+        if (riscv_csr_access_ok(s, imm, will_write))
+        {
+            word_t old = getCSRValue(imm);
+            R(rd) = old;
+
+            if (will_write)
             {
-                bool will_write = rs1 != 0;
-
-                if (riscv_csr_access_ok(s, imm, will_write))
-                {
-                    word_t old = getCSRValue(imm);
-                    R(rd) = old;
-
-                    if (will_write)
-                    {
-                        setCSRValue(imm, old & ~src1);
-                    }
-                }
-            });
+                setCSRValue(imm, old & ~src1);
+            }
+        }
+    });
 
     /*
      * CSRRWI is the immediate form of CSRRW.  The zimm value has already been
      * placed in src1 by decode_operand(), so no register read is involved.
      */
-    INSTPAT("??????? ????? ????? 101 ????? 11100 11", csrrwi, CSI,
+    INSTPAT("??????? ????? ????? 101 ????? 11100 11", csrrwi, CSI, {
+        if (riscv_csr_access_ok(s, imm, true))
+        {
+            if (rd != 0)
             {
-                if (riscv_csr_access_ok(s, imm, true))
-                {
-                    if (rd != 0)
-                    {
-                        word_t old = getCSRValue(imm);
-                        setCSRValue(imm, src1);
-                        R(rd) = old;
-                    }
-                    else
-                    {
-                        setCSRValue(imm, src1);
-                    }
-                }
-            });
+                word_t old = getCSRValue(imm);
+                setCSRValue(imm, src1);
+                R(rd) = old;
+            }
+            else
+            {
+                setCSRValue(imm, src1);
+            }
+        }
+    });
 
     /*
      * CSRRSI sets CSR bits selected by zimm.  zimm=0 is a pure read and must not
      * trip the read-only CSR write check.
      */
-    INSTPAT("??????? ????? ????? 110 ????? 11100 11", csrrsi, CSI,
+    INSTPAT("??????? ????? ????? 110 ????? 11100 11", csrrsi, CSI, {
+        bool will_write = rs1 != 0;
+
+        if (riscv_csr_access_ok(s, imm, will_write))
+        {
+            word_t old = getCSRValue(imm);
+            R(rd) = old;
+
+            if (will_write)
             {
-                bool will_write = rs1 != 0;
-
-                if (riscv_csr_access_ok(s, imm, will_write))
-                {
-                    word_t old = getCSRValue(imm);
-                    R(rd) = old;
-
-                    if (will_write)
-                    {
-                        setCSRValue(imm, old | src1);
-                    }
-                }
-            });
+                setCSRValue(imm, old | src1);
+            }
+        }
+    });
 
     /*
      * CSRRCI clears CSR bits selected by zimm.  The old CSR value is written to
      * rd before any modification, matching the atomic read-modify-write rule.
      */
-    INSTPAT("??????? ????? ????? 111 ????? 11100 11", csrrci, CSI,
+    INSTPAT("??????? ????? ????? 111 ????? 11100 11", csrrci, CSI, {
+        bool will_write = rs1 != 0;
+
+        if (riscv_csr_access_ok(s, imm, will_write))
+        {
+            word_t old = getCSRValue(imm);
+            R(rd) = old;
+
+            if (will_write)
             {
-                bool will_write = rs1 != 0;
-
-                if (riscv_csr_access_ok(s, imm, will_write))
-                {
-                    word_t old = getCSRValue(imm);
-                    R(rd) = old;
-
-                    if (will_write)
-                    {
-                        setCSRValue(imm, old & ~src1);
-                    }
-                }
-            });
+                setCSRValue(imm, old & ~src1);
+            }
+        }
+    });
 
     /*
      * NEMU's private trap instruction is how AM programs report good/bad traps;
@@ -1054,8 +999,7 @@ static int decode_exec(Decode *s)
      * otherwise unmatched encoding into a RISC-V illegal-instruction trap.
      */
     INSTPAT("??????? ????? ????? ??? ????? 11010 11", nemu_trap, N, NEMUTRAP(s->pc, R(10))); // R(10) is $a0
-    INSTPAT("??????? ????? ????? ??? ????? ????? ??", inv, N,
-            riscv_raise_trap(s, RISCV_CAUSE_ILLEGAL_INST, 0));
+    INSTPAT("??????? ????? ????? ??? ????? ????? ??", inv, N, riscv_raise_trap(s, RISCV_CAUSE_ILLEGAL_INST, 0));
     INSTPAT_END();
 
     R(0) = 0; // reset $zero to 0

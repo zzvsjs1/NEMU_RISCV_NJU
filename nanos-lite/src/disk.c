@@ -67,11 +67,7 @@ static void disk_transfer_blocks(bool write, size_t blkno, size_t blkcnt)
      * directly into host PMEM.  Keep it as a kernel static buffer: syscall
      * buffers may be userspace virtual addresses, which the device cannot walk.
      */
-    io_write(AM_DISK_BLKIO,
-             .write = write,
-             .buf = disk_block_buf,
-             .blkno = (int)blkno,
-             .blkcnt = (int)blkcnt);
+    io_write(AM_DISK_BLKIO, .write = write, .buf = disk_block_buf, .blkno = (int)blkno, .blkcnt = (int)blkcnt);
 }
 
 size_t disk_read(void *buf, size_t offset, size_t len)
@@ -180,8 +176,7 @@ void init_disk(void)
 
     if (!disk_present)
     {
-        Log("disk absent, using embedded ramdisk fallback, size = %zu bytes",
-            get_ramdisk_size());
+        Log("disk absent, using embedded ramdisk fallback, size = %zu bytes", get_ramdisk_size());
         return;
     }
 
@@ -192,6 +187,5 @@ void init_disk(void)
      * uses larger blocks than the bounce buffer, batching would silently collapse
      * back to one partial command or fail to preserve surrounding bytes on writes.
      */
-    Log("disk info: block size = %d bytes, blocks = %d, size = %zu bytes",
-        disk_cfg.blksz, disk_cfg.blkcnt, disk_size());
+    Log("disk info: block size = %d bytes, blocks = %d, size = %zu bytes", disk_cfg.blksz, disk_cfg.blkcnt, disk_size());
 }

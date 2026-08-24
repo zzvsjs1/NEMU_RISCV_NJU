@@ -9,8 +9,7 @@ static int key_f = 0, key_r = 0;
 static SDL_mutex *key_queue_lock = NULL;
 
 #define XX(k) [SDL_SCANCODE_##k] = AM_KEY_##k,
-static int keymap[256] = {
-    AM_KEYS(XX)};
+static int keymap[256] = {AM_KEYS(XX)};
 
 static int event_thread(void *args)
 {

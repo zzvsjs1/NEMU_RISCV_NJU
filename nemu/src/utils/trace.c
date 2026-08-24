@@ -42,7 +42,11 @@ void trace_iringbuf_dump()
     }
 }
 #else
-void trace_iringbuf_record(const char *logbuf) {}
+void trace_iringbuf_record(const char *logbuf)
+{
+}
 
-void trace_iringbuf_dump() {}
+void trace_iringbuf_dump()
+{
+}
 #endif

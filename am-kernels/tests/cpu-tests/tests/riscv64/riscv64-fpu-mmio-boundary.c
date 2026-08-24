@@ -44,8 +44,7 @@ asm(".section .text\n"
     ".-rv64_fpu_mmio_boundary_all\n"
     ".option pop\n");
 
-extern uint64_t rv64_fpu_mmio_boundary_all(
-    uintptr_t, uint64_t, uint32_t, uint64_t observed[2]);
+extern uint64_t rv64_fpu_mmio_boundary_all(uintptr_t, uint64_t, uint32_t, uint64_t observed[2]);
 
 static uintptr_t read_mstatus(void)
 {
@@ -69,18 +68,13 @@ int main(void)
     const uint32_t final_word = UINT32_C(0x5a17c3e9);
     const uint64_t boxed_word = UINT64_C(0xffffffff2468ace0);
     uint64_t observed[2] = {0};
-    volatile uint64_t *const scratch =
-        (volatile uint64_t *)NEMU_VGACTL_TEST_MMIO;
+    volatile uint64_t *const scratch = (volatile uint64_t *)NEMU_VGACTL_TEST_MMIO;
 
     write_mstatus((old_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
-    check(rv64_fpu_mmio_boundary_all(
-              NEMU_VGACTL_TEST_MMIO, double_pattern,
-              final_word, observed) == 7);
+    check(rv64_fpu_mmio_boundary_all(NEMU_VGACTL_TEST_MMIO, double_pattern, final_word, observed) == 7);
     check(observed[0] == boxed_word);
     check(observed[1] == double_pattern);
-    check(*scratch ==
-          ((double_pattern & UINT64_C(0xffffffff00000000)) |
-           final_word));
+    check(*scratch == ((double_pattern & UINT64_C(0xffffffff00000000)) | final_word));
     write_mstatus(old_mstatus);
 #endif
 

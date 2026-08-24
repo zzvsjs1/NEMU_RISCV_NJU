@@ -9,24 +9,15 @@ extern volatile uintptr_t __am_user_trap_stack_top;
 #define MIPS32_EXC_INT 0u
 #define MIPS32_STATUS_IE ((uintptr_t)1u << 0)
 
-_Static_assert(offsetof(Context, gpr) == 0,
-               "MIPS32 Context GPRs must begin at trap-frame offset zero");
-_Static_assert(offsetof(Context, lo) == 32 * sizeof(uintptr_t),
-               "MIPS32 Context LO offset must match trap.S");
-_Static_assert(offsetof(Context, hi) == 33 * sizeof(uintptr_t),
-               "MIPS32 Context HI offset must match trap.S");
-_Static_assert(offsetof(Context, cause) == 34 * sizeof(uintptr_t),
-               "MIPS32 Context Cause offset must match trap.S");
-_Static_assert(offsetof(Context, status) == 35 * sizeof(uintptr_t),
-               "MIPS32 Context Status offset must match trap.S");
-_Static_assert(offsetof(Context, epc) == 36 * sizeof(uintptr_t),
-               "MIPS32 Context EPC offset must match trap.S");
-_Static_assert(offsetof(Context, np) == 37 * sizeof(uintptr_t),
-               "MIPS32 Context np marker must follow the architectural state");
-_Static_assert(sizeof(Context) == 38 * sizeof(uintptr_t),
-               "MIPS32 Context size must match trap.S");
-_Static_assert(sizeof(Context) % 8 == 0,
-               "MIPS32 Context must preserve O32 stack alignment");
+_Static_assert(offsetof(Context, gpr) == 0, "MIPS32 Context GPRs must begin at trap-frame offset zero");
+_Static_assert(offsetof(Context, lo) == 32 * sizeof(uintptr_t), "MIPS32 Context LO offset must match trap.S");
+_Static_assert(offsetof(Context, hi) == 33 * sizeof(uintptr_t), "MIPS32 Context HI offset must match trap.S");
+_Static_assert(offsetof(Context, cause) == 34 * sizeof(uintptr_t), "MIPS32 Context Cause offset must match trap.S");
+_Static_assert(offsetof(Context, status) == 35 * sizeof(uintptr_t), "MIPS32 Context Status offset must match trap.S");
+_Static_assert(offsetof(Context, epc) == 36 * sizeof(uintptr_t), "MIPS32 Context EPC offset must match trap.S");
+_Static_assert(offsetof(Context, np) == 37 * sizeof(uintptr_t), "MIPS32 Context np marker must follow the architectural state");
+_Static_assert(sizeof(Context) == 38 * sizeof(uintptr_t), "MIPS32 Context size must match trap.S");
+_Static_assert(sizeof(Context) % 8 == 0, "MIPS32 Context must preserve O32 stack alignment");
 
 static uint32_t syscall_code_at(uintptr_t epc)
 {
@@ -77,10 +68,8 @@ extern void __am_tlb_refill_entry(void);
 bool cte_init(Context *(*handler)(Event, Context *))
 {
     const uint32_t j_opcode = 0x08000000u;
-    const uint32_t general_jump =
-        j_opcode | (((uintptr_t)__am_asm_trap >> 2) & 0x03ffffffu);
-    const uint32_t refill_jump =
-        j_opcode | (((uintptr_t)__am_tlb_refill_entry >> 2) & 0x03ffffffu);
+    const uint32_t general_jump = j_opcode | (((uintptr_t)__am_asm_trap >> 2) & 0x03ffffffu);
+    const uint32_t refill_jump = j_opcode | (((uintptr_t)__am_tlb_refill_entry >> 2) & 0x03ffffffu);
 
     /* The refill entry must never use the general trap's possibly-user SP. */
     *(uint32_t *)TLB_REFILL_ENTRY = refill_jump;

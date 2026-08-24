@@ -9,8 +9,7 @@ static uint64_t memory_entry_data[2] __attribute__((aligned(8))) = {
     0,
 };
 
-static uint64_t memory_entry_route_data __attribute__((aligned(8))) =
-    0xfedcba980badc0deull;
+static uint64_t memory_entry_route_data __attribute__((aligned(8))) = 0xfedcba980badc0deull;
 
 volatile uint64_t memory_entry_saved_mcause = 0;
 volatile uint64_t memory_entry_saved_mtval = 0;
@@ -67,15 +66,14 @@ static uint32_t entry_mmio_load32_code[2] __attribute__((aligned(16))) = {
  * signedness. The literal opcodes keep this test independent of compiler load
  * selection and make every typed generated MMIO load observable.
  */
-static uint32_t entry_mmio_width_load_code[7][2]
-    __attribute__((aligned(16))) = {
-        {0x00050503u, 0x00008067u}, /* lb a0, 0(a0); ret */
-        {0x00054503u, 0x00008067u}, /* lbu a0, 0(a0); ret */
-        {0x00051503u, 0x00008067u}, /* lh a0, 0(a0); ret */
-        {0x00055503u, 0x00008067u}, /* lhu a0, 0(a0); ret */
-        {0x00052503u, 0x00008067u}, /* lw a0, 0(a0); ret */
-        {0x00056503u, 0x00008067u}, /* lwu a0, 0(a0); ret */
-        {0x00053503u, 0x00008067u}, /* ld a0, 0(a0); ret */
+static uint32_t entry_mmio_width_load_code[7][2] __attribute__((aligned(16))) = {
+    {0x00050503u, 0x00008067u}, /* lb a0, 0(a0); ret */
+    {0x00054503u, 0x00008067u}, /* lbu a0, 0(a0); ret */
+    {0x00051503u, 0x00008067u}, /* lh a0, 0(a0); ret */
+    {0x00055503u, 0x00008067u}, /* lhu a0, 0(a0); ret */
+    {0x00052503u, 0x00008067u}, /* lw a0, 0(a0); ret */
+    {0x00056503u, 0x00008067u}, /* lwu a0, 0(a0); ret */
+    {0x00053503u, 0x00008067u}, /* ld a0, 0(a0); ret */
 };
 
 static uint32_t entry_misaligned_load_code[2] __attribute__((aligned(16))) = {
@@ -100,17 +98,15 @@ static uint32_t entry_mmio_store32_code[3] __attribute__((aligned(16))) = {
  * every address transition. The store result is derived from rs2, so a fast
  * arm which corrupts or fails to materialise the source register is visible.
  */
-static volatile uint32_t entry_mmio_route_load_code[2]
-    __attribute__((aligned(16))) = {
-        0x00056503u, /* lwu a0, 0(a0) */
-        0x00008067u, /* ret */
+static volatile uint32_t entry_mmio_route_load_code[2] __attribute__((aligned(16))) = {
+    0x00056503u, /* lwu a0, 0(a0) */
+    0x00008067u, /* ret */
 };
 
-static volatile uint32_t entry_mmio_route_store_code[3]
-    __attribute__((aligned(16))) = {
-        ENTRY_MMIO_ROUTE_STORE_SW, /* sw a1, 0(a0) */
-        0x00558513u,               /* addi a0, a1, 5 */
-        0x00008067u,               /* ret */
+static volatile uint32_t entry_mmio_route_store_code[3] __attribute__((aligned(16))) = {
+    ENTRY_MMIO_ROUTE_STORE_SW, /* sw a1, 0(a0) */
+    0x00558513u,               /* addi a0, a1, 5 */
+    0x00008067u,               /* ret */
 };
 
 /*
@@ -119,15 +115,13 @@ static volatile uint32_t entry_mmio_route_store_code[3]
  * CONFIG_MBASE must take the ordinary PMEM path instead of matching an invalid
  * sidecar state.
  */
-static volatile uint32_t entry_mmio_route_seed_guard_code[3]
-    __attribute__((aligned(16))) = {
-        0x00058513u, /* addi a0, a1, 0 */
-        0x00056503u, /* lwu a0, 0(a0) */
-        0x00008067u, /* ret */
+static volatile uint32_t entry_mmio_route_seed_guard_code[3] __attribute__((aligned(16))) = {
+    0x00058513u, /* addi a0, a1, 0 */
+    0x00056503u, /* lwu a0, 0(a0) */
+    0x00008067u, /* ret */
 };
 
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".option push\n"
     ".option norvc\n"
     ".align 2\n"
@@ -156,8 +150,7 @@ extern void memory_entry_trap_handler(void);
  * evict t0 and writing the MMIO result to t6 evict t1. Both control-flow arms
  * must spill and map the same architectural registers.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".option push\n"
     ".option norvc\n"
     ".align 2\n"
@@ -227,15 +220,13 @@ static uint64_t entry_mmio_load_sequence(uintptr_t addr)
 /* Enter one generated LWU block with a run-time-selected MMIO address. */
 static uint64_t entry_mmio_load32_sequence(uintptr_t addr)
 {
-    return ((entry_load_fn_t)(uintptr_t)entry_mmio_load32_code)(
-        (uint64_t *)addr);
+    return ((entry_load_fn_t)(uintptr_t)entry_mmio_load32_code)((uint64_t *)addr);
 }
 
 /* Enter one generated block for each signed or unsigned MMIO load width. */
 static uint64_t entry_mmio_width_load_sequence(uint32_t index)
 {
-    return ((entry_load_fn_t)(uintptr_t)entry_mmio_width_load_code[index])(
-        (uint64_t *)NEMU_VGACTL_TEST_MMIO);
+    return ((entry_load_fn_t)(uintptr_t)entry_mmio_width_load_code[index])((uint64_t *)NEMU_VGACTL_TEST_MMIO);
 }
 
 /* Enter a generated block whose first LD must side-exit before trapping. */
@@ -247,39 +238,31 @@ static uint64_t entry_misaligned_load_sequence(uintptr_t bad)
 /* Enter a generated block whose first SB must commit exactly once. */
 static uint64_t entry_mmio_store_sequence(uintptr_t addr, uint64_t value)
 {
-    return ((entry_store_fn_t)(uintptr_t)entry_mmio_store_code)(
-        (uint64_t *)addr, value);
+    return ((entry_store_fn_t)(uintptr_t)entry_mmio_store_code)((uint64_t *)addr, value);
 }
 
 /* Enter one generated SW block with a run-time-selected MMIO address. */
 static uint64_t entry_mmio_store32_sequence(uintptr_t addr, uint64_t value)
 {
-    return ((entry_store_fn_t)(uintptr_t)entry_mmio_store32_code)(
-        (uint64_t *)addr, value);
+    return ((entry_store_fn_t)(uintptr_t)entry_mmio_store32_code)((uint64_t *)addr, value);
 }
 
 /* Enter the dedicated mutable LWU route-cache site. */
 static uint64_t entry_mmio_route_load_sequence(uintptr_t addr)
 {
-    return ((entry_load_fn_t)(uintptr_t)entry_mmio_route_load_code)(
-        (uint64_t *)addr);
+    return ((entry_load_fn_t)(uintptr_t)entry_mmio_route_load_code)((uint64_t *)addr);
 }
 
 /* Enter the dedicated mutable SW/SD route-cache site. */
-static uint64_t entry_mmio_route_store_sequence(
-    uintptr_t addr, uint64_t value)
+static uint64_t entry_mmio_route_store_sequence(uintptr_t addr, uint64_t value)
 {
-    return ((entry_store_fn_t)(uintptr_t)entry_mmio_route_store_code)(
-        (uint64_t *)addr, value);
+    return ((entry_store_fn_t)(uintptr_t)entry_mmio_route_store_code)((uint64_t *)addr, value);
 }
 
 /* Enter a block whose observed direct address changes before its first load. */
-static uint64_t entry_mmio_route_seed_guard_sequence(
-    uintptr_t observed_addr, uintptr_t runtime_addr)
+static uint64_t entry_mmio_route_seed_guard_sequence(uintptr_t observed_addr, uintptr_t runtime_addr)
 {
-    return ((entry_seed_guard_fn_t)(uintptr_t)
-                entry_mmio_route_seed_guard_code)(
-        observed_addr, runtime_addr);
+    return ((entry_seed_guard_fn_t)(uintptr_t)entry_mmio_route_seed_guard_code)(observed_addr, runtime_addr);
 }
 
 /* Cover memory instructions at block entry and safe store continuation. */
@@ -291,8 +274,7 @@ static void test_memory_entry_and_store_continue(void)
     const uint64_t marker = 0x0f0e0d0c0b0a0908ull;
     const uint64_t store_out = entry_store_sequence(&memory_entry_data[1], marker);
     const uint64_t mmio_load = entry_mmio_load_sequence(NEMU_RTC_MMIO);
-    const uint64_t mmio_once_load =
-        entry_mmio_load32_sequence(NEMU_MOUSE_MMIO);
+    const uint64_t mmio_once_load = entry_mmio_load32_sequence(NEMU_MOUSE_MMIO);
     const uint64_t mmio_width_pattern = 0x88776655f0e2d4c3ull;
     uint64_t mmio_width_loads[7] = {};
     const uintptr_t bad_load = ((uintptr_t)&memory_entry_data[0]) + 1u;
@@ -303,26 +285,21 @@ static void test_memory_entry_and_store_continue(void)
      * them before this fixture writes its pattern so allocator contents cannot
      * be mistaken for a valid device value.
      */
-    const uint64_t mmio_initial_staging =
-        entry_mmio_load_sequence(NEMU_VGACTL_TEST_MMIO);
+    const uint64_t mmio_initial_staging = entry_mmio_load_sequence(NEMU_VGACTL_TEST_MMIO);
 
     /*
      * This VGA control-map slot is ordinary backing storage unless a separate
      * command register is written. An eight-byte write at this offset therefore
      * provides stable bytes without asking the device to update the display.
      */
-    (void)entry_store_sequence(
-        (uint64_t *)NEMU_VGACTL_TEST_MMIO, mmio_width_pattern);
+    (void)entry_store_sequence((uint64_t *)NEMU_VGACTL_TEST_MMIO, mmio_width_pattern);
 
-    const uint64_t mmio_shared_direct_load =
-        entry_mmio_load_sequence(NEMU_VGACTL_TEST_MMIO);
-    const uint64_t mmio_spill_load = memory_entry_mmio_spill_load(
-        (uint64_t *)NEMU_VGACTL_TEST_MMIO);
+    const uint64_t mmio_shared_direct_load = entry_mmio_load_sequence(NEMU_VGACTL_TEST_MMIO);
+    const uint64_t mmio_spill_load = memory_entry_mmio_spill_load((uint64_t *)NEMU_VGACTL_TEST_MMIO);
 
     for (uint32_t index = 0; index < 7u; index++)
     {
-        mmio_width_loads[index] =
-            entry_mmio_width_load_sequence(index);
+        mmio_width_loads[index] = entry_mmio_width_load_sequence(index);
     }
 
     /*
@@ -332,29 +309,19 @@ static void test_memory_entry_and_store_continue(void)
      * position and size also makes the following command callback deterministic
      * even though new_space() does not clear its backing arena.
      */
-    const uint64_t direct_store_out =
-        entry_mmio_store32_sequence(
-            NEMU_VGACTL_TEST_MMIO,
-            NEMU_VGACTL_INITIAL_DIRECT_PATTERN);
-    const uint64_t direct_store_readback =
-        entry_mmio_load32_sequence(NEMU_VGACTL_TEST_MMIO);
+    const uint64_t direct_store_out = entry_mmio_store32_sequence(NEMU_VGACTL_TEST_MMIO, NEMU_VGACTL_INITIAL_DIRECT_PATTERN);
+    const uint64_t direct_store_readback = entry_mmio_load32_sequence(NEMU_VGACTL_TEST_MMIO);
     /*
      * The preceding eight-byte setup leaves a non-zero BLIT_POS word adjacent
      * to BLIT_SRC. Check it before resetting the command operands: an emitter
      * which accidentally widened SW to a host qword store would zero this word
      * because the guest source argument is zero-extended.
      */
-    const uint64_t direct_store_adjacent_readback =
-        entry_mmio_load32_sequence(NEMU_VGACTL_BLIT_POS_MMIO);
-    const uint64_t position_store_out =
-        entry_mmio_store32_sequence(NEMU_VGACTL_BLIT_POS_MMIO, 0);
-    const uint64_t size_store_out =
-        entry_mmio_store32_sequence(NEMU_VGACTL_BLIT_SIZE_MMIO, 0);
-    const uint64_t command_store_out =
-        entry_mmio_store32_sequence(
-            NEMU_VGACTL_BLIT_CMD_MMIO, NEMU_VGACTL_BLIT_CMD_COPY);
-    const uint64_t command_readback =
-        entry_mmio_load32_sequence(NEMU_VGACTL_BLIT_CMD_MMIO);
+    const uint64_t direct_store_adjacent_readback = entry_mmio_load32_sequence(NEMU_VGACTL_BLIT_POS_MMIO);
+    const uint64_t position_store_out = entry_mmio_store32_sequence(NEMU_VGACTL_BLIT_POS_MMIO, 0);
+    const uint64_t size_store_out = entry_mmio_store32_sequence(NEMU_VGACTL_BLIT_SIZE_MMIO, 0);
+    const uint64_t command_store_out = entry_mmio_store32_sequence(NEMU_VGACTL_BLIT_CMD_MMIO, NEMU_VGACTL_BLIT_CMD_COPY);
+    const uint64_t command_readback = entry_mmio_load32_sequence(NEMU_VGACTL_BLIT_CMD_MMIO);
 
     /*
      * Use several stores so a host timer signal arriving inside one helper call
@@ -364,8 +331,7 @@ static void test_memory_entry_and_store_continue(void)
      */
     for (uint32_t attempt = 0; attempt < 16u; attempt++)
     {
-        mmio_store_out =
-            entry_mmio_store_sequence(NEMU_RTC_MMIO, 0x55u);
+        mmio_store_out = entry_mmio_store_sequence(NEMU_RTC_MMIO, 0x55u);
         check(mmio_store_out == 5);
     }
 
@@ -374,10 +340,8 @@ static void test_memory_entry_and_store_continue(void)
      * counts this otherwise-unused marker, proving that one guest SB invokes
      * the device callback exactly once rather than merely balancing JIT stats.
      */
-    const uint64_t serial_store_out =
-        entry_mmio_store_sequence(NEMU_SERIAL_MMIO, '~');
-    const uint64_t serial_newline_out =
-        entry_mmio_store_sequence(NEMU_SERIAL_MMIO, '\n');
+    const uint64_t serial_store_out = entry_mmio_store_sequence(NEMU_SERIAL_MMIO, '~');
+    const uint64_t serial_newline_out = entry_mmio_store_sequence(NEMU_SERIAL_MMIO, '\n');
 
     memory_entry_saved_mcause = 0;
     memory_entry_saved_mtval = 0;
@@ -407,8 +371,7 @@ static void test_memory_entry_and_store_continue(void)
     check(mmio_spill_load == 0x00000000f0e2d5aaull);
     check(direct_store_out == 5);
     check(direct_store_readback == NEMU_VGACTL_INITIAL_DIRECT_PATTERN);
-    check(direct_store_adjacent_readback ==
-          (uint32_t)(mmio_width_pattern >> 32));
+    check(direct_store_adjacent_readback == (uint32_t)(mmio_width_pattern >> 32));
     check(position_store_out == 5);
     check(size_store_out == 5);
     check(command_store_out == 5);
@@ -450,43 +413,27 @@ static void test_direct_mmio_route_cache(void)
      * consume WHEEL=4. Zero or a later event exposes a skipped or duplicated
      * device effect.
      */
-    const uint64_t cold_src =
-        entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
-    const uint64_t warm_src =
-        entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
-    const uint64_t mouse_once =
-        entry_mmio_route_load_sequence(NEMU_MOUSE_MMIO);
-    const uint64_t src_after_helper =
-        entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
-    const uint32_t pmem_base_expected =
-        *(volatile uint32_t *)(uintptr_t)NEMU_PMEM_BASE;
-    const uint64_t pmem_base_load =
-        entry_mmio_route_load_sequence(NEMU_PMEM_BASE);
-    const uint64_t pmem_base_seed_guard =
-        entry_mmio_route_seed_guard_sequence(
-            NEMU_VGACTL_TEST_MMIO, NEMU_PMEM_BASE);
-    const uint64_t pmem_load =
-        entry_mmio_route_load_sequence(
-            (uintptr_t)&memory_entry_route_data);
-    const uint64_t src_after_pmem =
-        entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
+    const uint64_t cold_src = entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
+    const uint64_t warm_src = entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
+    const uint64_t mouse_once = entry_mmio_route_load_sequence(NEMU_MOUSE_MMIO);
+    const uint64_t src_after_helper = entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
+    const uint32_t pmem_base_expected = *(volatile uint32_t *)(uintptr_t)NEMU_PMEM_BASE;
+    const uint64_t pmem_base_load = entry_mmio_route_load_sequence(NEMU_PMEM_BASE);
+    const uint64_t pmem_base_seed_guard = entry_mmio_route_seed_guard_sequence(NEMU_VGACTL_TEST_MMIO, NEMU_PMEM_BASE);
+    const uint64_t pmem_load = entry_mmio_route_load_sequence((uintptr_t)&memory_entry_route_data);
+    const uint64_t src_after_pmem = entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
 
     memory_entry_saved_mcause = 0;
     memory_entry_saved_mtval = 0;
     memory_entry_restore_mtvec = read_mtvec();
     write_mtvec((uintptr_t)memory_entry_trap_handler);
-    const uint64_t misaligned_load =
-        entry_mmio_route_load_sequence(bad_load);
+    const uint64_t misaligned_load = entry_mmio_route_load_sequence(bad_load);
     const uint64_t load_mcause = memory_entry_saved_mcause;
     const uint64_t load_mtval = memory_entry_saved_mtval;
-    const uint64_t src_after_bad_load =
-        entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
-    const uint64_t info_expected =
-        entry_mmio_load32_sequence(NEMU_VGACTL_MMIO);
-    const uint64_t info_via_changed_route =
-        entry_mmio_route_load_sequence(NEMU_VGACTL_MMIO);
-    const uint64_t src_after_direct_change =
-        entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
+    const uint64_t src_after_bad_load = entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
+    const uint64_t info_expected = entry_mmio_load32_sequence(NEMU_VGACTL_MMIO);
+    const uint64_t info_via_changed_route = entry_mmio_route_load_sequence(NEMU_VGACTL_MMIO);
+    const uint64_t src_after_direct_change = entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
 
     check(cold_src == NEMU_VGACTL_INITIAL_DIRECT_PATTERN);
     check(warm_src == NEMU_VGACTL_INITIAL_DIRECT_PATTERN);
@@ -508,48 +455,28 @@ static void test_direct_mmio_route_cache(void)
      * address. A helper miss must not poison the direct entry, and a PMEM
      * access must remain on the unchanged ordinary-memory path.
      */
-    check(entry_mmio_route_store_sequence(
-              NEMU_VGACTL_TEST_MMIO, store_a) ==
-          (uint64_t)store_a + 5u);
-    check(entry_mmio_route_store_sequence(
-              NEMU_VGACTL_TEST_MMIO, store_b) ==
-          (uint64_t)store_b + 5u);
-    const uint64_t observed_store_b =
-        entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
+    check(entry_mmio_route_store_sequence(NEMU_VGACTL_TEST_MMIO, store_a) == (uint64_t)store_a + 5u);
+    check(entry_mmio_route_store_sequence(NEMU_VGACTL_TEST_MMIO, store_b) == (uint64_t)store_b + 5u);
+    const uint64_t observed_store_b = entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
 
-    check(entry_mmio_route_store_sequence(
-              (uintptr_t)&memory_entry_route_data, pmem_store) ==
-          (uint64_t)pmem_store + 5u);
+    check(entry_mmio_route_store_sequence((uintptr_t)&memory_entry_route_data, pmem_store) == (uint64_t)pmem_store + 5u);
     check(memory_entry_route_data == 0xfedcba9811223344ull);
 
-    check(entry_mmio_route_store_sequence(
-              NEMU_VGACTL_TEST_MMIO, store_c) ==
-          (uint64_t)store_c + 5u);
-    check(entry_mmio_route_store_sequence(
-              NEMU_VGACTL_BLIT_CMD_MMIO,
-              NEMU_VGACTL_BLIT_CMD_COPY) ==
-          (uint64_t)NEMU_VGACTL_BLIT_CMD_COPY + 5u);
-    const uint64_t command_readback =
-        entry_mmio_load32_sequence(NEMU_VGACTL_BLIT_CMD_MMIO);
-    check(entry_mmio_route_store_sequence(
-              NEMU_VGACTL_TEST_MMIO, store_d) ==
-          (uint64_t)store_d + 5u);
+    check(entry_mmio_route_store_sequence(NEMU_VGACTL_TEST_MMIO, store_c) == (uint64_t)store_c + 5u);
+    check(entry_mmio_route_store_sequence(NEMU_VGACTL_BLIT_CMD_MMIO, NEMU_VGACTL_BLIT_CMD_COPY) == (uint64_t)NEMU_VGACTL_BLIT_CMD_COPY + 5u);
+    const uint64_t command_readback = entry_mmio_load32_sequence(NEMU_VGACTL_BLIT_CMD_MMIO);
+    check(entry_mmio_route_store_sequence(NEMU_VGACTL_TEST_MMIO, store_d) == (uint64_t)store_d + 5u);
 
     memory_entry_saved_mcause = 0;
     memory_entry_saved_mtval = 0;
     memory_entry_restore_mtvec = read_mtvec();
     write_mtvec((uintptr_t)memory_entry_trap_handler);
-    const uint64_t misaligned_store =
-        entry_mmio_route_store_sequence(
-            bad_store, misaligned_store_data);
+    const uint64_t misaligned_store = entry_mmio_route_store_sequence(bad_store, misaligned_store_data);
     const uint64_t store_mcause = memory_entry_saved_mcause;
     const uint64_t store_mtval = memory_entry_saved_mtval;
-    const uint64_t full_after_bad_store =
-        entry_mmio_load_sequence(NEMU_VGACTL_TEST_MMIO);
+    const uint64_t full_after_bad_store = entry_mmio_load_sequence(NEMU_VGACTL_TEST_MMIO);
 
-    check(entry_mmio_route_store_sequence(
-              NEMU_VGACTL_TEST_MMIO, store_e) ==
-          (uint64_t)store_e + 5u);
+    check(entry_mmio_route_store_sequence(NEMU_VGACTL_TEST_MMIO, store_e) == (uint64_t)store_e + 5u);
 
     /*
      * Recompile the same source address with an unsupported width. SD spans
@@ -559,29 +486,20 @@ static void test_direct_mmio_route_cache(void)
      */
     entry_mmio_route_store_code[0] = ENTRY_MMIO_ROUTE_STORE_SD;
     local_fence_i();
-    check(entry_mmio_route_store_sequence(
-              NEMU_VGACTL_TEST_MMIO, sd_pattern) ==
-          sd_pattern + 5u);
-    const uint64_t full_after_sd =
-        entry_mmio_load_sequence(NEMU_VGACTL_TEST_MMIO);
+    check(entry_mmio_route_store_sequence(NEMU_VGACTL_TEST_MMIO, sd_pattern) == sd_pattern + 5u);
+    const uint64_t full_after_sd = entry_mmio_load_sequence(NEMU_VGACTL_TEST_MMIO);
 
     entry_mmio_route_store_code[0] = ENTRY_MMIO_ROUTE_STORE_SW;
     local_fence_i();
-    check(entry_mmio_route_store_sequence(
-              NEMU_VGACTL_TEST_MMIO, store_f) ==
-          (uint64_t)store_f + 5u);
-    check(entry_mmio_route_store_sequence(
-              NEMU_VGACTL_TEST_MMIO, store_g) ==
-          (uint64_t)store_g + 5u);
-    const uint64_t observed_store_g =
-        entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
+    check(entry_mmio_route_store_sequence(NEMU_VGACTL_TEST_MMIO, store_f) == (uint64_t)store_f + 5u);
+    check(entry_mmio_route_store_sequence(NEMU_VGACTL_TEST_MMIO, store_g) == (uint64_t)store_g + 5u);
+    const uint64_t observed_store_g = entry_mmio_route_load_sequence(NEMU_VGACTL_TEST_MMIO);
 
     check(observed_store_b == store_b);
     check(command_readback == 0u);
     check(store_mcause == 6u);
     check(store_mtval == bad_store);
-    check(misaligned_store ==
-          (uint64_t)misaligned_store_data + 5u);
+    check(misaligned_store == (uint64_t)misaligned_store_data + 5u);
     check(full_after_bad_store == store_d);
     check(full_after_sd == sd_pattern);
     check(observed_store_g == store_g);

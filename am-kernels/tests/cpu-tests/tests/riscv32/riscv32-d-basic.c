@@ -21,8 +21,7 @@ enum
  * four-byte instruction lets the test reach its literal checks and fail
  * because D is absent, rather than becoming stuck in the trap handler.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -49,8 +48,7 @@ extern void rv32_d_basic_trap_handler(void);
  * architecturally defined FLD/FSD transfer instructions.  The translation
  * unit retains the normal integer-only ILP32 ABI.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -96,13 +94,10 @@ asm(
 
     ".option pop\n");
 
-extern void rv32_d_add_bits(const uint64_t *lhs, const uint64_t *rhs,
-                            uint64_t *result);
+extern void rv32_d_add_bits(const uint64_t *lhs, const uint64_t *rhs, uint64_t *result);
 extern void rv32_d_roundtrip_bits(const uint64_t *source, uint64_t *result);
 extern void rv32_d_box_single(const uint32_t *source, uint64_t *result);
-extern void rv32_d_malformed_box_add_single(const uint64_t *lhs,
-                                             const uint64_t *rhs,
-                                             uint64_t *result);
+extern void rv32_d_malformed_box_add_single(const uint64_t *lhs, const uint64_t *rhs, uint64_t *result);
 
 static uintptr_t read_mstatus(void)
 {
@@ -161,8 +156,7 @@ static void test_rv32d_state_and_basic_execution(void)
     dirty_mstatus = read_mstatus();
     rv32_d_roundtrip_bits(&signalling_nan, &transferred);
     rv32_d_box_single(&single_signalling_nan, &boxed_single);
-    rv32_d_malformed_box_add_single(&malformed_one, &boxed_one,
-                                     &malformed_result);
+    rv32_d_malformed_box_add_single(&malformed_one, &boxed_one, &malformed_result);
 
     write_mstatus(old_mstatus);
     write_mtvec(old_mtvec);

@@ -27,8 +27,7 @@ static uint64_t uptime_us(void)
  * Keep a small amount of register-only work around each return.  Unsigned
  * arithmetic gives defined modulo-2^64 wrapping and a stable final checksum.
  */
-__attribute__((noinline)) static uint64_t
-callmark_leaf(uint64_t x, uint64_t iteration)
+__attribute__((noinline)) static uint64_t callmark_leaf(uint64_t x, uint64_t iteration)
 {
     x ^= x >> 13;
     x += iteration ^ UINT64_C(0x9e3779b97f4a7c15);
@@ -39,11 +38,9 @@ callmark_leaf(uint64_t x, uint64_t iteration)
  * The extra wrapper creates a second hot canonical return per iteration while
  * keeping the leaf call direct and easy to identify in the disassembly.
  */
-__attribute__((noinline)) static uint64_t
-callmark_wrapper(uint64_t x, uint64_t iteration)
+__attribute__((noinline)) static uint64_t callmark_wrapper(uint64_t x, uint64_t iteration)
 {
-    uint64_t value =
-        callmark_leaf(x + UINT64_C(0xd1b54a32d192ed03), iteration);
+    uint64_t value = callmark_leaf(x + UINT64_C(0xd1b54a32d192ed03), iteration);
     return value ^ UINT64_C(0xa5a5a5a55a5a5a5a);
 }
 

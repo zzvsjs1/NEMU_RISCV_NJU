@@ -68,10 +68,7 @@ static uint16_t rdLE16(const uint8_t *p)
 
 static uint32_t rdLE32(const uint8_t *p)
 {
-    return (uint32_t)p[0] |
-           ((uint32_t)p[1] << 8) |
-           ((uint32_t)p[2] << 16) |
-           ((uint32_t)p[3] << 24);
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
 static int readLE32(int fd, uint32_t *out)
@@ -199,10 +196,7 @@ int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained)
 
     const int bytes_per_sample = bytesPerSampleFromFormat(desired->format);
 
-    if (bytes_per_sample == 0 ||
-        desired->freq <= 0 ||
-        desired->channels == 0 ||
-        desired->samples == 0)
+    if (bytes_per_sample == 0 || desired->freq <= 0 || desired->channels == 0 || desired->samples == 0)
     {
         return -1;
     }
@@ -312,8 +306,7 @@ void SDL_MixAudio(uint8_t *dst, const uint8_t *src, uint32_t len, int volume)
         {
             uint8_t *d = dst + i * 2;
             const uint8_t *s = src + i * 2;
-            int mixed = readS16Native(d) +
-                        (readS16Native(s) * volume) / SDL_MIX_MAXVOLUME;
+            int mixed = readS16Native(d) + (readS16Native(s) * volume) / SDL_MIX_MAXVOLUME;
             writeS16Native(d, clampS16(mixed));
         }
         break;
@@ -324,11 +317,7 @@ void SDL_MixAudio(uint8_t *dst, const uint8_t *src, uint32_t len, int volume)
     }
 }
 
-SDL_AudioSpec *SDL_LoadWAV(
-    const char *file,
-    SDL_AudioSpec *spec,
-    uint8_t **audio_buf,
-    uint32_t *audio_len)
+SDL_AudioSpec *SDL_LoadWAV(const char *file, SDL_AudioSpec *spec, uint8_t **audio_buf, uint32_t *audio_len)
 {
     if (!file || !spec || !audio_buf || !audio_len)
         return NULL;
@@ -344,10 +333,7 @@ SDL_AudioSpec *SDL_LoadWAV(
     char riff[4], wave[4];
     uint32_t riff_size;
 
-    if (!readExact(fd, riff, 4) ||
-        !readLE32(fd, &riff_size) ||
-        !readExact(fd, wave, 4) ||
-        memcmp(riff, "RIFF", 4) != 0 ||
+    if (!readExact(fd, riff, 4) || !readLE32(fd, &riff_size) || !readExact(fd, wave, 4) || memcmp(riff, "RIFF", 4) != 0 ||
         memcmp(wave, "WAVE", 4) != 0)
     {
         close(fd);
@@ -433,16 +419,13 @@ SDL_AudioSpec *SDL_LoadWAV(
                 break;
             }
 
-            if (numChannels == 0 || numChannels > UINT8_MAX ||
-                sampleRate == 0 || sampleRate > INT_MAX ||
-                (bitsPerSample != 8 && bitsPerSample != 16))
+            if (numChannels == 0 || numChannels > UINT8_MAX || sampleRate == 0 || sampleRate > INT_MAX || (bitsPerSample != 8 && bitsPerSample != 16))
             {
                 parse_ok = 0;
                 break;
             }
 
-            const uint32_t expectedAlign =
-                (uint32_t)numChannels * (uint32_t)(bitsPerSample / 8);
+            const uint32_t expectedAlign = (uint32_t)numChannels * (uint32_t)(bitsPerSample / 8);
 
             if (blockAlign == 0 || blockAlign != expectedAlign)
             {
@@ -553,8 +536,7 @@ SDL_AudioSpec *SDL_LoadWAV(
     spec->silence = (spec->format == AUDIO_U8) ? 0x80 : 0x00;
     // Choose a reasonable default buffer size for callback-driven playback
     spec->samples = 1024;
-    spec->size = (uint32_t)spec->samples * spec->channels *
-                 (uint32_t)(bitsPerSample / 8);
+    spec->size = (uint32_t)spec->samples * spec->channels * (uint32_t)(bitsPerSample / 8);
 
     *audio_buf = data_ptr;
     *audio_len = data_size;
@@ -649,8 +631,7 @@ void CallbackHelper(void)
      * target watermark.
      */
     const int target_per_cb = alignDownToFrame((int)g_spec.size);
-    const int low_watermark =
-        g_target_queue_bytes > target_per_cb ? g_target_queue_bytes - target_per_cb : 0;
+    const int low_watermark = g_target_queue_bytes > target_per_cb ? g_target_queue_bytes - target_per_cb : 0;
 
     if (queued_bytes > low_watermark)
         return;
@@ -673,9 +654,7 @@ void CallbackHelper(void)
     g_in_audio_cb = 1;
 
     // Feed several chunks back to back, until the watermark is restored.
-    while (free_bytes >= g_bytes_per_frame &&
-           produced < fill_budget &&
-           bursts < MAX_CALLBACKS_PER_PUMP)
+    while (free_bytes >= g_bytes_per_frame && produced < fill_budget && bursts < MAX_CALLBACKS_PER_PUMP)
     {
         int chunk = target_per_cb;
 

@@ -9,8 +9,7 @@ volatile uint32_t jit_trap_mepc = 0;
 volatile uint32_t jit_trap_mcause = 0;
 volatile uint32_t jit_trap_a0 = 0;
 
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".option push\n"
     ".option norvc\n"
     ".align 2\n"
@@ -75,15 +74,14 @@ static void run_ecall_after_hot_block(void)
     jit_trap_a0 = 0;
     write_mtvec((uintptr_t)jit_trap_boundary_handler);
 
-    asm volatile(
-        "la %[expected], 1f\n"
-        "mv a0, %[value]\n"
-        "li a7, 11\n"
-        "1:\n"
-        "ecall\n"
-        : [expected] "=&r"(expected_mepc)
-        : [value] "r"(value)
-        : "a0", "a7", "t0", "t1", "memory");
+    asm volatile("la %[expected], 1f\n"
+                 "mv a0, %[value]\n"
+                 "li a7, 11\n"
+                 "1:\n"
+                 "ecall\n"
+                 : [expected] "=&r"(expected_mepc)
+                 : [value] "r"(value)
+                 : "a0", "a7", "t0", "t1", "memory");
 
     write_mtvec(old_mtvec);
     check(jit_trap_seen == 1u);

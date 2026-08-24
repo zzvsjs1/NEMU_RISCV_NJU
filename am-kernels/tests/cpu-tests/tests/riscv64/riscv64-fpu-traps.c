@@ -13,8 +13,7 @@ volatile uint64_t rv64_fpu_trap_mtval = UINT64_MAX;
 #define MSTATUS_FS_OFF ((uintptr_t)0u << 13)
 #define MSTATUS_FS_INITIAL ((uintptr_t)1u << 13)
 
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -530,11 +529,9 @@ extern void rv64_fpu_misaligned_fsw(void *, uint32_t);
 extern char rv64_fpu_misaligned_fsw_insn[];
 extern void rv64_fpu_misaligned_fsd(void *, uint64_t);
 extern char rv64_fpu_misaligned_fsd_insn[];
-extern void rv64_fpu_misaligned_cache_eviction(
-    const void *, uint64_t observed[6]);
+extern void rv64_fpu_misaligned_cache_eviction(const void *, uint64_t observed[6]);
 extern char rv64_fpu_misaligned_cache_eviction_insn[];
-extern void rv64_fpu_misaligned_store_cache_eviction(
-    void *, uint64_t observed[6], uint32_t);
+extern void rv64_fpu_misaligned_store_cache_eviction(void *, uint64_t observed[6], uint32_t);
 extern char rv64_fpu_misaligned_store_cache_eviction_insn[];
 extern uint64_t rv64_fpu_fs_off_flw(const void *, uint64_t, uint64_t);
 extern char rv64_fpu_fs_off_flw_insn[];
@@ -586,8 +583,7 @@ static void reset_trap(void)
     rv64_fpu_trap_mtval = UINT64_MAX;
 }
 
-static void check_trap(uint64_t cause, const char *instruction,
-                       uintptr_t expected_tval)
+static void check_trap(uint64_t cause, const char *instruction, uintptr_t expected_tval)
 {
     check(rv64_fpu_trap_count == 1);
     check(rv64_fpu_trap_mcause == cause);
@@ -633,10 +629,7 @@ static void test_fs_off_and_reserved_rounding(uintptr_t base_mstatus)
 
     write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
     reset_trap();
-    check(rv64_fpu_bad_static_rm(UINT32_C(0x3f000000),
-                                UINT32_C(0x3f800000),
-                                UINT32_C(0x40000000)) ==
-          boxed_sentinel);
+    check(rv64_fpu_bad_static_rm(UINT32_C(0x3f000000), UINT32_C(0x3f800000), UINT32_C(0x40000000)) == boxed_sentinel);
     check_trap(2, rv64_fpu_bad_static_rm_insn, 0);
 
     reset_trap();
@@ -649,10 +642,7 @@ static void test_fs_off_and_reserved_rounding(uintptr_t base_mstatus)
 
     write_frm(5);
     reset_trap();
-    check(rv64_fpu_bad_dynamic_rm(UINT32_C(0x3f000000),
-                                 UINT32_C(0x3f800000),
-                                 UINT32_C(0x40000000)) ==
-          boxed_sentinel);
+    check(rv64_fpu_bad_dynamic_rm(UINT32_C(0x3f000000), UINT32_C(0x3f800000), UINT32_C(0x40000000)) == boxed_sentinel);
     check_trap(2, rv64_fpu_bad_dynamic_rm_insn, 0);
     write_frm(0);
 }
@@ -667,25 +657,16 @@ static void test_reserved_exact_encodings(uintptr_t base_mstatus)
         check_trap(2, instruction, 0); \
     } while (0)
 
-    write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) |
-                  MSTATUS_FS_INITIAL);
+    write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
 
-    CHECK_BAD_EXACT(rv64_fpu_bad_fmv_x_w_rs2,
-                    rv64_fpu_bad_fmv_x_w_rs2_insn);
-    CHECK_BAD_EXACT(rv64_fpu_bad_fclass_s_rs2,
-                    rv64_fpu_bad_fclass_s_rs2_insn);
-    CHECK_BAD_EXACT(rv64_fpu_bad_fmv_w_x_rs2,
-                    rv64_fpu_bad_fmv_w_x_rs2_insn);
-    CHECK_BAD_EXACT(rv64_fpu_bad_fsgnj_s_funct3,
-                    rv64_fpu_bad_fsgnj_s_funct3_insn);
-    CHECK_BAD_EXACT(rv64_fpu_bad_fmv_x_d_rs2,
-                    rv64_fpu_bad_fmv_x_d_rs2_insn);
-    CHECK_BAD_EXACT(rv64_fpu_bad_fclass_d_rs2,
-                    rv64_fpu_bad_fclass_d_rs2_insn);
-    CHECK_BAD_EXACT(rv64_fpu_bad_fmv_d_x_rs2,
-                    rv64_fpu_bad_fmv_d_x_rs2_insn);
-    CHECK_BAD_EXACT(rv64_fpu_bad_fsgnj_d_funct3,
-                    rv64_fpu_bad_fsgnj_d_funct3_insn);
+    CHECK_BAD_EXACT(rv64_fpu_bad_fmv_x_w_rs2, rv64_fpu_bad_fmv_x_w_rs2_insn);
+    CHECK_BAD_EXACT(rv64_fpu_bad_fclass_s_rs2, rv64_fpu_bad_fclass_s_rs2_insn);
+    CHECK_BAD_EXACT(rv64_fpu_bad_fmv_w_x_rs2, rv64_fpu_bad_fmv_w_x_rs2_insn);
+    CHECK_BAD_EXACT(rv64_fpu_bad_fsgnj_s_funct3, rv64_fpu_bad_fsgnj_s_funct3_insn);
+    CHECK_BAD_EXACT(rv64_fpu_bad_fmv_x_d_rs2, rv64_fpu_bad_fmv_x_d_rs2_insn);
+    CHECK_BAD_EXACT(rv64_fpu_bad_fclass_d_rs2, rv64_fpu_bad_fclass_d_rs2_insn);
+    CHECK_BAD_EXACT(rv64_fpu_bad_fmv_d_x_rs2, rv64_fpu_bad_fmv_d_x_rs2_insn);
+    CHECK_BAD_EXACT(rv64_fpu_bad_fsgnj_d_funct3, rv64_fpu_bad_fsgnj_d_funct3_insn);
 
 #undef CHECK_BAD_EXACT
 }
@@ -701,12 +682,7 @@ static void test_misaligned_memory_traps(void)
     const uint64_t fp_sentinel = UINT64_C(0x123456789abcdef0);
     uint64_t observed_cache_values[6] = {0};
     static const uint64_t expected_cache_values[6] = {
-        UINT64_C(0x112),
-        UINT64_C(0x223),
-        UINT64_C(0x334),
-        UINT64_C(0x445),
-        UINT64_C(0x556),
-        UINT64_C(0x667),
+        UINT64_C(0x112), UINT64_C(0x223), UINT64_C(0x334), UINT64_C(0x445), UINT64_C(0x556), UINT64_C(0x667),
     };
 
     reset_trap();
@@ -730,10 +706,8 @@ static void test_misaligned_memory_traps(void)
     check(storage[1] == UINT64_C(0x99aabbccddeeff00));
 
     reset_trap();
-    rv64_fpu_misaligned_cache_eviction(
-        misaligned, observed_cache_values);
-    check_trap(4, rv64_fpu_misaligned_cache_eviction_insn,
-               (uintptr_t)misaligned);
+    rv64_fpu_misaligned_cache_eviction(misaligned, observed_cache_values);
+    check_trap(4, rv64_fpu_misaligned_cache_eviction_insn, (uintptr_t)misaligned);
     for (uint32_t i = 0; i < 6; i++)
     {
         check(observed_cache_values[i] == expected_cache_values[i]);
@@ -745,10 +719,8 @@ static void test_misaligned_memory_traps(void)
     }
 
     reset_trap();
-    rv64_fpu_misaligned_store_cache_eviction(
-        misaligned, observed_cache_values, UINT32_C(0xdeadbeef));
-    check_trap(6, rv64_fpu_misaligned_store_cache_eviction_insn,
-               (uintptr_t)misaligned);
+    rv64_fpu_misaligned_store_cache_eviction(misaligned, observed_cache_values, UINT32_C(0xdeadbeef));
+    check_trap(6, rv64_fpu_misaligned_store_cache_eviction_insn, (uintptr_t)misaligned);
     check(storage[0] == UINT64_C(0x1122334455667788));
     check(storage[1] == UINT64_C(0x99aabbccddeeff00));
     for (uint32_t i = 0; i < 6; i++)
@@ -766,59 +738,47 @@ static void test_warmed_fs_off_memory(uintptr_t base_mstatus)
     uint32_t word_destination = 0;
     uint64_t double_destination = 0;
 
-    write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) |
-                  MSTATUS_FS_INITIAL);
+    write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
     check(rv64_fpu_fs_off_flw(&word_source, 10, 20) == 33);
     rv64_fpu_seed_fs_off_load_regs(f8_sentinel, f9_sentinel);
 
     reset_trap();
     write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_OFF);
-    check(rv64_fpu_fs_off_flw(
-              (const uint8_t *)&word_source + 1, 10, 20) == 33);
+    check(rv64_fpu_fs_off_flw((const uint8_t *)&word_source + 1, 10, 20) == 33);
     check_trap(2, rv64_fpu_fs_off_flw_insn, 0);
 
-    write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) |
-                  MSTATUS_FS_INITIAL);
+    write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
     check(rv64_fpu_read_fs_off_f8() == f8_sentinel);
     check(rv64_fpu_fs_off_fld(&double_source, 10, 20) == 33);
     rv64_fpu_seed_fs_off_load_regs(f8_sentinel, f9_sentinel);
 
     reset_trap();
     write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_OFF);
-    check(rv64_fpu_fs_off_fld(
-              (const uint8_t *)&double_source + 1, 10, 20) == 33);
+    check(rv64_fpu_fs_off_fld((const uint8_t *)&double_source + 1, 10, 20) == 33);
     check_trap(2, rv64_fpu_fs_off_fld_insn, 0);
 
-    write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) |
-                  MSTATUS_FS_INITIAL);
+    write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
     check(rv64_fpu_read_fs_off_f9() == f9_sentinel);
-    rv64_fpu_seed_fs_off_store_regs(
-        UINT64_C(0x012345677f800123),
-        UINT64_C(0xfff8000000000789));
+    rv64_fpu_seed_fs_off_store_regs(UINT64_C(0x012345677f800123), UINT64_C(0xfff8000000000789));
     check(rv64_fpu_fs_off_fsw(&word_destination, 10, 20) == 33);
     check(word_destination == UINT32_C(0x7f800123));
     word_destination = UINT32_C(0xa5a55a5a);
 
     reset_trap();
     write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_OFF);
-    check(rv64_fpu_fs_off_fsw(
-              (uint8_t *)&word_destination + 1, 10, 20) == 33);
+    check(rv64_fpu_fs_off_fsw((uint8_t *)&word_destination + 1, 10, 20) == 33);
     check_trap(2, rv64_fpu_fs_off_fsw_insn, 0);
     check(word_destination == UINT32_C(0xa5a55a5a));
 
-    write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) |
-                  MSTATUS_FS_INITIAL);
-    rv64_fpu_seed_fs_off_store_regs(
-        UINT64_C(0x012345677f800123),
-        UINT64_C(0xfff8000000000789));
+    write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
+    rv64_fpu_seed_fs_off_store_regs(UINT64_C(0x012345677f800123), UINT64_C(0xfff8000000000789));
     check(rv64_fpu_fs_off_fsd(&double_destination, 10, 20) == 33);
     check(double_destination == UINT64_C(0xfff8000000000789));
     double_destination = UINT64_C(0x1122334455667788);
 
     reset_trap();
     write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_OFF);
-    check(rv64_fpu_fs_off_fsd(
-              (uint8_t *)&double_destination + 1, 10, 20) == 33);
+    check(rv64_fpu_fs_off_fsd((uint8_t *)&double_destination + 1, 10, 20) == 33);
     check_trap(2, rv64_fpu_fs_off_fsd_insn, 0);
     check(double_destination == UINT64_C(0x1122334455667788));
 }

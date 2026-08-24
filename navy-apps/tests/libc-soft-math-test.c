@@ -42,8 +42,7 @@ static double local_abs(double x)
 static int local_is_nan(double x)
 {
     uint64_t bits = bits_of_double(x);
-    return (bits & UINT64_C(0x7ff0000000000000)) == UINT64_C(0x7ff0000000000000) &&
-           (bits & UINT64_C(0x000fffffffffffff)) != 0;
+    return (bits & UINT64_C(0x7ff0000000000000)) == UINT64_C(0x7ff0000000000000) && (bits & UINT64_C(0x000fffffffffffff)) != 0;
 }
 
 static void expect_near(const char *name, double actual, double expected, double tolerance)
@@ -51,8 +50,7 @@ static void expect_near(const char *name, double actual, double expected, double
     double diff = local_abs(actual - expected);
     if (!(diff <= tolerance))
     {
-        printf("[FAIL] %s: expected %.17g, got %.17g, diff %.17g, tolerance %.17g\n",
-               name, expected, actual, diff, tolerance);
+        printf("[FAIL] %s: expected %.17g, got %.17g, diff %.17g, tolerance %.17g\n", name, expected, actual, diff, tolerance);
         failures++;
     }
 }
@@ -62,8 +60,7 @@ static void expect_exact_bits(const char *name, double actual, uint64_t expected
     uint64_t actual_bits = bits_of_double(actual);
     if (actual_bits != expected_bits)
     {
-        printf("[FAIL] %s: expected bits 0x%016llx, got 0x%016llx\n",
-               name, (unsigned long long)expected_bits, (unsigned long long)actual_bits);
+        printf("[FAIL] %s: expected bits 0x%016llx, got 0x%016llx\n", name, (unsigned long long)expected_bits, (unsigned long long)actual_bits);
         failures++;
     }
 }
@@ -72,8 +69,7 @@ static void expect_nan(const char *name, double actual)
 {
     if (!local_is_nan(actual))
     {
-        printf("[FAIL] %s: expected NaN, got %.17g with bits 0x%016llx\n",
-               name, actual, (unsigned long long)bits_of_double(actual));
+        printf("[FAIL] %s: expected NaN, got %.17g with bits 0x%016llx\n", name, actual, (unsigned long long)bits_of_double(actual));
         failures++;
     }
 }
@@ -86,8 +82,7 @@ static void expect_scaled_int(const char *name, double actual, int expected, int
         diff = -diff;
     if (diff > tolerance)
     {
-        printf("[FAIL] %s: expected scaled integer %d +/- %d, got %d from %.17g\n",
-               name, expected, tolerance, rounded_towards_zero, actual);
+        printf("[FAIL] %s: expected scaled integer %d +/- %d, got %d from %.17g\n", name, expected, tolerance, rounded_towards_zero, actual);
         failures++;
     }
 }

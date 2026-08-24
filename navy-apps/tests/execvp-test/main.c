@@ -8,8 +8,7 @@ int main(int argc, char *argv[])
 {
     if (argc >= 2 && strcmp(argv[1], "--child") == 0)
     {
-        if (argc != 4 || strcmp(argv[0], "execvp-test") != 0 ||
-            strcmp(argv[2], "arg ok") != 0 || strcmp(argv[3], "tail") != 0)
+        if (argc != 4 || strcmp(argv[0], "execvp-test") != 0 || strcmp(argv[2], "arg ok") != 0 || strcmp(argv[3], "tail") != 0)
         {
             printf("EXECVP_TEST: bad argv argc=%d argv0=%s\n", argc, argv[0]);
             return 2;

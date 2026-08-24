@@ -54,13 +54,12 @@ static void test_hi_lo(void)
     uint32_t hi_output = 0;
     uint32_t lo_output = 0;
 
-    asm volatile(
-        "mthi %2\n"
-        "mtlo %3\n"
-        "mfhi %0\n"
-        "mflo %1\n"
-        : "=&r"(hi_output), "=&r"(lo_output)
-        : "r"(hi_input), "r"(lo_input));
+    asm volatile("mthi %2\n"
+                 "mtlo %3\n"
+                 "mfhi %0\n"
+                 "mflo %1\n"
+                 : "=&r"(hi_output), "=&r"(lo_output)
+                 : "r"(hi_input), "r"(lo_input));
 
     check(hi_output == hi_input);
     check(lo_output == lo_input);
@@ -72,12 +71,11 @@ static void test_hi_lo(void)
      * architectural requirement.
      */
     uint32_t product = 0;
-    asm volatile(
-        "mul %0, %3, %4\n"
-        "mfhi %1\n"
-        "mflo %2\n"
-        : "=&r"(product), "=&r"(hi_output), "=&r"(lo_output)
-        : "r"(7u), "r"(9u));
+    asm volatile("mul %0, %3, %4\n"
+                 "mfhi %1\n"
+                 "mflo %2\n"
+                 : "=&r"(product), "=&r"(hi_output), "=&r"(lo_output)
+                 : "r"(7u), "r"(9u));
 
     check(product == 63);
     check(hi_output == hi_input);
@@ -89,28 +87,26 @@ static uint32_t read_badvaddr(void)
     uint32_t value;
 
     /* Keep explicit spacing for the CP0-to-GPR result hazard. */
-    asm volatile(
-        "mfc0 %0, $8\n"
-        "nop\n"
-        "nop\n"
-        "nop\n"
-        : "=r"(value)
-        :
-        : "memory");
+    asm volatile("mfc0 %0, $8\n"
+                 "nop\n"
+                 "nop\n"
+                 "nop\n"
+                 : "=r"(value)
+                 :
+                 : "memory");
     return value;
 }
 
 static void write_badvaddr(uint32_t value)
 {
     /* Keep explicit spacing before any later CP0 access. */
-    asm volatile(
-        "mtc0 %0, $8\n"
-        "nop\n"
-        "nop\n"
-        "nop\n"
-        :
-        : "r"(value)
-        : "memory");
+    asm volatile("mtc0 %0, $8\n"
+                 "nop\n"
+                 "nop\n"
+                 "nop\n"
+                 :
+                 : "r"(value)
+                 : "memory");
 }
 
 static uint32_t read_cause(void)
@@ -118,28 +114,26 @@ static uint32_t read_cause(void)
     uint32_t value;
 
     /* Keep explicit spacing for the CP0-to-GPR result hazard. */
-    asm volatile(
-        "mfc0 %0, $13\n"
-        "nop\n"
-        "nop\n"
-        "nop\n"
-        : "=r"(value)
-        :
-        : "memory");
+    asm volatile("mfc0 %0, $13\n"
+                 "nop\n"
+                 "nop\n"
+                 "nop\n"
+                 : "=r"(value)
+                 :
+                 : "memory");
     return value;
 }
 
 static void write_cause(uint32_t value)
 {
     /* Keep explicit spacing before any later CP0 access. */
-    asm volatile(
-        "mtc0 %0, $13\n"
-        "nop\n"
-        "nop\n"
-        "nop\n"
-        :
-        : "r"(value)
-        : "memory");
+    asm volatile("mtc0 %0, $13\n"
+                 "nop\n"
+                 "nop\n"
+                 "nop\n"
+                 :
+                 : "r"(value)
+                 : "memory");
 }
 
 static void test_cp0_write_semantics(void)
@@ -169,31 +163,28 @@ static void test_cp0_write_semantics(void)
 
     /* Restore every writable bit to its original value before checking. */
     write_cause(cause_before);
-    check((cause_after & cause_exc_code_mask) ==
-          (cause_before & cause_exc_code_mask));
+    check((cause_after & cause_exc_code_mask) == (cause_before & cause_exc_code_mask));
 }
 
 static void store_unaligned_word(uint8_t *address, uint32_t value)
 {
     /* Little-endian MIPS stores an unaligned word with SWL at +3 and SWR at +0. */
-    asm volatile(
-        "swl %1, 3(%0)\n"
-        "swr %1, 0(%0)\n"
-        :
-        : "r"(address), "r"(value)
-        : "memory");
+    asm volatile("swl %1, 3(%0)\n"
+                 "swr %1, 0(%0)\n"
+                 :
+                 : "r"(address), "r"(value)
+                 : "memory");
 }
 
 static uint32_t load_unaligned_word(const uint8_t *address)
 {
     uint32_t value = 0xa5a5a5a5u;
 
-    asm volatile(
-        "lwl %0, 3(%1)\n"
-        "lwr %0, 0(%1)\n"
-        : "+r"(value)
-        : "r"(address)
-        : "memory");
+    asm volatile("lwl %0, 3(%1)\n"
+                 "lwr %0, 0(%1)\n"
+                 : "+r"(value)
+                 : "r"(address)
+                 : "memory");
     return value;
 }
 

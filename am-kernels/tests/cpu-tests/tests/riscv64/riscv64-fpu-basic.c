@@ -21,8 +21,7 @@ enum
  * AM/Navy build deliberately remains rv64im/lp64.  That prevents one focused
  * emulator test from silently changing the ABI of every linked library.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -89,8 +88,7 @@ static void write_mstatus(uintptr_t value)
 static uintptr_t enable_initial_fp_state(void)
 {
     const uintptr_t old = read_mstatus();
-    const uintptr_t next =
-        (old & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL;
+    const uintptr_t next = (old & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL;
 
     write_mstatus(next);
     return old;
@@ -102,12 +100,8 @@ static void test_basic_single_and_double_arithmetic(void)
      * 1.5 + 2.25 = 3.75.  The single result must also have all upper 32 bits
      * set, proving that a narrow result is NaN-boxed in an FLEN=64 register.
      */
-    check(rv64_fpu_add_s_boxed(UINT32_C(0x3fc00000),
-                              UINT32_C(0x40100000)) ==
-          UINT64_C(0xffffffff40700000));
-    check(rv64_fpu_add_d_bits(UINT64_C(0x3ff8000000000000),
-                             UINT64_C(0x4002000000000000)) ==
-          UINT64_C(0x400e000000000000));
+    check(rv64_fpu_add_s_boxed(UINT32_C(0x3fc00000), UINT32_C(0x40100000)) == UINT64_C(0xffffffff40700000));
+    check(rv64_fpu_add_d_bits(UINT64_C(0x3ff8000000000000), UINT64_C(0x4002000000000000)) == UINT64_C(0x400e000000000000));
 }
 
 static void test_load_store_raw_bit_preservation(void)
@@ -121,8 +115,7 @@ static void test_load_store_raw_bit_preservation(void)
     uint32_t single_out = 0;
     uint64_t double_out = 0;
 
-    check(rv64_fpu_roundtrip_w(&single_snan, &single_out) ==
-          (UINT64_C(0xffffffff00000000) | single_snan));
+    check(rv64_fpu_roundtrip_w(&single_snan, &single_out) == (UINT64_C(0xffffffff00000000) | single_snan));
     check(single_out == single_snan);
 
     check(rv64_fpu_roundtrip_d(&double_snan, &double_out) == double_snan);

@@ -17,8 +17,7 @@ volatile uint32_t riscv_priv_restore_mtvec = 0;
  * vectored mode still sends synchronous exceptions to BASE, so slot zero must
  * be the only handler reached by the ecall test.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".option push\n"
     ".option norvc\n"
     ".align 6\n"
@@ -197,17 +196,16 @@ static void test_user_ecall_uses_user_cause(void)
     mstatus &= ~(3u << 11); // MPP = U
     mstatus |= (1u << 7);   // MPIE = 1
 
-    asm volatile(
-        "csrw mstatus, %[mstatus]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        "li a7, 42\n"
-        "ecall\n"
-        :
-        : [mstatus] "r"(mstatus)
-        : "t0", "a7", "memory");
+    asm volatile("csrw mstatus, %[mstatus]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 "li a7, 42\n"
+                 "ecall\n"
+                 :
+                 : [mstatus] "r"(mstatus)
+                 : "t0", "a7", "memory");
 
     check(riscv_priv_saved_mcause == 8u);
     check(riscv_priv_saved_a7 == 42u);
@@ -228,16 +226,15 @@ static void test_user_csr_access_is_illegal_instruction(void)
     mstatus &= ~(3u << 11); // MPP = U
     mstatus |= (1u << 7);   // MPIE = 1
 
-    asm volatile(
-        "csrw mstatus, %[mstatus]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        "csrr t1, mtvec\n"
-        :
-        : [mstatus] "r"(mstatus)
-        : "t0", "t1", "memory");
+    asm volatile("csrw mstatus, %[mstatus]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 "csrr t1, mtvec\n"
+                 :
+                 : [mstatus] "r"(mstatus)
+                 : "t0", "t1", "memory");
 
     check(riscv_priv_saved_mcause == 2u);
     check(riscv_priv_saved_mtval == 0u);
@@ -296,46 +293,43 @@ static void test_misaligned_control_transfer_causes(void)
     uintptr_t link_after = 0;
 
     prepare_cause_test();
-    asm volatile(
-        "la t0, 1f\n"
-        "addi %[bad], t0, 2\n"
-        "li t2, 0x13579\n"
-        "1:\n"
-        ".word 0x002003ef\n" // jal t2, 2
-        "2:\n"
-        "mv %[link_after], t2\n"
-        : [bad] "=&r"(bad), [link_after] "=&r"(link_after)
-        :
-        : "t0", "t2", "memory");
+    asm volatile("la t0, 1f\n"
+                 "addi %[bad], t0, 2\n"
+                 "li t2, 0x13579\n"
+                 "1:\n"
+                 ".word 0x002003ef\n" // jal t2, 2
+                 "2:\n"
+                 "mv %[link_after], t2\n"
+                 : [bad] "=&r"(bad), [link_after] "=&r"(link_after)
+                 :
+                 : "t0", "t2", "memory");
     check(riscv_priv_saved_mcause == 0u);
     check(riscv_priv_saved_mtval == bad);
     check(link_after == 0x13579u);
 
     prepare_cause_test();
-    asm volatile(
-        "la t0, 1f\n"
-        "addi %[bad], t0, 2\n"
-        "li t2, 0x2468a\n"
-        "jalr t2, 2(t0)\n"
-        "1:\n"
-        "mv %[link_after], t2\n"
-        : [bad] "=&r"(bad), [link_after] "=&r"(link_after)
-        :
-        : "t0", "t2", "memory");
+    asm volatile("la t0, 1f\n"
+                 "addi %[bad], t0, 2\n"
+                 "li t2, 0x2468a\n"
+                 "jalr t2, 2(t0)\n"
+                 "1:\n"
+                 "mv %[link_after], t2\n"
+                 : [bad] "=&r"(bad), [link_after] "=&r"(link_after)
+                 :
+                 : "t0", "t2", "memory");
     check(riscv_priv_saved_mcause == 0u);
     check(riscv_priv_saved_mtval == bad);
     check(link_after == 0x2468au);
 
     prepare_cause_test();
-    asm volatile(
-        "la %[bad], 1f\n"
-        "addi %[bad], %[bad], 2\n"
-        "1:\n"
-        ".word 0x00000163\n" // beq zero, zero, 2
-        "2:\n"
-        : [bad] "=&r"(bad)
-        :
-        : "memory");
+    asm volatile("la %[bad], 1f\n"
+                 "addi %[bad], %[bad], 2\n"
+                 "1:\n"
+                 ".word 0x00000163\n" // beq zero, zero, 2
+                 "2:\n"
+                 : [bad] "=&r"(bad)
+                 :
+                 : "memory");
     check(riscv_priv_saved_mcause == 0u);
     check(riscv_priv_saved_mtval == bad);
 
@@ -363,17 +357,16 @@ static void test_mret_clears_mprv_when_returning_to_u_mode(void)
     riscv_priv_restore_mtvec = old_mtvec;
     write_mtvec((uintptr_t)riscv_priv_mstatus_handler);
 
-    asm volatile(
-        "csrw mstatus, %[mstatus]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        "li a7, 11\n"
-        "ecall\n"
-        :
-        : [mstatus] "r"(mstatus)
-        : "t0", "a7", "memory");
+    asm volatile("csrw mstatus, %[mstatus]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 "li a7, 11\n"
+                 "ecall\n"
+                 :
+                 : [mstatus] "r"(mstatus)
+                 : "t0", "a7", "memory");
 
     check((riscv_priv_saved_mstatus & (1u << 17)) == 0);
 }

@@ -29,12 +29,8 @@ void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
 
 int main(void)
 {
-    SDL_Surface *src = SDL_CreateRGBSurface(0, 2, 2, 32,
-                                            DEFAULT_RMASK, DEFAULT_GMASK,
-                                            DEFAULT_BMASK, DEFAULT_AMASK);
-    SDL_Surface *dst = SDL_CreateRGBSurface(SDL_HWSURFACE, 4, 4, 32,
-                                            DEFAULT_RMASK, DEFAULT_GMASK,
-                                            DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *src = SDL_CreateRGBSurface(0, 2, 2, 32, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *dst = SDL_CreateRGBSurface(SDL_HWSURFACE, 4, 4, 32, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
     assert(src != NULL && dst != NULL);
 
     uint32_t *src_pixels = (uint32_t *)src->pixels;
@@ -47,22 +43,7 @@ int main(void)
     SDL_SoftStretchUpdate(src, NULL, dst, &dstrect);
 
     static const uint32_t expected[16] = {
-        1,
-        1,
-        2,
-        2,
-        1,
-        1,
-        2,
-        2,
-        3,
-        3,
-        4,
-        4,
-        3,
-        3,
-        4,
-        4,
+        1, 1, 2, 2, 1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 4, 4,
     };
 
     assert(dstrect.x == 0 && dstrect.y == 0);

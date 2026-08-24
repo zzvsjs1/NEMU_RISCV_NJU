@@ -115,8 +115,7 @@ static uint32_t read_raw_fat_entry(const Fat32Volume *vol, unsigned fat_index, u
     return get_le32(raw);
 }
 
-static void write_raw_fat_entry(const Fat32Volume *vol, unsigned fat_index, uint32_t cluster,
-                                uint32_t value)
+static void write_raw_fat_entry(const Fat32Volume *vol, unsigned fat_index, uint32_t cluster, uint32_t value)
 {
     uint8_t raw[4];
 
@@ -175,8 +174,7 @@ static void assert_range_is_zero(const uint8_t *buf, size_t len)
     }
 }
 
-static void expect_pattern_with_patch(const uint8_t *buf, size_t size, size_t patch_offset,
-                                      const uint8_t *patch, size_t patch_size)
+static void expect_pattern_with_patch(const uint8_t *buf, size_t size, size_t patch_offset, const uint8_t *patch, size_t patch_size)
 {
     for (size_t i = 0; i < size; i++)
     {
@@ -387,22 +385,7 @@ static void test_backend_overwrites_existing_file_without_changing_size(void)
     Fat32File file;
     uint8_t buf[900];
     const uint8_t patch[] = {
-        0xde,
-        0xad,
-        0xbe,
-        0xef,
-        0xca,
-        0xfe,
-        0x11,
-        0x22,
-        0x33,
-        0x44,
-        0x55,
-        0x66,
-        0x77,
-        0x88,
-        0x99,
-        0xaa,
+        0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa,
     };
 
     build_write_image();

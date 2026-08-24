@@ -16,18 +16,17 @@ static uint64_t run_cross_block_loop(void)
     uint64_t out = 0;
     uint64_t laps = 64;
 
-    asm volatile(
-        "1:\n"
-        ".rept 70\n"
-        "addi %[out], %[out], 1\n"
-        ".endr\n"
-        "addi %[laps], %[laps], -1\n"
-        "beqz %[laps], 2f\n"
-        "jal zero, 1b\n"
-        "2:\n"
-        : [out] "+r"(out), [laps] "+r"(laps)
-        :
-        : "memory");
+    asm volatile("1:\n"
+                 ".rept 70\n"
+                 "addi %[out], %[out], 1\n"
+                 ".endr\n"
+                 "addi %[laps], %[laps], -1\n"
+                 "beqz %[laps], 2f\n"
+                 "jal zero, 1b\n"
+                 "2:\n"
+                 : [out] "+r"(out), [laps] "+r"(laps)
+                 :
+                 : "memory");
 
     return out;
 }
@@ -43,18 +42,17 @@ static uint64_t run_budget_crossing_link_loop(void)
     uint64_t out = 0;
     uint64_t laps = 1024;
 
-    asm volatile(
-        "1:\n"
-        ".rept 70\n"
-        "addi %[out], %[out], 1\n"
-        ".endr\n"
-        "addi %[laps], %[laps], -1\n"
-        "beqz %[laps], 2f\n"
-        "jal zero, 1b\n"
-        "2:\n"
-        : [out] "+r"(out), [laps] "+r"(laps)
-        :
-        : "memory");
+    asm volatile("1:\n"
+                 ".rept 70\n"
+                 "addi %[out], %[out], 1\n"
+                 ".endr\n"
+                 "addi %[laps], %[laps], -1\n"
+                 "beqz %[laps], 2f\n"
+                 "jal zero, 1b\n"
+                 "2:\n"
+                 : [out] "+r"(out), [laps] "+r"(laps)
+                 :
+                 : "memory");
 
     return out;
 }
@@ -65,16 +63,15 @@ static uint64_t run_cross_block_branch_loop(void)
     uint64_t out = 0;
     uint64_t laps = 64;
 
-    asm volatile(
-        "1:\n"
-        ".rept 70\n"
-        "addi %[out], %[out], 1\n"
-        ".endr\n"
-        "addi %[laps], %[laps], -1\n"
-        "bnez %[laps], 1b\n"
-        : [out] "+r"(out), [laps] "+r"(laps)
-        :
-        : "memory");
+    asm volatile("1:\n"
+                 ".rept 70\n"
+                 "addi %[out], %[out], 1\n"
+                 ".endr\n"
+                 "addi %[laps], %[laps], -1\n"
+                 "bnez %[laps], 1b\n"
+                 : [out] "+r"(out), [laps] "+r"(laps)
+                 :
+                 : "memory");
 
     return out;
 }
@@ -85,24 +82,23 @@ static uint64_t run_cross_block_branch_fork(void)
     uint64_t out = 0;
     uint64_t laps = 64;
 
-    asm volatile(
-        "1:\n"
-        "andi t0, %[laps], 1\n"
-        "bnez t0, 2f\n"
-        ".rept 70\n"
-        "addi %[out], %[out], 1\n"
-        ".endr\n"
-        "jal zero, 3f\n"
-        "2:\n"
-        ".rept 70\n"
-        "addi %[out], %[out], 1\n"
-        ".endr\n"
-        "3:\n"
-        "addi %[laps], %[laps], -1\n"
-        "bnez %[laps], 1b\n"
-        : [out] "+r"(out), [laps] "+r"(laps)
-        :
-        : "t0", "memory");
+    asm volatile("1:\n"
+                 "andi t0, %[laps], 1\n"
+                 "bnez t0, 2f\n"
+                 ".rept 70\n"
+                 "addi %[out], %[out], 1\n"
+                 ".endr\n"
+                 "jal zero, 3f\n"
+                 "2:\n"
+                 ".rept 70\n"
+                 "addi %[out], %[out], 1\n"
+                 ".endr\n"
+                 "3:\n"
+                 "addi %[laps], %[laps], -1\n"
+                 "bnez %[laps], 1b\n"
+                 : [out] "+r"(out), [laps] "+r"(laps)
+                 :
+                 : "t0", "memory");
 
     return out;
 }

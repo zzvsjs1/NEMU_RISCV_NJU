@@ -11,26 +11,25 @@ static uint64_t spill_sequence(void)
 {
     uint64_t out;
 
-    asm volatile(
-        "addi t0, zero, 1\n"
-        "addi t1, zero, 2\n"
-        "addi t2, zero, 3\n"
-        "addi t3, zero, 4\n"
-        "addi t4, zero, 5\n"
-        "addi t5, zero, 6\n"
-        "addi t6, zero, 7\n"
-        "add t0, t0, t6\n"
-        "add t1, t1, t5\n"
-        "add t2, t2, t4\n"
-        "add t3, t3, t0\n"
-        "add t4, t4, t1\n"
-        "add t5, t5, t2\n"
-        "add t6, t6, t3\n"
-        "add %[out], t4, t5\n"
-        "add %[out], %[out], t6\n"
-        : [out] "=&r"(out)
-        :
-        : "t0", "t1", "t2", "t3", "t4", "t5", "t6", "memory");
+    asm volatile("addi t0, zero, 1\n"
+                 "addi t1, zero, 2\n"
+                 "addi t2, zero, 3\n"
+                 "addi t3, zero, 4\n"
+                 "addi t4, zero, 5\n"
+                 "addi t5, zero, 6\n"
+                 "addi t6, zero, 7\n"
+                 "add t0, t0, t6\n"
+                 "add t1, t1, t5\n"
+                 "add t2, t2, t4\n"
+                 "add t3, t3, t0\n"
+                 "add t4, t4, t1\n"
+                 "add t5, t5, t2\n"
+                 "add t6, t6, t3\n"
+                 "add %[out], t4, t5\n"
+                 "add %[out], %[out], t6\n"
+                 : [out] "=&r"(out)
+                 :
+                 : "t0", "t1", "t2", "t3", "t4", "t5", "t6", "memory");
 
     return out;
 }
@@ -41,21 +40,20 @@ static uint64_t store_and_branch_sequence(void)
     uint64_t out;
 
     reg_cache_slot = 0;
-    asm volatile(
-        "addi t0, zero, 40\n"
-        "addi t1, t0, 2\n"
-        "sd t1, 0(%[slot])\n"
-        "ld t2, 0(%[slot])\n"
-        "addi t3, t2, 5\n"
-        "beq t1, t2, 1f\n"
-        "li %[out], 0\n"
-        "j 2f\n"
-        "1:\n"
-        "addi %[out], t3, 1\n"
-        "2:\n"
-        : [out] "=&r"(out)
-        : [slot] "r"(&reg_cache_slot)
-        : "t0", "t1", "t2", "t3", "memory");
+    asm volatile("addi t0, zero, 40\n"
+                 "addi t1, t0, 2\n"
+                 "sd t1, 0(%[slot])\n"
+                 "ld t2, 0(%[slot])\n"
+                 "addi t3, t2, 5\n"
+                 "beq t1, t2, 1f\n"
+                 "li %[out], 0\n"
+                 "j 2f\n"
+                 "1:\n"
+                 "addi %[out], t3, 1\n"
+                 "2:\n"
+                 : [out] "=&r"(out)
+                 : [slot] "r"(&reg_cache_slot)
+                 : "t0", "t1", "t2", "t3", "memory");
 
     return out;
 }
@@ -66,17 +64,16 @@ static uint64_t word_and_m_sequence(void)
     uint64_t out;
     const uint64_t pos = 0x1000000000000001ull;
 
-    asm volatile(
-        "li t0, 0x7fffffff\n"
-        "addiw t0, t0, 1\n"
-        "li t1, -256\n"
-        "mulh t2, t1, %[pos]\n"
-        "add t3, t0, t2\n"
-        "addi zero, t3, 99\n"
-        "add %[out], zero, t3\n"
-        : [out] "=&r"(out)
-        : [pos] "r"(pos)
-        : "t0", "t1", "t2", "t3", "memory");
+    asm volatile("li t0, 0x7fffffff\n"
+                 "addiw t0, t0, 1\n"
+                 "li t1, -256\n"
+                 "mulh t2, t1, %[pos]\n"
+                 "add t3, t0, t2\n"
+                 "addi zero, t3, 99\n"
+                 "add %[out], zero, t3\n"
+                 : [out] "=&r"(out)
+                 : [pos] "r"(pos)
+                 : "t0", "t1", "t2", "t3", "memory");
 
     return out;
 }
@@ -90,19 +87,18 @@ static uint64_t liveness_victim_sequence(void)
 {
     uint64_t out;
 
-    asm volatile(
-        "li t0, 1\n"
-        "li t1, 2\n"
-        "li t2, 3\n"
-        "li t3, 4\n"
-        "li t4, 5\n"
-        "li t5, 6\n"
-        "addi t0, t0, 0\n"
-        "li t6, 7\n"
-        "add %[out], t1, t6\n"
-        : [out] "=r"(out)
-        :
-        : "t0", "t1", "t2", "t3", "t4", "t5", "t6", "memory");
+    asm volatile("li t0, 1\n"
+                 "li t1, 2\n"
+                 "li t2, 3\n"
+                 "li t3, 4\n"
+                 "li t4, 5\n"
+                 "li t5, 6\n"
+                 "addi t0, t0, 0\n"
+                 "li t6, 7\n"
+                 "add %[out], t1, t6\n"
+                 : [out] "=r"(out)
+                 :
+                 : "t0", "t1", "t2", "t3", "t4", "t5", "t6", "memory");
 
     return out;
 }

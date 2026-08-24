@@ -201,17 +201,15 @@ typedef struct
 #define SEG16(type, base, lim, dpl) \
     (SegDesc) \
     { \
-        (lim) & 0xffff, (uintptr_t)(base) & 0xffff, \
-            ((uintptr_t)(base) >> 16) & 0xff, type, 0, dpl, 1, \
-            (uintptr_t)(lim) >> 16, 0, 0, 1, 0, (uintptr_t)(base) >> 24 \
+        (lim) & 0xffff, (uintptr_t)(base) & 0xffff, ((uintptr_t)(base) >> 16) & 0xff, type, 0, dpl, 1, (uintptr_t)(lim) >> 16, 0, 0, 1, 0, \
+            (uintptr_t)(base) >> 24 \
     }
 
 #define SEG32(type, base, lim, dpl) \
     (SegDesc) \
     { \
-        ((lim) >> 12) & 0xffff, (uintptr_t)(base) & 0xffff, \
-            ((uintptr_t)(base) >> 16) & 0xff, type, 1, dpl, 1, \
-            (uintptr_t)(lim) >> 28, 0, 0, 1, 1, (uintptr_t)(base) >> 24 \
+        ((lim) >> 12) & 0xffff, (uintptr_t)(base) & 0xffff, ((uintptr_t)(base) >> 16) & 0xff, type, 1, dpl, 1, (uintptr_t)(lim) >> 28, 0, 0, 1, 1, \
+            (uintptr_t)(base) >> 24 \
     }
 
 #define SEG64(type, dpl) \
@@ -223,23 +221,20 @@ typedef struct
 #define SEGTSS64(type, base, lim, dpl) \
     (SegDesc) \
     { \
-        (lim) & 0xffff, (uint32_t)(base) & 0xffff, \
-            ((uint32_t)(base) >> 16) & 0xff, type, 0, dpl, 1, \
-            (uint32_t)(lim) >> 16, 0, 0, 0, 0, (uint32_t)(base) >> 24 \
+        (lim) & 0xffff, (uint32_t)(base) & 0xffff, ((uint32_t)(base) >> 16) & 0xff, type, 0, dpl, 1, (uint32_t)(lim) >> 16, 0, 0, 0, 0, \
+            (uint32_t)(base) >> 24 \
     }
 
 #define GATE32(type, cs, entry, dpl) \
     (GateDesc32) \
     { \
-        (uint32_t)(entry) & 0xffff, (cs), 0, 0, (type), 0, (dpl), \
-            1, (uint32_t)(entry) >> 16 \
+        (uint32_t)(entry) & 0xffff, (cs), 0, 0, (type), 0, (dpl), 1, (uint32_t)(entry) >> 16 \
     }
 
 #define GATE64(type, cs, entry, dpl) \
     (GateDesc64) \
     { \
-        (uint64_t)(entry) & 0xffff, (cs), 0, 0, (type), 0, (dpl), \
-            1, ((uint64_t)(entry) >> 16) & 0xffff, (uint64_t)(entry) >> 32, 0 \
+        (uint64_t)(entry) & 0xffff, (cs), 0, 0, (type), 0, (dpl), 1, ((uint64_t)(entry) >> 16) & 0xffff, (uint64_t)(entry) >> 32, 0 \
     }
 
 // Instruction wrappers
@@ -383,16 +378,19 @@ static inline uint64_t rdtsc()
     return ((uint64_t)hi << 32) | lo;
 }
 
-#define interrupt(id) \
-    asm volatile("int $" #id);
+#define interrupt(id) asm volatile("int $" #id);
 
 static inline void stack_switch_call(void *sp, void *entry, uintptr_t arg)
 {
     asm volatile(
 #if __x86_64__
-        "movq %0, %%rsp; movq %2, %%rdi; jmp *%1" : : "b"((uintptr_t)sp), "d"(entry), "a"(arg)
+        "movq %0, %%rsp; movq %2, %%rdi; jmp *%1"
+        :
+        : "b"((uintptr_t)sp), "d"(entry), "a"(arg)
 #else
-        "movl %0, %%esp; movl %2, 4(%0); jmp *%1" : : "b"((uintptr_t)sp - 8), "d"(entry), "a"(arg)
+        "movl %0, %%esp; movl %2, 4(%0); jmp *%1"
+        :
+        : "b"((uintptr_t)sp - 8), "d"(entry), "a"(arg)
 #endif
     );
 }

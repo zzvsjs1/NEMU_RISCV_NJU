@@ -10,10 +10,8 @@
  * assembler cannot accept a run-time CP0 register number, so these helpers
  * deliberately stringify a compile-time constant at each call site.
  */
-#define MTC0(reg, value)                                                       \
-    asm volatile("mtc0 %0, $" #reg : : "r"((uint32_t)(value)) : "memory")
-#define MFC0(reg, value)                                                       \
-    asm volatile("mfc0 %0, $" #reg : "=r"(value) : : "memory")
+#define MTC0(reg, value) asm volatile("mtc0 %0, $" #reg : : "r"((uint32_t)(value)) : "memory")
+#define MFC0(reg, value) asm volatile("mfc0 %0, $" #reg : "=r"(value) : : "memory")
 
 static inline void tlbp(void)
 {
@@ -30,8 +28,7 @@ static inline void tlbwr(void)
     asm volatile("tlbwr" : : : "memory");
 }
 
-static void write_entry(uint32_t index, uint32_t entryhi,
-                        uint32_t entrylo0, uint32_t entrylo1)
+static void write_entry(uint32_t index, uint32_t entryhi, uint32_t entrylo0, uint32_t entrylo1)
 {
     MTC0(0, index);
     MTC0(10, entryhi);

@@ -313,8 +313,7 @@ static void nemu_finish_data(struct nemu_host *host)
          * command completed. Make sure we do
          * things in the proper order.
          */
-        dev_dbg(dev, "Finished early - HSTS %08x\n",
-                readl(host->ioaddr + SDHSTS));
+        dev_dbg(dev, "Finished early - HSTS %08x\n", readl(host->ioaddr + SDHSTS));
     }
     else
     {
@@ -333,8 +332,7 @@ static void nemu_finish_command(struct nemu_host *host)
         {
             for (i = 0; i < 4; i++)
             {
-                cmd->resp[3 - i] =
-                    readl(host->ioaddr + SDRSP0 + i * 4);
+                cmd->resp[3 - i] = readl(host->ioaddr + SDRSP0 + i * 4);
             }
         }
         else
@@ -406,8 +404,7 @@ static void nemu_request(struct mmc_host *mmc, struct mmc_request *mrq)
 
     if (mrq->data && !is_power_of_2(mrq->data->blksz))
     {
-        dev_err(dev, "unsupported block size (%d bytes)\n",
-                mrq->data->blksz);
+        dev_err(dev, "unsupported block size (%d bytes)\n", mrq->data->blksz);
 
         if (mrq->cmd)
             mrq->cmd->error = -EINVAL;
@@ -421,8 +418,7 @@ static void nemu_request(struct mmc_host *mmc, struct mmc_request *mrq)
     WARN_ON(host->mrq);
     host->mrq = mrq;
 
-    host->use_sbc = !!mrq->sbc && host->mrq->data &&
-                    (host->mrq->data->flags & MMC_DATA_READ);
+    host->use_sbc = !!mrq->sbc && host->mrq->data && (host->mrq->data->flags & MMC_DATA_READ);
 
     if (host->use_sbc)
     {
@@ -472,13 +468,10 @@ static int nemu_add_host(struct nemu_host *host)
 
     mmc->max_busy_timeout = ~0 / (mmc->f_max / 1000);
 
-    dev_dbg(dev, "f_max %d, f_min %d, max_busy_timeout %d\n",
-            mmc->f_max, mmc->f_min, mmc->max_busy_timeout);
+    dev_dbg(dev, "f_max %d, f_min %d, max_busy_timeout %d\n", mmc->f_max, mmc->f_min, mmc->max_busy_timeout);
 
     /* host controller capabilities */
-    mmc->caps |= MMC_CAP_SD_HIGHSPEED | MMC_CAP_MMC_HIGHSPEED |
-                 MMC_CAP_NEEDS_POLL | MMC_CAP_HW_RESET | MMC_CAP_ERASE |
-                 MMC_CAP_CMD23;
+    mmc->caps |= MMC_CAP_SD_HIGHSPEED | MMC_CAP_MMC_HIGHSPEED | MMC_CAP_NEEDS_POLL | MMC_CAP_HW_RESET | MMC_CAP_ERASE | MMC_CAP_CMD23;
 
     spin_lock_init(&host->lock);
     mutex_init(&host->mutex);
@@ -585,18 +578,17 @@ static int nemu_remove(struct platform_device *pdev)
     return 0;
 }
 
-static const struct of_device_id nemu_match[] = {
-    {.compatible = "nemu-sdhost"},
-    {}};
+static const struct of_device_id nemu_match[] = {{.compatible = "nemu-sdhost"}, {}};
 MODULE_DEVICE_TABLE(of, nemu_match);
 
 static struct platform_driver nemu_driver = {
     .probe = nemu_probe,
     .remove = nemu_remove,
-    .driver = {
-        .name = "sdhost-nemu",
-        .of_match_table = nemu_match,
-    },
+    .driver =
+        {
+            .name = "sdhost-nemu",
+            .of_match_table = nemu_match,
+        },
 };
 module_platform_driver(nemu_driver);
 

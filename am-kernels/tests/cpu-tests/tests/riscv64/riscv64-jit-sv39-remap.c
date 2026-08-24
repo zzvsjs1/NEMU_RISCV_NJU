@@ -122,8 +122,7 @@ static void map_identity_window(void)
 
     for (uint64_t l1 = 0; l1 < IDENTITY_L1_ENTRIES; l1++)
     {
-        identity_l1[vpn1(IDENTITY_BASE) + l1] =
-            pte_for_page(identity_l0[l1], PTE_V);
+        identity_l1[vpn1(IDENTITY_BASE) + l1] = pte_for_page(identity_l0[l1], PTE_V);
 
         for (uint64_t i = 0; i < 512ull; i++)
         {
@@ -155,10 +154,8 @@ static void install_page_tables(void)
 
     for (uint64_t i = 0; i < 512ull; i++)
     {
-        const uintptr_t pa =
-            (uintptr_t)((vpn1(ALIAS_VA) * 512ull + i) * PAGE_SIZE + IDENTITY_BASE);
-        alias_l0[i] = ((uint64_t)(pa >> 12) << 10) |
-                      (PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
+        const uintptr_t pa = (uintptr_t)((vpn1(ALIAS_VA) * 512ull + i) * PAGE_SIZE + IDENTITY_BASE);
+        alias_l0[i] = ((uint64_t)(pa >> 12) << 10) | (PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
     }
 
     identity_l1[vpn1(ALIAS_VA)] = pte_for_page(alias_l0, table_flags);
@@ -196,22 +193,20 @@ static void enter_supervisor_mode(void)
      * normal timer work, and address-translation correctness does not depend on
      * enabling interrupts during the short S-mode window.
      */
-    asm volatile(
-        "csrr %[mstatus], mstatus\n"
-        "li t0, %[mpp_mask]\n"
-        "not t0, t0\n"
-        "and %[mstatus], %[mstatus], t0\n"
-        "li t0, %[mpp_s]\n"
-        "or %[mstatus], %[mstatus], t0\n"
-        "csrw mstatus, %[mstatus]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        : [mstatus] "=&r"(mstatus)
-        : [mpp_mask] "i"(MSTATUS_MPP_MPIE_MASK),
-          [mpp_s] "i"(MSTATUS_MPP_S)
-        : "t0", "memory");
+    asm volatile("csrr %[mstatus], mstatus\n"
+                 "li t0, %[mpp_mask]\n"
+                 "not t0, t0\n"
+                 "and %[mstatus], %[mstatus], t0\n"
+                 "li t0, %[mpp_s]\n"
+                 "or %[mstatus], %[mstatus], t0\n"
+                 "csrw mstatus, %[mstatus]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 : [mstatus] "=&r"(mstatus)
+                 : [mpp_mask] "i"(MSTATUS_MPP_MPIE_MASK), [mpp_s] "i"(MSTATUS_MPP_S)
+                 : "t0", "memory");
 }
 
 /* Build two physical code pages with identical shape but different results. */
@@ -245,8 +240,7 @@ int main(void)
      * Remap only the leaf PTE.  If a cached native block validates only PC/satp,
      * the second call will incorrectly keep executing the old physical page.
      */
-    alias_l0[vpn0(ALIAS_VA)] =
-        pte_for_page(code_page_b, PTE_V | PTE_R | PTE_X | PTE_A);
+    alias_l0[vpn0(ALIAS_VA)] = pte_for_page(code_page_b, PTE_V | PTE_R | PTE_X | PTE_A);
     sfence_vma_all();
 
     const int second = fn();

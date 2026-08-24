@@ -25,11 +25,9 @@ static word_t effective_mem_priv(int type)
         return cpu.prvi;
     }
 
-    if (cpu.prvi == RISCV_PRIV_M &&
-        (cpu.csr.mstatus & RISCV_MSTATUS_MPRV) != 0)
+    if (cpu.prvi == RISCV_PRIV_M && (cpu.csr.mstatus & RISCV_MSTATUS_MPRV) != 0)
     {
-        return (cpu.csr.mstatus & RISCV_MSTATUS_MPP_MASK) >>
-               RISCV_MSTATUS_MPP_SHIFT;
+        return (cpu.csr.mstatus & RISCV_MSTATUS_MPP_MASK) >> RISCV_MSTATUS_MPP_SHIFT;
     }
 
     return cpu.prvi;
@@ -40,8 +38,7 @@ static word_t effective_mem_priv(int type)
 /* Extract satp.MODE from the RV64 satp layout. */
 static word_t satp_mode(word_t satp)
 {
-    return (satp & (word_t)RISCV64_SATP_MODE_MASK) >>
-           RISCV64_SATP_MODE_SHIFT;
+    return (satp & (word_t)RISCV64_SATP_MODE_MASK) >> RISCV64_SATP_MODE_SHIFT;
 }
 
 /*
@@ -50,8 +47,7 @@ static word_t satp_mode(word_t satp)
  */
 static bool sv39_active_for_access(int type)
 {
-    return satp_mode(cpu.csr.satp) == RISCV64_SATP_MODE_SV39 &&
-           effective_mem_priv(type) != RISCV_PRIV_M;
+    return satp_mode(cpu.csr.satp) == RISCV64_SATP_MODE_SV39 && effective_mem_priv(type) != RISCV_PRIV_M;
 }
 
 /*
@@ -61,16 +57,10 @@ static bool sv39_active_for_access(int type)
  */
 static bool is_sv39_canonical(vaddr_t vaddr)
 {
-    const uint64_t sign =
-        ((uint64_t)vaddr >> RISCV64_SV39_CANONICAL_SIGN_BIT) & 1u;
-    const uint64_t high =
-        (uint64_t)vaddr >> RISCV64_SV39_CANONICAL_HIGH_SHIFT;
+    const uint64_t sign = ((uint64_t)vaddr >> RISCV64_SV39_CANONICAL_SIGN_BIT) & 1u;
+    const uint64_t high = (uint64_t)vaddr >> RISCV64_SV39_CANONICAL_HIGH_SHIFT;
 
-    return sign
-               ? high == ((UINT64_C(1)
-                           << RISCV64_SV39_CANONICAL_HIGH_BITS) -
-                          UINT64_C(1))
-               : high == 0;
+    return sign ? high == ((UINT64_C(1) << RISCV64_SV39_CANONICAL_HIGH_BITS) - UINT64_C(1)) : high == 0;
 }
 
 /*
@@ -79,9 +69,7 @@ static bool is_sv39_canonical(vaddr_t vaddr)
  */
 static bool pte_is_valid(word_t pte)
 {
-    return (pte & RISCV_PTE_V) != 0 &&
-           (pte & (RISCV_PTE_R | RISCV_PTE_W)) != RISCV_PTE_W &&
-           (pte & (word_t)RISCV64_PTE_UNSUPPORTED_HIGH_MASK) == 0;
+    return (pte & RISCV_PTE_V) != 0 && (pte & (RISCV_PTE_R | RISCV_PTE_W)) != RISCV_PTE_W && (pte & (word_t)RISCV64_PTE_UNSUPPORTED_HIGH_MASK) == 0;
 }
 
 /* A PTE with any R/W/X bit set is a leaf mapping; otherwise it points lower. */
@@ -93,8 +81,7 @@ static bool pte_is_leaf(word_t pte)
 /* Extract the physical page number from a Sv39 PTE. */
 static word_t pte_ppn(word_t pte)
 {
-    return (pte >> RISCV_PTE_PPN_SHIFT) &
-           (word_t)RISCV64_PTE_PPN_MASK;
+    return (pte >> RISCV_PTE_PPN_SHIFT) & (word_t)RISCV64_PTE_PPN_MASK;
 }
 
 /*
@@ -141,8 +128,7 @@ static bool pte_allows_priv(word_t pte, word_t priv, int type)
          * SUM lets S-mode load/store user pages.  It never permits S-mode
          * instruction fetch from a user page.
          */
-        return type != MEM_TYPE_IFETCH &&
-               (cpu.csr.mstatus & RISCV_MSTATUS_SUM) != 0;
+        return type != MEM_TYPE_IFETCH && (cpu.csr.mstatus & RISCV_MSTATUS_SUM) != 0;
     }
 
     return false;
@@ -169,15 +155,12 @@ static bool pte_allows_access(word_t pte, word_t priv, int type)
 
     if (type == MEM_TYPE_READ)
     {
-        return (pte & RISCV_PTE_R) != 0 ||
-               ((cpu.csr.mstatus & RISCV_MSTATUS_MXR) != 0 &&
-                (pte & RISCV_PTE_X) != 0);
+        return (pte & RISCV_PTE_R) != 0 || ((cpu.csr.mstatus & RISCV_MSTATUS_MXR) != 0 && (pte & RISCV_PTE_X) != 0);
     }
 
     if (type == MEM_TYPE_WRITE)
     {
-        return (pte & (RISCV_PTE_W | RISCV_PTE_D)) ==
-               (RISCV_PTE_W | RISCV_PTE_D);
+        return (pte & (RISCV_PTE_W | RISCV_PTE_D)) == (RISCV_PTE_W | RISCV_PTE_D);
     }
 
     return false;
@@ -188,10 +171,7 @@ static bool pte_allows_access(word_t pte, word_t priv, int type)
  * PPN fields come from the virtual page number, which is why vpn[] is needed
  * even after the leaf has been found.
  */
-static paddr_t
-leaf_page_base(word_t ppn,
-               const word_t vpn[RISCV64_SV39_LEVELS],
-               int level)
+static paddr_t leaf_page_base(word_t ppn, const word_t vpn[RISCV64_SV39_LEVELS], int level)
 {
     word_t pa_ppn = ppn;
 
@@ -201,16 +181,13 @@ leaf_page_base(word_t ppn,
      */
     if (level >= RISCV64_SV39_MEGAPAGE_LEVEL)
     {
-        pa_ppn = (pa_ppn & ~RISCV64_SV39_LEVEL1_LOW_PPN_MASK) |
-                 vpn[RISCV64_SV39_PAGE_LEVEL];
+        pa_ppn = (pa_ppn & ~RISCV64_SV39_LEVEL1_LOW_PPN_MASK) | vpn[RISCV64_SV39_PAGE_LEVEL];
     }
 
     if (level >= RISCV64_SV39_GIGAPAGE_LEVEL)
     {
-        pa_ppn = (pa_ppn & ~RISCV64_SV39_LEVEL2_LOW_PPN_MASK) |
-                 (vpn[RISCV64_SV39_MEGAPAGE_LEVEL]
-                  << RISCV64_SV39_VPN_BITS) |
-                 vpn[RISCV64_SV39_PAGE_LEVEL];
+        pa_ppn =
+            (pa_ppn & ~RISCV64_SV39_LEVEL2_LOW_PPN_MASK) | (vpn[RISCV64_SV39_MEGAPAGE_LEVEL] << RISCV64_SV39_VPN_BITS) | vpn[RISCV64_SV39_PAGE_LEVEL];
     }
 
     return (paddr_t)(pa_ppn << PAGE_SHIFT);
@@ -264,33 +241,17 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
      * page-table level number used by the descending walk below.
      */
     const word_t vpn[RISCV64_SV39_LEVELS] = {
-        ((word_t)vaddr >>
-         (PAGE_SHIFT +
-          RISCV64_SV39_PAGE_LEVEL * RISCV64_SV39_VPN_BITS)) &
-            RISCV64_SV39_VPN_MASK,
-        ((word_t)vaddr >>
-         (PAGE_SHIFT +
-          RISCV64_SV39_MEGAPAGE_LEVEL * RISCV64_SV39_VPN_BITS)) &
-            RISCV64_SV39_VPN_MASK,
-        ((word_t)vaddr >>
-         (PAGE_SHIFT +
-          RISCV64_SV39_GIGAPAGE_LEVEL * RISCV64_SV39_VPN_BITS)) &
-            RISCV64_SV39_VPN_MASK,
+        ((word_t)vaddr >> (PAGE_SHIFT + RISCV64_SV39_PAGE_LEVEL * RISCV64_SV39_VPN_BITS)) & RISCV64_SV39_VPN_MASK,
+        ((word_t)vaddr >> (PAGE_SHIFT + RISCV64_SV39_MEGAPAGE_LEVEL * RISCV64_SV39_VPN_BITS)) & RISCV64_SV39_VPN_MASK,
+        ((word_t)vaddr >> (PAGE_SHIFT + RISCV64_SV39_GIGAPAGE_LEVEL * RISCV64_SV39_VPN_BITS)) & RISCV64_SV39_VPN_MASK,
     };
     const word_t priv = effective_mem_priv(type);
-    paddr_t pt_base =
-        (paddr_t)((cpu.csr.satp & (word_t)RISCV64_SATP_PPN_MASK)
-                  << PAGE_SHIFT);
+    paddr_t pt_base = (paddr_t)((cpu.csr.satp & (word_t)RISCV64_SATP_PPN_MASK) << PAGE_SHIFT);
 
-    for (int level = RISCV64_SV39_ROOT_LEVEL;
-         level >= RISCV64_SV39_PAGE_LEVEL;
-         --level)
+    for (int level = RISCV64_SV39_ROOT_LEVEL; level >= RISCV64_SV39_PAGE_LEVEL; --level)
     {
-        const paddr_t pte_addr =
-            pt_base +
-            (paddr_t)(vpn[level] * RISCV64_SV39_PTE_BYTES);
-        const word_t pte =
-            (word_t)paddr_read(pte_addr, RISCV64_SV39_PTE_BYTES);
+        const paddr_t pte_addr = pt_base + (paddr_t)(vpn[level] * RISCV64_SV39_PTE_BYTES);
+        const word_t pte = (word_t)paddr_read(pte_addr, RISCV64_SV39_PTE_BYTES);
 
         if (!pte_is_valid(pte))
         {
@@ -309,8 +270,7 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
             return leaf_page_base(ppn, vpn, level) | (paddr_t)MEM_RET_OK;
         }
 
-        if (level == RISCV64_SV39_PAGE_LEVEL ||
-            (pte & RISCV_PTE_NON_LEAF_RESERVED) != 0)
+        if (level == RISCV64_SV39_PAGE_LEVEL || (pte & RISCV_PTE_NON_LEAF_RESERVED) != 0)
         {
             return (paddr_t)MEM_RET_FAIL;
         }
@@ -329,8 +289,7 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
  */
 static bool sv32_active_for_access(int type)
 {
-    if ((cpu.csr.satp & RISCV32_SATP_MODE_MASK) ==
-        RISCV_SATP_MODE_BARE)
+    if ((cpu.csr.satp & RISCV32_SATP_MODE_MASK) == RISCV_SATP_MODE_BARE)
     {
         return false;
     }
@@ -376,23 +335,14 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
      * Multiplying an index by the four-byte PTE size selects its entry without
      * embedding `22`, `0x3ff`, or `4` independently in the walk.
      */
-    const paddr_t root =
-        (paddr_t)((satp & RISCV32_SATP_PPN_MASK) * PAGE_SIZE);
-    const word_t vpn1 =
-        (word_t)((vaddr >>
-                  (PAGE_SHIFT +
-                   RISCV32_SV32_ROOT_LEVEL * RISCV32_SV32_VPN_BITS)) &
-                 RISCV32_SV32_VPN_MASK);
-    const word_t vpn0 =
-        (word_t)((vaddr >> PAGE_SHIFT) & RISCV32_SV32_VPN_MASK);
+    const paddr_t root = (paddr_t)((satp & RISCV32_SATP_PPN_MASK) * PAGE_SIZE);
+    const word_t vpn1 = (word_t)((vaddr >> (PAGE_SHIFT + RISCV32_SV32_ROOT_LEVEL * RISCV32_SV32_VPN_BITS)) & RISCV32_SV32_VPN_MASK);
+    const word_t vpn0 = (word_t)((vaddr >> PAGE_SHIFT) & RISCV32_SV32_VPN_MASK);
 
-    const paddr_t pte1_addr =
-        root + (paddr_t)(vpn1 * RISCV32_SV32_PTE_BYTES);
-    const uint32_t pte1 =
-        (uint32_t)paddr_read(pte1_addr, RISCV32_SV32_PTE_BYTES);
+    const paddr_t pte1_addr = root + (paddr_t)(vpn1 * RISCV32_SV32_PTE_BYTES);
+    const uint32_t pte1 = (uint32_t)paddr_read(pte1_addr, RISCV32_SV32_PTE_BYTES);
 
-    Assert((pte1 & RISCV_PTE_V) != 0,
-           "Not a valid pte at %u", (word_t)pte1_addr);
+    Assert((pte1 & RISCV_PTE_V) != 0, "Not a valid pte at %u", (word_t)pte1_addr);
 
     const uint32_t pte1_rwx = pte1 & RISCV_PTE_RWX;
     /*
@@ -401,13 +351,9 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
      */
     Assert(pte1_rwx == 0, "super page");
 
-    const paddr_t l0_pt =
-        (paddr_t)(((paddr_t)(pte1 >> RISCV_PTE_PPN_SHIFT)) *
-                  PAGE_SIZE);
-    const paddr_t pte0_addr =
-        l0_pt + (paddr_t)(vpn0 * RISCV32_SV32_PTE_BYTES);
-    const uint32_t pte0 =
-        (uint32_t)paddr_read(pte0_addr, RISCV32_SV32_PTE_BYTES);
+    const paddr_t l0_pt = (paddr_t)(((paddr_t)(pte1 >> RISCV_PTE_PPN_SHIFT)) * PAGE_SIZE);
+    const paddr_t pte0_addr = l0_pt + (paddr_t)(vpn0 * RISCV32_SV32_PTE_BYTES);
+    const uint32_t pte0 = (uint32_t)paddr_read(pte0_addr, RISCV32_SV32_PTE_BYTES);
 
     Assert((pte0 & RISCV_PTE_V) != 0, "PTE 0 invalid");
 
@@ -427,9 +373,7 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
         assert((pte0 & RISCV_PTE_W) != 0);
     }
 
-    const paddr_t pg_paddr =
-        (paddr_t)(((paddr_t)(pte0 >> RISCV_PTE_PPN_SHIFT))
-                  << PAGE_SHIFT);
+    const paddr_t pg_paddr = (paddr_t)(((paddr_t)(pte0 >> RISCV_PTE_PPN_SHIFT)) << PAGE_SHIFT);
     return pg_paddr | (paddr_t)MEM_RET_OK;
 }
 

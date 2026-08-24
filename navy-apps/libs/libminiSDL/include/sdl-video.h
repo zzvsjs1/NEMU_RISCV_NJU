@@ -62,10 +62,9 @@ typedef struct
 
 struct SDL_RWops;
 
-SDL_Surface *SDL_CreateRGBSurfaceFrom(void *pixels, int width, int height, int depth,
-                                      int pitch, uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask);
-SDL_Surface *SDL_CreateRGBSurface(uint32_t flags, int width, int height, int depth,
-                                  uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask);
+SDL_Surface *SDL_CreateRGBSurfaceFrom(void *pixels, int width, int height, int depth, int pitch, uint32_t Rmask, uint32_t Gmask, uint32_t Bmask,
+                                      uint32_t Amask);
+SDL_Surface *SDL_CreateRGBSurface(uint32_t flags, int width, int height, int depth, uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask);
 SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, uint32_t flags);
 void SDL_FreeSurface(SDL_Surface *s);
 void SDL_BlitSurface(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_Rect *dstrect);

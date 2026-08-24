@@ -85,17 +85,7 @@ static snddevice_t navy_music_devices[] = {
 };
 
 music_module_t DG_music_module = {
-    navy_music_devices,
-    arrlen(navy_music_devices),
-    NavyMusic_Init,
-    NavyMusic_Shutdown,
-    NavyMusic_SetMusicVolume,
-    NavyMusic_PauseMusic,
-    NavyMusic_ResumeMusic,
-    NavyMusic_RegisterSong,
-    NavyMusic_UnRegisterSong,
-    NavyMusic_PlaySong,
-    NavyMusic_StopSong,
-    NavyMusic_MusicIsPlaying,
-    NavyMusic_Poll,
+    navy_music_devices,   arrlen(navy_music_devices), NavyMusic_Init,         NavyMusic_Shutdown,       NavyMusic_SetMusicVolume,
+    NavyMusic_PauseMusic, NavyMusic_ResumeMusic,      NavyMusic_RegisterSong, NavyMusic_UnRegisterSong, NavyMusic_PlaySong,
+    NavyMusic_StopSong,   NavyMusic_MusicIsPlaying,   NavyMusic_Poll,
 };

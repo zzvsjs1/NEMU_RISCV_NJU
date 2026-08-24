@@ -129,81 +129,31 @@ static void timer_uptime(AM_TIMER_UPTIME_T *upt)
 // ====================================================
 
 static int keylut[128] = {
-    [0x01] = AM_KEY_ESCAPE,
-    [0x02] = AM_KEY_1,
-    [0x03] = AM_KEY_2,
-    [0x04] = AM_KEY_3,
-    [0x05] = AM_KEY_4,
-    [0x06] = AM_KEY_5,
-    [0x07] = AM_KEY_6,
-    [0x08] = AM_KEY_7,
-    [0x09] = AM_KEY_8,
-    [0x0a] = AM_KEY_9,
-    [0x0b] = AM_KEY_0,
-    [0x0c] = AM_KEY_MINUS,
-    [0x0d] = AM_KEY_EQUALS,
-    [0x0e] = AM_KEY_BACKSPACE,
-    [0x0f] = AM_KEY_TAB,
-    [0x10] = AM_KEY_Q,
-    [0x11] = AM_KEY_W,
-    [0x12] = AM_KEY_E,
-    [0x13] = AM_KEY_R,
-    [0x14] = AM_KEY_T,
-    [0x15] = AM_KEY_Y,
-    [0x16] = AM_KEY_U,
-    [0x17] = AM_KEY_I,
-    [0x18] = AM_KEY_O,
-    [0x19] = AM_KEY_P,
-    [0x1a] = AM_KEY_LEFTBRACKET,
-    [0x1b] = AM_KEY_RIGHTBRACKET,
-    [0x1c] = AM_KEY_RETURN,
-    [0x1d] = AM_KEY_LCTRL,
-    [0x1e] = AM_KEY_A,
-    [0x1f] = AM_KEY_S,
-    [0x20] = AM_KEY_D,
-    [0x21] = AM_KEY_F,
-    [0x22] = AM_KEY_G,
-    [0x23] = AM_KEY_H,
-    [0x24] = AM_KEY_J,
-    [0x25] = AM_KEY_K,
-    [0x26] = AM_KEY_L,
-    [0x27] = AM_KEY_SEMICOLON,
-    [0x28] = AM_KEY_APOSTROPHE,
-    [0x29] = AM_KEY_GRAVE,
-    [0x2a] = AM_KEY_LSHIFT,
-    [0x2b] = AM_KEY_BACKSLASH,
-    [0x2c] = AM_KEY_Z,
-    [0x2d] = AM_KEY_X,
-    [0x2e] = AM_KEY_C,
-    [0x2f] = AM_KEY_V,
-    [0x30] = AM_KEY_B,
-    [0x31] = AM_KEY_N,
-    [0x32] = AM_KEY_M,
-    [0x33] = AM_KEY_COMMA,
-    [0x34] = AM_KEY_PERIOD,
-    [0x35] = AM_KEY_SLASH,
-    [0x36] = AM_KEY_RSHIFT,
-    [0x37] = AM_KEY_LALT,
-    [0x38] = AM_KEY_RALT,
-    [0x39] = AM_KEY_SPACE,
-    [0x3a] = AM_KEY_CAPSLOCK,
-    [0x3b] = AM_KEY_F1,
-    [0x3c] = AM_KEY_F2,
-    [0x3d] = AM_KEY_F3,
-    [0x3e] = AM_KEY_F4,
-    [0x3f] = AM_KEY_F5,
-    [0x40] = AM_KEY_F6,
-    [0x41] = AM_KEY_F7,
-    [0x42] = AM_KEY_F8,
-    [0x43] = AM_KEY_F9,
-    [0x44] = AM_KEY_F10,
-    [0x48] = AM_KEY_INSERT,
-    [0x4b] = AM_KEY_HOME,
-    [0x4d] = AM_KEY_END,
-    [0x50] = AM_KEY_DELETE,
-    [0x57] = AM_KEY_F11,
-    [0x58] = AM_KEY_F12,
-    [0x5b] = AM_KEY_APPLICATION,
+    [0x01] = AM_KEY_ESCAPE,     [0x02] = AM_KEY_1,           [0x03] = AM_KEY_2,
+    [0x04] = AM_KEY_3,          [0x05] = AM_KEY_4,           [0x06] = AM_KEY_5,
+    [0x07] = AM_KEY_6,          [0x08] = AM_KEY_7,           [0x09] = AM_KEY_8,
+    [0x0a] = AM_KEY_9,          [0x0b] = AM_KEY_0,           [0x0c] = AM_KEY_MINUS,
+    [0x0d] = AM_KEY_EQUALS,     [0x0e] = AM_KEY_BACKSPACE,   [0x0f] = AM_KEY_TAB,
+    [0x10] = AM_KEY_Q,          [0x11] = AM_KEY_W,           [0x12] = AM_KEY_E,
+    [0x13] = AM_KEY_R,          [0x14] = AM_KEY_T,           [0x15] = AM_KEY_Y,
+    [0x16] = AM_KEY_U,          [0x17] = AM_KEY_I,           [0x18] = AM_KEY_O,
+    [0x19] = AM_KEY_P,          [0x1a] = AM_KEY_LEFTBRACKET, [0x1b] = AM_KEY_RIGHTBRACKET,
+    [0x1c] = AM_KEY_RETURN,     [0x1d] = AM_KEY_LCTRL,       [0x1e] = AM_KEY_A,
+    [0x1f] = AM_KEY_S,          [0x20] = AM_KEY_D,           [0x21] = AM_KEY_F,
+    [0x22] = AM_KEY_G,          [0x23] = AM_KEY_H,           [0x24] = AM_KEY_J,
+    [0x25] = AM_KEY_K,          [0x26] = AM_KEY_L,           [0x27] = AM_KEY_SEMICOLON,
+    [0x28] = AM_KEY_APOSTROPHE, [0x29] = AM_KEY_GRAVE,       [0x2a] = AM_KEY_LSHIFT,
+    [0x2b] = AM_KEY_BACKSLASH,  [0x2c] = AM_KEY_Z,           [0x2d] = AM_KEY_X,
+    [0x2e] = AM_KEY_C,          [0x2f] = AM_KEY_V,           [0x30] = AM_KEY_B,
+    [0x31] = AM_KEY_N,          [0x32] = AM_KEY_M,           [0x33] = AM_KEY_COMMA,
+    [0x34] = AM_KEY_PERIOD,     [0x35] = AM_KEY_SLASH,       [0x36] = AM_KEY_RSHIFT,
+    [0x37] = AM_KEY_LALT,       [0x38] = AM_KEY_RALT,        [0x39] = AM_KEY_SPACE,
+    [0x3a] = AM_KEY_CAPSLOCK,   [0x3b] = AM_KEY_F1,          [0x3c] = AM_KEY_F2,
+    [0x3d] = AM_KEY_F3,         [0x3e] = AM_KEY_F4,          [0x3f] = AM_KEY_F5,
+    [0x40] = AM_KEY_F6,         [0x41] = AM_KEY_F7,          [0x42] = AM_KEY_F8,
+    [0x43] = AM_KEY_F9,         [0x44] = AM_KEY_F10,         [0x48] = AM_KEY_INSERT,
+    [0x4b] = AM_KEY_HOME,       [0x4d] = AM_KEY_END,         [0x50] = AM_KEY_DELETE,
+    [0x57] = AM_KEY_F11,        [0x58] = AM_KEY_F12,         [0x5b] = AM_KEY_APPLICATION,
 };
 
 static void input_config(AM_INPUT_CONFIG_T *cfg)
@@ -240,11 +190,20 @@ struct vbe_info
     uint32_t framebuffer;
 } __attribute__((packed));
 
-static inline uint8_t R(uint32_t p) { return p >> 16; }
+static inline uint8_t R(uint32_t p)
+{
+    return p >> 16;
+}
 
-static inline uint8_t G(uint32_t p) { return p >> 8; }
+static inline uint8_t G(uint32_t p)
+{
+    return p >> 8;
+}
 
-static inline uint8_t B(uint32_t p) { return p; }
+static inline uint8_t B(uint32_t p)
+{
+    return p;
+}
 
 struct pixel
 {
@@ -256,7 +215,10 @@ static uint8_t vmem[VMEM_SIZE], vbuf[VMEM_SIZE], *vbuf_head;
 
 static struct gpu_canvas display;
 
-static inline void *to_host(gpuptr_t ptr) { return ptr == AM_GPU_NULL ? NULL : vmem + ptr; }
+static inline void *to_host(gpuptr_t ptr)
+{
+    return ptr == AM_GPU_NULL ? NULL : vmem + ptr;
+}
 
 static void gpu_init()
 {
@@ -426,32 +388,28 @@ static void disk_blkio(AM_DISK_BLKIO_T *bio)
 
 // ====================================================
 
-static void audio_config(AM_AUDIO_CONFIG_T *cfg) { cfg->present = false; }
+static void audio_config(AM_AUDIO_CONFIG_T *cfg)
+{
+    cfg->present = false;
+}
 
-static void net_config(AM_NET_CONFIG_T *cfg) { cfg->present = false; }
+static void net_config(AM_NET_CONFIG_T *cfg)
+{
+    cfg->present = false;
+}
 
-static void fail(void *buf) { panic("access nonexist register"); }
+static void fail(void *buf)
+{
+    panic("access nonexist register");
+}
 
 typedef void (*handler_t)(void *buf);
 static void *lut[128] = {
-    [AM_UART_CONFIG] = uart_config,
-    [AM_UART_TX] = uart_tx,
-    [AM_UART_RX] = uart_rx,
-    [AM_TIMER_CONFIG] = timer_config,
-    [AM_TIMER_RTC] = timer_rtc,
-    [AM_TIMER_UPTIME] = timer_uptime,
-    [AM_INPUT_CONFIG] = input_config,
-    [AM_INPUT_KEYBRD] = input_keybrd,
-    [AM_GPU_CONFIG] = gpu_config,
-    [AM_GPU_FBDRAW] = gpu_fbdraw,
-    [AM_GPU_STATUS] = gpu_status,
-    [AM_GPU_MEMCPY] = gpu_memcpy,
-    [AM_GPU_RENDER] = gpu_render,
-    [AM_AUDIO_CONFIG] = audio_config,
-    [AM_DISK_CONFIG] = disk_config,
-    [AM_DISK_STATUS] = disk_status,
-    [AM_DISK_BLKIO] = disk_blkio,
-    [AM_NET_CONFIG] = net_config,
+    [AM_UART_CONFIG] = uart_config, [AM_UART_TX] = uart_tx,           [AM_UART_RX] = uart_rx,           [AM_TIMER_CONFIG] = timer_config,
+    [AM_TIMER_RTC] = timer_rtc,     [AM_TIMER_UPTIME] = timer_uptime, [AM_INPUT_CONFIG] = input_config, [AM_INPUT_KEYBRD] = input_keybrd,
+    [AM_GPU_CONFIG] = gpu_config,   [AM_GPU_FBDRAW] = gpu_fbdraw,     [AM_GPU_STATUS] = gpu_status,     [AM_GPU_MEMCPY] = gpu_memcpy,
+    [AM_GPU_RENDER] = gpu_render,   [AM_AUDIO_CONFIG] = audio_config, [AM_DISK_CONFIG] = disk_config,   [AM_DISK_STATUS] = disk_status,
+    [AM_DISK_BLKIO] = disk_blkio,   [AM_NET_CONFIG] = net_config,
 };
 
 bool ioe_init()
@@ -469,9 +427,15 @@ bool ioe_init()
     return true;
 }
 
-void ioe_read(int reg, void *buf) { ((handler_t)lut[reg])(buf); }
+void ioe_read(int reg, void *buf)
+{
+    ((handler_t)lut[reg])(buf);
+}
 
-void ioe_write(int reg, void *buf) { ((handler_t)lut[reg])(buf); }
+void ioe_write(int reg, void *buf)
+{
+    ((handler_t)lut[reg])(buf);
+}
 
 // LAPIC/IOAPIC (from xv6)
 

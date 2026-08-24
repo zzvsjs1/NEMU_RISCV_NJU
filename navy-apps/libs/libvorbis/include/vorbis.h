@@ -176,11 +176,8 @@ extern "C"
     // need to give it the same data again PLUS more. Note that the Vorbis
     // specification does not bound the size of an individual frame.
 
-    extern stb_vorbis *stb_vorbis_open_pushdata(
-        const unsigned char *datablock, int datablock_length_in_bytes,
-        int *datablock_memory_consumed_in_bytes,
-        int *error,
-        const stb_vorbis_alloc *alloc_buffer);
+    extern stb_vorbis *stb_vorbis_open_pushdata(const unsigned char *datablock, int datablock_length_in_bytes,
+                                                int *datablock_memory_consumed_in_bytes, int *error, const stb_vorbis_alloc *alloc_buffer);
     // create a vorbis decoder by passing in the initial data block containing
     //    the ogg&vorbis headers (you don't need to do parse them, just provide
     //    the first N bytes of the file--you're told if it's not enough, see below)
@@ -256,19 +253,16 @@ extern int stb_vorbis_decode_frame_pushdata(
     // decoded, or -1 if the file could not be opened or was not an ogg vorbis file.
     // When you're done with it, just free() the pointer returned in *output.
 
-    extern stb_vorbis *stb_vorbis_open_memory(const unsigned char *data, int len,
-                                              int *error, const stb_vorbis_alloc *alloc_buffer);
+    extern stb_vorbis *stb_vorbis_open_memory(const unsigned char *data, int len, int *error, const stb_vorbis_alloc *alloc_buffer);
     // create an ogg vorbis decoder from an ogg vorbis stream in memory (note
     // this must be the entire stream!). on failure, returns NULL and sets *error
 
 #ifndef STB_VORBIS_NO_STDIO
-    extern stb_vorbis *stb_vorbis_open_filename(const char *filename,
-                                                int *error, const stb_vorbis_alloc *alloc_buffer);
+    extern stb_vorbis *stb_vorbis_open_filename(const char *filename, int *error, const stb_vorbis_alloc *alloc_buffer);
     // create an ogg vorbis decoder from a filename via fopen(). on failure,
     // returns NULL and sets *error (possibly to VORBIS_file_open_failure).
 
-    extern stb_vorbis *stb_vorbis_open_file(FILE *f, int close_handle_on_close,
-                                            int *error, const stb_vorbis_alloc *alloc_buffer);
+    extern stb_vorbis *stb_vorbis_open_file(FILE *f, int close_handle_on_close, int *error, const stb_vorbis_alloc *alloc_buffer);
     // create an ogg vorbis decoder from an open FILE *, looking for a stream at
     // the _current_ seek point (ftell). on failure, returns NULL and sets *error.
     // note that stb_vorbis must "own" this stream; if you seek it in between
@@ -277,8 +271,8 @@ extern int stb_vorbis_decode_frame_pushdata(
     // owns the _entire_ rest of the file after the start point. Use the next
     // function, stb_vorbis_open_file_section(), to limit it.
 
-    extern stb_vorbis *stb_vorbis_open_file_section(FILE *f, int close_handle_on_close,
-                                                    int *error, const stb_vorbis_alloc *alloc_buffer, unsigned int len);
+    extern stb_vorbis *stb_vorbis_open_file_section(FILE *f, int close_handle_on_close, int *error, const stb_vorbis_alloc *alloc_buffer,
+                                                    unsigned int len);
 // create an ogg vorbis decoder from an open FILE *, looking for a stream at
 // the _current_ seek point (ftell); the stream will be of length 'len' bytes.
 // on failure, returns NULL and sets *error. note that stb_vorbis must "own"

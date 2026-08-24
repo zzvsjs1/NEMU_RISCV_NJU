@@ -8,8 +8,7 @@ volatile uint32_t csr_trap_saved_mstatus = 0;
 volatile uint32_t csr_trap_saved_mcause = 0;
 volatile uint32_t csr_trap_restore_mtvec = 0;
 
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".option push\n"
     ".option norvc\n"
     ".align 2\n"
@@ -161,16 +160,15 @@ static void test_mret_restores_machine_mstatus_fields(void)
     before &= ~(MSTATUS_MIE | MSTATUS_MPIE | MSTATUS_MPP_MASK);
     before |= MSTATUS_MPIE | MSTATUS_MPP_M | MSTATUS_MPRV;
 
-    asm volatile(
-        "csrw mstatus, %[before]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        "csrr %[after], mstatus\n"
-        : [after] "=&r"(after)
-        : [before] "r"(before)
-        : "t0", "memory");
+    asm volatile("csrw mstatus, %[before]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 "csrr %[after], mstatus\n"
+                 : [after] "=&r"(after)
+                 : [before] "r"(before)
+                 : "t0", "memory");
 
     write_mstatus(old_mstatus);
 

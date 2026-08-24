@@ -181,16 +181,14 @@ extern "C"
     }
 
 #define BENCHMARK_LIST(def) \
-    def(qsort, "qsort", QSORT_S, QSORT_M, QSORT_L, QSORT_H, "Quick sort") \
-        def(queen, "queen", QUEEN_S, QUEEN_M, QUEEN_L, QUEEN_H, "Queen placement") \
-            def(bf, "bf", BF_S, BF_M, BF_L, BF_H, "Brainf**k interpreter") \
-                def(fib, "fib", FIB_S, FIB_M, FIB_L, FIB_H, "Fibonacci number") \
-                    def(sieve, "sieve", SIEVE_S, SIEVE_M, SIEVE_L, SIEVE_H, "Eratosthenes sieve") \
-                        def(15pz, "15pz", PZ15_S, PZ15_M, PZ15_L, PZ15_H, "A* 15-puzzle search") \
-                            def(dinic, "dinic", DINIC_S, DINIC_M, DINIC_L, DINIC_H, "Dinic's maxflow algorithm") \
-                                def(lzip, "lzip", LZIP_S, LZIP_M, LZIP_L, LZIP_H, "Lzip compression") \
-                                    def(ssort, "ssort", SSORT_S, SSORT_M, SSORT_L, SSORT_H, "Suffix sort") \
-                                        def(md5, "md5", MD5_S, MD5_M, MD5_L, MD5_H, "MD5 digest")
+    def(qsort, "qsort", QSORT_S, QSORT_M, QSORT_L, QSORT_H, "Quick sort") def(queen, "queen", QUEEN_S, QUEEN_M, QUEEN_L, QUEEN_H, "Queen placement") \
+        def(bf, "bf", BF_S, BF_M, BF_L, BF_H, "Brainf**k interpreter") def(fib, "fib", FIB_S, FIB_M, FIB_L, FIB_H, "Fibonacci number") \
+            def(sieve, "sieve", SIEVE_S, SIEVE_M, SIEVE_L, SIEVE_H, "Eratosthenes sieve") \
+                def(15pz, "15pz", PZ15_S, PZ15_M, PZ15_L, PZ15_H, "A* 15-puzzle search") \
+                    def(dinic, "dinic", DINIC_S, DINIC_M, DINIC_L, DINIC_H, "Dinic's maxflow algorithm") \
+                        def(lzip, "lzip", LZIP_S, LZIP_M, LZIP_L, LZIP_H, "Lzip compression") \
+                            def(ssort, "ssort", SSORT_S, SSORT_M, SSORT_L, SSORT_H, "Suffix sort") \
+                                def(md5, "md5", MD5_S, MD5_M, MD5_L, MD5_H, "MD5 digest")
 
     // Each benchmark will run REPEAT times
 

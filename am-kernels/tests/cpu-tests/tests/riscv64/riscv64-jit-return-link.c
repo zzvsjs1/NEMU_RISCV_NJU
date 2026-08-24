@@ -17,29 +17,28 @@ static uint64_t run_two_target_return_loop(void)
     uint64_t out = 0;
     uint64_t laps = 4096;
 
-    asm volatile(
-        "mv t3, ra\n"
-        "1:\n"
-        "andi t0, %[laps], 1\n"
-        "beqz t0, 2f\n"
-        "jal ra, 4f\n"
-        "addi %[out], %[out], 1\n"
-        "j 3f\n"
-        "2:\n"
-        "jal ra, 4f\n"
-        "addi %[out], %[out], 2\n"
-        "3:\n"
-        "addi %[laps], %[laps], -1\n"
-        "bnez %[laps], 1b\n"
-        "mv ra, t3\n"
-        "j 5f\n"
-        "4:\n"
-        "addi %[out], %[out], 3\n"
-        "ret\n"
-        "5:\n"
-        : [out] "+&r"(out), [laps] "+&r"(laps)
-        :
-        : "t0", "t3", "ra", "memory");
+    asm volatile("mv t3, ra\n"
+                 "1:\n"
+                 "andi t0, %[laps], 1\n"
+                 "beqz t0, 2f\n"
+                 "jal ra, 4f\n"
+                 "addi %[out], %[out], 1\n"
+                 "j 3f\n"
+                 "2:\n"
+                 "jal ra, 4f\n"
+                 "addi %[out], %[out], 2\n"
+                 "3:\n"
+                 "addi %[laps], %[laps], -1\n"
+                 "bnez %[laps], 1b\n"
+                 "mv ra, t3\n"
+                 "j 5f\n"
+                 "4:\n"
+                 "addi %[out], %[out], 3\n"
+                 "ret\n"
+                 "5:\n"
+                 : [out] "+&r"(out), [laps] "+&r"(laps)
+                 :
+                 : "t0", "t3", "ra", "memory");
 
     return out;
 }

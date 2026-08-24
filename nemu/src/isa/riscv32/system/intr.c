@@ -46,10 +46,8 @@ static void update_mstatus_on_trap_entry(void)
      */
     uint64_t status = cpu.csr.mstatus;
 
-    status = set_bit(status, RISCV_MSTATUS_MPIE_BIT,
-                     get_bit(status, RISCV_MSTATUS_MIE_BIT));
-    status = set_field(status, RISCV_MSTATUS_MPP_SHIFT,
-                       RISCV_MSTATUS_MPP_WIDTH, cpu.prvi);
+    status = set_bit(status, RISCV_MSTATUS_MPIE_BIT, get_bit(status, RISCV_MSTATUS_MIE_BIT));
+    status = set_field(status, RISCV_MSTATUS_MPP_SHIFT, RISCV_MSTATUS_MPP_WIDTH, cpu.prvi);
     status = set_bit(status, RISCV_MSTATUS_MIE_BIT, false);
 #ifdef CONFIG_RV64
     /*

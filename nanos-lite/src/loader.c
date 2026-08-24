@@ -110,9 +110,7 @@ static size_t checked_add_size(size_t left, size_t right)
  * The preflight check catches oversized argument vectors, while this helper
  * makes each later subtraction safe if the stack layout changes in future.
  */
-static void reserve_stack_bytes(uintptr_t *sp_va, uintptr_t va_base,
-                                uintptr_t *sp_pa, uintptr_t pa_base,
-                                size_t bytes)
+static void reserve_stack_bytes(uintptr_t *sp_va, uintptr_t va_base, uintptr_t *sp_pa, uintptr_t pa_base, size_t bytes)
 {
     const uintptr_t amount = (uintptr_t)bytes;
 
@@ -144,9 +142,7 @@ static void load_direct(int fd, const Elf_Phdr *phdr)
     }
 }
 
-static uintptr_t load_mapped(PCB *pcb, int fd, const Elf_Phdr *phdr,
-                             uintptr_t max_end, uintptr_t stack_va_base,
-                             uintptr_t entry, bool *entry_mapped)
+static uintptr_t load_mapped(PCB *pcb, int fd, const Elf_Phdr *phdr, uintptr_t max_end, uintptr_t stack_va_base, uintptr_t entry, bool *entry_mapped)
 {
     const uintptr_t user_va_base = (uintptr_t)pcb->as.area.start;
     const uintptr_t seg_va = (uintptr_t)phdr->p_vaddr;
@@ -167,12 +163,10 @@ static uintptr_t load_mapped(PCB *pcb, int fd, const Elf_Phdr *phdr,
      * before page-table lookup so an ELF header can never make the loader
      * reuse and overwrite one of those inherited kernel pages.
      */
-    assert(nanos_loader_load_range_fits(user_va_base, (uintptr_t)pcb->as.area.end,
-                                        (size_t)USTACK_PAGES * PGSIZE, seg_va,
-                                        (uintptr_t)phdr->p_memsz, &mem_va_end));
+    assert(nanos_loader_load_range_fits(user_va_base, (uintptr_t)pcb->as.area.end, (size_t)USTACK_PAGES * PGSIZE, seg_va, (uintptr_t)phdr->p_memsz,
+                                        &mem_va_end));
     assert(mem_va_end <= stack_va_base);
-    assert(nanos_loader_checked_add_uintptr(seg_va, (uintptr_t)phdr->p_filesz,
-                                            &file_va_end));
+    assert(nanos_loader_checked_add_uintptr(seg_va, (uintptr_t)phdr->p_filesz, &file_va_end));
 
     assert(entry_mapped != NULL);
 
@@ -293,8 +287,7 @@ static uintptr_t loader(PCB *pcb, const char *filename)
         }
         else
         {
-            max_end = load_mapped(pcb, fd, &phdr, max_end, stack_va_base,
-                                  (uintptr_t)elfH.e_entry, &entry_mapped);
+            max_end = load_mapped(pcb, fd, &phdr, max_end, stack_va_base, (uintptr_t)elfH.e_entry, &entry_mapped);
         }
     }
 
@@ -315,8 +308,7 @@ static uintptr_t loader(PCB *pcb, const char *filename)
     return elfH.e_entry;
 }
 
-static uintptr_t build_user_stack(uintptr_t ustack_va_base, uintptr_t ustack_va_end,
-                                  uintptr_t ustack_pa_base, uintptr_t ustack_pa_end,
+static uintptr_t build_user_stack(uintptr_t ustack_va_base, uintptr_t ustack_va_end, uintptr_t ustack_pa_base, uintptr_t ustack_pa_end,
                                   char *const argv[], char *const envp[])
 {
     char *argv_ptrs[USTACK_VECTOR_SLOTS];
@@ -326,8 +318,7 @@ static uintptr_t build_user_stack(uintptr_t ustack_va_base, uintptr_t ustack_va_
     const size_t argv_bytes = stack_string_bytes(argv, argc);
     const size_t envp_bytes = stack_string_bytes(envp, envc);
     const size_t string_bytes = checked_add_size(argv_bytes, envp_bytes);
-    const size_t pointer_words = checked_add_size(
-        checked_add_size((size_t)argc, (size_t)envc), 3u);
+    const size_t pointer_words = checked_add_size(checked_add_size((size_t)argc, (size_t)envc), 3u);
     uintptr_t expected_sp_va;
     uintptr_t expected_sp_pa;
 
@@ -336,12 +327,8 @@ static uintptr_t build_user_stack(uintptr_t ustack_va_base, uintptr_t ustack_va_
      * happen before copying strings: the physical stack sits after earlier
      * bump allocations, so writing below its base would corrupt them.
      */
-    assert(nanos_loader_stack_layout_fits(ustack_va_base, ustack_va_end,
-                                          string_bytes, pointer_words,
-                                          &expected_sp_va));
-    assert(nanos_loader_stack_layout_fits(ustack_pa_base, ustack_pa_end,
-                                          string_bytes, pointer_words,
-                                          &expected_sp_pa));
+    assert(nanos_loader_stack_layout_fits(ustack_va_base, ustack_va_end, string_bytes, pointer_words, &expected_sp_va));
+    assert(nanos_loader_stack_layout_fits(ustack_pa_base, ustack_pa_end, string_bytes, pointer_words, &expected_sp_pa));
 
     uintptr_t sp_va = ustack_va_end;
     uintptr_t sp_pa = ustack_pa_end;
@@ -434,18 +421,12 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
 
     for (int i = 0; i < USTACK_PAGES; i++)
     {
-        map(
-            &pcb->as,
-            (void *)(ustack_va_base + (uintptr_t)i * PGSIZE),
-            (void *)((uintptr_t)ustack_pa_base + (uintptr_t)i * PGSIZE),
-            MMAP_WRITE);
+        map(&pcb->as, (void *)(ustack_va_base + (uintptr_t)i * PGSIZE), (void *)((uintptr_t)ustack_pa_base + (uintptr_t)i * PGSIZE), MMAP_WRITE);
     }
 
     // 4) Build argc/argv/envp on the stack.
     uintptr_t ustack_pa_end = (uintptr_t)ustack_pa_base + (uintptr_t)USTACK_PAGES * PGSIZE;
-    uintptr_t args_va = build_user_stack(ustack_va_base, ustack_va_end,
-                                         (uintptr_t)ustack_pa_base, ustack_pa_end,
-                                         argv, envp);
+    uintptr_t args_va = build_user_stack(ustack_va_base, ustack_va_end, (uintptr_t)ustack_pa_base, ustack_pa_end, argv, envp);
 
     // 5) Create user context on kernel stack.
     // The Context itself must live on the PCB kernel stack, not on the user
@@ -460,9 +441,7 @@ void context_uload(PCB *pcb, const char *filename, char *const argv[], char *con
      * can still syntax-check this file, but they do not provide the ABI accessor
      * needed to initialise a user stack pointer here.
      */
-#if defined(__ISA_X86__) || defined(__ISA_RISCV32__) || \
-    defined(__ISA_RISCV32E__) || defined(__ISA_RISCV64__) || \
-    defined(__ISA_MIPS32__)
+#if defined(__ISA_X86__) || defined(__ISA_RISCV32__) || defined(__ISA_RISCV32E__) || defined(__ISA_RISCV64__) || defined(__ISA_MIPS32__)
     pcb->cp->GPRSP = args_va;
 #endif
     pcb->cp->GPRx = args_va;

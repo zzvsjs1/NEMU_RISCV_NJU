@@ -47,26 +47,22 @@
  * constant and verify at compile time that it remains inside Spike's FS field.
  */
 static constexpr reg_t SPIKE_MSTATUS_FS_INITIAL = (reg_t)1 << 13;
-static_assert((SPIKE_MSTATUS_FS_INITIAL & MSTATUS_FS) ==
-                  SPIKE_MSTATUS_FS_INITIAL,
-              "Spike FS Initial encoding is outside mstatus.FS");
+static_assert((SPIKE_MSTATUS_FS_INITIAL & MSTATUS_FS) == SPIKE_MSTATUS_FS_INITIAL, "Spike FS Initial encoding is outside mstatus.FS");
 #endif
 
 static std::vector<std::pair<reg_t, abstract_device_t *>> difftest_plugin_devices;
 static std::vector<std::string> difftest_htif_args;
-static std::vector<std::pair<reg_t, mem_t *>> difftest_mem(
-    1, std::make_pair(reg_t(DRAM_BASE), new mem_t(CONFIG_MSIZE)));
+static std::vector<std::pair<reg_t, mem_t *>> difftest_mem(1, std::make_pair(reg_t(DRAM_BASE), new mem_t(CONFIG_MSIZE)));
 static std::vector<int> difftest_hartids;
-static debug_module_config_t difftest_dm_config = {
-    .progbufsize = 2,
-    .max_sba_data_width = 0,
-    .require_authentication = false,
-    .abstract_rti = 0,
-    .support_hasel = true,
-    .support_abstract_csr_access = true,
-    .support_abstract_fpr_access = true,
-    .support_haltgroups = true,
-    .support_impebreak = true};
+static debug_module_config_t difftest_dm_config = {.progbufsize = 2,
+                                                   .max_sba_data_width = 0,
+                                                   .require_authentication = false,
+                                                   .abstract_rti = 0,
+                                                   .support_hasel = true,
+                                                   .support_abstract_csr_access = true,
+                                                   .support_abstract_fpr_access = true,
+                                                   .support_haltgroups = true,
+                                                   .support_impebreak = true};
 
 static sim_t *s = NULL;
 static processor_t *p = NULL;
@@ -139,8 +135,7 @@ void sim_t::diff_get_regs(void *diff_context)
 #endif
     }
 
-    ctx->fcsr =
-        diff_read_csr(CSR_FCSR) & RISCV_DIFFTEST_FCSR_MASK;
+    ctx->fcsr = diff_read_csr(CSR_FCSR) & RISCV_DIFFTEST_FCSR_MASK;
 #endif
 }
 
@@ -204,8 +199,7 @@ void sim_t::diff_set_regs(void *diff_context)
         state->FPR.write(i, value);
     }
 
-    diff_write_csr(CSR_FCSR,
-                   ctx->fcsr & RISCV_DIFFTEST_FCSR_MASK);
+    diff_write_csr(CSR_FCSR, ctx->fcsr & RISCV_DIFFTEST_FCSR_MASK);
     diff_write_csr(CSR_MSTATUS, target_mstatus);
 #endif
 }
@@ -267,11 +261,7 @@ extern "C"
                                /*default_hartids=*/std::vector<size_t>(1),
                                /*default_real_time_clint=*/false,
                                /*default_trigger_count=*/4);
-        s = new sim_t(cfg, false,
-                      difftest_mem, difftest_plugin_devices, difftest_htif_args,
-                      difftest_dm_config, nullptr, false, NULL,
-                      false,
-                      NULL,
+        s = new sim_t(cfg, false, difftest_mem, difftest_plugin_devices, difftest_htif_args, difftest_dm_config, nullptr, false, NULL, false, NULL,
                       true);
         s->diff_init(port);
     }

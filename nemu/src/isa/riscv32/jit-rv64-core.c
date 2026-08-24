@@ -69,11 +69,9 @@ volatile bool rv64_jit_cpu_boundary_requested = false;
 
 /* Dynamic PIC refill shares the ordinary target-slot link lifecycle below. */
 static void jit_link_unpatch(rv64_jit_link_t *link);
-static void jit_link_try_patch(rv64_jit_link_t *link,
-                               rv64_jit_block_t *target);
+static void jit_link_try_patch(rv64_jit_link_t *link, rv64_jit_block_t *target);
 static void jit_link_remove_from_slot(rv64_jit_link_t *link);
-static void jit_link_add_to_slot(rv64_jit_link_t *link,
-                                 uint32_t slot_index);
+static void jit_link_add_to_slot(rv64_jit_link_t *link, uint32_t slot_index);
 
 /*
  * Permanently return one churn-heavy source to its guarded two-way PIC.
@@ -83,16 +81,13 @@ static void jit_link_add_to_slot(rv64_jit_link_t *link,
  */
 static void jit_indirect_pic_downgrade(rv64_jit_indirect_pic_t *pic)
 {
-    Assert(pic != NULL && !pic->guarded_only,
-           "jit: invalid RV64 indirect PIC downgrade");
+    Assert(pic != NULL && !pic->guarded_only, "jit: invalid RV64 indirect PIC downgrade");
 
     for (uint32_t i = 0; i < RV64_JIT_INDIRECT_PIC_WAYS; i++)
     {
         rv64_jit_link_t *link = &pic->links[i];
 
-        Assert(link->dynamic && link->source != NULL &&
-                   link->source->valid,
-               "jit: invalid RV64 PIC link during downgrade");
+        Assert(link->dynamic && link->source != NULL && link->source->valid, "jit: invalid RV64 PIC link during downgrade");
         jit_link_unpatch(link);
     }
 
@@ -101,8 +96,7 @@ static void jit_indirect_pic_downgrade(rv64_jit_indirect_pic_t *pic)
     {
         rv64_jit_link_t *link = &pic->links[i];
 
-        Assert(!link->patched,
-               "jit: RV64 PIC selector survived downgrade unpatching");
+        Assert(!link->patched, "jit: RV64 PIC selector survived downgrade unpatching");
         if (link->target_slot_index != UINT32_MAX)
         {
             jit_link_remove_from_slot(link);
@@ -118,25 +112,17 @@ static void jit_indirect_pic_downgrade(rv64_jit_indirect_pic_t *pic)
 /* Allocate one process-unique, non-zero native block publication identity. */
 uint64_t rv64_jit_allocate_block_generation(void)
 {
-    Assert(rv64_jit_next_block_generation != UINT64_MAX,
-           "jit: RV64 block generation space exhausted");
+    Assert(rv64_jit_next_block_generation != UINT64_MAX, "jit: RV64 block generation space exhausted");
     return rv64_jit_next_block_generation++;
 }
 
 /* Publish one cold authoritative lookup result into a two-way indirect PIC. */
-rv64_jit_entry_t rv64_jit_indirect_pic_refill(
-    rv64_jit_indirect_pic_t *pic, vaddr_t target_pc,
-    rv64_jit_block_t *target_slot)
+rv64_jit_entry_t rv64_jit_indirect_pic_refill(rv64_jit_indirect_pic_t *pic, vaddr_t target_pc, rv64_jit_block_t *target_slot)
 {
     Assert(pic != NULL, "jit: missing RV64 indirect PIC sidecar");
-    Assert(pic->kind < RV64_JIT_INDIRECT_PIC_KIND_COUNT,
-           "jit: invalid RV64 indirect PIC kind %u", pic->kind);
-    Assert(target_slot != NULL && target_slot->valid &&
-               target_slot->generation != 0 &&
-               target_slot->pc == target_pc &&
-               !target_slot->translated &&
-               !target_slot->uses_data_state &&
-               target_slot->body_entry != NULL,
+    Assert(pic->kind < RV64_JIT_INDIRECT_PIC_KIND_COUNT, "jit: invalid RV64 indirect PIC kind %u", pic->kind);
+    Assert(target_slot != NULL && target_slot->valid && target_slot->generation != 0 && target_slot->pc == target_pc && !target_slot->translated &&
+               !target_slot->uses_data_state && target_slot->body_entry != NULL,
            "jit: unsafe RV64 indirect PIC refill target");
 
     uint32_t victim = RV64_JIT_INDIRECT_PIC_WAYS;
@@ -144,8 +130,7 @@ rv64_jit_entry_t rv64_jit_indirect_pic_refill(
     /* Refresh a stale publication in place rather than creating duplicate tags. */
     for (uint32_t i = 0; i < RV64_JIT_INDIRECT_PIC_WAYS; i++)
     {
-        if (pic->ways[i].target_pc == target_pc &&
-            pic->ways[i].target_slot == target_slot)
+        if (pic->ways[i].target_pc == target_pc && pic->ways[i].target_slot == target_slot)
         {
             victim = i;
             break;
@@ -155,10 +140,8 @@ rv64_jit_entry_t rv64_jit_indirect_pic_refill(
     if (victim == RV64_JIT_INDIRECT_PIC_WAYS)
     {
         victim = pic->next_victim;
-        Assert(victim < RV64_JIT_INDIRECT_PIC_WAYS,
-               "jit: invalid RV64 indirect PIC victim %u", victim);
-        pic->next_victim =
-            (uint8_t)((victim + 1u) % RV64_JIT_INDIRECT_PIC_WAYS);
+        Assert(victim < RV64_JIT_INDIRECT_PIC_WAYS, "jit: invalid RV64 indirect PIC victim %u", victim);
+        pic->next_victim = (uint8_t)((victim + 1u) % RV64_JIT_INDIRECT_PIC_WAYS);
 
         if (pic->ways[victim].target_generation != 0)
         {
@@ -166,13 +149,10 @@ rv64_jit_entry_t rv64_jit_indirect_pic_refill(
 
             if (!pic->guarded_only)
             {
-                Assert(pic->patch_replacement_count <
-                           RV64_JIT_INDIRECT_PIC_PATCH_REPLACEMENT_LIMIT,
-                       "jit: RV64 PIC replacement counter overflow");
+                Assert(pic->patch_replacement_count < RV64_JIT_INDIRECT_PIC_PATCH_REPLACEMENT_LIMIT, "jit: RV64 PIC replacement counter overflow");
                 pic->patch_replacement_count++;
 
-                if (pic->patch_replacement_count ==
-                    RV64_JIT_INDIRECT_PIC_PATCH_REPLACEMENT_LIMIT)
+                if (pic->patch_replacement_count == RV64_JIT_INDIRECT_PIC_PATCH_REPLACEMENT_LIMIT)
                 {
                     jit_indirect_pic_downgrade(pic);
                 }
@@ -183,9 +163,7 @@ rv64_jit_entry_t rv64_jit_indirect_pic_refill(
     rv64_jit_indirect_pic_entry_t *entry = &pic->ways[victim];
     rv64_jit_link_t *link = &pic->links[victim];
 
-    Assert(link->dynamic && link->source != NULL &&
-               link->source->valid && link->pic_kind == pic->kind &&
-               link->pic_way == victim,
+    Assert(link->dynamic && link->source != NULL && link->source->valid && link->pic_kind == pic->kind && link->pic_way == victim,
            "jit: invalid RV64 dynamic PIC link ownership");
 
     /*
@@ -210,9 +188,7 @@ rv64_jit_entry_t rv64_jit_indirect_pic_refill(
 
     if (pic->guarded_only)
     {
-        Assert(!link->patched && !link->patch_eligible &&
-                   link->target_slot_index == UINT32_MAX &&
-                   link->target_generation == 0,
+        Assert(!link->patched && !link->patch_eligible && link->target_slot_index == UINT32_MAX && link->target_generation == 0,
                "jit: downgraded RV64 PIC retained a direct edge");
         entry->target_generation = target_slot->generation;
         JIT_STAT_INC(indirect_pic_fills[pic->kind]);
@@ -223,13 +199,11 @@ rv64_jit_entry_t rv64_jit_indirect_pic_refill(
     link->target_satp = target_slot->satp;
     link->target_ifetch_state = target_slot->ifetch_state;
     link->target_generation = target_slot->generation;
-    jit_link_add_to_slot(
-        link, (uint32_t)(target_slot - rv64_jit_cache));
+    jit_link_add_to_slot(link, (uint32_t)(target_slot - rv64_jit_cache));
 
     entry->target_generation = target_slot->generation;
     jit_link_try_patch(link, target_slot);
-    Assert(link->patched,
-           "jit: authoritative RV64 PIC refill did not patch its edge");
+    Assert(link->patched, "jit: authoritative RV64 PIC refill did not patch its edge");
     JIT_STAT_INC(indirect_pic_fills[pic->kind]);
     return target_slot->body_entry;
 }
@@ -263,8 +237,7 @@ void rv64_jit_stat_block_end(rv64_jit_block_end_reason_t reason)
 static bool jit_env_flag_enabled(const char *name)
 {
     const char *value = getenv(name);
-    return value != NULL && value[0] != '\0' &&
-           !(value[0] == '0' && value[1] == '\0');
+    return value != NULL && value[0] != '\0' && !(value[0] == '0' && value[1] == '\0');
 }
 
 /* Cache runtime switches once so dispatch does not call getenv() repeatedly. */
@@ -273,13 +246,9 @@ static void rv64_jit_init_runtime_options(void)
     if (!rv64_jit_runtime_options_ready)
     {
         rv64_jit_env_disable = jit_env_flag_enabled("NEMU_DISABLE_JIT");
-        rv64_jit_env_disable_direct_link =
-            jit_env_flag_enabled("NEMU_DISABLE_RV64_JIT_DIRECT_LINK");
-        rv64_jit_env_disable_return_link =
-            jit_env_flag_enabled("NEMU_DISABLE_RV64_JIT_RETURN_LINK");
-        rv64_jit_env_disable_fp_gpr_effects =
-            jit_env_flag_enabled(
-                "NEMU_DISABLE_RV64_JIT_FP_GPR_EFFECTS");
+        rv64_jit_env_disable_direct_link = jit_env_flag_enabled("NEMU_DISABLE_RV64_JIT_DIRECT_LINK");
+        rv64_jit_env_disable_return_link = jit_env_flag_enabled("NEMU_DISABLE_RV64_JIT_RETURN_LINK");
+        rv64_jit_env_disable_fp_gpr_effects = jit_env_flag_enabled("NEMU_DISABLE_RV64_JIT_FP_GPR_EFFECTS");
         rv64_jit_env_perf_map = jit_env_flag_enabled("NEMU_JIT_PERFMAP");
         rv64_jit_stats_enabled = jit_env_flag_enabled("NEMU_JIT_STATS");
         rv64_jit_runtime_options_ready = true;
@@ -308,8 +277,7 @@ bool rv64_jit_direct_link_enabled(void)
 bool rv64_jit_return_link_enabled(void)
 {
     rv64_jit_init_runtime_options();
-    return !rv64_jit_env_disable_direct_link &&
-           !rv64_jit_env_disable_return_link;
+    return !rv64_jit_env_disable_direct_link && !rv64_jit_env_disable_return_link;
 }
 
 /*
@@ -341,8 +309,7 @@ static uint32_t jit_hash(vaddr_t pc, word_t satp)
 }
 
 /* Return the cache slot for a PC under an already-known fetch context. */
-rv64_jit_block_t *rv64_jit_cache_slot_context(vaddr_t pc, word_t satp,
-                                                uint32_t ifetch_state)
+rv64_jit_block_t *rv64_jit_cache_slot_context(vaddr_t pc, word_t satp, uint32_t ifetch_state)
 {
     return &rv64_jit_cache[jit_hash_context(pc, satp, ifetch_state)];
 }
@@ -362,16 +329,13 @@ rv64_jit_block_t *rv64_jit_cache_slot(vaddr_t pc)
  */
 static void jit_link_patch_rel32(uint8_t *disp, const uint8_t *target)
 {
-    Assert(disp != NULL && target != NULL,
-           "jit: invalid RV64 direct-link patch");
+    Assert(disp != NULL && target != NULL, "jit: invalid RV64 direct-link patch");
 
     const int64_t rel = target - (disp + sizeof(int32_t));
-    Assert(rel >= INT32_MIN && rel <= INT32_MAX,
-           "jit: RV64 direct-link target is out of rel32 range");
+    Assert(rel >= INT32_MIN && rel <= INT32_MAX, "jit: RV64 direct-link target is out of rel32 range");
     const int32_t rel32 = (int32_t)rel;
     memcpy(disp, &rel32, sizeof(rel32));
-    __builtin___clear_cache((char *)disp,
-                            (char *)(disp + sizeof(rel32)));
+    __builtin___clear_cache((char *)disp, (char *)(disp + sizeof(rel32)));
 }
 
 /* Restore one mutable source selector before its target can be discarded. */
@@ -391,8 +355,7 @@ static void jit_link_unpatch(rv64_jit_link_t *link)
 
     if (link->dynamic)
     {
-        Assert(link->pic_kind < RV64_JIT_INDIRECT_PIC_KIND_COUNT,
-               "jit: invalid RV64 PIC unlink kind %u", link->pic_kind);
+        Assert(link->pic_kind < RV64_JIT_INDIRECT_PIC_KIND_COUNT, "jit: invalid RV64 PIC unlink kind %u", link->pic_kind);
         JIT_STAT_INC(indirect_pic_patch_unlinks[link->pic_kind]);
     }
     else
@@ -402,35 +365,25 @@ static void jit_link_unpatch(rv64_jit_link_t *link)
 }
 
 /* Resolve one waiting source only when the slot holds its exact safe target. */
-static void jit_link_try_patch(rv64_jit_link_t *link,
-                               rv64_jit_block_t *target)
+static void jit_link_try_patch(rv64_jit_link_t *link, rv64_jit_block_t *target)
 {
-    if (link->patched || !link->patch_eligible ||
-        link->source == NULL || !link->source->valid ||
-        !target->valid || target->entry == NULL ||
-        target->chain_entry == NULL ||
-        target->translated || target->uses_data_state ||
-        target->pc != link->target_pc ||
-        target->satp != link->target_satp ||
-        target->ifetch_state != link->target_ifetch_state)
+    if (link->patched || !link->patch_eligible || link->source == NULL || !link->source->valid || !target->valid || target->entry == NULL ||
+        target->chain_entry == NULL || target->translated || target->uses_data_state || target->pc != link->target_pc ||
+        target->satp != link->target_satp || target->ifetch_state != link->target_ifetch_state)
     {
         return;
     }
 
-    if (link->dynamic &&
-        (link->target_generation == 0 ||
-         link->target_generation != target->generation))
+    if (link->dynamic && (link->target_generation == 0 || link->target_generation != target->generation))
     {
         return;
     }
 
-    const uint8_t *chain_entry =
-        (const uint8_t *)(uintptr_t)target->chain_entry;
+    const uint8_t *chain_entry = (const uint8_t *)(uintptr_t)target->chain_entry;
 
     if (link->target_disp != NULL)
     {
-        Assert(link->patched_path != NULL,
-               "jit: RV64 link thunk has no patched entry");
+        Assert(link->patched_path != NULL, "jit: RV64 link thunk has no patched entry");
         /*
          * Publish the thunk's destination before making the thunk reachable
          * from its selector.
@@ -447,8 +400,7 @@ static void jit_link_try_patch(rv64_jit_link_t *link,
 
     if (link->dynamic)
     {
-        Assert(link->pic_kind < RV64_JIT_INDIRECT_PIC_KIND_COUNT,
-               "jit: invalid RV64 PIC patch kind %u", link->pic_kind);
+        Assert(link->pic_kind < RV64_JIT_INDIRECT_PIC_KIND_COUNT, "jit: invalid RV64 PIC patch kind %u", link->pic_kind);
         JIT_STAT_INC(indirect_pic_patch_resolutions[link->pic_kind]);
     }
     else
@@ -460,8 +412,7 @@ static void jit_link_try_patch(rv64_jit_link_t *link,
 /* Remove one source record from the persistent list for its target slot. */
 static void jit_link_remove_from_slot(rv64_jit_link_t *link)
 {
-    Assert(link->target_slot_index < RV64_JIT_CACHE_SIZE,
-           "jit: invalid RV64 direct-link target slot");
+    Assert(link->target_slot_index < RV64_JIT_CACHE_SIZE, "jit: invalid RV64 direct-link target slot");
 
     if (link->slot_prev != NULL)
     {
@@ -469,10 +420,8 @@ static void jit_link_remove_from_slot(rv64_jit_link_t *link)
     }
     else
     {
-        Assert(rv64_jit_link_slot_heads[link->target_slot_index] == link,
-               "jit: RV64 direct-link slot head mismatch");
-        rv64_jit_link_slot_heads[link->target_slot_index] =
-            link->slot_next;
+        Assert(rv64_jit_link_slot_heads[link->target_slot_index] == link, "jit: RV64 direct-link slot head mismatch");
+        rv64_jit_link_slot_heads[link->target_slot_index] = link->slot_next;
     }
 
     if (link->slot_next != NULL)
@@ -486,12 +435,10 @@ static void jit_link_remove_from_slot(rv64_jit_link_t *link)
 }
 
 /* Attach one detached source record to the persistent list for a target slot. */
-static void jit_link_add_to_slot(rv64_jit_link_t *link,
-                                 uint32_t slot_index)
+static void jit_link_add_to_slot(rv64_jit_link_t *link, uint32_t slot_index)
 {
-    Assert(link != NULL && slot_index < RV64_JIT_CACHE_SIZE &&
-               link->target_slot_index == UINT32_MAX &&
-               link->slot_prev == NULL && link->slot_next == NULL,
+    Assert(link != NULL && slot_index < RV64_JIT_CACHE_SIZE && link->target_slot_index == UINT32_MAX && link->slot_prev == NULL &&
+               link->slot_next == NULL,
            "jit: invalid RV64 direct-link attachment");
 
     link->target_slot_index = slot_index;
@@ -508,16 +455,12 @@ static void jit_link_add_to_slot(rv64_jit_link_t *link,
 /* Register every persistent edge owned by one newly published source block. */
 void rv64_jit_links_source_published(rv64_jit_block_t *block)
 {
-    Assert(block != NULL && block->valid,
-           "jit: publishing links for an invalid RV64 source block");
+    Assert(block != NULL && block->valid, "jit: publishing links for an invalid RV64 source block");
 
     for (uint32_t i = 0; i < block->outgoing_link_count; i++)
     {
         rv64_jit_link_t *link = &block->outgoing_links[i];
-        const uint32_t slot_index =
-            rv64_jit_cache_hash_context(
-                link->target_pc, link->target_satp,
-                link->target_ifetch_state);
+        const uint32_t slot_index = rv64_jit_cache_hash_context(link->target_pc, link->target_satp, link->target_ifetch_state);
 
         link->source = block;
         jit_link_add_to_slot(link, slot_index);
@@ -529,9 +472,7 @@ void rv64_jit_links_source_published(rv64_jit_block_t *block)
         for (uint32_t i = 0; i < RV64_JIT_INDIRECT_PIC_WAYS; i++)
         {
             rv64_jit_link_t *link = &block->indirect_pic->links[i];
-            Assert(link->dynamic && link->source == NULL &&
-                       link->target_slot_index == UINT32_MAX,
-                   "jit: invalid unpublished RV64 PIC link");
+            Assert(link->dynamic && link->source == NULL && link->target_slot_index == UINT32_MAX, "jit: invalid unpublished RV64 PIC link");
             link->source = block;
         }
     }
@@ -540,20 +481,16 @@ void rv64_jit_links_source_published(rv64_jit_block_t *block)
 /* Resolve all waiting incoming edges after an exact target is published. */
 void rv64_jit_links_target_published(rv64_jit_block_t *block)
 {
-    Assert(block >= rv64_jit_cache &&
-               block < rv64_jit_cache + RV64_JIT_CACHE_SIZE,
-           "jit: RV64 target block is outside the cache");
+    Assert(block >= rv64_jit_cache && block < rv64_jit_cache + RV64_JIT_CACHE_SIZE, "jit: RV64 target block is outside the cache");
 
     if (!block->valid)
     {
         return;
     }
 
-    const uint32_t slot_index =
-        (uint32_t)(block - rv64_jit_cache);
+    const uint32_t slot_index = (uint32_t)(block - rv64_jit_cache);
 
-    for (rv64_jit_link_t *link = rv64_jit_link_slot_heads[slot_index];
-         link != NULL; link = link->slot_next)
+    for (rv64_jit_link_t *link = rv64_jit_link_slot_heads[slot_index]; link != NULL; link = link->slot_next)
     {
         jit_link_try_patch(link, block);
     }
@@ -562,25 +499,18 @@ void rv64_jit_links_target_published(rv64_jit_block_t *block)
 /* Disconnect both incoming target users and outgoing source-owned records. */
 void rv64_jit_links_block_discard(rv64_jit_block_t *block)
 {
-    Assert(block >= rv64_jit_cache &&
-               block < rv64_jit_cache + RV64_JIT_CACHE_SIZE,
-           "jit: discarded RV64 block is outside the cache");
+    Assert(block >= rv64_jit_cache && block < rv64_jit_cache + RV64_JIT_CACHE_SIZE, "jit: discarded RV64 block is outside the cache");
 
-    const uint32_t slot_index =
-        (uint32_t)(block - rv64_jit_cache);
+    const uint32_t slot_index = (uint32_t)(block - rv64_jit_cache);
 
     if (block->valid)
     {
-        for (rv64_jit_link_t *link =
-                 rv64_jit_link_slot_heads[slot_index];
-             link != NULL;)
+        for (rv64_jit_link_t *link = rv64_jit_link_slot_heads[slot_index]; link != NULL;)
         {
             /* Detaching the current record rewrites its next pointer. */
             rv64_jit_link_t *next = link->slot_next;
 
-            if (link->target_pc == block->pc &&
-                link->target_satp == block->satp &&
-                link->target_ifetch_state == block->ifetch_state)
+            if (link->target_pc == block->pc && link->target_satp == block->satp && link->target_ifetch_state == block->ifetch_state)
             {
                 jit_link_unpatch(link);
 
@@ -594,14 +524,10 @@ void rv64_jit_links_block_discard(rv64_jit_block_t *block)
                  */
                 if (link->dynamic)
                 {
-                    Assert(link->pic_kind <
-                               RV64_JIT_INDIRECT_PIC_KIND_COUNT,
-                           "jit: invalid RV64 PIC detach kind %u",
-                           link->pic_kind);
+                    Assert(link->pic_kind < RV64_JIT_INDIRECT_PIC_KIND_COUNT, "jit: invalid RV64 PIC detach kind %u", link->pic_kind);
                     jit_link_remove_from_slot(link);
                     link->target_generation = 0;
-                    JIT_STAT_INC(
-                        indirect_pic_target_detaches[link->pic_kind]);
+                    JIT_STAT_INC(indirect_pic_target_detaches[link->pic_kind]);
                 }
             }
 
@@ -637,13 +563,9 @@ void rv64_jit_links_block_discard(rv64_jit_block_t *block)
             jit_link_unpatch(link);
             if (link->target_slot_index != UINT32_MAX)
             {
-                Assert(link->pic_kind <
-                           RV64_JIT_INDIRECT_PIC_KIND_COUNT,
-                       "jit: invalid RV64 PIC source-detach kind %u",
-                       link->pic_kind);
+                Assert(link->pic_kind < RV64_JIT_INDIRECT_PIC_KIND_COUNT, "jit: invalid RV64 PIC source-detach kind %u", link->pic_kind);
                 jit_link_remove_from_slot(link);
-                JIT_STAT_INC(
-                    indirect_pic_source_detaches[link->pic_kind]);
+                JIT_STAT_INC(indirect_pic_source_detaches[link->pic_kind]);
             }
             link->source = NULL;
             link->target_generation = 0;
@@ -654,8 +576,7 @@ void rv64_jit_links_block_discard(rv64_jit_block_t *block)
 /* Forget every arena-owned list node before the whole native arena is reused. */
 void rv64_jit_links_reset(void)
 {
-    memset(rv64_jit_link_slot_heads, 0,
-           sizeof(rv64_jit_link_slot_heads));
+    memset(rv64_jit_link_slot_heads, 0, sizeof(rv64_jit_link_slot_heads));
 }
 
 /* Clear every published block when arena or broad machine state changes. */
@@ -682,8 +603,7 @@ bool rv64_jit_code_init(void)
         return false;
     }
 
-    void *mem = mmap(NULL, RV64_JIT_CODE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
-                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    void *mem = mmap(NULL, RV64_JIT_CODE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
     if (mem == MAP_FAILED)
     {
@@ -798,8 +718,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
                 const uint32_t next = rv64_jit_source_links[node].next;
                 rv64_jit_block_t *block = &rv64_jit_cache[rv64_jit_source_links[node].block_index];
 
-                if (block->valid &&
-                    rv64_jit_block_source_overlaps(block, addr, len))
+                if (block->valid && rv64_jit_block_source_overlaps(block, addr, len))
                 {
                     rv64_jit_block_discard(block);
                     JIT_STAT_INC(invalidated_blocks);
@@ -826,8 +745,7 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
     {
         rv64_jit_block_t *block = &rv64_jit_cache[i];
 
-        if (block->valid &&
-            rv64_jit_block_source_overlaps(block, addr, len))
+        if (block->valid && rv64_jit_block_source_overlaps(block, addr, len))
         {
             rv64_jit_block_discard(block);
             JIT_STAT_INC(invalidated_blocks);
@@ -866,9 +784,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
 
     JIT_STAT_INC(exec_requests);
 
-    uint32_t batch_budget = remaining > RV64_JIT_BATCH_MAX_INSNS
-                                ? RV64_JIT_BATCH_MAX_INSNS
-                                : (uint32_t)remaining;
+    uint32_t batch_budget = remaining > RV64_JIT_BATCH_MAX_INSNS ? RV64_JIT_BATCH_MAX_INSNS : (uint32_t)remaining;
 
     if (batch_budget > device_budget)
     {
@@ -923,8 +839,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
         rv64_jit_loop_extra = 0;
         rv64_jit_cpu_boundary_requested = false;
         const uint32_t ran = block->entry();
-        const bool cpu_boundary_requested =
-            rv64_jit_cpu_boundary_requested;
+        const bool cpu_boundary_requested = rv64_jit_cpu_boundary_requested;
         rv64_jit_cpu_boundary_requested = false;
 
         if (ran == 0)
@@ -933,8 +848,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
             break;
         }
 
-        Assert(ran <= remaining_budget,
-               "jit: invalid RV64 executed count %u", ran);
+        Assert(ran <= remaining_budget, "jit: invalid RV64 executed count %u", ran);
         JIT_STAT_INC(blocks_executed);
         JIT_STAT_ADD(executed_insns, ran);
         total += ran;

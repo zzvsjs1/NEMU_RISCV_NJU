@@ -115,16 +115,12 @@ static uint64_t rotate_left_64(uint64_t value, unsigned amount)
 
 static uint64_t run_move_sign_kernel(uint64_t rounds)
 {
-    return rv64_fpmark_move_sign_kernel(
-        UINT64_C(0x3ff123456789abcd),
-        UINT64_C(0xbff76543210fedcb), rounds);
+    return rv64_fpmark_move_sign_kernel(UINT64_C(0x3ff123456789abcd), UINT64_C(0xbff76543210fedcb), rounds);
 }
 
 static uint64_t run_class_kernel(uint64_t rounds)
 {
-    return rv64_fpmark_class_kernel(
-        UINT64_C(0x7ff0000000000001),
-        UINT64_C(0x000000007f800001), rounds);
+    return rv64_fpmark_class_kernel(UINT64_C(0x7ff0000000000001), UINT64_C(0x000000007f800001), rounds);
 }
 
 int main(void)
@@ -132,8 +128,7 @@ int main(void)
     ioe_init();
 
     const uintptr_t old_mstatus = read_mstatus();
-    write_mstatus((old_mstatus & ~MSTATUS_FS_MASK) |
-                  MSTATUS_FS_INITIAL);
+    write_mstatus((old_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
     write_fflags(UINT64_C(0x1f));
 
     /*
@@ -144,31 +139,21 @@ int main(void)
     (void)run_class_kernel(FPMARK_WARMUP_ROUNDS);
 
     const uint64_t move_start = uptime_us();
-    const uint64_t move_result =
-        run_move_sign_kernel(FPMARK_MOVE_SIGN_ROUNDS);
+    const uint64_t move_result = run_move_sign_kernel(FPMARK_MOVE_SIGN_ROUNDS);
     const uint64_t move_end = uptime_us();
 
     const uint64_t class_start = uptime_us();
-    const uint64_t class_result =
-        run_class_kernel(FPMARK_CLASS_ROUNDS);
+    const uint64_t class_result = run_class_kernel(FPMARK_CLASS_ROUNDS);
     const uint64_t class_end = uptime_us();
 
-    const uint64_t checksum =
-        move_result ^ rotate_left_64(class_result, 23);
+    const uint64_t checksum = move_result ^ rotate_left_64(class_result, 23);
     const uint32_t checksum_hi = (uint32_t)(checksum >> 32);
     const uint32_t checksum_lo = (uint32_t)checksum;
-    const bool pass =
-        checksum_hi == UINT32_C(0xbf67a9eb) &&
-        checksum_lo == UINT32_C(0x1b4961ca) &&
-        read_fflags() == UINT64_C(0x1f);
+    const bool pass = checksum_hi == UINT32_C(0xbf67a9eb) && checksum_lo == UINT32_C(0x1b4961ca) && read_fflags() == UINT64_C(0x1f);
 
-    printf("fpmark_move_sign_us: %d\n",
-           (int)(move_end - move_start));
-    printf("fpmark_class_us: %d\n",
-           (int)(class_end - class_start));
-    printf("fpmark_total_us: %d\n",
-           (int)((move_end - move_start) +
-                 (class_end - class_start)));
+    printf("fpmark_move_sign_us: %d\n", (int)(move_end - move_start));
+    printf("fpmark_class_us: %d\n", (int)(class_end - class_start));
+    printf("fpmark_total_us: %d\n", (int)((move_end - move_start) + (class_end - class_start)));
     printf("fpmark_checksum_hi: 0x%x\n", checksum_hi);
     printf("fpmark_checksum_lo: 0x%x\n", checksum_lo);
     printf("FPMark %s\n", pass ? "PASS" : "FAIL");

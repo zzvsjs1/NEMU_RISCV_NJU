@@ -4,14 +4,12 @@
 
 #include <stdint.h>
 
-#define DEFINE_RV64_M_OP(name, mnemonic)                                      \
-    static uint64_t name(uint64_t lhs, uint64_t rhs)                          \
-    {                                                                          \
-        uint64_t result;                                                       \
-        asm volatile(#mnemonic " %0, %1, %2"                                  \
-                     : "=r"(result)                                            \
-                     : "r"(lhs), "r"(rhs));                                    \
-        return result;                                                         \
+#define DEFINE_RV64_M_OP(name, mnemonic) \
+    static uint64_t name(uint64_t lhs, uint64_t rhs) \
+    { \
+        uint64_t result; \
+        asm volatile(#mnemonic " %0, %1, %2" : "=r"(result) : "r"(lhs), "r"(rhs)); \
+        return result; \
     }
 
 DEFINE_RV64_M_OP(op_mul, mul)
@@ -325,53 +323,35 @@ extern void rv64_m_source_x0_probe(uint64_t, uint64_t *);
 extern void rv64_m_runtime_zero_probe(uint64_t, uint64_t, uint64_t *);
 extern void rv64_m_pair_probe(uint64_t, uint64_t, uint64_t *);
 extern void rv64_m_unsigned_pair_probe(uint64_t, uint64_t, uint64_t *);
-extern uint64_t rv64_m_stable_loop(uint64_t, uint64_t, uint64_t,
-                                   uint64_t, uint64_t, uint64_t);
+extern uint64_t rv64_m_stable_loop(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
 static void test_ordinary_results(void)
 {
     check(op_mul(UINT64_MAX, 3) == UINT64_C(0xfffffffffffffffd));
-    check(op_mulh(UINT64_C(0xffffffffffffff00),
-                  UINT64_C(0x1000000000000001)) ==
-          UINT64_C(0xffffffffffffffef));
+    check(op_mulh(UINT64_C(0xffffffffffffff00), UINT64_C(0x1000000000000001)) == UINT64_C(0xffffffffffffffef));
     check(op_mulhsu(UINT64_MAX, 2) == UINT64_MAX);
     check(op_mulhsu(2, UINT64_MAX) == 1);
-    check(op_mulhsu((uint64_t)(int64_t)-2, UINT64_MAX) ==
-          UINT64_C(0xfffffffffffffffe));
+    check(op_mulhsu((uint64_t)(int64_t)-2, UINT64_MAX) == UINT64_C(0xfffffffffffffffe));
     check(op_mulhu(UINT64_MAX, 2) == 1);
 
-    check(op_div((uint64_t)(int64_t)-42, 5) ==
-          (uint64_t)(int64_t)-8);
-    check(op_rem((uint64_t)(int64_t)-42, 5) ==
-          (uint64_t)(int64_t)-2);
-    check(op_div(42, (uint64_t)(int64_t)-5) ==
-          (uint64_t)(int64_t)-8);
+    check(op_div((uint64_t)(int64_t)-42, 5) == (uint64_t)(int64_t)-8);
+    check(op_rem((uint64_t)(int64_t)-42, 5) == (uint64_t)(int64_t)-2);
+    check(op_div(42, (uint64_t)(int64_t)-5) == (uint64_t)(int64_t)-8);
     check(op_rem(42, (uint64_t)(int64_t)-5) == 2);
-    check(op_div((uint64_t)(int64_t)-42,
-                 (uint64_t)(int64_t)-5) == 8);
-    check(op_rem((uint64_t)(int64_t)-42,
-                 (uint64_t)(int64_t)-5) ==
-          (uint64_t)(int64_t)-2);
+    check(op_div((uint64_t)(int64_t)-42, (uint64_t)(int64_t)-5) == 8);
+    check(op_rem((uint64_t)(int64_t)-42, (uint64_t)(int64_t)-5) == (uint64_t)(int64_t)-2);
     check(op_divu(42, 5) == 8);
     check(op_remu(42, 5) == 2);
-    check(op_divu(UINT64_MAX, 2) ==
-          UINT64_C(0x7fffffffffffffff));
+    check(op_divu(UINT64_MAX, 2) == UINT64_C(0x7fffffffffffffff));
     check(op_remu(UINT64_MAX, 2) == 1);
 
     check(op_mulw(UINT64_C(0xaaaaaaaa80000000), 2) == 0);
-    check(op_mulw(UINT64_C(0x123456787fffffff), 2) ==
-          UINT64_C(0xfffffffffffffffe));
-    check(op_divw((uint64_t)(int64_t)-10, 3) ==
-          (uint64_t)(int64_t)-3);
-    check(op_remw((uint64_t)(int64_t)-10, 3) ==
-          (uint64_t)(int64_t)-1);
-    check(op_divuw(UINT64_C(0xfeedbeef80000000),
-                   UINT64_C(0x1234567800000001)) ==
-          UINT64_C(0xffffffff80000000));
-    check(op_divuw(UINT64_C(0x12345678ffffffff), 2) ==
-          UINT64_C(0x000000007fffffff));
-    check(op_remuw(UINT64_C(0x12345678ffffffff),
-                   UINT64_C(0xabcdef010000000a)) == 5);
+    check(op_mulw(UINT64_C(0x123456787fffffff), 2) == UINT64_C(0xfffffffffffffffe));
+    check(op_divw((uint64_t)(int64_t)-10, 3) == (uint64_t)(int64_t)-3);
+    check(op_remw((uint64_t)(int64_t)-10, 3) == (uint64_t)(int64_t)-1);
+    check(op_divuw(UINT64_C(0xfeedbeef80000000), UINT64_C(0x1234567800000001)) == UINT64_C(0xffffffff80000000));
+    check(op_divuw(UINT64_C(0x12345678ffffffff), 2) == UINT64_C(0x000000007fffffff));
+    check(op_remuw(UINT64_C(0x12345678ffffffff), UINT64_C(0xabcdef010000000a)) == 5);
 }
 
 static void test_division_exceptions(void)
@@ -405,57 +385,41 @@ static void test_division_exceptions(void)
     check(runtime_zero[6] == UINT64_C(0xffffffff80001234));
     check(runtime_zero[7] == UINT64_C(0xffffffff80001234));
 
-    check(op_div(UINT64_C(0x8000000000000000), UINT64_MAX) ==
-          UINT64_C(0x8000000000000000));
+    check(op_div(UINT64_C(0x8000000000000000), UINT64_MAX) == UINT64_C(0x8000000000000000));
     check(op_rem(UINT64_C(0x8000000000000000), UINT64_MAX) == 0);
 
     /*
      * Upper halves are deliberate garbage. W overflow depends only on the low
      * 32-bit INT_MIN and -1 encodings, then sign-extends the result to XLEN.
      */
-    check(op_divw(UINT64_C(0x1234567880000000),
-                  UINT64_C(0xabcdef01ffffffff)) ==
-          UINT64_C(0xffffffff80000000));
-    check(op_remw(UINT64_C(0x1234567880000000),
-                  UINT64_C(0xabcdef01ffffffff)) == 0);
+    check(op_divw(UINT64_C(0x1234567880000000), UINT64_C(0xabcdef01ffffffff)) == UINT64_C(0xffffffff80000000));
+    check(op_remw(UINT64_C(0x1234567880000000), UINT64_C(0xabcdef01ffffffff)) == 0);
 }
 
 static void test_register_aliases(void)
 {
-    check(rv64_m_alias_rd_rs1_mulh(
-              UINT64_C(0xffffffffffffff00),
-              UINT64_C(0x1000000000000001)) ==
-          UINT64_C(0xffffffffffffffef));
+    check(rv64_m_alias_rd_rs1_mulh(UINT64_C(0xffffffffffffff00), UINT64_C(0x1000000000000001)) == UINT64_C(0xffffffffffffffef));
     check(rv64_m_alias_rd_rs2_mulhsu(UINT64_MAX, 2) == UINT64_MAX);
-    check(rv64_m_alias_equal_mulhu(UINT64_MAX) ==
-          UINT64_C(0xfffffffffffffffe));
+    check(rv64_m_alias_equal_mulhu(UINT64_MAX) == UINT64_C(0xfffffffffffffffe));
 
-    check(rv64_m_alias_rd_rs1_div((uint64_t)(int64_t)-42, 5) ==
-          (uint64_t)(int64_t)-8);
-    check(rv64_m_alias_rd_rs2_rem((uint64_t)(int64_t)-42, 5) ==
-          (uint64_t)(int64_t)-2);
+    check(rv64_m_alias_rd_rs1_div((uint64_t)(int64_t)-42, 5) == (uint64_t)(int64_t)-8);
+    check(rv64_m_alias_rd_rs2_rem((uint64_t)(int64_t)-42, 5) == (uint64_t)(int64_t)-2);
     check(rv64_m_alias_equal_divu(37) == 1);
     check(rv64_m_alias_rd_rs1_remu(42, 5) == 2);
 
-    check(rv64_m_alias_rd_rs1_divw((uint64_t)(int64_t)-10, 3) ==
-          (uint64_t)(int64_t)-3);
-    check(rv64_m_alias_rd_rs2_remw((uint64_t)(int64_t)-10, 3) ==
-          (uint64_t)(int64_t)-1);
+    check(rv64_m_alias_rd_rs1_divw((uint64_t)(int64_t)-10, 3) == (uint64_t)(int64_t)-3);
+    check(rv64_m_alias_rd_rs2_remw((uint64_t)(int64_t)-10, 3) == (uint64_t)(int64_t)-1);
     check(rv64_m_alias_equal_divuw(UINT64_C(0x1234567880000000)) == 1);
-    check(rv64_m_alias_rd_rs1_remuw(UINT64_C(0x12345678ffffffff),
-                                    UINT64_C(0xabcdef010000000a)) == 5);
-    check(rv64_m_alias_rd_rs1_mulw(UINT64_C(0x1234567840000000), 2) ==
-          UINT64_C(0xffffffff80000000));
-    check(rv64_m_alias_rd_rs2_mulw(2, UINT64_C(0x1234567840000000)) ==
-          UINT64_C(0xffffffff80000000));
+    check(rv64_m_alias_rd_rs1_remuw(UINT64_C(0x12345678ffffffff), UINT64_C(0xabcdef010000000a)) == 5);
+    check(rv64_m_alias_rd_rs1_mulw(UINT64_C(0x1234567840000000), 2) == UINT64_C(0xffffffff80000000));
+    check(rv64_m_alias_rd_rs2_mulw(2, UINT64_C(0x1234567840000000)) == UINT64_C(0xffffffff80000000));
 }
 
 static void test_dead_destination_and_pairs(void)
 {
     uint64_t pair[4] = {0, 0, 0, 0};
     uint64_t unsigned_pair[6] = {0, 0, 0, 0, 0, 0};
-    uint64_t source_zero[13] = {
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    uint64_t source_zero[13] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     const uint64_t word_lhs = UINT64_C(0xfeedbeef80001234);
 
     check(rv64_m_x0_probe() == 0);
@@ -491,8 +455,7 @@ static void test_dead_destination_and_pairs(void)
 
 static void test_stable_m_loop(void)
 {
-    check(rv64_m_stable_loop(
-              3, 1, UINT64_MAX, 2, 99, 64) == (3 ^ 99));
+    check(rv64_m_stable_loop(3, 1, UINT64_MAX, 2, 99, 64) == (3 ^ 99));
 }
 
 static void run_all_m_checks(void)

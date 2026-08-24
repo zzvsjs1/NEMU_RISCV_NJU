@@ -5,58 +5,28 @@
 #include <stdint.h>
 
 static uint8_t load_data[32] __attribute__((aligned(8))) = {
-    0xffu,
-    0x80u,
-    0x01u,
-    0x80u,
-    0x34u,
-    0x12u,
-    0x00u,
-    0x00u,
-    0x78u,
-    0x56u,
-    0x34u,
-    0x80u,
-    0x78u,
-    0x56u,
-    0x34u,
-    0x80u,
-    0xefu,
-    0xcdu,
-    0xabu,
-    0x89u,
-    0x67u,
-    0x45u,
-    0x23u,
-    0x01u,
+    0xffu, 0x80u, 0x01u, 0x80u, 0x34u, 0x12u, 0x00u, 0x00u, 0x78u, 0x56u, 0x34u, 0x80u,
+    0x78u, 0x56u, 0x34u, 0x80u, 0xefu, 0xcdu, 0xabu, 0x89u, 0x67u, 0x45u, 0x23u, 0x01u,
 };
 
 /* Execute all RV64 integer load widths after one JIT-friendly ALU instruction. */
-static void run_load_sequence(uint64_t *lb_out, uint64_t *lbu_out,
-                              uint64_t *lh_out, uint64_t *lhu_out,
-                              uint64_t *lw_out, uint64_t *lwu_out,
+static void run_load_sequence(uint64_t *lb_out, uint64_t *lbu_out, uint64_t *lh_out, uint64_t *lhu_out, uint64_t *lw_out, uint64_t *lwu_out,
                               uint64_t *ld_out)
 {
     uint8_t *base = load_data;
 
-    asm volatile(
-        "addi t0, zero, 7\n"
-        "lb %[lb], 0(%[base])\n"
-        "lbu %[lbu], 1(%[base])\n"
-        "lh %[lh], 2(%[base])\n"
-        "lhu %[lhu], 4(%[base])\n"
-        "lw %[lw], 8(%[base])\n"
-        "lwu %[lwu], 12(%[base])\n"
-        "ld %[ld], 16(%[base])\n"
-        : [lb] "=&r"(*lb_out),
-          [lbu] "=&r"(*lbu_out),
-          [lh] "=&r"(*lh_out),
-          [lhu] "=&r"(*lhu_out),
-          [lw] "=&r"(*lw_out),
-          [lwu] "=&r"(*lwu_out),
-          [ld] "=&r"(*ld_out)
-        : [base] "r"(base)
-        : "t0", "memory");
+    asm volatile("addi t0, zero, 7\n"
+                 "lb %[lb], 0(%[base])\n"
+                 "lbu %[lbu], 1(%[base])\n"
+                 "lh %[lh], 2(%[base])\n"
+                 "lhu %[lhu], 4(%[base])\n"
+                 "lw %[lw], 8(%[base])\n"
+                 "lwu %[lwu], 12(%[base])\n"
+                 "ld %[ld], 16(%[base])\n"
+                 : [lb] "=&r"(*lb_out), [lbu] "=&r"(*lbu_out), [lh] "=&r"(*lh_out), [lhu] "=&r"(*lhu_out), [lw] "=&r"(*lw_out), [lwu] "=&r"(*lwu_out),
+                   [ld] "=&r"(*ld_out)
+                 : [base] "r"(base)
+                 : "t0", "memory");
 }
 
 /* Verify signed and unsigned RV64 load extension rules from the unprivileged ISA. */

@@ -43,10 +43,8 @@ static uint64_t data_page[WORDS_PER_PAGE] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t fp_data_page_a[WORDS_PER_PAGE] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t fp_data_page_b[WORDS_PER_PAGE] __attribute__((aligned(PAGE_SIZE)));
 
-_Static_assert(((FP_ALIAS_VA >> 12) & 0x1ffull) == 1ull,
-               "FP alias must use leaf PTE slot one");
-_Static_assert(((PTE_ALIAS_VA >> 12) & 0x1ffull) == 2ull,
-               "PTE alias must use leaf PTE slot two");
+_Static_assert(((FP_ALIAS_VA >> 12) & 0x1ffull) == 1ull, "FP alias must use leaf PTE slot one");
+_Static_assert(((PTE_ALIAS_VA >> 12) & 0x1ffull) == 2ull, "PTE alias must use leaf PTE slot two");
 
 /*
  * Unexpected traps are test failures.  Encoding mcause into the bad-trap code
@@ -175,14 +173,12 @@ asm(".section .text\n"
     ".option pop\n");
 
 extern uint64_t rv64_sv39_fp_memory_loop(uint8_t *, uint64_t);
-extern void rv64_sv39_fp_cold_load_eviction(
-    uint8_t *, uint64_t observed[7]);
+extern void rv64_sv39_fp_cold_load_eviction(uint8_t *, uint64_t observed[7]);
 extern void rv64_sv39_fp_load_state(uint8_t *, uint64_t observed[2]);
 extern void rv64_sv39_fp_seed_stores(uint64_t, uint64_t);
 extern void rv64_sv39_fp_store_state(uint8_t *);
 extern void rv64_sv39_fp_seed_pte(uint64_t);
-extern void rv64_sv39_fp_patch_pte_eviction(
-    uint8_t *, uint64_t observed[6], uint64_t, uint8_t *);
+extern void rv64_sv39_fp_patch_pte_eviction(uint8_t *, uint64_t observed[6], uint64_t, uint8_t *);
 
 /* Return the Sv39 root-table index for a canonical virtual address. */
 static uint64_t vpn2(uint64_t va)
@@ -226,8 +222,7 @@ static void map_identity_window(void)
 
     for (uint64_t l1 = 0; l1 < IDENTITY_L1_ENTRIES; l1++)
     {
-        identity_l1[vpn1(IDENTITY_BASE) + l1] =
-            pte_for_page(identity_l0[l1], PTE_V);
+        identity_l1[vpn1(IDENTITY_BASE) + l1] = pte_for_page(identity_l0[l1], PTE_V);
 
         for (uint64_t i = 0; i < 512ull; i++)
         {
@@ -250,18 +245,14 @@ static void map_data_aliases(void)
 
     for (uint64_t i = 0; i < 512ull; i++)
     {
-        const uintptr_t pa =
-            (uintptr_t)((vpn1(DATA_ALIAS_VA) * 512ull + i) * PAGE_SIZE +
-                        IDENTITY_BASE);
+        const uintptr_t pa = (uintptr_t)((vpn1(DATA_ALIAS_VA) * 512ull + i) * PAGE_SIZE + IDENTITY_BASE);
         data_alias_l0[i] = ((uint64_t)(pa >> 12) << 10) | leaf_flags;
     }
 
     identity_l1[vpn1(DATA_ALIAS_VA)] = pte_for_page(data_alias_l0, table_flags);
     data_alias_l0[vpn0(DATA_ALIAS_VA)] = pte_for_page(data_page, leaf_flags);
-    data_alias_l0[vpn0(FP_ALIAS_VA)] =
-        pte_for_page(fp_data_page_a, leaf_flags);
-    data_alias_l0[vpn0(PTE_ALIAS_VA)] =
-        pte_for_page(data_alias_l0, leaf_flags);
+    data_alias_l0[vpn0(FP_ALIAS_VA)] = pte_for_page(fp_data_page_a, leaf_flags);
+    data_alias_l0[vpn0(PTE_ALIAS_VA)] = pte_for_page(data_alias_l0, leaf_flags);
 }
 
 /* Install a three-level Sv39 tree with identity code and one data alias. */
@@ -326,8 +317,7 @@ static void write_fflags(uintptr_t value)
 
 static void set_machine_fp_state(uintptr_t fs)
 {
-    const uintptr_t next =
-        (read_mstatus() & ~MSTATUS_FS_MASK) | fs;
+    const uintptr_t next = (read_mstatus() & ~MSTATUS_FS_MASK) | fs;
 
     write_mstatus(next);
 }
@@ -340,8 +330,7 @@ static void set_machine_fp_state(uintptr_t fs)
 static uintptr_t enable_mprv_supervisor_data(void)
 {
     const uintptr_t old = read_mstatus();
-    const uintptr_t next =
-        (old & ~MSTATUS_MPP_MASK) | MSTATUS_MPP_S | MSTATUS_MPRV;
+    const uintptr_t next = (old & ~MSTATUS_MPP_MASK) | MSTATUS_MPP_S | MSTATUS_MPRV;
 
     write_mstatus(next);
     return old;
@@ -364,22 +353,20 @@ static void enter_supervisor_mode(void)
 {
     uintptr_t mstatus;
 
-    asm volatile(
-        "csrr %[mstatus], mstatus\n"
-        "li t0, %[mpp_mask]\n"
-        "not t0, t0\n"
-        "and %[mstatus], %[mstatus], t0\n"
-        "li t0, %[mpp_s]\n"
-        "or %[mstatus], %[mstatus], t0\n"
-        "csrw mstatus, %[mstatus]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        : [mstatus] "=&r"(mstatus)
-        : [mpp_mask] "i"(MSTATUS_MPP_MPIE_MASK),
-          [mpp_s] "i"(MSTATUS_MPP_S)
-        : "t0", "memory");
+    asm volatile("csrr %[mstatus], mstatus\n"
+                 "li t0, %[mpp_mask]\n"
+                 "not t0, t0\n"
+                 "and %[mstatus], %[mstatus], t0\n"
+                 "li t0, %[mpp_s]\n"
+                 "or %[mstatus], %[mstatus], t0\n"
+                 "csrw mstatus, %[mstatus]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 : [mstatus] "=&r"(mstatus)
+                 : [mpp_mask] "i"(MSTATUS_MPP_MPIE_MASK), [mpp_s] "i"(MSTATUS_MPP_S)
+                 : "t0", "memory");
 }
 
 /* Execute every RV64 integer load width through the Sv39 alias. */
@@ -393,23 +380,16 @@ static void sv39_load_widths(uint8_t *alias, uint64_t *out)
     uint64_t lwu;
     uint64_t ld;
 
-    asm volatile(
-        "lb %[lb], 0(%[alias])\n"
-        "lbu %[lbu], 0(%[alias])\n"
-        "lh %[lh], 2(%[alias])\n"
-        "lhu %[lhu], 2(%[alias])\n"
-        "lw %[lw], 4(%[alias])\n"
-        "lwu %[lwu], 4(%[alias])\n"
-        "ld %[ld], 16(%[alias])\n"
-        : [lb] "=&r"(lb),
-          [lbu] "=&r"(lbu),
-          [lh] "=&r"(lh),
-          [lhu] "=&r"(lhu),
-          [lw] "=&r"(lw),
-          [lwu] "=&r"(lwu),
-          [ld] "=&r"(ld)
-        : [alias] "r"(alias)
-        : "memory");
+    asm volatile("lb %[lb], 0(%[alias])\n"
+                 "lbu %[lbu], 0(%[alias])\n"
+                 "lh %[lh], 2(%[alias])\n"
+                 "lhu %[lhu], 2(%[alias])\n"
+                 "lw %[lw], 4(%[alias])\n"
+                 "lwu %[lwu], 4(%[alias])\n"
+                 "ld %[ld], 16(%[alias])\n"
+                 : [lb] "=&r"(lb), [lbu] "=&r"(lbu), [lh] "=&r"(lh), [lhu] "=&r"(lhu), [lw] "=&r"(lw), [lwu] "=&r"(lwu), [ld] "=&r"(ld)
+                 : [alias] "r"(alias)
+                 : "memory");
 
     out[0] = lb;
     out[1] = lbu;
@@ -434,11 +414,7 @@ static void sv39_store_widths(uint8_t *alias)
         "sw %[word_value], 28(%[alias])\n"
         "sd %[dword_value], 32(%[alias])\n"
         :
-        : [alias] "r"(alias),
-          [byte_value] "r"(byte_value),
-          [half_value] "r"(half_value),
-          [word_value] "r"(word_value),
-          [dword_value] "r"(dword_value)
+        : [alias] "r"(alias), [byte_value] "r"(byte_value), [half_value] "r"(half_value), [word_value] "r"(word_value), [dword_value] "r"(dword_value)
         : "memory");
 }
 
@@ -448,21 +424,20 @@ static uint64_t sv39_direct_link_loop(uint8_t *alias)
     uint64_t out = 0;
     uint64_t laps = 64;
 
-    asm volatile(
-        "1:\n"
-        "jal zero, 2f\n"
-        "3:\n"
-        "addi %[laps], %[laps], -1\n"
-        "bnez %[laps], 1b\n"
-        "jal zero, 4f\n"
-        "2:\n"
-        "ld t0, 16(%[alias])\n"
-        "add %[out], %[out], t0\n"
-        "jal zero, 3b\n"
-        "4:\n"
-        : [out] "+r"(out), [laps] "+r"(laps)
-        : [alias] "r"(alias)
-        : "t0", "memory");
+    asm volatile("1:\n"
+                 "jal zero, 2f\n"
+                 "3:\n"
+                 "addi %[laps], %[laps], -1\n"
+                 "bnez %[laps], 1b\n"
+                 "jal zero, 4f\n"
+                 "2:\n"
+                 "ld t0, 16(%[alias])\n"
+                 "add %[out], %[out], t0\n"
+                 "jal zero, 3b\n"
+                 "4:\n"
+                 : [out] "+r"(out), [laps] "+r"(laps)
+                 : [alias] "r"(alias)
+                 : "t0", "memory");
 
     return out;
 }
@@ -489,8 +464,7 @@ static void test_sv39_data_memory(void)
 
     sv39_load_widths((uint8_t *)(uintptr_t)DATA_ALIAS_VA, loaded);
     sv39_store_widths((uint8_t *)(uintptr_t)DATA_ALIAS_VA);
-    const uint64_t linked_sum =
-        sv39_direct_link_loop((uint8_t *)(uintptr_t)DATA_ALIAS_VA);
+    const uint64_t linked_sum = sv39_direct_link_loop((uint8_t *)(uintptr_t)DATA_ALIAS_VA);
 
     check(loaded[0] == 0xffffffffffffff80ull);
     check(loaded[1] == 0x80ull);
@@ -502,8 +476,7 @@ static void test_sv39_data_memory(void)
 
     check(raw[24] == 0xa5u);
     check(raw[26] == 0xc7u && raw[27] == 0xb6u);
-    check(raw[28] == 0x0bu && raw[29] == 0xfau &&
-          raw[30] == 0xe9u && raw[31] == 0xd8u);
+    check(raw[28] == 0x0bu && raw[29] == 0xfau && raw[30] == 0xe9u && raw[31] == 0xd8u);
     check(data_page[4] == 0x1122334455667788ull);
     check(linked_sum == data_page[2] * 64u);
 }
@@ -547,8 +520,7 @@ static uint64_t load_u64_bytes(const void *source)
     return value;
 }
 
-static void seed_fp_page(uint64_t *page, uint32_t word,
-                         uint64_t doubleword)
+static void seed_fp_page(uint64_t *page, uint32_t word, uint64_t doubleword)
 {
     uint8_t *const raw = (uint8_t *)page;
 
@@ -561,12 +533,7 @@ static void seed_fp_page(uint64_t *page, uint32_t word,
 static void check_eviction_values(const uint64_t *observed)
 {
     static const uint64_t expected[6] = {
-        UINT64_C(0x112),
-        UINT64_C(0x223),
-        UINT64_C(0x334),
-        UINT64_C(0x445),
-        UINT64_C(0x556),
-        UINT64_C(0x667),
+        UINT64_C(0x112), UINT64_C(0x223), UINT64_C(0x334), UINT64_C(0x445), UINT64_C(0x556), UINT64_C(0x667),
     };
 
     for (uint32_t i = 0; i < 6; i++)
@@ -608,8 +575,7 @@ static void test_sv39_fp_memory(void)
     const uint64_t boxed_word_b = UINT64_C(0xffffffffff800321);
     const uint64_t malformed_box = UINT64_C(0x012345677f800abc);
     const uint64_t raw_store_double = UINT64_C(0xfff0000000000abc);
-    const uint64_t leaf_flags =
-        PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    const uint64_t leaf_flags = PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
     uint8_t *const alias = (uint8_t *)(uintptr_t)FP_ALIAS_VA;
     uint8_t *const pte_alias = (uint8_t *)(uintptr_t)PTE_ALIAS_VA;
     uint8_t *const raw_a = (uint8_t *)fp_data_page_a;
@@ -663,8 +629,7 @@ static void test_sv39_fp_memory(void)
 
     write_fflags(UINT64_C(0x1f));
     set_machine_fp_state(MSTATUS_FS_INITIAL);
-    const uint64_t checksum_a =
-        rv64_sv39_fp_memory_loop(alias, 64);
+    const uint64_t checksum_a = rv64_sv39_fp_memory_loop(alias, 64);
     check(checksum_a == (boxed_word_a ^ double_a));
     check(load_u32_bytes(&raw_a[56]) == word_a);
     check(load_u64_bytes(&raw_a[64]) == double_a);
@@ -680,8 +645,7 @@ static void test_sv39_fp_memory(void)
     rv64_sv39_fp_seed_pte(pte_b);
     write_fflags(UINT64_C(0x1f));
     set_machine_fp_state(MSTATUS_FS_CLEAN);
-    rv64_sv39_fp_patch_pte_eviction(
-        pte_alias, patch_observed, 0, pte_alias);
+    rv64_sv39_fp_patch_pte_eviction(pte_alias, patch_observed, 0, pte_alias);
     check_eviction_values(patch_observed);
     check(data_alias_l0[vpn0(FP_ALIAS_VA)] == pte_b);
     check_fp_clean_state();
@@ -705,8 +669,7 @@ static void test_sv39_fp_memory(void)
     check(cold_observed[6] == boxed_word_b);
     check_fp_dirty_state();
 
-    const uint64_t checksum_b =
-        rv64_sv39_fp_memory_loop(alias, 64);
+    const uint64_t checksum_b = rv64_sv39_fp_memory_loop(alias, 64);
     check(checksum_b == (boxed_word_b ^ double_b));
     check(load_u32_bytes(&raw_b[56]) == word_b);
     check(load_u64_bytes(&raw_b[64]) == double_b);
@@ -727,8 +690,7 @@ int main(void)
     enable_fp_state();
     enable_sv39();
     sfence_vma_all();
-    const uintptr_t pre_mprv_mstatus =
-        enable_mprv_supervisor_data();
+    const uintptr_t pre_mprv_mstatus = enable_mprv_supervisor_data();
     test_sv39_fp_memory();
     write_mstatus(pre_mprv_mstatus);
     enter_supervisor_mode();

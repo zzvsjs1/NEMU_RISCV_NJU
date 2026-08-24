@@ -177,8 +177,7 @@ static size_t find_root_entry_offset(const Fat32Volume *vol, const char short_na
     return 0;
 }
 
-static void overwrite_root_entry_cluster(const Fat32Volume *vol, const char short_name[11],
-                                         uint32_t cluster)
+static void overwrite_root_entry_cluster(const Fat32Volume *vol, const char short_name[11], uint32_t cluster)
 {
     uint8_t raw_entry[32];
     const size_t entry_offset = find_root_entry_offset(vol, short_name);
@@ -458,11 +457,7 @@ static void test_backend_rejects_non_empty_files_with_invalid_first_cluster(void
     Fat32Volume vol;
     Fat32File file;
     const uint32_t invalid_clusters[] = {
-        0,
-        1,
-        0x0ffffff0u,
-        0x0ffffff7u,
-        0,
+        0, 1, 0x0ffffff0u, 0x0ffffff7u, 0,
     };
 
     for (size_t i = 0; i < sizeof(invalid_clusters) / sizeof(invalid_clusters[0]); i++)

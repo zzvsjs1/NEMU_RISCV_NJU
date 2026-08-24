@@ -67,15 +67,13 @@ static void test_floor_ceil()
 
         if (!nearly(f_floor, our_floor))
         {
-            printf("[FAIL] floor: orig=%.6f, floorf=%.6f, ours=%.6f\n",
-                   f, f_floor, our_floor);
+            printf("[FAIL] floor: orig=%.6f, floorf=%.6f, ours=%.6f\n", f, f_floor, our_floor);
             fails++;
         }
 
         if (!nearly(f_ceil, our_ceil))
         {
-            printf("[FAIL] ceil : orig=%.6f, ceilf =%.6f, ours =%.6f\n",
-                   f, f_ceil, our_ceil);
+            printf("[FAIL] ceil : orig=%.6f, ceilf =%.6f, ours =%.6f\n", f, f_ceil, our_ceil);
             fails++;
         }
     }
@@ -104,8 +102,7 @@ static void test_arithmetic()
 
         if (!nearly(fmul_f, exp_mul))
         {
-            printf("[FAIL] mul: %.4f * %.4f = %.4f (exp=%.4f)\n",
-                   a, b, fmul_f, exp_mul);
+            printf("[FAIL] mul: %.4f * %.4f = %.4f (exp=%.4f)\n", a, b, fmul_f, exp_mul);
             fails++;
         }
 
@@ -119,8 +116,7 @@ static void test_arithmetic()
 
             if (!nearly(fdiv_f, exp_div))
             {
-                printf("[FAIL] div: %.4f / %.4f = %.4f (exp=%.4f)\n",
-                       a, b, fdiv_f, exp_div);
+                printf("[FAIL] div: %.4f / %.4f = %.4f (exp=%.4f)\n", a, b, fdiv_f, exp_div);
                 fails++;
             }
         }
@@ -147,8 +143,7 @@ static void test_arithmetic()
 
             if (!nearly(fm_f, f * I))
             {
-                printf("[FAIL] muli: %.4f * %d = %.4f (exp=%.4f)\n",
-                       f, I, fm_f, f * I);
+                printf("[FAIL] muli: %.4f * %d = %.4f (exp=%.4f)\n", f, I, fm_f, f * I);
                 ifails++;
             }
 
@@ -161,8 +156,7 @@ static void test_arithmetic()
 
                 if (!nearly(fd_f, f / I))
                 {
-                    printf("[FAIL] divi: %.4f / %d = %.4f (exp=%.4f)\n",
-                           f, I, fd_f, f / I);
+                    printf("[FAIL] divi: %.4f / %d = %.4f (exp=%.4f)\n", f, I, fd_f, f / I);
                     ifails++;
                 }
             }
@@ -173,8 +167,7 @@ static void test_arithmetic()
 
             if (!nearly(ab_f, fabsf(f)))
             {
-                printf("[FAIL] abs: |%.4f| = %.4f (exp=%.4f)\n",
-                       f, ab_f, fabsf(f));
+                printf("[FAIL] abs: |%.4f| = %.4f (exp=%.4f)\n", f, ab_f, fabsf(f));
                 ifails++;
             }
         }

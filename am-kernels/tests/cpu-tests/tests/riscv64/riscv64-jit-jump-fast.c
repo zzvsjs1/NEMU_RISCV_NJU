@@ -9,17 +9,16 @@ static uint64_t run_jal_sequence(void)
 {
     uint64_t out = 0;
 
-    asm volatile(
-        "addi t0, zero, 9\n"
-        "jal t1, 1f\n"
-        "li %[out], 0\n"
-        "j 2f\n"
-        "1:\n"
-        "addi %[out], t1, 11\n"
-        "2:\n"
-        : [out] "=&r"(out)
-        :
-        : "t0", "t1", "memory");
+    asm volatile("addi t0, zero, 9\n"
+                 "jal t1, 1f\n"
+                 "li %[out], 0\n"
+                 "j 2f\n"
+                 "1:\n"
+                 "addi %[out], t1, 11\n"
+                 "2:\n"
+                 : [out] "=&r"(out)
+                 :
+                 : "t0", "t1", "memory");
 
     return out;
 }
@@ -29,19 +28,18 @@ static uint64_t run_jalr_sequence(uint64_t marker)
 {
     uint64_t out = 0;
 
-    asm volatile(
-        "addi t0, zero, 3\n"
-        "la t1, 1f\n"
-        "ori t1, t1, 1\n"
-        "jalr t2, 0(t1)\n"
-        "li %[out], 0\n"
-        "j 2f\n"
-        "1:\n"
-        "xor %[out], t2, %[marker]\n"
-        "2:\n"
-        : [out] "=&r"(out)
-        : [marker] "r"(marker)
-        : "t0", "t1", "t2", "memory");
+    asm volatile("addi t0, zero, 3\n"
+                 "la t1, 1f\n"
+                 "ori t1, t1, 1\n"
+                 "jalr t2, 0(t1)\n"
+                 "li %[out], 0\n"
+                 "j 2f\n"
+                 "1:\n"
+                 "xor %[out], t2, %[marker]\n"
+                 "2:\n"
+                 : [out] "=&r"(out)
+                 : [marker] "r"(marker)
+                 : "t0", "t1", "t2", "memory");
 
     return out;
 }

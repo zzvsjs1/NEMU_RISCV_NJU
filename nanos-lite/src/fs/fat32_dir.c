@@ -233,7 +233,8 @@ static int lfn_build_name(const Fat32LfnState *state, const uint8_t short_name[1
 {
     size_t pos = 0;
 
-    if (out_size == 0 || state->malformed || !state->saw_last || state->count == 0 || state->count > FAT32_MAX_LFN_PIECES || state->expected_sequence != 0 || state->checksum != fat32_lfn_checksum(short_name))
+    if (out_size == 0 || state->malformed || !state->saw_last || state->count == 0 || state->count > FAT32_MAX_LFN_PIECES ||
+        state->expected_sequence != 0 || state->checksum != fat32_lfn_checksum(short_name))
     {
         return -1;
     }
@@ -471,7 +472,8 @@ static uint32_t entries_per_cluster(const Fat32Volume *vol)
  * Translate a raw directory slot index into its byte offset and read the slot.
  * Return 1 for a slot, 0 after the current directory chain, and -1 on damage.
  */
-static int read_directory_slot(const Fat32Volume *vol, uint32_t dir_cluster, uint32_t entry_index, uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE], uint64_t *entry_offset)
+static int read_directory_slot(const Fat32Volume *vol, uint32_t dir_cluster, uint32_t entry_index, uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE],
+                               uint64_t *entry_offset)
 {
     uint32_t cluster = dir_cluster;
     uint32_t index = entry_index;
@@ -963,7 +965,8 @@ static uint32_t lfn_entry_count_for_name(const char *name)
 /*
  * Fill one raw LFN entry for the selected one-based sequence number.
  */
-static void fill_lfn_entry(uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE], const char *name, uint32_t sequence, uint32_t total_count, const uint8_t short_name[11])
+static void fill_lfn_entry(uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE], const char *name, uint32_t sequence, uint32_t total_count,
+                           const uint8_t short_name[11])
 {
     const size_t name_len = strlen(name);
     const size_t start = (size_t)(sequence - 1u) * 13u;
@@ -1014,7 +1017,8 @@ static void fill_lfn_entry(uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE], const char *
 /*
  * Fill one short directory entry with FAT32 cluster and size metadata.
  */
-static void fill_short_entry(uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE], const uint8_t short_name[11], uint8_t attr, uint32_t first_cluster, uint32_t size)
+static void fill_short_entry(uint8_t raw_entry[FAT32_DIR_ENTRY_SIZE], const uint8_t short_name[11], uint8_t attr, uint32_t first_cluster,
+                             uint32_t size)
 {
     memset(raw_entry, 0, FAT32_DIR_ENTRY_SIZE);
     memcpy(raw_entry, short_name, 11);
@@ -1165,7 +1169,8 @@ static int find_free_entry_run(Fat32Volume *vol, uint32_t dir_cluster, uint32_t 
 /*
  * Write all LFN slots followed by the final short entry into a directory.
  */
-static int write_entry_set(Fat32Volume *vol, uint32_t parent_cluster, uint32_t start_index, const char *name, const uint8_t short_name[11], uint8_t attr, uint32_t first_cluster, uint32_t size, Fat32DirEntry *out)
+static int write_entry_set(Fat32Volume *vol, uint32_t parent_cluster, uint32_t start_index, const char *name, const uint8_t short_name[11],
+                           uint8_t attr, uint32_t first_cluster, uint32_t size, Fat32DirEntry *out)
 {
     const uint32_t lfn_count = name_needs_lfn(name, short_name) ? lfn_entry_count_for_name(name) : 0;
     uint32_t slot = start_index;
@@ -1212,7 +1217,8 @@ static int write_entry_set(Fat32Volume *vol, uint32_t parent_cluster, uint32_t s
 /*
  * Create a directory entry in a known parent directory.
  */
-static int create_entry_in_directory(Fat32Volume *vol, uint32_t parent_cluster, const char *name, uint8_t attr, uint32_t first_cluster, uint32_t size, Fat32DirEntry *out)
+static int create_entry_in_directory(Fat32Volume *vol, uint32_t parent_cluster, const char *name, uint8_t attr, uint32_t first_cluster, uint32_t size,
+                                     Fat32DirEntry *out)
 {
     uint8_t short_name[11];
     uint32_t start_index;
@@ -1675,7 +1681,8 @@ int fat32_rename_path(Fat32Volume *vol, const char *old_path, const char *new_pa
         }
     }
 
-    if (create_entry_in_directory(vol, new_parent_cluster, new_name, old_entry.entry.attr, old_entry.entry.first_cluster, old_entry.entry.size, 0) != 0)
+    if (create_entry_in_directory(vol, new_parent_cluster, new_name, old_entry.entry.attr, old_entry.entry.first_cluster, old_entry.entry.size, 0) !=
+        0)
     {
         return -1;
     }

@@ -40,10 +40,7 @@ static uint8_t bsf32_zero_sets_zf(uint32_t value)
 {
     uint32_t result = 0xdeadbeefu;
     uint8_t zf;
-    asm volatile("bsfl %2, %0; setz %1"
-                 : "+r"(result), "=qm"(zf)
-                 : "r"(value)
-                 : "cc");
+    asm volatile("bsfl %2, %0; setz %1" : "+r"(result), "=qm"(zf) : "r"(value) : "cc");
     return zf;
 }
 

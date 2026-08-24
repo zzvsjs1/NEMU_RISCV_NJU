@@ -95,8 +95,7 @@ void __am_lapic_init()
             MPConf *conf = (void *)((uintptr_t)(mpconf_ptr));
             __am_lapic = (void *)((uintptr_t)(conf->lapicaddr));
 
-            for (volatile char *ptr = (char *)(conf + 1);
-                 ptr < (char *)conf + conf->length; ptr += 8)
+            for (volatile char *ptr = (char *)(conf + 1); ptr < (char *)conf + conf->length; ptr += 8)
             {
                 if (*ptr == '\0')
                 {

@@ -4,19 +4,18 @@ static uint32_t push_pop16_result(void)
 {
     uint32_t packed;
 
-    asm volatile(
-        "movl %%esp, %%edx\n\t"
-        "movl $0x12345678, %%eax\n\t"
-        ".byte 0x66, 0x50\n\t"
-        "movl %%edx, %%ecx\n\t"
-        "subl %%esp, %%ecx\n\t"
-        "xorl %%eax, %%eax\n\t"
-        ".byte 0x66, 0x58\n\t"
-        "shll $16, %%ecx\n\t"
-        "orl %%ecx, %%eax\n\t"
-        : "=a"(packed)
-        :
-        : "ecx", "edx", "memory", "cc");
+    asm volatile("movl %%esp, %%edx\n\t"
+                 "movl $0x12345678, %%eax\n\t"
+                 ".byte 0x66, 0x50\n\t"
+                 "movl %%edx, %%ecx\n\t"
+                 "subl %%esp, %%ecx\n\t"
+                 "xorl %%eax, %%eax\n\t"
+                 ".byte 0x66, 0x58\n\t"
+                 "shll $16, %%ecx\n\t"
+                 "orl %%ecx, %%eax\n\t"
+                 : "=a"(packed)
+                 :
+                 : "ecx", "edx", "memory", "cc");
 
     return packed;
 }
@@ -25,18 +24,17 @@ static uint32_t pushf16_result(void)
 {
     uint32_t packed;
 
-    asm volatile(
-        "movl %%esp, %%edx\n\t"
-        ".byte 0x66, 0x9c\n\t"
-        "movl %%edx, %%ecx\n\t"
-        "subl %%esp, %%ecx\n\t"
-        ".byte 0x66, 0x58\n\t"
-        "andl $0xffff, %%eax\n\t"
-        "shll $16, %%ecx\n\t"
-        "orl %%ecx, %%eax\n\t"
-        : "=a"(packed)
-        :
-        : "ecx", "edx", "memory", "cc");
+    asm volatile("movl %%esp, %%edx\n\t"
+                 ".byte 0x66, 0x9c\n\t"
+                 "movl %%edx, %%ecx\n\t"
+                 "subl %%esp, %%ecx\n\t"
+                 ".byte 0x66, 0x58\n\t"
+                 "andl $0xffff, %%eax\n\t"
+                 "shll $16, %%ecx\n\t"
+                 "orl %%ecx, %%eax\n\t"
+                 : "=a"(packed)
+                 :
+                 : "ecx", "edx", "memory", "cc");
 
     return packed;
 }

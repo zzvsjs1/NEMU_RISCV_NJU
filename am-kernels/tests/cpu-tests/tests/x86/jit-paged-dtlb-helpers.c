@@ -133,117 +133,83 @@ static void init_operands(void)
 
 static void run_paged_helpers(void)
 {
-    asm volatile(
-        "shll $1, %[shl1]\n\t"
-        "setc %[shl_cf]\n\t"
-        "seto %[shl_of]\n\t"
-        "shrl $3, %[shr3]\n\t"
-        "movl $3, %%ecx\n\t"
-        "sarl %%cl, %[sarcl]\n\t"
-        "roll $5, %[rol5]\n\t"
-        "movl $9, %%ecx\n\t"
-        "rorl %%cl, %[rorcl]\n\t"
-        "notl %[notv]\n\t"
-        "negl %[negv]\n\t"
-        "cmpl $0xdeadbeef, %[cmpv]\n\t"
-        "sete %[eq]\n\t"
-        "movl %[imul_lhs], %%eax\n\t"
-        "imull %[imul_src], %%eax\n\t"
-        "movl %%eax, %[imul_out]\n\t"
-        "movl %[mul_lhs], %%eax\n\t"
-        "mull %[mul_src]\n\t"
-        "xorl %%edx, %%eax\n\t"
-        "movl %%eax, %[mul_out]\n\t"
-        "xorl %%edx, %%edx\n\t"
-        "movl %[div_lhs], %%eax\n\t"
-        "divl %[div_src]\n\t"
-        "movl %%eax, %[div_quot]\n\t"
-        "movl %%edx, %[div_rem]\n\t"
-        : [shl1] "+m"(paged_mem[0]),
-          [shr3] "+m"(paged_mem[1]),
-          [sarcl] "+m"(paged_mem[2]),
-          [rol5] "+m"(paged_mem[3]),
-          [rorcl] "+m"(paged_mem[4]),
-          [notv] "+m"(paged_mem[5]),
-          [negv] "+m"(paged_mem[6]),
-          [shl_cf] "=m"(result_bytes[0]),
-          [shl_of] "=m"(result_bytes[1]),
-          [eq] "=m"(result_bytes[2]),
-          [imul_out] "=m"(result_words[0]),
-          [mul_out] "=m"(result_words[1]),
-          [div_quot] "=m"(result_words[2]),
-          [div_rem] "=m"(result_words[3])
-        : [cmpv] "m"(paged_mem[7]),
-          [imul_lhs] "r"(0xfffffff3u),
-          [imul_src] "m"(paged_mem[8]),
-          [mul_lhs] "r"(0x00012345u),
-          [mul_src] "m"(paged_mem[9]),
-          [div_lhs] "r"(100000u),
-          [div_src] "m"(paged_mem[10])
-        : "eax", "ecx", "edx", "cc", "memory");
+    asm volatile("shll $1, %[shl1]\n\t"
+                 "setc %[shl_cf]\n\t"
+                 "seto %[shl_of]\n\t"
+                 "shrl $3, %[shr3]\n\t"
+                 "movl $3, %%ecx\n\t"
+                 "sarl %%cl, %[sarcl]\n\t"
+                 "roll $5, %[rol5]\n\t"
+                 "movl $9, %%ecx\n\t"
+                 "rorl %%cl, %[rorcl]\n\t"
+                 "notl %[notv]\n\t"
+                 "negl %[negv]\n\t"
+                 "cmpl $0xdeadbeef, %[cmpv]\n\t"
+                 "sete %[eq]\n\t"
+                 "movl %[imul_lhs], %%eax\n\t"
+                 "imull %[imul_src], %%eax\n\t"
+                 "movl %%eax, %[imul_out]\n\t"
+                 "movl %[mul_lhs], %%eax\n\t"
+                 "mull %[mul_src]\n\t"
+                 "xorl %%edx, %%eax\n\t"
+                 "movl %%eax, %[mul_out]\n\t"
+                 "xorl %%edx, %%edx\n\t"
+                 "movl %[div_lhs], %%eax\n\t"
+                 "divl %[div_src]\n\t"
+                 "movl %%eax, %[div_quot]\n\t"
+                 "movl %%edx, %[div_rem]\n\t"
+                 : [shl1] "+m"(paged_mem[0]), [shr3] "+m"(paged_mem[1]), [sarcl] "+m"(paged_mem[2]), [rol5] "+m"(paged_mem[3]),
+                   [rorcl] "+m"(paged_mem[4]), [notv] "+m"(paged_mem[5]), [negv] "+m"(paged_mem[6]), [shl_cf] "=m"(result_bytes[0]),
+                   [shl_of] "=m"(result_bytes[1]), [eq] "=m"(result_bytes[2]), [imul_out] "=m"(result_words[0]), [mul_out] "=m"(result_words[1]),
+                   [div_quot] "=m"(result_words[2]), [div_rem] "=m"(result_words[3])
+                 : [cmpv] "m"(paged_mem[7]), [imul_lhs] "r"(0xfffffff3u), [imul_src] "m"(paged_mem[8]), [mul_lhs] "r"(0x00012345u),
+                   [mul_src] "m"(paged_mem[9]), [div_lhs] "r"(100000u), [div_src] "m"(paged_mem[10])
+                 : "eax", "ecx", "edx", "cc", "memory");
 
-    asm volatile(
-        "rolb $1, %[rolb1]\n\t"
-        "rorb $1, %[rorb1]\n\t"
-        "shlb $1, %[shlb1]\n\t"
-        "shrw $1, %[shrw1]\n\t"
-        "sarw $1, %[sarw1]\n\t"
-        : [rolb1] "+m"(shift_bytes[0]),
-          [rorb1] "+m"(shift_bytes[1]),
-          [shlb1] "+m"(shift_bytes[2]),
-          [shrw1] "+m"(shift_words[0]),
-          [sarw1] "+m"(shift_words[1])
-        :
-        : "cc", "memory");
+    asm volatile("rolb $1, %[rolb1]\n\t"
+                 "rorb $1, %[rorb1]\n\t"
+                 "shlb $1, %[shlb1]\n\t"
+                 "shrw $1, %[shrw1]\n\t"
+                 "sarw $1, %[sarw1]\n\t"
+                 : [rolb1] "+m"(shift_bytes[0]), [rorb1] "+m"(shift_bytes[1]), [shlb1] "+m"(shift_bytes[2]), [shrw1] "+m"(shift_words[0]),
+                   [sarw1] "+m"(shift_words[1])
+                 :
+                 : "cc", "memory");
 
-    asm volatile(
-        "movl $1, %%ecx\n\t"
-        "shlb %%cl, %[shlbcl1]\n\t"
-        "rorb %%cl, %[rorbcl1]\n\t"
-        "rolw %%cl, %[rolwcl1]\n\t"
-        "sarw %%cl, %[sarwcl1]\n\t"
-        "xorl %%ecx, %%ecx\n\t"
-        "shrw %%cl, %[shrwcl0]\n\t"
-        : [shlbcl1] "+m"(shift_bytes[3]),
-          [rorbcl1] "+m"(shift_bytes[4]),
-          [rolwcl1] "+m"(shift_words[2]),
-          [sarwcl1] "+m"(shift_words[3]),
-          [shrwcl0] "+m"(shift_words[4])
-        :
-        : "ecx", "cc", "memory");
+    asm volatile("movl $1, %%ecx\n\t"
+                 "shlb %%cl, %[shlbcl1]\n\t"
+                 "rorb %%cl, %[rorbcl1]\n\t"
+                 "rolw %%cl, %[rolwcl1]\n\t"
+                 "sarw %%cl, %[sarwcl1]\n\t"
+                 "xorl %%ecx, %%ecx\n\t"
+                 "shrw %%cl, %[shrwcl0]\n\t"
+                 : [shlbcl1] "+m"(shift_bytes[3]), [rorbcl1] "+m"(shift_bytes[4]), [rolwcl1] "+m"(shift_words[2]), [sarwcl1] "+m"(shift_words[3]),
+                   [shrwcl0] "+m"(shift_words[4])
+                 :
+                 : "ecx", "cc", "memory");
 
-    asm volatile(
-        "shlb $4, %[shlb4]\n\t"
-        "sarb $3, %[sarb3]\n\t"
-        "shrw $3, %[shrw3]\n\t"
-        "rolw $4, %[rolw4]\n\t"
-        : [shlb4] "+m"(shift_bytes[5]),
-          [sarb3] "+m"(shift_bytes[6]),
-          [shrw3] "+m"(shift_words[5]),
-          [rolw4] "+m"(shift_words[6])
-        :
-        : "cc", "memory");
+    asm volatile("shlb $4, %[shlb4]\n\t"
+                 "sarb $3, %[sarb3]\n\t"
+                 "shrw $3, %[shrw3]\n\t"
+                 "rolw $4, %[rolw4]\n\t"
+                 : [shlb4] "+m"(shift_bytes[5]), [sarb3] "+m"(shift_bytes[6]), [shrw3] "+m"(shift_words[5]), [rolw4] "+m"(shift_words[6])
+                 :
+                 : "cc", "memory");
 
-    asm volatile(
-        "movl $0x12340003, %%eax\n\t"
-        "imulw %[src0], %%ax\n\t"
-        "setc %[cf0]\n\t"
-        "seto %[of0]\n\t"
-        "movl %%eax, %[out0]\n\t"
-        "movl $0xabcd4000, %%eax\n\t"
-        "imulw %[src1], %%ax\n\t"
-        "setc %[cf1]\n\t"
-        "seto %[of1]\n\t"
-        "movl %%eax, %[out1]\n\t"
-        : [out0] "=m"(imul16_out[0]),
-          [out1] "=m"(imul16_out[1]),
-          [cf0] "=m"(imul16_flags[0]),
-          [of0] "=m"(imul16_flags[1]),
-          [cf1] "=m"(imul16_flags[2]),
-          [of1] "=m"(imul16_flags[3])
-        : [src0] "m"(imul16_src[0]),
-          [src1] "m"(imul16_src[1])
-        : "eax", "cc", "memory");
+    asm volatile("movl $0x12340003, %%eax\n\t"
+                 "imulw %[src0], %%ax\n\t"
+                 "setc %[cf0]\n\t"
+                 "seto %[of0]\n\t"
+                 "movl %%eax, %[out0]\n\t"
+                 "movl $0xabcd4000, %%eax\n\t"
+                 "imulw %[src1], %%ax\n\t"
+                 "setc %[cf1]\n\t"
+                 "seto %[of1]\n\t"
+                 "movl %%eax, %[out1]\n\t"
+                 : [out0] "=m"(imul16_out[0]), [out1] "=m"(imul16_out[1]), [cf0] "=m"(imul16_flags[0]), [of0] "=m"(imul16_flags[1]),
+                   [cf1] "=m"(imul16_flags[2]), [of1] "=m"(imul16_flags[3])
+                 : [src0] "m"(imul16_src[0]), [src1] "m"(imul16_src[1])
+                 : "eax", "cc", "memory");
 
     asm volatile(
         "movl $3, %%eax\n\t"
@@ -276,35 +242,21 @@ static void run_paged_helpers(void)
         "shll $16, %%edx\n\t"
         "orl %%edx, %%eax\n\t"
         "movl %%eax, %[imul16_out]\n\t"
-        : [umul8_out] "=m"(mul_acc_out[0]),
-          [umul16_out] "=m"(mul_acc_out[1]),
-          [imul8_out] "=m"(mul_acc_out[2]),
-          [imul16_out] "=m"(mul_acc_out[3]),
-          [umul8_cf] "=m"(mul_acc_flags[0]),
-          [umul8_of] "=m"(mul_acc_flags[1]),
-          [umul16_cf] "=m"(mul_acc_flags[2]),
-          [umul16_of] "=m"(mul_acc_flags[3]),
-          [imul8_cf] "=m"(mul_acc_flags[4]),
-          [imul8_of] "=m"(mul_acc_flags[5]),
-          [imul16_cf] "=m"(mul_acc_flags[6]),
-          [imul16_of] "=m"(mul_acc_flags[7])
-        : [umul8_src] "m"(mul_acc_src[0]),
-          [umul16_src] "m"(mul_acc_src[1]),
-          [imul8_src] "m"(mul_acc_src[2]),
-          [imul16_src] "m"(mul_acc_src[3])
+        : [umul8_out] "=m"(mul_acc_out[0]), [umul16_out] "=m"(mul_acc_out[1]), [imul8_out] "=m"(mul_acc_out[2]), [imul16_out] "=m"(mul_acc_out[3]),
+          [umul8_cf] "=m"(mul_acc_flags[0]), [umul8_of] "=m"(mul_acc_flags[1]), [umul16_cf] "=m"(mul_acc_flags[2]),
+          [umul16_of] "=m"(mul_acc_flags[3]), [imul8_cf] "=m"(mul_acc_flags[4]), [imul8_of] "=m"(mul_acc_flags[5]),
+          [imul16_cf] "=m"(mul_acc_flags[6]), [imul16_of] "=m"(mul_acc_flags[7])
+        : [umul8_src] "m"(mul_acc_src[0]), [umul16_src] "m"(mul_acc_src[1]), [imul8_src] "m"(mul_acc_src[2]), [imul16_src] "m"(mul_acc_src[3])
         : "eax", "edx", "cc", "memory");
 
-    asm volatile(
-        "movl %[idiv_lhs], %%eax\n\t"
-        "cdq\n\t"
-        "idivl %[idiv_src]\n\t"
-        "movl %%eax, %[idiv_quot]\n\t"
-        "movl %%edx, %[idiv_rem]\n\t"
-        : [idiv_quot] "=m"(result_words[4]),
-          [idiv_rem] "=m"(result_words[5])
-        : [idiv_lhs] "r"((uint32_t)(0u - 100000u)),
-          [idiv_src] "m"(paged_mem[11])
-        : "eax", "ecx", "edx", "cc", "memory");
+    asm volatile("movl %[idiv_lhs], %%eax\n\t"
+                 "cdq\n\t"
+                 "idivl %[idiv_src]\n\t"
+                 "movl %%eax, %[idiv_quot]\n\t"
+                 "movl %%edx, %[idiv_rem]\n\t"
+                 : [idiv_quot] "=m"(result_words[4]), [idiv_rem] "=m"(result_words[5])
+                 : [idiv_lhs] "r"((uint32_t)(0u - 100000u)), [idiv_src] "m"(paged_mem[11])
+                 : "eax", "ecx", "edx", "cc", "memory");
 }
 
 int main()

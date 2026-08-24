@@ -20,8 +20,7 @@
 /* This implementation uses one address space at a time, so VPN2 is the complete TLB tag. */
 static bool tlb_entry_matches(const mips32_TLB_entry *entry, word_t entryhi)
 {
-    return (entry->entryhi & MIPS32_ENTRYHI_VPN2_MASK) ==
-           (entryhi & MIPS32_ENTRYHI_VPN2_MASK);
+    return (entry->entryhi & MIPS32_ENTRYHI_VPN2_MASK) == (entryhi & MIPS32_ENTRYHI_VPN2_MASK);
 }
 
 void mips32_tlb_reset(void)
@@ -59,8 +58,7 @@ void mips32_tlbp(void)
 
 static void write_tlb_slot(uint32_t index)
 {
-    Assert(index < MIPS32_TLB_NR,
-           "MIPS32 TLB index out of range: %u", index);
+    Assert(index < MIPS32_TLB_NR, "MIPS32 TLB index out of range: %u", index);
 
     cpu.tlb[index].entryhi = cpu.entryhi & MIPS32_ENTRYHI_VPN2_MASK;
     cpu.tlb[index].entrylo0 = cpu.entrylo0;
@@ -70,8 +68,7 @@ static void write_tlb_slot(uint32_t index)
 void mips32_tlbwi(void)
 {
     /* Reserved Index bits are not a valid indexed-write destination. */
-    Assert((cpu.index & ~0x0fu) == 0,
-           "MIPS32 TLBWI invalid Index=" FMT_WORD, cpu.index);
+    Assert((cpu.index & ~0x0fu) == 0, "MIPS32 TLBWI invalid Index=" FMT_WORD, cpu.index);
 
     write_tlb_slot(cpu.index);
 }
@@ -147,24 +144,16 @@ paddr_t isa_mmu_translate(vaddr_t vaddr, int len, int type)
         }
 
         /* Virtual bit 12 selects the odd (EntryLo1) half of a VPN2 pair. */
-        const word_t entrylo = (vaddr & 0x1000u) != 0
-                                   ? entry->entrylo1
-                                   : entry->entrylo0;
+        const word_t entrylo = (vaddr & 0x1000u) != 0 ? entry->entrylo1 : entry->entrylo0;
 
-        Assert((entrylo & MIPS32_ENTRYLO_V) != 0,
-               "MIPS32 invalid TLB mapping for vaddr=" FMT_WORD, vaddr);
-        Assert(!store || (entrylo & MIPS32_ENTRYLO_D) != 0,
-               "MIPS32 read-only TLB mapping written at vaddr=" FMT_WORD,
-               vaddr);
+        Assert((entrylo & MIPS32_ENTRYLO_V) != 0, "MIPS32 invalid TLB mapping for vaddr=" FMT_WORD, vaddr);
+        Assert(!store || (entrylo & MIPS32_ENTRYLO_D) != 0, "MIPS32 read-only TLB mapping written at vaddr=" FMT_WORD, vaddr);
 
         /* EntryLo.PFN bits 25:6 become physical address bits 31:12. */
-        return (paddr_t)((entrylo & MIPS32_ENTRYLO_PFN_MASK) << 6) |
-               (paddr_t)MEM_RET_OK;
+        return (paddr_t)((entrylo & MIPS32_ENTRYLO_PFN_MASK) << 6) | (paddr_t)MEM_RET_OK;
     }
 
-    return record_tlb_fault(
-        vaddr, store ? MIPS32_TLB_FAULT_REFILL_STORE
-                     : MIPS32_TLB_FAULT_REFILL_LOAD);
+    return record_tlb_fault(vaddr, store ? MIPS32_TLB_FAULT_REFILL_STORE : MIPS32_TLB_FAULT_REFILL_LOAD);
 }
 
 /* Translate one debugger byte without updating CP0 or the pending fault. */
@@ -192,17 +181,14 @@ static bool debug_translate(vaddr_t vaddr, paddr_t *paddr)
             continue;
         }
 
-        const word_t entrylo = (vaddr & 0x1000u) != 0
-                                   ? entry->entrylo1
-                                   : entry->entrylo0;
+        const word_t entrylo = (vaddr & 0x1000u) != 0 ? entry->entrylo1 : entry->entrylo0;
 
         if ((entrylo & MIPS32_ENTRYLO_V) == 0)
         {
             return false;
         }
 
-        *paddr = (paddr_t)((entrylo & MIPS32_ENTRYLO_PFN_MASK) << 6) |
-                 (paddr_t)(vaddr & 0xfffu);
+        *paddr = (paddr_t)((entrylo & MIPS32_ENTRYLO_PFN_MASK) << 6) | (paddr_t)(vaddr & 0xfffu);
         return true;
     }
 
@@ -218,8 +204,7 @@ bool mips32_debug_vaddr_read(vaddr_t addr, int len, word_t *value)
 
     paddr_t first_paddr;
 
-    if ((uint32_t)len <= 4096u - (addr & 0xfffu) &&
-        debug_translate(addr, &first_paddr))
+    if ((uint32_t)len <= 4096u - (addr & 0xfffu) && debug_translate(addr, &first_paddr))
     {
         *value = paddr_read(first_paddr, len);
         return true;

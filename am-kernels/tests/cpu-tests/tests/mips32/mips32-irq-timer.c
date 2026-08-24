@@ -59,8 +59,7 @@ int main(void)
 
     const uint64_t enabled_start = uptime_us();
 
-    while (timer_events < REQUIRED_TIMER_EVENTS &&
-           uptime_us() - enabled_start < ENABLED_TIMEOUT_US)
+    while (timer_events < REQUIRED_TIMER_EVENTS && uptime_us() - enabled_start < ENABLED_TIMEOUT_US)
     {
         asm volatile("nop");
     }

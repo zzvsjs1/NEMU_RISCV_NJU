@@ -28,8 +28,7 @@ enum
  * uncompressed instruction.  It uses integer registers only, so it is also
  * safe for the probe that deliberately sets mstatus.FS to Off.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -60,23 +59,19 @@ extern void rv32_d_traps_handler(void);
 
 #define RV32_D_FLOAT_TO_LONG_PROBE(name, label, encoding) \
     ".globl " #name "\n" \
-    ".type " #name ", @function\n" \
-    #name ":\n" \
+    ".type " #name ", @function\n" #name ":\n" \
     "  fld f0, 0(a0)\n" \
     "  mv a0, a1\n" \
-    ".globl " #label "\n" \
-    #label ":\n" \
+    ".globl " #label "\n" #label ":\n" \
     "  .word " #encoding "\n" \
     "  ret\n" \
     ".size " #name ", .-" #name "\n"
 
 #define RV32_D_LONG_TO_FLOAT_PROBE(name, label, encoding) \
     ".globl " #name "\n" \
-    ".type " #name ", @function\n" \
-    #name ":\n" \
+    ".type " #name ", @function\n" #name ":\n" \
     "  fld f0, 0(a1)\n" \
-    ".globl " #label "\n" \
-    #label ":\n" \
+    ".globl " #label "\n" #label ":\n" \
     "  .word " #encoding "\n" \
     "  fsd f0, 0(a2)\n" \
     "  ret\n" \
@@ -88,8 +83,7 @@ extern void rv32_d_traps_handler(void);
  * intentional for RV64-only encodings that a conforming RV32 assembler must
  * reject; none of these helpers uses FMV.X.D or FMV.D.X to observe an FPR.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -173,55 +167,41 @@ asm(
      * FCVT.L[U].S and FCVT.L[U].D are RV64-only.  Each probe preloads a0
      * with a literal sentinel immediately before the raw instruction.
      */
-    RV32_D_FLOAT_TO_LONG_PROBE(
-        rv32_d_traps_fcvt_l_s, rv32_d_traps_fcvt_l_s_insn, 0xc0200553)
-    RV32_D_FLOAT_TO_LONG_PROBE(
-        rv32_d_traps_fcvt_lu_s, rv32_d_traps_fcvt_lu_s_insn, 0xc0300553)
-    RV32_D_FLOAT_TO_LONG_PROBE(
-        rv32_d_traps_fcvt_l_d, rv32_d_traps_fcvt_l_d_insn, 0xc2200553)
-    RV32_D_FLOAT_TO_LONG_PROBE(
-        rv32_d_traps_fcvt_lu_d, rv32_d_traps_fcvt_lu_d_insn, 0xc2300553)
+    RV32_D_FLOAT_TO_LONG_PROBE(rv32_d_traps_fcvt_l_s, rv32_d_traps_fcvt_l_s_insn, 0xc0200553)
+        RV32_D_FLOAT_TO_LONG_PROBE(rv32_d_traps_fcvt_lu_s, rv32_d_traps_fcvt_lu_s_insn, 0xc0300553)
+            RV32_D_FLOAT_TO_LONG_PROBE(rv32_d_traps_fcvt_l_d, rv32_d_traps_fcvt_l_d_insn, 0xc2200553)
+                RV32_D_FLOAT_TO_LONG_PROBE(rv32_d_traps_fcvt_lu_d, rv32_d_traps_fcvt_lu_d_insn, 0xc2300553)
 
     /*
      * FCVT.S.L[U] and FCVT.D.L[U] are also RV64-only.  The helpers preserve a
      * complete 64-bit FPR sentinel through FLD/FSD if rejection precedes
      * destination writeback.
      */
-    RV32_D_LONG_TO_FLOAT_PROBE(
-        rv32_d_traps_fcvt_s_l, rv32_d_traps_fcvt_s_l_insn, 0xd0250053)
-    RV32_D_LONG_TO_FLOAT_PROBE(
-        rv32_d_traps_fcvt_s_lu, rv32_d_traps_fcvt_s_lu_insn, 0xd0350053)
-    RV32_D_LONG_TO_FLOAT_PROBE(
-        rv32_d_traps_fcvt_d_l, rv32_d_traps_fcvt_d_l_insn, 0xd2250053)
-    RV32_D_LONG_TO_FLOAT_PROBE(
-        rv32_d_traps_fcvt_d_lu, rv32_d_traps_fcvt_d_lu_insn, 0xd2350053)
+    RV32_D_LONG_TO_FLOAT_PROBE(rv32_d_traps_fcvt_s_l, rv32_d_traps_fcvt_s_l_insn, 0xd0250053)
+        RV32_D_LONG_TO_FLOAT_PROBE(rv32_d_traps_fcvt_s_lu, rv32_d_traps_fcvt_s_lu_insn, 0xd0350053)
+            RV32_D_LONG_TO_FLOAT_PROBE(rv32_d_traps_fcvt_d_l, rv32_d_traps_fcvt_d_l_insn, 0xd2250053)
+                RV32_D_LONG_TO_FLOAT_PROBE(rv32_d_traps_fcvt_d_lu, rv32_d_traps_fcvt_d_lu_insn, 0xd2350053)
 
     /*
      * The standard provides no whole-double FPR/GPR move when XLEN is 32.
      * These two raw encodings must therefore trap even though D is present.
      */
-    RV32_D_FLOAT_TO_LONG_PROBE(
-        rv32_d_traps_fmv_x_d, rv32_d_traps_fmv_x_d_insn, 0xe2000553)
-    RV32_D_LONG_TO_FLOAT_PROBE(
-        rv32_d_traps_fmv_d_x, rv32_d_traps_fmv_d_x_insn, 0xf2050053)
+    RV32_D_FLOAT_TO_LONG_PROBE(rv32_d_traps_fmv_x_d, rv32_d_traps_fmv_x_d_insn, 0xe2000553)
+        RV32_D_LONG_TO_FLOAT_PROBE(rv32_d_traps_fmv_d_x, rv32_d_traps_fmv_d_x_insn, 0xf2050053)
 
-    ".option pop\n");
+            ".option pop\n");
 
 extern void rv32_d_traps_fs_off(const uint64_t *);
 extern char rv32_d_traps_fs_off_insn[];
-extern void rv32_d_traps_misaligned_fld(const void *, const uint64_t *,
-                                         uint64_t *);
+extern void rv32_d_traps_misaligned_fld(const void *, const uint64_t *, uint64_t *);
 extern char rv32_d_traps_misaligned_fld_insn[];
 extern void rv32_d_traps_misaligned_fsd(void *, const uint64_t *);
 extern char rv32_d_traps_misaligned_fsd_insn[];
-extern void rv32_d_traps_bad_static_rm(const uint64_t *, const uint64_t *,
-                                        const uint64_t *, uint64_t *);
+extern void rv32_d_traps_bad_static_rm(const uint64_t *, const uint64_t *, const uint64_t *, uint64_t *);
 extern char rv32_d_traps_bad_static_rm_insn[];
-extern void rv32_d_traps_bad_dynamic_rm(const uint64_t *, const uint64_t *,
-                                         const uint64_t *, uint64_t *);
+extern void rv32_d_traps_bad_dynamic_rm(const uint64_t *, const uint64_t *, const uint64_t *, uint64_t *);
 extern char rv32_d_traps_bad_dynamic_rm_insn[];
-extern void rv32_d_traps_bad_sqrt_rs2(const uint64_t *, const uint64_t *,
-                                       uint64_t *);
+extern void rv32_d_traps_bad_sqrt_rs2(const uint64_t *, const uint64_t *, uint64_t *);
 extern char rv32_d_traps_bad_sqrt_rs2_insn[];
 
 extern uint32_t rv32_d_traps_fcvt_l_s(const uint64_t *, uint32_t);
@@ -303,8 +283,7 @@ static void check_illegal_trap(const char *instruction)
     check(rv32_d_traps_mepc == (uintptr_t)instruction);
 }
 
-static void check_memory_trap(uint32_t cause, const char *instruction,
-                              uintptr_t address)
+static void check_memory_trap(uint32_t cause, const char *instruction, uintptr_t address)
 {
     check(rv32_d_traps_count == 1);
     check(rv32_d_traps_mcause == cause);
@@ -314,8 +293,7 @@ static void check_memory_trap(uint32_t cause, const char *instruction,
 
 static void test_fs_off(uintptr_t base_mstatus)
 {
-    const uint64_t source __attribute__((aligned(8))) =
-        UINT64_C(0x3ff0000000000000);
+    const uint64_t source __attribute__((aligned(8))) = UINT64_C(0x3ff0000000000000);
 
     reset_trap_record();
     write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_OFF);
@@ -337,25 +315,19 @@ static void test_misaligned_d_memory(void)
         UINT32_C(0x99aabbcc),
         UINT32_C(0xddeeff00),
     };
-    const uint64_t fpr_sentinel __attribute__((aligned(8))) =
-        UINT64_C(0x0123456789abcdef);
-    const uint64_t store_source __attribute__((aligned(8))) =
-        UINT64_C(0xfedcba9876543210);
+    const uint64_t fpr_sentinel __attribute__((aligned(8))) = UINT64_C(0x0123456789abcdef);
+    const uint64_t store_source __attribute__((aligned(8))) = UINT64_C(0xfedcba9876543210);
     uint64_t observed __attribute__((aligned(8))) = 0;
     uint8_t *const misaligned = (uint8_t *)storage + 1;
 
     reset_trap_record();
     rv32_d_traps_misaligned_fld(misaligned, &fpr_sentinel, &observed);
-    check_memory_trap(CAUSE_LOAD_ADDRESS_MISALIGNED,
-                      rv32_d_traps_misaligned_fld_insn,
-                      (uintptr_t)misaligned);
+    check_memory_trap(CAUSE_LOAD_ADDRESS_MISALIGNED, rv32_d_traps_misaligned_fld_insn, (uintptr_t)misaligned);
     check(observed == UINT64_C(0x0123456789abcdef));
 
     reset_trap_record();
     rv32_d_traps_misaligned_fsd(misaligned, &store_source);
-    check_memory_trap(CAUSE_STORE_ADDRESS_MISALIGNED,
-                      rv32_d_traps_misaligned_fsd_insn,
-                      (uintptr_t)misaligned);
+    check_memory_trap(CAUSE_STORE_ADDRESS_MISALIGNED, rv32_d_traps_misaligned_fsd_insn, (uintptr_t)misaligned);
 
     /*
      * All four words bracket the attempted eight-byte write.  Their literal
@@ -369,18 +341,14 @@ static void test_misaligned_d_memory(void)
 
 static void test_reserved_rounding_and_rs2(void)
 {
-    const uint64_t destination_sentinel __attribute__((aligned(8))) =
-        UINT64_C(0x0123456789abcdef);
-    const uint64_t one __attribute__((aligned(8))) =
-        UINT64_C(0x3ff0000000000000);
-    const uint64_t two __attribute__((aligned(8))) =
-        UINT64_C(0x4000000000000000);
+    const uint64_t destination_sentinel __attribute__((aligned(8))) = UINT64_C(0x0123456789abcdef);
+    const uint64_t one __attribute__((aligned(8))) = UINT64_C(0x3ff0000000000000);
+    const uint64_t two __attribute__((aligned(8))) = UINT64_C(0x4000000000000000);
     uint64_t observed __attribute__((aligned(8))) = 0;
 
     write_fflags(FFLAG_DZ);
     reset_trap_record();
-    rv32_d_traps_bad_static_rm(&destination_sentinel, &one, &two,
-                                &observed);
+    rv32_d_traps_bad_static_rm(&destination_sentinel, &one, &two, &observed);
     check_illegal_trap(rv32_d_traps_bad_static_rm_insn);
     check(observed == UINT64_C(0x0123456789abcdef));
     check(read_fflags() == FFLAG_DZ);
@@ -392,8 +360,7 @@ static void test_reserved_rounding_and_rs2(void)
     write_frm(5);
     write_fflags(FFLAG_DZ);
     reset_trap_record();
-    rv32_d_traps_bad_dynamic_rm(&destination_sentinel, &one, &two,
-                                 &observed);
+    rv32_d_traps_bad_dynamic_rm(&destination_sentinel, &one, &two, &observed);
     check_illegal_trap(rv32_d_traps_bad_dynamic_rm_insn);
     check(observed == UINT64_C(0x0123456789abcdef));
     check(read_fflags() == FFLAG_DZ);
@@ -411,10 +378,8 @@ static void test_reserved_rounding_and_rs2(void)
 
 static void check_float_to_long_probes(void)
 {
-    const uint64_t boxed_single_one __attribute__((aligned(8))) =
-        UINT64_C(0xffffffff3f800000);
-    const uint64_t double_one __attribute__((aligned(8))) =
-        UINT64_C(0x3ff0000000000000);
+    const uint64_t boxed_single_one __attribute__((aligned(8))) = UINT64_C(0xffffffff3f800000);
+    const uint64_t double_one __attribute__((aligned(8))) = UINT64_C(0x3ff0000000000000);
     const uint32_t gpr_sentinel = UINT32_C(0x13579bdf);
 
 #define CHECK_FLOAT_TO_LONG(function, instruction, source) \
@@ -425,29 +390,18 @@ static void check_float_to_long_probes(void)
         check_illegal_trap(instruction); \
     } while (0)
 
-    CHECK_FLOAT_TO_LONG(rv32_d_traps_fcvt_l_s,
-                        rv32_d_traps_fcvt_l_s_insn,
-                        boxed_single_one);
-    CHECK_FLOAT_TO_LONG(rv32_d_traps_fcvt_lu_s,
-                        rv32_d_traps_fcvt_lu_s_insn,
-                        boxed_single_one);
-    CHECK_FLOAT_TO_LONG(rv32_d_traps_fcvt_l_d,
-                        rv32_d_traps_fcvt_l_d_insn,
-                        double_one);
-    CHECK_FLOAT_TO_LONG(rv32_d_traps_fcvt_lu_d,
-                        rv32_d_traps_fcvt_lu_d_insn,
-                        double_one);
-    CHECK_FLOAT_TO_LONG(rv32_d_traps_fmv_x_d,
-                        rv32_d_traps_fmv_x_d_insn,
-                        double_one);
+    CHECK_FLOAT_TO_LONG(rv32_d_traps_fcvt_l_s, rv32_d_traps_fcvt_l_s_insn, boxed_single_one);
+    CHECK_FLOAT_TO_LONG(rv32_d_traps_fcvt_lu_s, rv32_d_traps_fcvt_lu_s_insn, boxed_single_one);
+    CHECK_FLOAT_TO_LONG(rv32_d_traps_fcvt_l_d, rv32_d_traps_fcvt_l_d_insn, double_one);
+    CHECK_FLOAT_TO_LONG(rv32_d_traps_fcvt_lu_d, rv32_d_traps_fcvt_lu_d_insn, double_one);
+    CHECK_FLOAT_TO_LONG(rv32_d_traps_fmv_x_d, rv32_d_traps_fmv_x_d_insn, double_one);
 
 #undef CHECK_FLOAT_TO_LONG
 }
 
 static void check_long_to_float_probes(void)
 {
-    const uint64_t fpr_sentinel __attribute__((aligned(8))) =
-        UINT64_C(0x0123456789abcdef);
+    const uint64_t fpr_sentinel __attribute__((aligned(8))) = UINT64_C(0x0123456789abcdef);
     const uint32_t integer_source = UINT32_C(2);
     uint64_t observed __attribute__((aligned(8))) = 0;
 
@@ -461,16 +415,11 @@ static void check_long_to_float_probes(void)
         check(observed == UINT64_C(0x0123456789abcdef)); \
     } while (0)
 
-    CHECK_LONG_TO_FLOAT(rv32_d_traps_fcvt_s_l,
-                        rv32_d_traps_fcvt_s_l_insn);
-    CHECK_LONG_TO_FLOAT(rv32_d_traps_fcvt_s_lu,
-                        rv32_d_traps_fcvt_s_lu_insn);
-    CHECK_LONG_TO_FLOAT(rv32_d_traps_fcvt_d_l,
-                        rv32_d_traps_fcvt_d_l_insn);
-    CHECK_LONG_TO_FLOAT(rv32_d_traps_fcvt_d_lu,
-                        rv32_d_traps_fcvt_d_lu_insn);
-    CHECK_LONG_TO_FLOAT(rv32_d_traps_fmv_d_x,
-                        rv32_d_traps_fmv_d_x_insn);
+    CHECK_LONG_TO_FLOAT(rv32_d_traps_fcvt_s_l, rv32_d_traps_fcvt_s_l_insn);
+    CHECK_LONG_TO_FLOAT(rv32_d_traps_fcvt_s_lu, rv32_d_traps_fcvt_s_lu_insn);
+    CHECK_LONG_TO_FLOAT(rv32_d_traps_fcvt_d_l, rv32_d_traps_fcvt_d_l_insn);
+    CHECK_LONG_TO_FLOAT(rv32_d_traps_fcvt_d_lu, rv32_d_traps_fcvt_d_lu_insn);
+    CHECK_LONG_TO_FLOAT(rv32_d_traps_fmv_d_x, rv32_d_traps_fmv_d_x_insn);
 
 #undef CHECK_LONG_TO_FLOAT
 }

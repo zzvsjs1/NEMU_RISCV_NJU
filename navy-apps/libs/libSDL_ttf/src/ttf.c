@@ -53,8 +53,7 @@ static void make_palette(SDL_Color palette[256], SDL_Color fg, SDL_Color bg)
 
 static int is_half_width_codepoint(Uint16 ch)
 {
-    return (ch >= 0x20 && ch <= 0x7e) ||
-           (ch >= 0xff60 && ch <= 0xff9f);
+    return (ch >= 0x20 && ch <= 0x7e) || (ch >= 0xff60 && ch <= 0xff9f);
 }
 
 static int glyph_bitmap_width(stbtt_fontinfo *finfo, int glyphIndex, fixedpt scale_x, fixedpt scale_y)

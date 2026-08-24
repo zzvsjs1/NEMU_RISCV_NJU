@@ -21,8 +21,7 @@ typedef struct VMHead
     int nr_page;
 } VMHead;
 
-#define list_foreach(p, head) \
-    for (p = (PageMap *)(head); p != NULL; p = p->next)
+#define list_foreach(p, head) for (p = (PageMap *)(head); p != NULL; p = p->next)
 
 extern int __am_pgsize;
 static int vme_enable = 0;

@@ -172,8 +172,7 @@ static void strace_log(uintptr_t num, uintptr_t arg1, uintptr_t arg2, uintptr_t 
         Log("strace: brk(0x%08" PRIxPTR ") = %d", arg1, (int)ret);
         break;
     case SYS_execve:
-        Log("strace: execve(\"%s\", 0x%08" PRIxPTR ", 0x%08" PRIxPTR ") = %d",
-            (char *)arg1, arg2, arg3, (int)ret);
+        Log("strace: execve(\"%s\", 0x%08" PRIxPTR ", 0x%08" PRIxPTR ") = %d", (char *)arg1, arg2, arg3, (int)ret);
         break;
     case SYS_gettimeofday:
         Log("strace: gettimeofday(0x%08" PRIxPTR ", 0x%08" PRIxPTR ") = %d", arg1, arg2, (int)ret);
@@ -209,8 +208,7 @@ static void strace_log(uintptr_t num, uintptr_t arg1, uintptr_t arg2, uintptr_t 
         Log("strace: yield() = %d", (int)ret);
         break;
     default:
-        Log("strace: %s(0x%08" PRIxPTR ", 0x%08" PRIxPTR ", 0x%08" PRIxPTR ") = %d",
-            syscall_name(num), arg1, arg2, arg3, (int)ret);
+        Log("strace: %s(0x%08" PRIxPTR ", 0x%08" PRIxPTR ", 0x%08" PRIxPTR ") = %d", syscall_name(num), arg1, arg2, arg3, (int)ret);
         break;
     }
 }

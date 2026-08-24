@@ -64,13 +64,12 @@ static uint64_t taken_branch_value(void)
 {
     uint64_t v = 1;
 
-    asm volatile(
-        "beq %[v], %[v], 1f\n"
-        "li %[v], 2\n"
-        "1:\n"
-        : [v] "+r"(v)
-        :
-        : "memory");
+    asm volatile("beq %[v], %[v], 1f\n"
+                 "li %[v], 2\n"
+                 "1:\n"
+                 : [v] "+r"(v)
+                 :
+                 : "memory");
     return v;
 }
 
@@ -79,18 +78,17 @@ static uint64_t jalr_low_bit_value(uint64_t marker)
 {
     uint64_t out = 0;
 
-    asm volatile(
-        "la t0, 1f\n"
-        "ori t0, t0, 1\n"
-        "jalr zero, 0(t0)\n"
-        "li %[out], 0\n"
-        "j 2f\n"
-        "1:\n"
-        "mv %[out], %[marker]\n"
-        "2:\n"
-        : [out] "=&r"(out)
-        : [marker] "r"(marker)
-        : "t0", "memory");
+    asm volatile("la t0, 1f\n"
+                 "ori t0, t0, 1\n"
+                 "jalr zero, 0(t0)\n"
+                 "li %[out], 0\n"
+                 "j 2f\n"
+                 "1:\n"
+                 "mv %[out], %[marker]\n"
+                 "2:\n"
+                 : [out] "=&r"(out)
+                 : [marker] "r"(marker)
+                 : "t0", "memory");
     return out;
 }
 

@@ -66,9 +66,8 @@ static void x86_regcpy_to_dut(x86_nemu_state *dut, const union isa_gdb_regs *qem
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
 static __attribute__((noreturn)) void riscv_qemu_difftest_unsupported(void)
 {
-    fprintf(stderr,
-            "RISC-V qemu-diff does not provide the CSR and privilege state "
-            "required by NEMU DiffTest; use spike-diff instead.\n");
+    fprintf(stderr, "RISC-V qemu-diff does not provide the CSR and privilege state "
+                    "required by NEMU DiffTest; use spike-diff instead.\n");
     abort();
 }
 #endif
@@ -154,8 +153,7 @@ __EXPORT void difftest_init(int port)
         }
 
         close(STDIN_FILENO);
-        execlp(ISA_QEMU_BIN, ISA_QEMU_BIN, ISA_QEMU_ARGS "-S", "-gdb", buf, "-nographic",
-               "-serial", "none", "-monitor", "none", NULL);
+        execlp(ISA_QEMU_BIN, ISA_QEMU_BIN, ISA_QEMU_ARGS "-S", "-gdb", buf, "-nographic", "-serial", "none", "-monitor", "none", NULL);
         perror("exec");
         assert(0);
     }

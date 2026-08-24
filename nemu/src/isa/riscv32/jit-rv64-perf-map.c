@@ -54,24 +54,19 @@ static void jit_perf_map_fail(const char *operation, int error_number)
 
     jit_perf_map_close();
     rv64_jit_perf_map_failed = true;
-    Log("jit: perf map %s failed (%s); disable perf-map output",
-        operation, strerror(error_number));
+    Log("jit: perf map %s failed (%s); disable perf-map output", operation, strerror(error_number));
 }
 
 /* Create the conventional map that Linux perf discovers from the NEMU PID. */
 void rv64_jit_perf_map_init(bool requested)
 {
-    if (!requested || rv64_jit_perf_map_file != NULL ||
-        rv64_jit_perf_map_failed)
+    if (!requested || rv64_jit_perf_map_file != NULL || rv64_jit_perf_map_failed)
     {
         return;
     }
 
-    const int path_length =
-        snprintf(rv64_jit_perf_map_path, sizeof(rv64_jit_perf_map_path),
-                 "/tmp/perf-%ld.map", (long)getpid());
-    if (path_length < 0 ||
-        (size_t)path_length >= sizeof(rv64_jit_perf_map_path))
+    const int path_length = snprintf(rv64_jit_perf_map_path, sizeof(rv64_jit_perf_map_path), "/tmp/perf-%ld.map", (long)getpid());
+    if (path_length < 0 || (size_t)path_length >= sizeof(rv64_jit_perf_map_path))
     {
         jit_perf_map_fail("path construction", ENAMETOOLONG);
         return;
@@ -84,9 +79,7 @@ void rv64_jit_perf_map_init(bool requested)
      * proved that a stale same-PID entry is an ordinary file owned only by this
      * user; PIDs can be reused while old perf maps intentionally remain.
      */
-    const int fd =
-        open(rv64_jit_perf_map_path,
-             O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600);
+    const int fd = open(rv64_jit_perf_map_path, O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600);
     if (fd < 0)
     {
         jit_perf_map_fail("open", errno);
@@ -102,8 +95,7 @@ void rv64_jit_perf_map_init(bool requested)
         return;
     }
 
-    if (!S_ISREG(map_stat.st_mode) || map_stat.st_uid != geteuid() ||
-        map_stat.st_nlink != 1)
+    if (!S_ISREG(map_stat.st_mode) || map_stat.st_uid != geteuid() || map_stat.st_nlink != 1)
     {
         (void)close(fd);
         jit_perf_map_fail("unsafe existing file", EACCES);
@@ -163,8 +155,7 @@ void rv64_jit_perf_map_reset(void)
         return;
     }
 
-    if (rv64_jit_perf_map_generation_records != 0 &&
-        !rv64_jit_perf_map_reset_warning_logged)
+    if (rv64_jit_perf_map_generation_records != 0 && !rv64_jit_perf_map_reset_warning_logged)
     {
         /*
          * The rewritten file remains internally coherent for the new arena
@@ -207,25 +198,18 @@ void rv64_jit_perf_map_reset(void)
 }
 
 /* Publish one complete, successfully installed native region. */
-void rv64_jit_perf_map_publish(const rv64_jit_block_t *block,
-                               const uint8_t *native_start,
-                               size_t native_size)
+void rv64_jit_perf_map_publish(const rv64_jit_block_t *block, const uint8_t *native_start, size_t native_size)
 {
-    if (rv64_jit_perf_map_file == NULL || block == NULL ||
-        native_start == NULL || native_size == 0)
+    if (rv64_jit_perf_map_file == NULL || block == NULL || native_start == NULL || native_size == 0)
     {
         return;
     }
 
-    const uint32_t context =
-        rv64_jit_cache_context_mix(block->satp, block->ifetch_state);
-    const int written =
-        fprintf(rv64_jit_perf_map_file,
-                "%" PRIxPTR " %zx "
-                "rv64_pc_%016" PRIx64 "_ctx_%08" PRIx32
-                "_n_%" PRIu32 "_g_%" PRIu64 "\n",
-                (uintptr_t)native_start, native_size, (uint64_t)block->pc,
-                context, block->insn_count, rv64_jit_perf_map_generation);
+    const uint32_t context = rv64_jit_cache_context_mix(block->satp, block->ifetch_state);
+    const int written = fprintf(rv64_jit_perf_map_file,
+                                "%" PRIxPTR " %zx "
+                                "rv64_pc_%016" PRIx64 "_ctx_%08" PRIx32 "_n_%" PRIu32 "_g_%" PRIu64 "\n",
+                                (uintptr_t)native_start, native_size, (uint64_t)block->pc, context, block->insn_count, rv64_jit_perf_map_generation);
 
     if (written < 0 || fflush(rv64_jit_perf_map_file) != 0)
     {
@@ -248,9 +232,7 @@ void rv64_jit_perf_map_reset(void)
 {
 }
 
-void rv64_jit_perf_map_publish(const rv64_jit_block_t *block,
-                               const uint8_t *native_start,
-                               size_t native_size)
+void rv64_jit_perf_map_publish(const rv64_jit_block_t *block, const uint8_t *native_start, size_t native_size)
 {
     (void)block;
     (void)native_start;

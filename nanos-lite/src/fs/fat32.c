@@ -107,8 +107,7 @@ static int checked_sector_byte_offset(uint64_t sector_number, size_t *out)
 /*
  * Convert a cluster-relative byte offset to an absolute disk-image byte offset.
  */
-static int checked_cluster_byte_offset(uint32_t first_sector, size_t offset_in_cluster,
-                                       size_t *out)
+static int checked_cluster_byte_offset(uint32_t first_sector, size_t offset_in_cluster, size_t *out)
 {
     size_t cluster_base;
 
@@ -144,8 +143,7 @@ static uint32_t clusters_for_file_size(size_t file_size, size_t cluster_size)
  * Extend the verified contiguous-cluster prefix when a followed FAT link proves
  * that the next logical cluster is also the next physical cluster.
  */
-static void remember_contiguous_cluster(Fat32File *file, uint32_t cluster_index,
-                                        uint32_t cluster)
+static void remember_contiguous_cluster(Fat32File *file, uint32_t cluster_index, uint32_t cluster)
 {
     if (file == 0 || file->first_cluster == 0)
     {
@@ -229,7 +227,8 @@ static int seek_cluster(Fat32File *file, uint32_t cluster_index, uint32_t *out_c
      * Reads commonly advance forwards.  Reusing the cached point keeps repeated
      * small reads from restarting at the first cluster every time.
      */
-    if (file->cached_cluster != 0 && file->cached_cluster_index <= cluster_index && file->cached_cluster_index > index && is_data_cluster(&mounted_volume, file->cached_cluster))
+    if (file->cached_cluster != 0 && file->cached_cluster_index <= cluster_index && file->cached_cluster_index > index &&
+        is_data_cluster(&mounted_volume, file->cached_cluster))
     {
         cluster = file->cached_cluster;
         index = file->cached_cluster_index;
@@ -315,7 +314,8 @@ static int ensure_cluster(Fat32File *file, uint32_t cluster_index, uint32_t *out
         }
     }
 
-    if (file->cached_cluster != 0 && file->cached_cluster_index <= cluster_index && file->cached_cluster_index > index && is_data_cluster(&mounted_volume, file->cached_cluster))
+    if (file->cached_cluster != 0 && file->cached_cluster_index <= cluster_index && file->cached_cluster_index > index &&
+        is_data_cluster(&mounted_volume, file->cached_cluster))
     {
         cluster = file->cached_cluster;
         index = file->cached_cluster_index;
@@ -426,10 +426,8 @@ static void discover_contiguous_prefix(Fat32File *file)
  * Build the longest bounded disk-read run that stays inside verified contiguous
  * clusters, starting from the already resolved cluster.
  */
-static int build_read_run(Fat32File *file, uint32_t cluster_index, uint32_t cluster,
-                          size_t offset_in_cluster, size_t cluster_size,
-                          size_t remaining, size_t *out_len,
-                          uint32_t *out_last_index, uint32_t *out_last_cluster)
+static int build_read_run(Fat32File *file, uint32_t cluster_index, uint32_t cluster, size_t offset_in_cluster, size_t cluster_size, size_t remaining,
+                          size_t *out_len, uint32_t *out_last_index, uint32_t *out_last_cluster)
 {
     const size_t limit = min_size(remaining, (size_t)FAT32_READ_RUN_MAX);
     uint32_t current_index = cluster_index;
@@ -584,8 +582,7 @@ static size_t write_bytes(Fat32File *file, size_t offset, const void *buf, size_
             break;
         }
 
-        for (uint32_t sector_index = first_sector_index;
-             sector_index < mounted_volume.sectors_per_cluster && remaining > 0 && cluster_left > 0;
+        for (uint32_t sector_index = first_sector_index; sector_index < mounted_volume.sectors_per_cluster && remaining > 0 && cluster_left > 0;
              sector_index++)
         {
             uint8_t sector[FAT32_SECTOR_SIZE];
@@ -1029,8 +1026,8 @@ size_t fat32_backend_read(Fat32File *file, size_t offset, void *buf, size_t len)
             return copied;
         }
 
-        if (build_read_run(file, cluster_index, cluster, offset_in_cluster, cluster_size,
-                           remaining, &run_len, &last_cluster_index, &last_cluster) != 0)
+        if (build_read_run(file, cluster_index, cluster, offset_in_cluster, cluster_size, remaining, &run_len, &last_cluster_index, &last_cluster) !=
+            0)
         {
             break;
         }

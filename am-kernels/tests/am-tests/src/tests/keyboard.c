@@ -1,8 +1,7 @@
 #include <amtest.h>
 
 #define NAMEINIT(key) [AM_KEY_##key] = #key,
-static const char *names[] = {
-    AM_KEYS(NAMEINIT)};
+static const char *names[] = {AM_KEYS(NAMEINIT)};
 
 static bool has_uart, has_kbd;
 

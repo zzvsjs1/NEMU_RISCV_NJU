@@ -13,19 +13,17 @@ static uint32_t leave_roundtrip(uint32_t *esp_delta)
 
     stack_mem[1] = 0x31415926u;
 
-    asm volatile(
-        "movl %%esp, %%edx\n\t"
-        "movl %%ebp, %%ecx\n\t"
-        "movl %[frame], %%ebp\n\t"
-        "leave\n\t"
-        "movl %%esp, %%eax\n\t"
-        "movl %%ebp, %%ebx\n\t"
-        "movl %%edx, %%esp\n\t"
-        "movl %%ecx, %%ebp"
-        : "=a"(leave_esp),
-          "=b"(leave_ebp)
-        : [frame] "r"(frame)
-        : "ecx", "edx", "memory", "cc");
+    asm volatile("movl %%esp, %%edx\n\t"
+                 "movl %%ebp, %%ecx\n\t"
+                 "movl %[frame], %%ebp\n\t"
+                 "leave\n\t"
+                 "movl %%esp, %%eax\n\t"
+                 "movl %%ebp, %%ebx\n\t"
+                 "movl %%edx, %%esp\n\t"
+                 "movl %%ecx, %%ebp"
+                 : "=a"(leave_esp), "=b"(leave_ebp)
+                 : [frame] "r"(frame)
+                 : "ecx", "edx", "memory", "cc");
 
     *esp_delta = leave_esp - (uint32_t)frame;
     return leave_ebp;
@@ -73,54 +71,40 @@ int main()
     mem32[5] = 0x00000010u;
     mem32[6] = 0xdeadbeefu;
 
-    asm volatile(
-        "movb $0x5a, %[imm8]\n\t"
-        "movw $0x2468, %[imm16]\n\t"
-        "movl $0x13572468, %[imm32]\n\t"
-        "movl $0xaaaa0000, %%eax\n\t"
-        "movl $0xbbbb0000, %%ebx\n\t"
-        "movl $0xcccc0000, %%ecx\n\t"
-        "movl $0xdddd0000, %%edx\n\t"
-        "movb %[load8], %%al\n\t"
-        "movw %[load16], %%cx\n\t"
-        "movl %[load32], %%edx\n\t"
-        "movb %%al, %%bl\n\t"
-        "movw %%cx, %%dx\n\t"
-        "movb %%bl, %[store8]\n\t"
-        "movw %%dx, %[store16]\n\t"
-        "movl %%edx, %[store32]"
-        : [imm8] "+m"(mem8[0]),
-          [imm16] "+m"(mem16[0]),
-          [imm32] "+m"(mem32[0]),
-          [store8] "=m"(mem8[4]),
-          [store16] "=m"(mem16[4]),
-          [store32] "=m"(mem32[4])
-        : [load8] "m"(mem8[0]),
-          [load16] "m"(mem16[0]),
-          [load32] "m"(mem32[0])
-        : "eax", "ebx", "ecx", "edx", "memory", "cc");
+    asm volatile("movb $0x5a, %[imm8]\n\t"
+                 "movw $0x2468, %[imm16]\n\t"
+                 "movl $0x13572468, %[imm32]\n\t"
+                 "movl $0xaaaa0000, %%eax\n\t"
+                 "movl $0xbbbb0000, %%ebx\n\t"
+                 "movl $0xcccc0000, %%ecx\n\t"
+                 "movl $0xdddd0000, %%edx\n\t"
+                 "movb %[load8], %%al\n\t"
+                 "movw %[load16], %%cx\n\t"
+                 "movl %[load32], %%edx\n\t"
+                 "movb %%al, %%bl\n\t"
+                 "movw %%cx, %%dx\n\t"
+                 "movb %%bl, %[store8]\n\t"
+                 "movw %%dx, %[store16]\n\t"
+                 "movl %%edx, %[store32]"
+                 : [imm8] "+m"(mem8[0]), [imm16] "+m"(mem16[0]), [imm32] "+m"(mem32[0]), [store8] "=m"(mem8[4]), [store16] "=m"(mem16[4]),
+                   [store32] "=m"(mem32[4])
+                 : [load8] "m"(mem8[0]), [load16] "m"(mem16[0]), [load32] "m"(mem32[0])
+                 : "eax", "ebx", "ecx", "edx", "memory", "cc");
 
-    asm volatile(
-        "movl $0xaaaa005a, %%eax\n\t"
-        "movl $0xcccc2468, %%ecx\n\t"
-        "movl $0x13572468, %%edx\n\t"
-        "addb %[alu8], %%al\n\t"
-        "subw %[alu16], %%cx\n\t"
-        "xorl %[alu32], %%edx\n\t"
-        "cmpb %[cmp8], %%al\n\t"
-        "setz %[zf]\n\t"
-        "movl %%eax, %[eax_after]\n\t"
-        "movl %%ecx, %[ecx_after]\n\t"
-        "movl %%edx, %[edx_after]"
-        : [zf] "=qm"(zf),
-          [eax_after] "=m"(eax_after),
-          [ecx_after] "=m"(ecx_after),
-          [edx_after] "=m"(edx_after)
-        : [alu8] "m"(mem8[2]),
-          [alu16] "m"(mem16[2]),
-          [alu32] "m"(mem32[2]),
-          [cmp8] "m"(mem8[0])
-        : "eax", "ecx", "edx", "memory", "cc");
+    asm volatile("movl $0xaaaa005a, %%eax\n\t"
+                 "movl $0xcccc2468, %%ecx\n\t"
+                 "movl $0x13572468, %%edx\n\t"
+                 "addb %[alu8], %%al\n\t"
+                 "subw %[alu16], %%cx\n\t"
+                 "xorl %[alu32], %%edx\n\t"
+                 "cmpb %[cmp8], %%al\n\t"
+                 "setz %[zf]\n\t"
+                 "movl %%eax, %[eax_after]\n\t"
+                 "movl %%ecx, %[ecx_after]\n\t"
+                 "movl %%edx, %[edx_after]"
+                 : [zf] "=qm"(zf), [eax_after] "=m"(eax_after), [ecx_after] "=m"(ecx_after), [edx_after] "=m"(edx_after)
+                 : [alu8] "m"(mem8[2]), [alu16] "m"(mem16[2]), [alu32] "m"(mem32[2]), [cmp8] "m"(mem8[0])
+                 : "eax", "ecx", "edx", "memory", "cc");
 
     asm volatile(
         "movl $0xbbbb005a, %%ebx\n\t"
@@ -140,18 +124,8 @@ int main()
         "subw %%ax, %[alu_rm16]\n\t"
         "xorl %%eax, %[alu_rm32]\n\t"
         "movl %%ebx, %[ebx_after]"
-        : [neg8] "+m"(mem8[3]),
-          [neg16] "+m"(mem16[3]),
-          [neg32] "+m"(mem32[3]),
-          [inc8] "+m"(mem8[1]),
-          [dec16] "+m"(mem16[1]),
-          [inc32] "+m"(mem32[1]),
-          [alu_rm8] "+m"(mem8[5]),
-          [alu_rm16] "+m"(mem16[5]),
-          [alu_rm32] "+m"(mem32[5]),
-          [sf] "=qm"(sf),
-          [cf] "=qm"(cf),
-          [ebx_after] "=m"(ebx_after)
+        : [neg8] "+m"(mem8[3]), [neg16] "+m"(mem16[3]), [neg32] "+m"(mem32[3]), [inc8] "+m"(mem8[1]), [dec16] "+m"(mem16[1]), [inc32] "+m"(mem32[1]),
+          [alu_rm8] "+m"(mem8[5]), [alu_rm16] "+m"(mem16[5]), [alu_rm32] "+m"(mem32[5]), [sf] "=qm"(sf), [cf] "=qm"(cf), [ebx_after] "=m"(ebx_after)
         :
         : "eax", "ebx", "memory", "cc");
 
@@ -178,33 +152,21 @@ int main()
         "popl %%ebx\n\t"
         "movl %%eax, %[push_imm_value]\n\t"
         "movl %%ebx, %[push_rm_value]"
-        : [movsx8_mem] "=m"(movsx8_mem),
-          [movsx16_mem] "=m"(movsx16_mem),
-          [movsx8_reg] "=m"(movsx8_reg),
-          [test_mem_nz] "=qm"(test_mem_nz),
-          [test_reg_z] "=qm"(test_reg_z),
-          [setcc_reg] "=qm"(setcc_reg),
-          [push_imm_value] "=m"(push_imm_value),
-          [push_rm_value] "=m"(push_rm_value)
-        : [sx8] "m"(mem8[6]),
-          [sx16] "m"(mem16[6]),
-          [test_mem] "m"(mem8[6]),
-          [push_src] "m"(mem32[6])
+        : [movsx8_mem] "=m"(movsx8_mem), [movsx16_mem] "=m"(movsx16_mem), [movsx8_reg] "=m"(movsx8_reg), [test_mem_nz] "=qm"(test_mem_nz),
+          [test_reg_z] "=qm"(test_reg_z), [setcc_reg] "=qm"(setcc_reg), [push_imm_value] "=m"(push_imm_value), [push_rm_value] "=m"(push_rm_value)
+        : [sx8] "m"(mem8[6]), [sx16] "m"(mem16[6]), [test_mem] "m"(mem8[6]), [push_src] "m"(mem32[6])
         : "eax", "ebx", "ecx", "edx", "memory", "cc");
 
-    asm volatile(
-        "movl $0x11223344, %%eax\n\t"
-        "addb $0x10, %%ah\n\t"
-        "testb $0x40, %%ah\n\t"
-        "setnz %[test_nz]\n\t"
-        "cmpb $0x43, %%ah\n\t"
-        "setz %[cmp_z]\n\t"
-        "movl %%eax, %[alu]"
-        : [alu] "=m"(high_byte_alu),
-          [test_nz] "=qm"(high_byte_test_nz),
-          [cmp_z] "=qm"(high_byte_cmp_z)
-        :
-        : "eax", "memory", "cc");
+    asm volatile("movl $0x11223344, %%eax\n\t"
+                 "addb $0x10, %%ah\n\t"
+                 "testb $0x40, %%ah\n\t"
+                 "setnz %[test_nz]\n\t"
+                 "cmpb $0x43, %%ah\n\t"
+                 "setz %[cmp_z]\n\t"
+                 "movl %%eax, %[alu]"
+                 : [alu] "=m"(high_byte_alu), [test_nz] "=qm"(high_byte_test_nz), [cmp_z] "=qm"(high_byte_cmp_z)
+                 :
+                 : "eax", "memory", "cc");
 
     leave_value = leave_roundtrip(&leave_delta);
 

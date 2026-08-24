@@ -26,9 +26,7 @@ int main(void)
     uint8_t pixels[10];
     memset(pixels, 0x7e, sizeof(pixels));
 
-    SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(pixels, 3, 2, 8, 5,
-                                                    DEFAULT_RMASK, DEFAULT_GMASK,
-                                                    DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(pixels, 3, 2, 8, 5, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
     assert(surface != NULL);
     assert(surface->pitch == 5);
 

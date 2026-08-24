@@ -20,11 +20,8 @@
 
 #define REG_FMT ("%-10s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "\n")
 
-const char *regs[] = {
-    "$0", "at", "v0", "v1", "a0", "a1", "a2", "a3",
-    "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7",
-    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
-    "t8", "t9", "k0", "k1", "gp", "sp", "s8", "ra"};
+const char *regs[] = {"$0", "at", "v0", "v1", "a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7",
+                      "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "t8", "t9", "k0", "k1", "gp", "sp", "s8", "ra"};
 
 /* Accept both monitor names (a0) and conventional assembly names ($a0). */
 static const char *strip_dollar(const char *name)
@@ -204,6 +201,5 @@ void isa_set_reg_val(const char *name, const word_t value)
         return;
     }
 
-    PRI_ERR("Failed to set unknown MIPS32 register %s.\n",
-            name == NULL ? "(null)" : name);
+    PRI_ERR("Failed to set unknown MIPS32 register %s.\n", name == NULL ? "(null)" : name);
 }

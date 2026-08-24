@@ -221,10 +221,8 @@ static void open_display()
     }
 
     SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_TIMER);
-    window = SDL_CreateWindow("Simulated Nanos Application",
-                              SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_W, WINDOW_H, 0);
-    surface = SDL_CreateRGBSurfaceFrom(fb, disp_w, disp_h, 32, disp_w * sizeof(uint32_t),
-                                       RMASK, GMASK, BMASK, AMASK);
+    window = SDL_CreateWindow("Simulated Nanos Application", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_W, WINDOW_H, 0);
+    surface = SDL_CreateRGBSurfaceFrom(fb, disp_w, disp_h, 32, disp_w * sizeof(uint32_t), RMASK, GMASK, BMASK, AMASK);
     SDL_CreateThread(event_thread, "event thread", nullptr);
     SDL_AddTimer(1000 / FPS, texture_sync, NULL);
 }

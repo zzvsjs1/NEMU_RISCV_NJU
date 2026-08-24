@@ -21,7 +21,10 @@ static PCB *fg_pcb = &pcb[0];
  */
 static int foreground_budget = FOREGROUND_QUANTA;
 
-void switch_boot_pcb() { current = &pcb_boot; }
+void switch_boot_pcb()
+{
+    current = &pcb_boot;
+}
 
 static bool pcb_runnable(PCB *pcb)
 {
@@ -139,11 +142,7 @@ void init_proc()
     static char *const envp_empty[] = {NULL};
 
     static char *argv_doom[] = {
-        "/bin/doom",
-        "-iwad",
-        "/share/games/doom/DOOM.WAD",
-        "-nogui",
-        NULL,
+        "/bin/doom", "-iwad", "/share/games/doom/DOOM.WAD", "-nogui", NULL,
     };
     static char *const argv_fceux_am[] = {"/bin/fceux", "/share/games/nes/c.nes", NULL};
     static char *const argv_onscripter[] = {"/bin/onscripter", "-r", "/share/games/ons", NULL};

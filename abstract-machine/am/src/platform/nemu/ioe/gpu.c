@@ -45,8 +45,7 @@ static void *gpu_accel_alloc(size_t bytes)
     cur = (cur + (uintptr_t)sizeof(uint32_t) - 1u) & ~((uintptr_t)sizeof(uint32_t) - 1u);
     gpu_accel_scratch_head = (uint8_t *)cur;
 
-    assert((size_t)(gpu_accel_scratch_head - gpu_accel_scratch) + bytes <=
-           sizeof(gpu_accel_scratch));
+    assert((size_t)(gpu_accel_scratch_head - gpu_accel_scratch) + bytes <= sizeof(gpu_accel_scratch));
 
     void *ret = gpu_accel_scratch_head;
     memset(ret, 0, bytes);
@@ -54,9 +53,7 @@ static void *gpu_accel_alloc(size_t bytes)
     return ret;
 }
 
-static void gpu_accel_render_canvas(struct gpu_canvas *cv,
-                                    struct gpu_canvas *parent,
-                                    uint32_t *parent_pixels)
+static void gpu_accel_render_canvas(struct gpu_canvas *cv, struct gpu_canvas *parent, uint32_t *parent_pixels)
 {
     uint32_t *local_pixels = NULL;
     int local_w = 0;
@@ -74,9 +71,7 @@ static void gpu_accel_render_canvas(struct gpu_canvas *cv,
         local_w = cv->texture.w;
         local_h = cv->texture.h;
         assert(local_w > 0 && local_h > 0);
-        local_pixels = gpu_accel_to_host(
-            cv->texture.pixels,
-            (size_t)local_w * (size_t)local_h * sizeof(uint32_t));
+        local_pixels = gpu_accel_to_host(cv->texture.pixels, (size_t)local_w * (size_t)local_h * sizeof(uint32_t));
         break;
     }
 
@@ -85,12 +80,9 @@ static void gpu_accel_render_canvas(struct gpu_canvas *cv,
         local_w = cv->w;
         local_h = cv->h;
         assert(local_w > 0 && local_h > 0);
-        local_pixels = gpu_accel_alloc((size_t)local_w * (size_t)local_h *
-                                       sizeof(uint32_t));
+        local_pixels = gpu_accel_alloc((size_t)local_w * (size_t)local_h * sizeof(uint32_t));
 
-        for (struct gpu_canvas *child = gpu_accel_canvas_or_null(cv->child);
-             child != NULL;
-             child = gpu_accel_canvas_or_null(child->sibling))
+        for (struct gpu_canvas *child = gpu_accel_canvas_or_null(cv->child); child != NULL; child = gpu_accel_canvas_or_null(child->sibling))
         {
             gpu_accel_render_canvas(child, cv, local_pixels);
         }
@@ -119,8 +111,7 @@ static void gpu_accel_render_canvas(struct gpu_canvas *cv,
             assert(dst_x >= 0 && dst_x < parent->w);
 
             const int src_x = x * local_w / cv->w1;
-            parent_pixels[(size_t)dst_y * (size_t)parent->w + (size_t)dst_x] =
-                local_pixels[(size_t)src_y * (size_t)local_w + (size_t)src_x];
+            parent_pixels[(size_t)dst_y * (size_t)parent->w + (size_t)dst_x] = local_pixels[(size_t)src_y * (size_t)local_w + (size_t)src_x];
         }
     }
 }
@@ -168,10 +159,8 @@ void __am_gpu_fbdraw(AM_GPU_FBDRAW_T *ctl)
         /* Position and size are packed as y:x and h:w.  Width/x are masked to
          * 16 bits to match the device register layout used by NEMU.
          */
-        outl(vgactl_reg_addr(NEMU_VGACTL_BLIT_POS),
-             ((uint32_t)ctl->y << 16) | (uint32_t)(uint16_t)ctl->x);
-        outl(vgactl_reg_addr(NEMU_VGACTL_BLIT_SIZE),
-             ((uint32_t)ctl->h << 16) | (uint32_t)(uint16_t)ctl->w);
+        outl(vgactl_reg_addr(NEMU_VGACTL_BLIT_POS), ((uint32_t)ctl->y << 16) | (uint32_t)(uint16_t)ctl->x);
+        outl(vgactl_reg_addr(NEMU_VGACTL_BLIT_SIZE), ((uint32_t)ctl->h << 16) | (uint32_t)(uint16_t)ctl->w);
         outl(vgactl_reg_addr(NEMU_VGACTL_BLIT_CMD), NEMU_VGACTL_BLIT_CMD_COPY);
     }
 

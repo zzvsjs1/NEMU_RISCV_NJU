@@ -88,8 +88,7 @@ static void map_identity_window(void)
 
     for (uint64_t l1 = 0; l1 < IDENTITY_L1_ENTRIES; l1++)
     {
-        identity_l1[vpn1(IDENTITY_BASE) + l1] =
-            pte_for_page(identity_l0[l1], PTE_V);
+        identity_l1[vpn1(IDENTITY_BASE) + l1] = pte_for_page(identity_l0[l1], PTE_V);
 
         for (uint64_t i = 0; i < 512ull; i++)
         {
@@ -138,50 +137,43 @@ static void sfence_vma_all(void)
 
 static void install_unexpected_trap_handler(void)
 {
-    asm volatile("csrw mtvec, %0"
-                 :
-                 : "r"(rv64_jit_mprv_ifetch_unexpected_trap)
-                 : "memory");
+    asm volatile("csrw mtvec, %0" : : "r"(rv64_jit_mprv_ifetch_unexpected_trap) : "memory");
 }
 
 static void set_mprv_data_as_supervisor(void)
 {
     uintptr_t mstatus;
 
-    asm volatile(
-        "csrr %[mstatus], mstatus\n"
-        "li t0, %[mpp_mask]\n"
-        "not t0, t0\n"
-        "and %[mstatus], %[mstatus], t0\n"
-        "li t0, %[mprv_mpp_s]\n"
-        "or %[mstatus], %[mstatus], t0\n"
-        "csrw mstatus, %[mstatus]\n"
-        : [mstatus] "=&r"(mstatus)
-        : [mpp_mask] "i"(MSTATUS_MPP_MASK),
-          [mprv_mpp_s] "i"(MSTATUS_MPRV | MSTATUS_MPP_S)
-        : "t0", "memory");
+    asm volatile("csrr %[mstatus], mstatus\n"
+                 "li t0, %[mpp_mask]\n"
+                 "not t0, t0\n"
+                 "and %[mstatus], %[mstatus], t0\n"
+                 "li t0, %[mprv_mpp_s]\n"
+                 "or %[mstatus], %[mstatus], t0\n"
+                 "csrw mstatus, %[mstatus]\n"
+                 : [mstatus] "=&r"(mstatus)
+                 : [mpp_mask] "i"(MSTATUS_MPP_MASK), [mprv_mpp_s] "i"(MSTATUS_MPRV | MSTATUS_MPP_S)
+                 : "t0", "memory");
 }
 
 static void enter_supervisor_mode(void)
 {
     uintptr_t mstatus;
 
-    asm volatile(
-        "csrr %[mstatus], mstatus\n"
-        "li t0, %[mpp_mask]\n"
-        "not t0, t0\n"
-        "and %[mstatus], %[mstatus], t0\n"
-        "li t0, %[mpp_s]\n"
-        "or %[mstatus], %[mstatus], t0\n"
-        "csrw mstatus, %[mstatus]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        : [mstatus] "=&r"(mstatus)
-        : [mpp_mask] "i"(MSTATUS_MPP_MPIE_MASK),
-          [mpp_s] "i"(MSTATUS_MPP_S)
-        : "t0", "memory");
+    asm volatile("csrr %[mstatus], mstatus\n"
+                 "li t0, %[mpp_mask]\n"
+                 "not t0, t0\n"
+                 "and %[mstatus], %[mstatus], t0\n"
+                 "li t0, %[mpp_s]\n"
+                 "or %[mstatus], %[mstatus], t0\n"
+                 "csrw mstatus, %[mstatus]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 : [mstatus] "=&r"(mstatus)
+                 : [mpp_mask] "i"(MSTATUS_MPP_MPIE_MASK), [mpp_s] "i"(MSTATUS_MPP_S)
+                 : "t0", "memory");
 }
 
 static void prepare_generated_code(void)

@@ -52,30 +52,31 @@ typedef struct Decode
 
 // Table-interpreter ISAs define `INSTR_LIST` in src/isa/$ISA/include/isa-all-instr.h.
 #define def_EXEC_ID(name) concat(EXEC_ID_, name),
-#define def_all_EXEC_ID() enum \
-{ \
-    MAP(INSTR_LIST, def_EXEC_ID) TOTAL_INSTR \
-}
+#define def_all_EXEC_ID() \
+    enum \
+    { \
+        MAP(INSTR_LIST, def_EXEC_ID) TOTAL_INSTR \
+    }
 
 // --- prototype of table helpers ---
 #define def_THelper(name) static inline int concat(table_, name)(Decode * s)
 #define def_THelper_body(name) \
-    def_THelper(name) { return concat(EXEC_ID_, name); }
+    def_THelper(name) \
+    { \
+        return concat(EXEC_ID_, name); \
+    }
 #define def_all_THelper() MAP(INSTR_LIST, def_THelper_body)
 
 // --- prototype of decode helpers ---
 #define def_DHelper(name) void concat(decode_, name)(Decode * s, int width)
 
 // empty decode helper
-static inline def_DHelper(empty) {}
+static inline def_DHelper(empty)
+{
+}
 
 // --- pattern matching mechanism ---
-__attribute__((always_inline)) static inline void pattern_decode(
-    const char *str,
-    int len,
-    uint32_t *key,
-    uint32_t *mask,
-    uint32_t *shift)
+__attribute__((always_inline)) static inline void pattern_decode(const char *str, int len, uint32_t *key, uint32_t *mask, uint32_t *shift)
 {
     /*
      * Convert a human-readable bit pattern such as
@@ -96,8 +97,7 @@ __attribute__((always_inline)) static inline void pattern_decode(
         char c = str[i]; \
         if (c != ' ') \
         { \
-            Assert(c == '0' || c == '1' || c == '?', \
-                   "invalid character '%c' in pattern string", c); \
+            Assert(c == '0' || c == '1' || c == '?', "invalid character '%c' in pattern string", c); \
             __key = (__key << 1) | (c == '1' ? 1 : 0); \
             __mask = (__mask << 1) | (c == '?' ? 0 : 1); \
             __shift = (c == '?' ? __shift + 1 : 0); \
@@ -131,8 +131,7 @@ finish:
     *shift = __shift;
 }
 
-__attribute__((always_inline)) static inline void pattern_decode_hex(const char *str, int len,
-                                                                     uint32_t *key, uint32_t *mask, uint32_t *shift)
+__attribute__((always_inline)) static inline void pattern_decode_hex(const char *str, int len, uint32_t *key, uint32_t *mask, uint32_t *shift)
 {
     /*
      * Hex patterns serve the same purpose as bit patterns, but each non-space
@@ -148,10 +147,8 @@ __attribute__((always_inline)) static inline void pattern_decode_hex(const char 
         char c = str[i]; \
         if (c != ' ') \
         { \
-            Assert((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '?', \
-                   "invalid character '%c' in pattern string", c); \
-            __key = (__key << 4) | (c == '?' ? 0 : (c >= '0' && c <= '9') ? c - '0' \
-                                                                          : c - 'a' + 10); \
+            Assert((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '?', "invalid character '%c' in pattern string", c); \
+            __key = (__key << 4) | (c == '?' ? 0 : (c >= '0' && c <= '9') ? c - '0' : c - 'a' + 10); \
             __mask = (__mask << 4) | (c == '?' ? 0 : 0xf); \
             __shift = (c == '?' ? __shift + 4 : 0); \
         } \
@@ -179,15 +176,19 @@ finish:
     } while (0)
 
 #define def_INSTR_IDTABW(pattern, id, tab, width) \
-    def_INSTR_raw(pattern_decode, pattern, \
-                  { concat(decode_, id)(s, width); return concat(table_, tab)(s); })
+    def_INSTR_raw(pattern_decode, pattern, { \
+        concat(decode_, id)(s, width); \
+        return concat(table_, tab)(s); \
+    })
 #define def_INSTR_IDTAB(pattern, id, tab) def_INSTR_IDTABW(pattern, id, tab, 0)
 #define def_INSTR_TABW(pattern, tab, width) def_INSTR_IDTABW(pattern, empty, tab, width)
 #define def_INSTR_TAB(pattern, tab) def_INSTR_IDTABW(pattern, empty, tab, 0)
 
 #define def_hex_INSTR_IDTABW(pattern, id, tab, width) \
-    def_INSTR_raw(pattern_decode_hex, pattern, \
-                  { concat(decode_, id)(s, width); return concat(table_, tab)(s); })
+    def_INSTR_raw(pattern_decode_hex, pattern, { \
+        concat(decode_, id)(s, width); \
+        return concat(table_, tab)(s); \
+    })
 #define def_hex_INSTR_IDTAB(pattern, id, tab) def_hex_INSTR_IDTABW(pattern, id, tab, 0)
 #define def_hex_INSTR_TABW(pattern, tab, width) def_hex_INSTR_IDTABW(pattern, empty, tab, width)
 #define def_hex_INSTR_TAB(pattern, tab) def_hex_INSTR_IDTABW(pattern, empty, tab, 0)

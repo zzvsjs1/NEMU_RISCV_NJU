@@ -43,8 +43,7 @@ void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
 
 int main(void)
 {
-    SDL_Surface *surface = SDL_CreateRGBSurface(0, 4, 3, 32,
-                                                DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *surface = SDL_CreateRGBSurface(0, 4, 3, 32, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
 
     uint32_t *pixels = (uint32_t *)surface->pixels;
 

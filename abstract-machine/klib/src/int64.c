@@ -5,8 +5,7 @@
 /* Assumption: Endianness is little or big (not mixed). */
 
 #if defined(__ELF__)
-#define FNALIAS(alias_name, original_name) \
-    void alias_name() __attribute__((__alias__(#original_name)))
+#define FNALIAS(alias_name, original_name) void alias_name() __attribute__((__alias__(#original_name)))
 #define COMPILER_RT_ALIAS(aliasee) __attribute__((__alias__(#aliasee)))
 #else
 #define FNALIAS(alias, name) _Pragma("GCC error(\"alias unsupported on this file format\")")
@@ -56,8 +55,7 @@
 #endif
 
 /* Include the commonly used internal type definitions. */
-#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && \
-    defined(__ORDER_LITTLE_ENDIAN__)
+#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && defined(__ORDER_LITTLE_ENDIAN__)
 
 /* Clang and GCC provide built-in endianness definitions. */
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -87,8 +85,7 @@
 
 /* .. */
 
-#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__DragonFly__) || \
-    defined(__minix)
+#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__DragonFly__) || defined(__minix)
 #include <sys/endian.h>
 
 #if _BYTE_ORDER == _BIG_ENDIAN
@@ -297,13 +294,11 @@ typedef struct
 /** \brief Trigger a program abort (or panic for kernel code). */
 #define compilerrt_abort() compilerrt_abort_impl(__FILE__, __LINE__, __func__)
 
-NORETURN void compilerrt_abort_impl(const char *file, int line,
-                                    const char *function);
+NORETURN void compilerrt_abort_impl(const char *file, int line, const char *function);
 
 #define COMPILE_TIME_ASSERT(expr) COMPILE_TIME_ASSERT1(expr, __COUNTER__)
 #define COMPILE_TIME_ASSERT1(expr, cnt) COMPILE_TIME_ASSERT2(expr, cnt)
-#define COMPILE_TIME_ASSERT2(expr, cnt) \
-    typedef char ct_assert_##cnt[(expr) ? 1 : -1] UNUSED
+#define COMPILE_TIME_ASSERT2(expr, cnt) typedef char ct_assert_##cnt[(expr) ? 1 : -1] UNUSED
 
 COMPILER_RT_ABI si_int __paritysi2(si_int a);
 COMPILER_RT_ABI si_int __paritydi2(di_int a);
@@ -427,8 +422,7 @@ static __inline du_int __umodXi3(du_int n, du_int d)
 #if !defined(__ARCH_RISCV64_MYCPU)
 /* Returns: a / b */
 
-COMPILER_RT_ABI di_int
-__divdi3(di_int a, di_int b)
+COMPILER_RT_ABI di_int __divdi3(di_int a, di_int b)
 {
     const int bits_in_dword_m1 = (int)(sizeof(di_int) * CHAR_BIT) - 1;
     di_int s_a = a >> bits_in_dword_m1;                   /* s_a = a < 0 ? -1 : 0 */
@@ -441,8 +435,7 @@ __divdi3(di_int a, di_int b)
 
 /* Returns: a / b, *rem = a % b  */
 
-COMPILER_RT_ABI di_int
-__divmoddi4(di_int a, di_int b, di_int *rem)
+COMPILER_RT_ABI di_int __divmoddi4(di_int a, di_int b, di_int *rem)
 {
     di_int d = __divdi3(a, b);
     *rem = a - (d * b);
@@ -451,8 +444,7 @@ __divmoddi4(di_int a, di_int b, di_int *rem)
 
 /* Returns: a % b */
 
-COMPILER_RT_ABI di_int
-__moddi3(di_int a, di_int b)
+COMPILER_RT_ABI di_int __moddi3(di_int a, di_int b)
 {
     const int bits_in_dword_m1 = (int)(sizeof(di_int) * CHAR_BIT) - 1;
     di_int s = b >> bits_in_dword_m1; /* s = b < 0 ? -1 : 0 */
@@ -466,23 +458,20 @@ __moddi3(di_int a, di_int b)
 
 /* Returns: a / b */
 
-COMPILER_RT_ABI du_int
-__udivdi3(du_int a, du_int b)
+COMPILER_RT_ABI du_int __udivdi3(du_int a, du_int b)
 {
     return __udivXi3(a, b);
 }
 
 /* Returns: a % b */
 
-COMPILER_RT_ABI du_int
-__umoddi3(du_int a, du_int b)
+COMPILER_RT_ABI du_int __umoddi3(du_int a, du_int b)
 {
     return __umodXi3(a, b);
 }
 #endif
 
-COMPILER_RT_ABI du_int
-__udivmoddi4(du_int a, du_int b, du_int *rem)
+COMPILER_RT_ABI du_int __udivmoddi4(du_int a, du_int b, du_int *rem)
 {
     const unsigned n_uword_bits = sizeof(su_int) * CHAR_BIT;
     const unsigned n_udword_bits = sizeof(du_int) * CHAR_BIT;
@@ -622,8 +611,7 @@ __udivmoddi4(du_int a, du_int b, du_int *rem)
             else // n_uword_bits + 1 <= sr <= n_udword_bits - 1
             {
                 q.s.low = n.s.low << (n_udword_bits - sr);
-                q.s.high = (n.s.high << (n_udword_bits - sr)) |
-                           (n.s.low >> (sr - n_uword_bits));
+                q.s.high = (n.s.high << (n_udword_bits - sr)) | (n.s.low >> (sr - n_uword_bits));
                 r.s.high = 0;
                 r.s.low = n.s.high >> (sr - n_uword_bits);
             }
@@ -734,10 +722,9 @@ COMPILER_RT_ABI si_int __clzsi2(si_int a)
 COMPILER_RT_ABI si_int __ctzsi2(si_int a)
 {
     su_int x = (su_int)a;
-    si_int t = ((x & 0x0000FFFF) == 0)
-               << 4; // if (x has no small bits) t = 16 else 0
-    x >>= t;         // x = [0 - 0xFFFF] + higher garbage bits
-    su_int r = t;    // r = [0, 16]
+    si_int t = ((x & 0x0000FFFF) == 0) << 4; // if (x has no small bits) t = 16 else 0
+    x >>= t;                                 // x = [0 - 0xFFFF] + higher garbage bits
+    su_int r = t;                            // r = [0, 16]
     // return r + ctz(x)
     t = ((x & 0x00FF) == 0) << 3;
     x >>= t; // x = [0 - 0xFF] + higher garbage bits
@@ -778,8 +765,7 @@ si_int __ctzdi2(di_int a)
     dwords x;
     x.all = a;
     const si_int f = -(x.s.low == 0);
-    return __ctzsi2((x.s.high & f) | (x.s.low & ~f)) +
-           (f & ((si_int)(sizeof(si_int) * CHAR_BIT)));
+    return __ctzsi2((x.s.high & f) | (x.s.low & ~f)) + (f & ((si_int)(sizeof(si_int) * CHAR_BIT)));
 }
 
 si_int __clzdi2(di_int a)
@@ -787,6 +773,5 @@ si_int __clzdi2(di_int a)
     dwords x;
     x.all = a;
     const si_int f = -(x.s.high == 0);
-    return __clzsi2((x.s.high & ~f) | (x.s.low & f)) +
-           (f & ((si_int)(sizeof(si_int) * CHAR_BIT)));
+    return __clzsi2((x.s.high & ~f) | (x.s.low & f)) + (f & ((si_int)(sizeof(si_int) * CHAR_BIT)));
 }

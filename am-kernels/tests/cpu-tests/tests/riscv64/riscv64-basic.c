@@ -5,12 +5,7 @@
 #include <stdint.h>
 
 static uint64_t rv64_basic_data[] = {
-    0x000000000000007full,
-    0x0000000000000080ull,
-    0x000000000000ffffull,
-    0x0000000080000000ull,
-    0xffffffff80000000ull,
-    0xffffffffffffffffull,
+    0x000000000000007full, 0x0000000000000080ull, 0x000000000000ffffull, 0x0000000080000000ull, 0xffffffff80000000ull, 0xffffffffffffffffull,
 };
 
 static uint64_t read_lbu(const void *p)
@@ -81,18 +76,17 @@ static uint64_t jalr_clear_low_bit(uint64_t marker)
 {
     uint64_t out = 0;
 
-    asm volatile(
-        "  la t0, 1f\n"
-        "  ori t0, t0, 1\n"
-        "  jalr zero, 0(t0)\n"
-        "  li %[out], 0\n"
-        "  j 2f\n"
-        "1:\n"
-        "  mv %[out], %[marker]\n"
-        "2:\n"
-        : [out] "=&r"(out)
-        : [marker] "r"(marker)
-        : "t0", "memory");
+    asm volatile("  la t0, 1f\n"
+                 "  ori t0, t0, 1\n"
+                 "  jalr zero, 0(t0)\n"
+                 "  li %[out], 0\n"
+                 "  j 2f\n"
+                 "1:\n"
+                 "  mv %[out], %[marker]\n"
+                 "2:\n"
+                 : [out] "=&r"(out)
+                 : [marker] "r"(marker)
+                 : "t0", "memory");
 
     return out;
 }

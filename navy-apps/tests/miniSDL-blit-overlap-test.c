@@ -23,9 +23,7 @@ void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
 
 int main(void)
 {
-    SDL_Surface *surface = SDL_CreateRGBSurface(0, 4, 4, 8,
-                                                DEFAULT_RMASK, DEFAULT_GMASK,
-                                                DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *surface = SDL_CreateRGBSurface(0, 4, 4, 8, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
     assert(surface != NULL);
 
     for (uint8_t i = 0; i < 16; i++)
@@ -36,22 +34,7 @@ int main(void)
     SDL_BlitSurface(surface, &src, surface, &dst);
 
     static const uint8_t expected[16] = {
-        0,
-        1,
-        2,
-        3,
-        0,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10,
-        11,
+        0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
     };
 
     assert(memcmp(surface->pixels, expected, sizeof(expected)) == 0);

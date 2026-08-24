@@ -15,14 +15,8 @@ enum Color
 };
 
 static int colors[] = {
-    [Color::BLACK] = 0x323232,
-    [Color::RED] = 0xe41b17,
-    [Color::GREEN] = 0x4aa02c,
-    [Color::YELLOW] = 0xe8a317,
-    [Color::BLUE] = 0x0041c2,
-    [Color::MAGENTA] = 0xe3319d,
-    [Color::CYAN] = 0x77bfc7,
-    [Color::WHITE] = 0xf0f0f0,
+    [Color::BLACK] = 0x323232, [Color::RED] = 0xe41b17,     [Color::GREEN] = 0x4aa02c, [Color::YELLOW] = 0xe8a317,
+    [Color::BLUE] = 0x0041c2,  [Color::MAGENTA] = 0xe3319d, [Color::CYAN] = 0x77bfc7,  [Color::WHITE] = 0xf0f0f0,
 };
 
 Terminal::Pattern Terminal::esc_seqs[] = {
@@ -32,27 +26,23 @@ Terminal::Pattern Terminal::esc_seqs[] = {
     {"\033[1t", &Terminal::esc_cookmode}, // added by us
     {"\033[2t", &Terminal::esc_rawmode},  // added by us
 
-    {"\033[s", &Terminal::esc_save},
-    {"\033[u", &Terminal::esc_restore},
-    {"\033[J", &Terminal::esc_clear},
-    {"\033[2J", &Terminal::esc_clear},
-    {"\033[K", &Terminal::esc_erase},
-    {"\033[f", &Terminal::esc_movefirst},
-    {"\033[H", &Terminal::esc_movefirst},
-    {"\033[#;#f", &Terminal::esc_move},
-    {"\033[#;#H", &Terminal::esc_move},
-    {"\033[#A", &Terminal::esc_moveup},
-    {"\033[#B", &Terminal::esc_movedown},
-    {"\033[#C", &Terminal::esc_moveright},
-    {"\033[#D", &Terminal::esc_moveleft},
-    {"\033[#m", &Terminal::esc_setattr1},
-    {"\033[#;#m", &Terminal::esc_setattr2},
+    {"\033[s", &Terminal::esc_save},          {"\033[u", &Terminal::esc_restore},   {"\033[J", &Terminal::esc_clear},
+    {"\033[2J", &Terminal::esc_clear},        {"\033[K", &Terminal::esc_erase},     {"\033[f", &Terminal::esc_movefirst},
+    {"\033[H", &Terminal::esc_movefirst},     {"\033[#;#f", &Terminal::esc_move},   {"\033[#;#H", &Terminal::esc_move},
+    {"\033[#A", &Terminal::esc_moveup},       {"\033[#B", &Terminal::esc_movedown}, {"\033[#C", &Terminal::esc_moveright},
+    {"\033[#D", &Terminal::esc_moveleft},     {"\033[#m", &Terminal::esc_setattr1}, {"\033[#;#m", &Terminal::esc_setattr2},
     {"\033[#;#;#m", &Terminal::esc_setattr3},
 };
 
-static inline int min(int x, int y) { return x < y ? x : y; }
+static inline int min(int x, int y)
+{
+    return x < y ? x : y;
+}
 
-static inline int max(int x, int y) { return x > y ? x : y; }
+static inline int max(int x, int y)
+{
+    return x > y ? x : y;
+}
 
 void Terminal::esc_move(int *args)
 {

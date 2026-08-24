@@ -32,8 +32,7 @@ static void jit_tlb_ref_page(paddr_t page)
 {
     size_t idx = 0;
 
-    if (jit_pmem_page_index(page, &idx) &&
-        rv32_jit_tlb_pt_page_refs[idx] != UINT16_MAX)
+    if (jit_pmem_page_index(page, &idx) && rv32_jit_tlb_pt_page_refs[idx] != UINT16_MAX)
     {
         rv32_jit_tlb_pt_page_refs[idx]++;
     }
@@ -77,9 +76,7 @@ bool rv32_jit_write_may_touch_page_table(paddr_t addr, int len)
         return true;
     }
 
-    for (paddr_t page = addr & ~(paddr_t)PAGE_MASK;
-         page <= (end & ~(paddr_t)PAGE_MASK);
-         page += PAGE_SIZE)
+    for (paddr_t page = addr & ~(paddr_t)PAGE_MASK; page <= (end & ~(paddr_t)PAGE_MASK); page += PAGE_SIZE)
     {
         if (jit_tlb_refs_page(page))
         {
@@ -161,8 +158,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
     const uint32_t idx = vpn & (RV32_JIT_TLB_SIZE - 1u);
     rv32_jit_tlb_entry_t *entry = &rv32_jit_tlb[idx];
 
-    if (likely(entry->valid && entry->satp == satp && entry->vpn == vpn &&
-               (entry->perm & need_perm) != 0))
+    if (likely(entry->valid && entry->satp == satp && entry->vpn == vpn && (entry->perm & need_perm) != 0))
     {
         const paddr_t translated = entry->pg_paddr | (paddr_t)(addr & PAGE_MASK);
 
@@ -175,19 +171,11 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
         return true;
     }
 
-    const paddr_t root =
-        ((paddr_t)(satp & RV32_JIT_SATP_PPN_MASK)) << PAGE_SHIFT;
-    const word_t vpn1 =
-        (word_t)((addr >>
-                  (PAGE_SHIFT +
-                   RISCV32_SV32_ROOT_LEVEL * RISCV32_SV32_VPN_BITS)) &
-                 RISCV32_SV32_VPN_MASK);
-    const word_t vpn0 =
-        (word_t)((addr >> PAGE_SHIFT) & RISCV32_SV32_VPN_MASK);
-    const paddr_t pte1_addr =
-        root + (paddr_t)(vpn1 * RISCV32_SV32_PTE_BYTES);
-    const uint32_t pte1 =
-        (uint32_t)paddr_read(pte1_addr, RISCV32_SV32_PTE_BYTES);
+    const paddr_t root = ((paddr_t)(satp & RV32_JIT_SATP_PPN_MASK)) << PAGE_SHIFT;
+    const word_t vpn1 = (word_t)((addr >> (PAGE_SHIFT + RISCV32_SV32_ROOT_LEVEL * RISCV32_SV32_VPN_BITS)) & RISCV32_SV32_VPN_MASK);
+    const word_t vpn0 = (word_t)((addr >> PAGE_SHIFT) & RISCV32_SV32_VPN_MASK);
+    const paddr_t pte1_addr = root + (paddr_t)(vpn1 * RISCV32_SV32_PTE_BYTES);
+    const uint32_t pte1 = (uint32_t)paddr_read(pte1_addr, RISCV32_SV32_PTE_BYTES);
 
     if ((pte1 & RV32_JIT_PTE_V) == 0)
     {
@@ -205,12 +193,9 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
         return false;
     }
 
-    const paddr_t l0_pt =
-        ((paddr_t)(pte1 >> RISCV_PTE_PPN_SHIFT)) << PAGE_SHIFT;
-    const paddr_t pte0_addr =
-        l0_pt + (paddr_t)(vpn0 * RISCV32_SV32_PTE_BYTES);
-    const uint32_t pte0 =
-        (uint32_t)paddr_read(pte0_addr, RISCV32_SV32_PTE_BYTES);
+    const paddr_t l0_pt = ((paddr_t)(pte1 >> RISCV_PTE_PPN_SHIFT)) << PAGE_SHIFT;
+    const paddr_t pte0_addr = l0_pt + (paddr_t)(vpn0 * RISCV32_SV32_PTE_BYTES);
+    const uint32_t pte0 = (uint32_t)paddr_read(pte0_addr, RISCV32_SV32_PTE_BYTES);
 
     if ((pte0 & RV32_JIT_PTE_V) == 0)
     {
@@ -224,8 +209,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
         return false;
     }
 
-    const paddr_t pg_paddr =
-        ((paddr_t)(pte0 >> RISCV_PTE_PPN_SHIFT)) << PAGE_SHIFT;
+    const paddr_t pg_paddr = ((paddr_t)(pte0 >> RISCV_PTE_PPN_SHIFT)) << PAGE_SHIFT;
 
     if (!jit_pmem_range(pg_paddr | (paddr_t)(addr & PAGE_MASK), len))
     {
@@ -234,8 +218,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
 
     if (entry->valid)
     {
-        const paddr_t old_root =
-            ((paddr_t)(entry->satp & RV32_JIT_SATP_PPN_MASK)) << PAGE_SHIFT;
+        const paddr_t old_root = ((paddr_t)(entry->satp & RV32_JIT_SATP_PPN_MASK)) << PAGE_SHIFT;
         jit_tlb_unref_page(old_root);
         jit_tlb_unref_page(entry->pt_page);
     }
@@ -418,8 +401,7 @@ static bool jit_pmem_source_chunk_index(paddr_t addr, size_t *idx)
         return false;
     }
 
-    *idx = ((size_t)(addr - (paddr_t)CONFIG_MBASE)) >>
-           RV32_JIT_SOURCE_CHUNK_SHIFT;
+    *idx = ((size_t)(addr - (paddr_t)CONFIG_MBASE)) >> RV32_JIT_SOURCE_CHUNK_SHIFT;
     return *idx < RV32_JIT_PMEM_CHUNK_COUNT;
 }
 
@@ -441,16 +423,14 @@ void rv32_jit_source_chunks_ref(paddr_t addr, uint32_t len)
     size_t last = 0;
     const paddr_t end = addr + (paddr_t)len - 1u;
 
-    if (end < addr || !jit_pmem_source_chunk_index(addr, &first) ||
-        !jit_pmem_source_chunk_index(end, &last))
+    if (end < addr || !jit_pmem_source_chunk_index(addr, &first) || !jit_pmem_source_chunk_index(end, &last))
     {
         return;
     }
 
     for (size_t i = first; i <= last; i++)
     {
-        Assert(rv32_jit_source_chunk_refs[i] != UINT16_MAX,
-               "jit: too many source blocks in PMEM source chunk %zu", i);
+        Assert(rv32_jit_source_chunk_refs[i] != UINT16_MAX, "jit: too many source blocks in PMEM source chunk %zu", i);
         rv32_jit_source_chunk_refs[i]++;
     }
 }
@@ -467,16 +447,14 @@ void rv32_jit_source_chunks_unref(paddr_t addr, uint32_t len)
     size_t last = 0;
     const paddr_t end = addr + (paddr_t)len - 1u;
 
-    if (end < addr || !jit_pmem_source_chunk_index(addr, &first) ||
-        !jit_pmem_source_chunk_index(end, &last))
+    if (end < addr || !jit_pmem_source_chunk_index(addr, &first) || !jit_pmem_source_chunk_index(end, &last))
     {
         return;
     }
 
     for (size_t i = first; i <= last; i++)
     {
-        Assert(rv32_jit_source_chunk_refs[i] > 0,
-               "jit: source chunk refcount underflow on PMEM source chunk %zu", i);
+        Assert(rv32_jit_source_chunk_refs[i] > 0, "jit: source chunk refcount underflow on PMEM source chunk %zu", i);
         rv32_jit_source_chunk_refs[i]--;
     }
 }
@@ -528,8 +506,7 @@ bool rv32_jit_write_may_touch_source_chunk(paddr_t addr, int len)
     size_t first = 0;
     size_t last = 0;
 
-    if (!jit_pmem_source_chunk_index(start, &first) ||
-        !jit_pmem_source_chunk_index(end, &last))
+    if (!jit_pmem_source_chunk_index(start, &first) || !jit_pmem_source_chunk_index(end, &last))
     {
         return true;
     }

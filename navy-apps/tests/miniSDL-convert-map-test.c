@@ -22,9 +22,7 @@ void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
 
 int main(void)
 {
-    SDL_Surface *src = SDL_CreateRGBSurface(0, 1, 1, 32,
-                                            DEFAULT_RMASK, DEFAULT_GMASK,
-                                            DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *src = SDL_CreateRGBSurface(0, 1, 1, 32, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
     assert(src != NULL);
 
     const uint32_t mapped = SDL_MapRGBA(src->format, 0x11, 0x22, 0x33, 0xff);

@@ -59,8 +59,7 @@ void ftrace_call(vaddr_t pc, vaddr_t target);
 void ftrace_ret(vaddr_t pc);
 
 #ifdef CONFIG_ISA_mips32
-void etrace_exception(word_t no, vaddr_t epc, vaddr_t vector,
-                      word_t cause, word_t status);
+void etrace_exception(word_t no, vaddr_t epc, vaddr_t vector, word_t cause, word_t status);
 void etrace_eret(vaddr_t epc, word_t status);
 #endif
 
@@ -86,13 +85,17 @@ void etrace_eret(vaddr_t epc, word_t status);
 
 #define ANSI_FMT(str, fmt) fmt str ANSI_NONE
 
-#define log_write(...) IFDEF(CONFIG_TARGET_NATIVE_ELF, do { \
-    extern FILE* log_fp; \
-    extern bool log_enable(); \
-    if (log_enable() && log_fp != NULL) { \
-      fprintf(log_fp, __VA_ARGS__); \
-      fflush(log_fp); \
-    } } while (0))
+#define log_write(...) \
+    IFDEF( \
+        CONFIG_TARGET_NATIVE_ELF, do { \
+            extern FILE *log_fp; \
+            extern bool log_enable(); \
+            if (log_enable() && log_fp != NULL) \
+            { \
+                fprintf(log_fp, __VA_ARGS__); \
+                fflush(log_fp); \
+            } \
+        } while (0))
 
 #define _Log(...) \
     do \

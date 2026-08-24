@@ -12,8 +12,7 @@ volatile uint64_t indirect_link_restore_mtvec = 0;
  * Preserve the faulting t0 in mscratch so the test can prove that a misaligned
  * JALR traps before writing its aliased destination register.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".option push\n"
     ".option norvc\n"
     ".align 2\n"
@@ -80,69 +79,64 @@ static uint64_t run_three_phase_indirect_pic_loop(void)
     uint64_t third_laps = 2;
     uint64_t bad_link = 0;
 
-    asm volatile(
-        ".option push\n"
-        ".option norvc\n"
-        "1:\n"
-        "  la t0, 4f\n"
-        "  bnez %[warm], 12f\n"
-        "  beqz %[laps], 8f\n"
-        "  andi t1, %[laps], 1\n"
-        "  beqz t1, 12f\n"
-        "  la t0, 5f\n"
-        "12:\n"
-        "  jal zero, 2f\n"
-        "2:\n"
-        "  ori t0, t0, 1\n"
-        "  jalr t0, 0(t0)\n"
-        "3:\n"
-        "  addi %[sum], %[sum], 7\n"
-        "  beqz %[warm], 9f\n"
-        "  addi %[warm], %[warm], -1\n"
-        "  j 1b\n"
-        "9:\n"
-        "  beqz %[laps], 10f\n"
-        "  addi %[laps], %[laps], -1\n"
-        "  bnez %[laps], 1b\n"
-        "  j 1b\n"
-        "10:\n"
-        "  addi %[third], %[third], -1\n"
-        "  bnez %[third], 1b\n"
-        "  j 7f\n"
-        ".balign 4\n"
-        "4:\n"
-        "  la t1, 3b\n"
-        "  bne t0, t1, 6f\n"
-        "  addi %[sum], %[sum], 3\n"
-        "  jalr t1, 0(t0)\n"
-        ".balign 4\n"
-        "5:\n"
-        "  la t1, 3b\n"
-        "  bne t0, t1, 6f\n"
-        "  addi %[sum], %[sum], 5\n"
-        "  jalr t1, 0(t0)\n"
-        ".balign 4\n"
-        "8:\n"
-        "  la t0, 11f\n"
-        "  j 2b\n"
-        ".balign 4\n"
-        "11:\n"
-        "  la t1, 3b\n"
-        "  bne t0, t1, 6f\n"
-        "  addi %[sum], %[sum], 11\n"
-        "  jalr t1, 0(t0)\n"
-        "6:\n"
-        "  li %[bad_link], 1\n"
-        "  j 3b\n"
-        "7:\n"
-        ".option pop\n"
-        : [sum] "+&r"(sum),
-          [warm] "+&r"(warm_laps),
-          [laps] "+&r"(laps),
-          [third] "+&r"(third_laps),
-          [bad_link] "+&r"(bad_link)
-        :
-        : "t0", "t1", "memory");
+    asm volatile(".option push\n"
+                 ".option norvc\n"
+                 "1:\n"
+                 "  la t0, 4f\n"
+                 "  bnez %[warm], 12f\n"
+                 "  beqz %[laps], 8f\n"
+                 "  andi t1, %[laps], 1\n"
+                 "  beqz t1, 12f\n"
+                 "  la t0, 5f\n"
+                 "12:\n"
+                 "  jal zero, 2f\n"
+                 "2:\n"
+                 "  ori t0, t0, 1\n"
+                 "  jalr t0, 0(t0)\n"
+                 "3:\n"
+                 "  addi %[sum], %[sum], 7\n"
+                 "  beqz %[warm], 9f\n"
+                 "  addi %[warm], %[warm], -1\n"
+                 "  j 1b\n"
+                 "9:\n"
+                 "  beqz %[laps], 10f\n"
+                 "  addi %[laps], %[laps], -1\n"
+                 "  bnez %[laps], 1b\n"
+                 "  j 1b\n"
+                 "10:\n"
+                 "  addi %[third], %[third], -1\n"
+                 "  bnez %[third], 1b\n"
+                 "  j 7f\n"
+                 ".balign 4\n"
+                 "4:\n"
+                 "  la t1, 3b\n"
+                 "  bne t0, t1, 6f\n"
+                 "  addi %[sum], %[sum], 3\n"
+                 "  jalr t1, 0(t0)\n"
+                 ".balign 4\n"
+                 "5:\n"
+                 "  la t1, 3b\n"
+                 "  bne t0, t1, 6f\n"
+                 "  addi %[sum], %[sum], 5\n"
+                 "  jalr t1, 0(t0)\n"
+                 ".balign 4\n"
+                 "8:\n"
+                 "  la t0, 11f\n"
+                 "  j 2b\n"
+                 ".balign 4\n"
+                 "11:\n"
+                 "  la t1, 3b\n"
+                 "  bne t0, t1, 6f\n"
+                 "  addi %[sum], %[sum], 11\n"
+                 "  jalr t1, 0(t0)\n"
+                 "6:\n"
+                 "  li %[bad_link], 1\n"
+                 "  j 3b\n"
+                 "7:\n"
+                 ".option pop\n"
+                 : [sum] "+&r"(sum), [warm] "+&r"(warm_laps), [laps] "+&r"(laps), [third] "+&r"(third_laps), [bad_link] "+&r"(bad_link)
+                 :
+                 : "t0", "t1", "memory");
 
     check(bad_link == 0);
     return sum;
@@ -175,25 +169,22 @@ static void test_misaligned_indirect_link(void)
     write_mscratch(0);
     write_mtvec((uintptr_t)indirect_link_trap_handler);
 
-    asm volatile(
-        ".option push\n"
-        ".option norvc\n"
-        "  la t0, 1f\n"
-        "  addi t0, t0, 2\n"
-        "  mv %[expected], t0\n"
-        "  jalr t0, 0(t0)\n"
-        "  mv %[actual], t0\n"
-        "  j 2f\n"
-        ".balign 4\n"
-        "1:\n"
-        "  li %[reached], 1\n"
-        "2:\n"
-        ".option pop\n"
-        : [expected] "=&r"(expected_target),
-          [actual] "=&r"(actual_t0),
-          [reached] "+&r"(reached_target)
-        :
-        : "t0", "t1", "memory");
+    asm volatile(".option push\n"
+                 ".option norvc\n"
+                 "  la t0, 1f\n"
+                 "  addi t0, t0, 2\n"
+                 "  mv %[expected], t0\n"
+                 "  jalr t0, 0(t0)\n"
+                 "  mv %[actual], t0\n"
+                 "  j 2f\n"
+                 ".balign 4\n"
+                 "1:\n"
+                 "  li %[reached], 1\n"
+                 "2:\n"
+                 ".option pop\n"
+                 : [expected] "=&r"(expected_target), [actual] "=&r"(actual_t0), [reached] "+&r"(reached_target)
+                 :
+                 : "t0", "t1", "memory");
 
     write_mtvec(old_mtvec);
     write_mscratch(old_mscratch);
@@ -223,25 +214,22 @@ static void test_misaligned_guarded_jump(void)
     write_mscratch(0);
     write_mtvec((uintptr_t)indirect_link_trap_handler);
 
-    asm volatile(
-        ".option push\n"
-        ".option norvc\n"
-        "  la t2, 1f\n"
-        "  addi t2, t2, 2\n"
-        "  mv %[expected], t2\n"
-        "  jalr zero, 0(t2)\n"
-        "  mv %[actual], t2\n"
-        "  j 2f\n"
-        ".balign 4\n"
-        "1:\n"
-        "  li %[reached], 1\n"
-        "2:\n"
-        ".option pop\n"
-        : [expected] "=&r"(expected_target),
-          [actual] "=&r"(actual_t2),
-          [reached] "+&r"(reached_target)
-        :
-        : "t0", "t1", "t2", "memory");
+    asm volatile(".option push\n"
+                 ".option norvc\n"
+                 "  la t2, 1f\n"
+                 "  addi t2, t2, 2\n"
+                 "  mv %[expected], t2\n"
+                 "  jalr zero, 0(t2)\n"
+                 "  mv %[actual], t2\n"
+                 "  j 2f\n"
+                 ".balign 4\n"
+                 "1:\n"
+                 "  li %[reached], 1\n"
+                 "2:\n"
+                 ".option pop\n"
+                 : [expected] "=&r"(expected_target), [actual] "=&r"(actual_t2), [reached] "+&r"(reached_target)
+                 :
+                 : "t0", "t1", "t2", "memory");
 
     write_mtvec(old_mtvec);
     write_mscratch(old_mscratch);

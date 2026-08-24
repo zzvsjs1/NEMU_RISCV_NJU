@@ -36,8 +36,7 @@ struct gdb_conn
     bool ack;
 };
 
-static uint8_t
-hex_nibble(uint8_t hex)
+static uint8_t hex_nibble(uint8_t hex)
 {
     return isdigit(hex) ? hex - '0' : tolower(hex) - 'a' + 10;
 }

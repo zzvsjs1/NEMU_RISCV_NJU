@@ -34,8 +34,7 @@ static uint32_t rv32_d_store_patch_code[4] __attribute__((aligned(16))) = {
  * Keep an unexpected architectural trap bounded so the probe reaches a clear
  * trap-count failure without using floating-point state in the handler.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -136,10 +135,8 @@ asm(".section .text\n"
 
     ".option pop\n");
 
-extern void rv32_d_jit_at_block_entry(const uint64_t *, uint64_t *,
-                                      uint32_t *);
-extern void rv32_d_jit_after_integer_prefix(const uint64_t *, uint64_t *,
-                                            uint32_t *);
+extern void rv32_d_jit_at_block_entry(const uint64_t *, uint64_t *, uint32_t *);
+extern void rv32_d_jit_after_integer_prefix(const uint64_t *, uint64_t *, uint32_t *);
 extern void rv32_d_jit_all_major_opcodes(const uint64_t *, uint64_t *);
 extern uint32_t rv32_d_jit_gpr_cache_roundtrip(const uint64_t *, uint64_t *, uint32_t);
 
@@ -224,20 +221,16 @@ static void test_fp_store_source_invalidation_boundary(void)
 
 static void test_d_jit_fallback_boundaries(void)
 {
-    uint64_t input __attribute__((aligned(8))) =
-        UINT64_C(0x3ff8000000000000); /* +1.5 */
-    uint64_t entry_result __attribute__((aligned(8))) =
-        UINT64_C(0xfeedfacecafebeef);
-    uint64_t prefix_result __attribute__((aligned(8))) =
-        UINT64_C(0xfeedfacecafebeef);
+    uint64_t input __attribute__((aligned(8))) = UINT64_C(0x3ff8000000000000); /* +1.5 */
+    uint64_t entry_result __attribute__((aligned(8))) = UINT64_C(0xfeedfacecafebeef);
+    uint64_t prefix_result __attribute__((aligned(8))) = UINT64_C(0xfeedfacecafebeef);
     uint64_t cold_roundtrip_result __attribute__((aligned(8))) = UINT64_C(0xfeedfacecafebeef);
     uint64_t warm_roundtrip_result __attribute__((aligned(8))) = UINT64_C(0xfeedfacecafebeef);
     uint32_t entry_counter = 0;
     uint32_t prefix_counter = 0;
 
     rv32_d_jit_at_block_entry(&input, &entry_result, &entry_counter);
-    rv32_d_jit_after_integer_prefix(&input, &prefix_result,
-                                    &prefix_counter);
+    rv32_d_jit_after_integer_prefix(&input, &prefix_result, &prefix_counter);
 
     /* 1.5 + 1.5 = 3.0 exactly in binary64. */
     check(entry_result == UINT64_C(0x4008000000000000));

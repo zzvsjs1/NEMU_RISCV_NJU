@@ -14,8 +14,7 @@ volatile uint64_t rv64_jit_rollback_mtval = UINT64_MAX;
  * values must survive the illegal-instruction trap so its resumed suffix can
  * distinguish a complete emitter rollback from leaked partial native state.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -53,8 +52,7 @@ extern const uint8_t rv64_jit_rollback_illegal_insn[];
  * and metadata, follow NEMU's characterised illegal-instruction fallback, then
  * resume at the suffix with a2 unchanged.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -77,8 +75,7 @@ asm(
     ".size rv64_jit_rollback_probe, .-rv64_jit_rollback_probe\n"
     ".option pop\n");
 
-extern uint64_t rv64_jit_rollback_probe(uint64_t first, uint64_t second,
-                                        uint64_t third);
+extern uint64_t rv64_jit_rollback_probe(uint64_t first, uint64_t second, uint64_t third);
 
 static uintptr_t read_mtvec(void)
 {
@@ -115,15 +112,13 @@ static void test_partial_emitter_rollback(void)
      * reporting rules.
      */
     check(rv64_jit_rollback_mcause == 2);
-    check(rv64_jit_rollback_mepc ==
-          (uintptr_t)rv64_jit_rollback_illegal_insn);
+    check(rv64_jit_rollback_mepc == (uintptr_t)rv64_jit_rollback_illegal_insn);
     /*
      * The privileged specification permits an illegal-instruction trap to
      * report either zero or the faulting instruction bits in mtval.  Accept
      * precisely those two architectural outcomes, not an unrelated value.
      */
-    check(rv64_jit_rollback_mtval == 0 ||
-          rv64_jit_rollback_mtval == UINT64_C(0x04b50633));
+    check(rv64_jit_rollback_mtval == 0 || rv64_jit_rollback_mtval == UINT64_C(0x04b50633));
     check(checksum == UINT64_C(123));
 }
 

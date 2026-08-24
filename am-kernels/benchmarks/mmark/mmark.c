@@ -73,15 +73,12 @@ static uint64_t rotate_left_64(uint64_t value, unsigned amount)
 
 static uint64_t run_mul_kernel(uint64_t rounds)
 {
-    return rv64_mmark_mul_kernel(
-        UINT64_C(0x123456789abcdef1),
-        UINT64_C(0xfedcba9876543211), rounds);
+    return rv64_mmark_mul_kernel(UINT64_C(0x123456789abcdef1), UINT64_C(0xfedcba9876543211), rounds);
 }
 
 static uint64_t run_div_kernel(uint64_t rounds)
 {
-    return rv64_mmark_div_kernel(
-        UINT64_C(0x7123456789abcdef), 97, rounds);
+    return rv64_mmark_div_kernel(UINT64_C(0x7123456789abcdef), 97, rounds);
 }
 
 int main(void)
@@ -104,8 +101,7 @@ int main(void)
     const uint64_t div_result = run_div_kernel(MMARK_DIV_ROUNDS);
     const uint64_t div_end = uptime_us();
 
-    const uint64_t checksum =
-        mul_result ^ rotate_left_64(div_result, 17);
+    const uint64_t checksum = mul_result ^ rotate_left_64(div_result, 17);
     const uint32_t checksum_hi = (uint32_t)(checksum >> 32);
     const uint32_t checksum_lo = (uint32_t)checksum;
 
@@ -113,14 +109,11 @@ int main(void)
      * The expected halves are filled from an interpreter-calibrated run, then
      * fixed permanently so later JIT changes cannot silently alter semantics.
      */
-    const bool pass =
-        checksum_hi == UINT32_C(0xfc0dd612) &&
-        checksum_lo == UINT32_C(0xcc32b3f0);
+    const bool pass = checksum_hi == UINT32_C(0xfc0dd612) && checksum_lo == UINT32_C(0xcc32b3f0);
 
     printf("mmark_mul_us: %d\n", (int)(mul_end - mul_start));
     printf("mmark_div_us: %d\n", (int)(div_end - div_start));
-    printf("mmark_total_us: %d\n",
-           (int)((mul_end - mul_start) + (div_end - div_start)));
+    printf("mmark_total_us: %d\n", (int)((mul_end - mul_start) + (div_end - div_start)));
     printf("mmark_checksum_hi: 0x%x\n", checksum_hi);
     printf("mmark_checksum_lo: 0x%x\n", checksum_lo);
     printf("MMark %s\n", pass ? "PASS" : "FAIL");

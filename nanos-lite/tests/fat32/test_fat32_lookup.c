@@ -137,8 +137,7 @@ static int ascii_equal_ignore_case(const char *a, const char *b)
     return *a == '\0' && *b == '\0';
 }
 
-static int find_entry_by_short_name(const Fat32Volume *vol, uint32_t dir_cluster,
-                                    const uint8_t short_name[11], uint64_t *entry_offset,
+static int find_entry_by_short_name(const Fat32Volume *vol, uint32_t dir_cluster, const uint8_t short_name[11], uint64_t *entry_offset,
                                     uint8_t entry_out[FAT32_DIR_ENTRY_SIZE])
 {
     uint8_t sector[FAT32_SECTOR_SIZE];
@@ -183,8 +182,7 @@ static int find_entry_by_short_name(const Fat32Volume *vol, uint32_t dir_cluster
     return -1;
 }
 
-static int find_lfn_entry(const Fat32Volume *vol, uint32_t dir_cluster, const char *name,
-                          uint64_t *lfn_start, unsigned *lfn_count,
+static int find_lfn_entry(const Fat32Volume *vol, uint32_t dir_cluster, const char *name, uint64_t *lfn_start, unsigned *lfn_count,
                           uint64_t *short_offset, uint8_t short_entry[FAT32_DIR_ENTRY_SIZE])
 {
     uint8_t sector[FAT32_SECTOR_SIZE];
@@ -347,12 +345,13 @@ static void test_lookup_paths(void)
 
     assert(fat32_lookup_path(&vol, "/share/long-name.txt/nope", &entry) == -1);
     assert(fat32_lookup_path(&vol, "/share/missing.txt", &entry) == -1);
-    assert(fat32_lookup_path(&vol, "/share/"
-                                   "this-component-name-is-longer-than-the-fat-lfn-maximum-"
-                                   "this-component-name-is-longer-than-the-fat-lfn-maximum-"
-                                   "this-component-name-is-longer-than-the-fat-lfn-maximum-"
-                                   "this-component-name-is-longer-than-the-fat-lfn-maximum-"
-                                   "this-component-name-is-longer-than-the-fat-lfn-maximum.txt",
+    assert(fat32_lookup_path(&vol,
+                             "/share/"
+                             "this-component-name-is-longer-than-the-fat-lfn-maximum-"
+                             "this-component-name-is-longer-than-the-fat-lfn-maximum-"
+                             "this-component-name-is-longer-than-the-fat-lfn-maximum-"
+                             "this-component-name-is-longer-than-the-fat-lfn-maximum-"
+                             "this-component-name-is-longer-than-the-fat-lfn-maximum.txt",
                              &entry) == -1);
 
     fat32_test_disk_close();
@@ -384,8 +383,7 @@ static void test_malformed_lfn_checksum_falls_back_to_short_alias(void)
 
     build_lookup_image();
     share_cluster = mount_and_find_share(&vol);
-    assert(find_lfn_entry(&vol, share_cluster, "long-name.txt", &lfn_start, &lfn_count,
-                          &short_offset, short_entry) == 0);
+    assert(find_lfn_entry(&vol, share_cluster, "long-name.txt", &lfn_start, &lfn_count, &short_offset, short_entry) == 0);
     assert(lfn_count > 0);
 
     image_read(lfn_start + 13u, &bad_checksum, sizeof(bad_checksum));
@@ -416,8 +414,7 @@ static void test_out_of_order_lfn_falls_back_to_short_alias(void)
 
     build_lookup_image();
     share_cluster = mount_and_find_share(&vol);
-    assert(find_lfn_entry(&vol, share_cluster, "three-part-long-file-name.txt", &lfn_start,
-                          &lfn_count, &short_offset, short_entry) == 0);
+    assert(find_lfn_entry(&vol, share_cluster, "three-part-long-file-name.txt", &lfn_start, &lfn_count, &short_offset, short_entry) == 0);
     assert(lfn_count == 3);
 
     image_read(lfn_start + FAT32_DIR_ENTRY_SIZE, second, sizeof(second));
@@ -446,8 +443,7 @@ static void test_deleted_and_volume_label_entries_do_not_hide_valid_files(void)
 
     build_lookup_image();
     share_cluster = mount_and_find_share(&vol);
-    assert(find_entry_by_short_name(&vol, share_cluster, (const uint8_t *)"SIMPLE  TXT",
-                                    &simple_offset, simple_entry) == 0);
+    assert(find_entry_by_short_name(&vol, share_cluster, (const uint8_t *)"SIMPLE  TXT", &simple_offset, simple_entry) == 0);
 
     memset(deleted_entry, 0, sizeof(deleted_entry));
     memset(label_entry, 0, sizeof(label_entry));

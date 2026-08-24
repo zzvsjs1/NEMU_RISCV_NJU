@@ -120,8 +120,7 @@ static void install_page_tables(void)
     root_pt[IDENTITY_BASE >> 22] = pte_for_page(identity_l0, table_flags);
     root_pt[ALIAS_BASE >> 22] = pte_for_page(alias_l0, table_flags);
     alias_l0[alias_vpn0] = pte_for_page(code_pair_a, leaf_flags);
-    alias_l0[alias_vpn0 + 1u] =
-        pte_for_page(&code_pair_a[WORDS_PER_PAGE], leaf_flags);
+    alias_l0[alias_vpn0 + 1u] = pte_for_page(&code_pair_a[WORDS_PER_PAGE], leaf_flags);
 }
 
 static void enable_sv32(void)
@@ -141,24 +140,21 @@ static void enter_supervisor_mode(void)
      * instruction fetch. This keeps the cross-page JIT test valid after M-mode
      * fetches correctly ignore satp.
      */
-    asm volatile(
-        "csrr %[mstatus], mstatus\n"
-        "li t0, %[mpp_mask]\n"
-        "not t0, t0\n"
-        "and %[mstatus], %[mstatus], t0\n"
-        "li t0, %[mpp_s]\n"
-        "or %[mstatus], %[mstatus], t0\n"
-        "ori %[mstatus], %[mstatus], %[mpie]\n"
-        "csrw mstatus, %[mstatus]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        : [mstatus] "=&r"(mstatus)
-        : [mpp_mask] "i"(MSTATUS_MPP_MASK),
-          [mpp_s] "i"(MSTATUS_MPP_S),
-          [mpie] "i"(MSTATUS_MPIE)
-        : "t0", "memory");
+    asm volatile("csrr %[mstatus], mstatus\n"
+                 "li t0, %[mpp_mask]\n"
+                 "not t0, t0\n"
+                 "and %[mstatus], %[mstatus], t0\n"
+                 "li t0, %[mpp_s]\n"
+                 "or %[mstatus], %[mstatus], t0\n"
+                 "ori %[mstatus], %[mstatus], %[mpie]\n"
+                 "csrw mstatus, %[mstatus]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 : [mstatus] "=&r"(mstatus)
+                 : [mpp_mask] "i"(MSTATUS_MPP_MASK), [mpp_s] "i"(MSTATUS_MPP_S), [mpie] "i"(MSTATUS_MPIE)
+                 : "t0", "memory");
 }
 
 static void prepare_generated_code(void)
@@ -198,8 +194,7 @@ int main()
     const int first = fn();
     check(first == 8);
 
-    alias_l0[((ALIAS_BASE >> 12) & 0x3ffu) + 1u] =
-        pte_for_page(code_second_b, PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
+    alias_l0[((ALIAS_BASE >> 12) & 0x3ffu) + 1u] = pte_for_page(code_second_b, PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
     local_sfence_vma();
 
     const int second = fn();

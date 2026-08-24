@@ -73,10 +73,7 @@ typedef uint64_t Uint64;
 #define SDL_PrintErr(fmt, ...) \
     do \
     { \
-        fprintf(stderr, \
-                "SDL_ERROR %s %s:%d: " fmt "\n", \
-                __func__, __FILE__, __LINE__, \
-                ##__VA_ARGS__); \
+        fprintf(stderr, "SDL_ERROR %s %s:%d: " fmt "\n", __func__, __FILE__, __LINE__, ##__VA_ARGS__); \
     } while (0)
 
 /* stringification helpers */

@@ -24,20 +24,14 @@
  * and data region and one leaf table for the two-page stack region.  Supplying
  * visibly non-zero pages also keeps this test independent of BSS zeroing.
  */
-static uint8_t page_table_pages[PAGE_TABLE_PAGE_COUNT][PAGE_SIZE]
-    __attribute__((aligned(PAGE_SIZE)));
+static uint8_t page_table_pages[PAGE_TABLE_PAGE_COUNT][PAGE_SIZE] __attribute__((aligned(PAGE_SIZE)));
 static unsigned allocated_page_count;
 
-static uint32_t code_page[PAGE_WORD_COUNT]
-    __attribute__((aligned(PAGE_SIZE)));
-static uint32_t data_page[PAGE_WORD_COUNT]
-    __attribute__((aligned(PAGE_SIZE)));
-static uint32_t lower_stack_page[PAGE_WORD_COUNT]
-    __attribute__((aligned(PAGE_SIZE)));
-static uint32_t upper_stack_page[PAGE_WORD_COUNT]
-    __attribute__((aligned(PAGE_SIZE)));
-static uint8_t user_context_stack[USER_CONTEXT_STACK_SIZE]
-    __attribute__((aligned(16)));
+static uint32_t code_page[PAGE_WORD_COUNT] __attribute__((aligned(PAGE_SIZE)));
+static uint32_t data_page[PAGE_WORD_COUNT] __attribute__((aligned(PAGE_SIZE)));
+static uint32_t lower_stack_page[PAGE_WORD_COUNT] __attribute__((aligned(PAGE_SIZE)));
+static uint32_t upper_stack_page[PAGE_WORD_COUNT] __attribute__((aligned(PAGE_SIZE)));
+static uint8_t user_context_stack[USER_CONTEXT_STACK_SIZE] __attribute__((aligned(16)));
 
 static AddrSpace user_address_space;
 static Context *boot_context;
@@ -60,12 +54,9 @@ static const uint32_t user_code[] = {
     0x00000000u, /* nop */
 };
 
-_Static_assert(sizeof(user_code) <= sizeof(code_page),
-               "MIPS32 user code must fit in one mapped page");
-_Static_assert((USER_INITIAL_SP & 0x0fu) == 0u,
-               "Initial MIPS32 user SP must be 16-byte aligned");
-_Static_assert((USER_STORED_SP & 0x0fu) == 0u,
-               "The raw user prologue must preserve stack alignment");
+_Static_assert(sizeof(user_code) <= sizeof(code_page), "MIPS32 user code must fit in one mapped page");
+_Static_assert((USER_INITIAL_SP & 0x0fu) == 0u, "Initial MIPS32 user SP must be 16-byte aligned");
+_Static_assert((USER_STORED_SP & 0x0fu) == 0u, "The raw user prologue must preserve stack alignment");
 
 static void *allocate_page(int size)
 {
@@ -115,8 +106,7 @@ static Context *handle_event(Event event, Context *context)
     check(context->gpr[4] == USER_VALUE); /* Architectural a0. */
 
     check(*(volatile uint32_t *)&data_page[0] == USER_VALUE);
-    check(*(volatile uint32_t *)&upper_stack_page[USER_STACK_STORE_INDEX] ==
-          USER_VALUE);
+    check(*(volatile uint32_t *)&upper_stack_page[USER_STACK_STORE_INDEX] == USER_VALUE);
 
     user_finished = true;
     return boot_context;
@@ -137,19 +127,13 @@ int main(void)
      * although this raw program deliberately stores in the upper half.
      */
     map(&user_address_space, (void *)USER_CODE_VA, code_page, MMAP_READ);
-    map(&user_address_space, (void *)USER_DATA_VA, data_page,
-        MMAP_READ | MMAP_WRITE);
-    map(&user_address_space, (void *)USER_STACK_LOWER_VA, lower_stack_page,
-        MMAP_READ | MMAP_WRITE);
-    map(&user_address_space, (void *)USER_STACK_UPPER_VA, upper_stack_page,
-        MMAP_READ | MMAP_WRITE);
+    map(&user_address_space, (void *)USER_DATA_VA, data_page, MMAP_READ | MMAP_WRITE);
+    map(&user_address_space, (void *)USER_STACK_LOWER_VA, lower_stack_page, MMAP_READ | MMAP_WRITE);
+    map(&user_address_space, (void *)USER_STACK_UPPER_VA, upper_stack_page, MMAP_READ | MMAP_WRITE);
     check(allocated_page_count == PAGE_TABLE_PAGE_COUNT);
 
-    const Area kernel_stack =
-        RANGE(user_context_stack,
-              user_context_stack + sizeof(user_context_stack));
-    initial_user_context =
-        ucontext(&user_address_space, kernel_stack, (void *)USER_CODE_VA);
+    const Area kernel_stack = RANGE(user_context_stack, user_context_stack + sizeof(user_context_stack));
+    initial_user_context = ucontext(&user_address_space, kernel_stack, (void *)USER_CODE_VA);
     check(initial_user_context != NULL);
 
     /*
@@ -167,7 +151,6 @@ int main(void)
     check(user_finished);
     check(boot_context != NULL);
     check(*(volatile uint32_t *)&data_page[0] == USER_VALUE);
-    check(*(volatile uint32_t *)&upper_stack_page[USER_STACK_STORE_INDEX] ==
-          USER_VALUE);
+    check(*(volatile uint32_t *)&upper_stack_page[USER_STACK_STORE_INDEX] == USER_VALUE);
     return 0;
 }

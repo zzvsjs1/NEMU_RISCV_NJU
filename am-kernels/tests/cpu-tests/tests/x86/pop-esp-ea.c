@@ -16,15 +16,14 @@ int main()
      * pop has advanced ESP.  Therefore popl (%esp) reads stack_words[1], advances
      * ESP to stack_words[2], and writes the popped value to stack_words[2].
      */
-    asm volatile(
-        "movl %%esp, %%edx\n\t"
-        "movl %%eax, %%esp\n\t"
-        ".byte 0x8f, 0x04, 0x24\n\t"
-        "movl %%esp, %%ecx\n\t"
-        "movl %%edx, %%esp\n\t"
-        : "=c"(new_esp)
-        : "a"((uintptr_t)&stack_words[1])
-        : "edx", "memory", "cc");
+    asm volatile("movl %%esp, %%edx\n\t"
+                 "movl %%eax, %%esp\n\t"
+                 ".byte 0x8f, 0x04, 0x24\n\t"
+                 "movl %%esp, %%ecx\n\t"
+                 "movl %%edx, %%esp\n\t"
+                 : "=c"(new_esp)
+                 : "a"((uintptr_t)&stack_words[1])
+                 : "edx", "memory", "cc");
 
     check(new_esp == (uintptr_t)&stack_words[2]);
     check(stack_words[1] == 0x12345678u);

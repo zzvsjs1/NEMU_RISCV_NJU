@@ -12,14 +12,7 @@ static uint32_t do_mul_mem(uint32_t lhs, uint32_t *hi)
     uint32_t lo = 0;
     uint32_t out_hi = 0;
 
-    asm volatile(
-        "mull %[src]"
-        : "=a"(lo),
-          "=d"(out_hi)
-        : "a"(lhs),
-          "d"(0u),
-          [src] "m"(mul_src[0])
-        : "cc");
+    asm volatile("mull %[src]" : "=a"(lo), "=d"(out_hi) : "a"(lhs), "d"(0u), [src] "m"(mul_src[0]) : "cc");
 
     *hi = out_hi;
     return lo;
@@ -30,14 +23,7 @@ static uint32_t do_imul_mem(uint32_t lhs, uint32_t *hi)
     uint32_t lo = 0;
     uint32_t out_hi = 0;
 
-    asm volatile(
-        "imull %[src]"
-        : "=a"(lo),
-          "=d"(out_hi)
-        : "a"(lhs),
-          "d"(0u),
-          [src] "m"(mul_src[2])
-        : "cc");
+    asm volatile("imull %[src]" : "=a"(lo), "=d"(out_hi) : "a"(lhs), "d"(0u), [src] "m"(mul_src[2]) : "cc");
 
     *hi = out_hi;
     return lo;
@@ -48,33 +34,18 @@ static uint32_t do_div_mem(uint32_t hi, uint32_t lo, uint32_t *rem)
     uint32_t quo = 0;
     uint32_t out_rem = 0;
 
-    asm volatile(
-        "divl %[src]"
-        : "=a"(quo),
-          "=d"(out_rem)
-        : "a"(lo),
-          "d"(hi),
-          [src] "m"(mul_src[0])
-        : "cc");
+    asm volatile("divl %[src]" : "=a"(quo), "=d"(out_rem) : "a"(lo), "d"(hi), [src] "m"(mul_src[0]) : "cc");
 
     *rem = out_rem;
     return quo;
 }
 
-static uint32_t do_div_reg(uint32_t hi, uint32_t lo, uint32_t divisor,
-                           uint32_t *rem)
+static uint32_t do_div_reg(uint32_t hi, uint32_t lo, uint32_t divisor, uint32_t *rem)
 {
     uint32_t quo = 0;
     uint32_t out_rem = 0;
 
-    asm volatile(
-        "divl %%ecx"
-        : "=a"(quo),
-          "=d"(out_rem)
-        : "a"(lo),
-          "d"(hi),
-          "c"(divisor)
-        : "cc");
+    asm volatile("divl %%ecx" : "=a"(quo), "=d"(out_rem) : "a"(lo), "d"(hi), "c"(divisor) : "cc");
 
     *rem = out_rem;
     return quo;

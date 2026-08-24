@@ -55,11 +55,7 @@ static void load_elf64(Elf64_Ehdr *elf)
 
     for (int i = 0; i < elf->e_phnum; i++, ph++)
     {
-        load_program(
-            (uint32_t)ph->p_filesz,
-            (uint32_t)ph->p_memsz,
-            (uint32_t)ph->p_paddr,
-            (uint32_t)ph->p_offset);
+        load_program((uint32_t)ph->p_filesz, (uint32_t)ph->p_memsz, (uint32_t)ph->p_paddr, (uint32_t)ph->p_offset);
     }
 }
 
@@ -69,11 +65,7 @@ static void load_elf32(Elf32_Ehdr *elf)
 
     for (int i = 0; i < elf->e_phnum; i++, ph++)
     {
-        load_program(
-            (uint32_t)ph->p_filesz,
-            (uint32_t)ph->p_memsz,
-            (uint32_t)ph->p_paddr,
-            (uint32_t)ph->p_offset);
+        load_program((uint32_t)ph->p_filesz, (uint32_t)ph->p_memsz, (uint32_t)ph->p_paddr, (uint32_t)ph->p_offset);
     }
 }
 

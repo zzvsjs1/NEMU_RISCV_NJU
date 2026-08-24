@@ -49,8 +49,7 @@ static uint64_t load_u64_bytes(const void *source)
     return value;
 }
 
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -154,8 +153,7 @@ asm(
 
     ".option pop\n");
 
-extern uint64_t rv64_fp_memory_native_loop(const fp_memory_pair_t *,
-                                           fp_memory_pair_t *, uint64_t);
+extern uint64_t rv64_fp_memory_native_loop(const fp_memory_pair_t *, fp_memory_pair_t *, uint64_t);
 extern uint64_t rv64_fp_memory_extreme_offsets(const uint8_t *, uint8_t *);
 extern uint64_t rv64_fp_memory_load_word_state(const uint32_t *);
 extern uint64_t rv64_fp_memory_load_double_state(const uint64_t *);
@@ -202,8 +200,7 @@ static void test_native_loop_and_raw_payloads(void)
     uintptr_t status = read_mstatus();
     write_mstatus((status & ~MSTATUS_FS_MASK) | MSTATUS_FS_CLEAN);
 
-    check(rv64_fp_memory_native_loop(&source, &destination, 64) ==
-          (boxed_word ^ source.doubleword));
+    check(rv64_fp_memory_native_loop(&source, &destination, 64) == (boxed_word ^ source.doubleword));
     check(destination.word == source.word);
     check(destination.doubleword == source.doubleword);
     check(destination.padding == 0);
@@ -227,9 +224,7 @@ static void test_extreme_offsets_and_high_fprs(void)
     store_u32_bytes(&destination[0], 0);
     store_u64_bytes(&destination[4088], 0);
 
-    check(rv64_fp_memory_extreme_offsets(&source[2048],
-                                         &destination[2048]) ==
-          (boxed_word ^ doubleword));
+    check(rv64_fp_memory_extreme_offsets(&source[2048], &destination[2048]) == (boxed_word ^ doubleword));
     check(load_u32_bytes(&destination[0]) == word);
     check(load_u64_bytes(&destination[4088]) == doubleword);
     check(read_fflags() == UINT64_C(0x1f));
@@ -260,8 +255,7 @@ static void test_load_state_effects(void)
 
 static void test_store_state_effects(void)
 {
-    const uint64_t malformed_word_box =
-        UINT64_C(0x012345677f800123);
+    const uint64_t malformed_word_box = UINT64_C(0x012345677f800123);
     const uint64_t doubleword = UINT64_C(0xfff8000000000456);
     fp_memory_pair_t destination = {0};
     uintptr_t status;

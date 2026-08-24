@@ -27,10 +27,7 @@ static uint16_t ror16_cl(uint16_t value, uint8_t count)
 static uint8_t rol_keeps_zf(uint32_t value)
 {
     uint8_t zf;
-    asm volatile("xorl %%eax, %%eax; roll $7, %1; setz %0"
-                 : "=qm"(zf), "+r"(value)
-                 :
-                 : "eax", "cc");
+    asm volatile("xorl %%eax, %%eax; roll $7, %1; setz %0" : "=qm"(zf), "+r"(value) : : "eax", "cc");
     return zf;
 }
 

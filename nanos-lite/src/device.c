@@ -7,8 +7,7 @@
 
 void syscall_request_resched(void);
 
-#if defined(__ARCH_X86_NEMU) || defined(__ARCH_MIPS32_NEMU) || \
-    defined(__ARCH_RISCV32_NEMU) || defined(__ARCH_RISCV64_NEMU)
+#if defined(__ARCH_X86_NEMU) || defined(__ARCH_MIPS32_NEMU) || defined(__ARCH_RISCV32_NEMU) || defined(__ARCH_RISCV64_NEMU)
 #define NEMU_PLATFORM_CONSTANTS_ONLY
 #include <nemu.h>
 #undef NEMU_PLATFORM_CONSTANTS_ONLY
@@ -38,12 +37,9 @@ static inline void fb_mmio_outl(uintptr_t addr, uint32_t data)
 #define MULTIPROGRAM_YIELD()
 #endif
 
-#define NAME(key) \
-    [AM_KEY_##key] = #key,
+#define NAME(key) [AM_KEY_##key] = #key,
 
-static const char *keyname[256] __attribute__((used)) = {
-    [AM_KEY_NONE] = "NONE",
-    AM_KEYS(NAME)};
+static const char *keyname[256] __attribute__((used)) = {[AM_KEY_NONE] = "NONE", AM_KEYS(NAME)};
 
 /*
  * All foreground apps share one physical /dev/fb. If a smaller app such as
@@ -77,8 +73,7 @@ static bool fb_backing_ready = false;
  * stable kseg address.  One page covers a complete row at NEMU's maximum
  * supported width and avoids allocating this storage on any other ISA.
  */
-static uint32_t fb_user_bounce[PGSIZE / sizeof(uint32_t)]
-    __attribute__((aligned(PGSIZE)));
+static uint32_t fb_user_bounce[PGSIZE / sizeof(uint32_t)] __attribute__((aligned(PGSIZE)));
 #endif
 
 /*
@@ -355,20 +350,16 @@ static size_t format_mouse_event(char *event, size_t event_size, AM_INPUT_MOUSE_
     switch (mouse.type)
     {
     case AM_MOUSE_MOVE:
-        format_len = snprintf(event, event_size, "mm %d %d %d\n",
-                              mouse.x, mouse.y, mouse.buttons);
+        format_len = snprintf(event, event_size, "mm %d %d %d\n", mouse.x, mouse.y, mouse.buttons);
         break;
     case AM_MOUSE_BUTTON_DOWN:
-        format_len = snprintf(event, event_size, "md %s %d %d %d\n",
-                              mouse_button_name(mouse.button), mouse.x, mouse.y, mouse.buttons);
+        format_len = snprintf(event, event_size, "md %s %d %d %d\n", mouse_button_name(mouse.button), mouse.x, mouse.y, mouse.buttons);
         break;
     case AM_MOUSE_BUTTON_UP:
-        format_len = snprintf(event, event_size, "mu %s %d %d %d\n",
-                              mouse_button_name(mouse.button), mouse.x, mouse.y, mouse.buttons);
+        format_len = snprintf(event, event_size, "mu %s %d %d %d\n", mouse_button_name(mouse.button), mouse.x, mouse.y, mouse.buttons);
         break;
     case AM_MOUSE_WHEEL:
-        format_len = snprintf(event, event_size, "mw %d %d %d %d %d\n",
-                              mouse.wheel_x, mouse.wheel_y, mouse.x, mouse.y, mouse.buttons);
+        format_len = snprintf(event, event_size, "mw %d %d %d %d %d\n", mouse.wheel_x, mouse.wheel_y, mouse.x, mouse.y, mouse.buttons);
         break;
     default:
         return 0;
@@ -515,8 +506,7 @@ size_t dispinfo_read(void *buf, size_t offset, size_t len)
 }
 
 #if defined(__ISA_MIPS32__) && defined(NANOS_INIT_MIPS32_PA4)
-static void draw_scheduled_foreground(const void *buf, size_t pixel_offset,
-                                      size_t pixel_count)
+static void draw_scheduled_foreground(const void *buf, size_t pixel_offset, size_t pixel_count)
 {
     const size_t capacity = sizeof(fb_user_bounce) / sizeof(fb_user_bounce[0]);
     const uint32_t *source = (const uint32_t *)buf;
@@ -561,10 +551,8 @@ static void draw_scheduled_foreground(const void *buf, size_t pixel_offset,
             draw_height = 1;
         }
 
-        memcpy(fb_user_bounce, source,
-               copied_pixels * sizeof(fb_user_bounce[0]));
-        io_write(AM_GPU_FBDRAW, col, row, fb_user_bounce,
-                 draw_width, draw_height, true);
+        memcpy(fb_user_bounce, source, copied_pixels * sizeof(fb_user_bounce[0]));
+        io_write(AM_GPU_FBDRAW, col, row, fb_user_bounce, draw_width, draw_height, true);
 
         source += copied_pixels;
         destination += copied_pixels;

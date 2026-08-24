@@ -9,8 +9,7 @@ static GateDesc32 idt[NR_IRQ];
 #define GATE GATE32
 #endif
 
-#define IRQHANDLE_DECL(id, dpl, err) \
-    void __am_irq##id();
+#define IRQHANDLE_DECL(id, dpl, err) void __am_irq##id();
 
 IRQS(IRQHANDLE_DECL)
 void __am_irqall();
@@ -153,8 +152,7 @@ bool cte_init(Context *(*handler)(Event, Context *))
     {
         idt[i] = GATE(STS_TG, KSEL(SEG_KCODE), __am_irqall, DPL_KERN);
     }
-#define IDT_ENTRY(id, dpl, err) \
-    idt[id] = GATE(STS_TG, KSEL(SEG_KCODE), __am_irq##id, DPL_##dpl);
+#define IDT_ENTRY(id, dpl, err) idt[id] = GATE(STS_TG, KSEL(SEG_KCODE), __am_irq##id, DPL_##dpl);
     IRQS(IDT_ENTRY)
 
     user_handler = handler;
@@ -179,7 +177,10 @@ void iset(bool enable)
         cli();
 }
 
-void __am_panic_on_return() { panic("kernel context returns"); }
+void __am_panic_on_return()
+{
+    panic("kernel context returns");
+}
 
 Context *kcontext(Area kstack, void (*entry)(void *), void *arg)
 {

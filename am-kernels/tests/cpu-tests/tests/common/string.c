@@ -1,12 +1,11 @@
 #include "trap.h"
 
-char *s[] = {
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab",
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    ", World!\n",
-    "Hello, World!\n",
-    "#####"};
+char *s[] = {"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab",
+             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+             ", World!\n",
+             "Hello, World!\n",
+             "#####"};
 
 char str1[] = "Hello";
 char str[20];

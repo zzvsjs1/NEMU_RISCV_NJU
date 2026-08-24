@@ -88,8 +88,7 @@ static void init_vga_fps_counter()
     vga_fps_vmem_bytes = 0;
     vga_fps_blits = 0;
     vga_fps_blit_bytes = 0;
-    Log("vga: host FPS counter enabled, print interval = %" PRIu64 " us",
-        (uint64_t)VGA_FPS_INTERVAL_US);
+    Log("vga: host FPS counter enabled, print interval = %" PRIu64 " us", (uint64_t)VGA_FPS_INTERVAL_US);
 }
 
 static void vga_fps_count_vmem_write(uint32_t offset, int len, uint64_t fb_size)
@@ -162,22 +161,15 @@ static void vga_fps_count_frame(bool had_dirty, uint64_t dirty_area)
     const uint64_t screen_area = (uint64_t)screen_width() * (uint64_t)screen_height();
     const double avg_dirty_pct = vga_fps_dirty_frames == 0 || screen_area == 0
                                      ? 0.0
-                                     : (double)vga_fps_dirty_area * 100.0 /
-                                           ((double)vga_fps_dirty_frames * (double)screen_area);
+                                     : (double)vga_fps_dirty_area * 100.0 / ((double)vga_fps_dirty_frames * (double)screen_area);
     const double mb = (double)vga_fps_vmem_bytes / (1024.0 * 1024.0);
     const double blit_mb = (double)vga_fps_blit_bytes / (1024.0 * 1024.0);
-    const double writes_per_frame = vga_fps_frames == 0
-                                        ? 0.0
-                                        : (double)vga_fps_vmem_writes / (double)vga_fps_frames;
+    const double writes_per_frame = vga_fps_frames == 0 ? 0.0 : (double)vga_fps_vmem_writes / (double)vga_fps_frames;
     printf("[vga] frames=%" PRIu64 " elapsed=%.3f s fps=%.2f "
-           "dirty=%" PRIu64 " full=%" PRIu64 " empty=%" PRIu64
-           " avg_dirty=%.1f%% vmem_writes=%" PRIu64
-           " writes/frame=%.0f vmem=%.2f MiB blits=%" PRIu64
-           " blit=%.2f MiB\n",
-           vga_fps_frames, seconds, fps,
-           vga_fps_dirty_frames, vga_fps_full_frames, vga_fps_empty_frames,
-           avg_dirty_pct, vga_fps_vmem_writes, writes_per_frame, mb,
-           vga_fps_blits, blit_mb);
+           "dirty=%" PRIu64 " full=%" PRIu64 " empty=%" PRIu64 " avg_dirty=%.1f%% vmem_writes=%" PRIu64
+           " writes/frame=%.0f vmem=%.2f MiB blits=%" PRIu64 " blit=%.2f MiB\n",
+           vga_fps_frames, seconds, fps, vga_fps_dirty_frames, vga_fps_full_frames, vga_fps_empty_frames, avg_dirty_pct, vga_fps_vmem_writes,
+           writes_per_frame, mb, vga_fps_blits, blit_mb);
     fflush(stdout);
 
     vga_fps_last_us = now;
@@ -192,7 +184,9 @@ static void vga_fps_count_frame(bool had_dirty, uint64_t dirty_area)
     vga_fps_blit_bytes = 0;
 }
 #else
-static void init_vga_fps_counter() {}
+static void init_vga_fps_counter()
+{
+}
 
 static void vga_fps_count_vmem_write(uint32_t offset, int len, uint64_t fb_size)
 {
@@ -213,8 +207,7 @@ static void vga_fps_count_blit(uint64_t bytes)
 }
 #endif
 
-static bool vga_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
-                                 size_t *len)
+static bool vga_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host, size_t *len)
 {
     if (wanted == 0)
         return false;
@@ -263,8 +256,7 @@ static bool vga_guest_read_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
     return chunk > 0;
 }
 
-static bool vga_guest_write_chunk(vaddr_t addr, size_t wanted, uint8_t **host,
-                                  size_t *len, paddr_t *paddr_out)
+static bool vga_guest_write_chunk(vaddr_t addr, size_t wanted, uint8_t **host, size_t *len, paddr_t *paddr_out)
 {
     if (wanted == 0)
         return false;
@@ -321,9 +313,7 @@ static void vga_blit_from_guest(vaddr_t src, int x, int y, int w, int h)
 
     const int sw = (int)screen_width();
     const int sh = (int)screen_height();
-    Assert(x >= 0 && y >= 0 && x + w <= sw && y + h <= sh,
-           "vga: invalid blit rectangle x=%d y=%d w=%d h=%d screen=%dx%d",
-           x, y, w, h, sw, sh);
+    Assert(x >= 0 && y >= 0 && x + w <= sw && y + h <= sh, "vga: invalid blit rectangle x=%d y=%d w=%d h=%d screen=%dx%d", x, y, w, h, sw, sh);
 
     const size_t row_bytes = (size_t)w * sizeof(uint32_t);
 
@@ -346,9 +336,7 @@ static void vga_blit_from_guest(vaddr_t src, int x, int y, int w, int h)
             size_t chunk = 0;
             const vaddr_t cur = row_src + (vaddr_t)done;
             const size_t remain = row_bytes - done;
-            Assert(vga_guest_read_chunk(cur, remain, &host, &chunk),
-                   "vga: cannot translate blit source vaddr=" FMT_WORD,
-                   (word_t)cur);
+            Assert(vga_guest_read_chunk(cur, remain, &host, &chunk), "vga: cannot translate blit source vaddr=" FMT_WORD, (word_t)cur);
             memcpy(dst + done, host, chunk);
             done += chunk;
         }
@@ -378,9 +366,7 @@ static void vga_capture_to_guest(vaddr_t dst)
         paddr_t paddr = 0;
         const vaddr_t cur = dst + (vaddr_t)done;
         const size_t remain = bytes - done;
-        Assert(vga_guest_write_chunk(cur, remain, &host, &chunk, &paddr),
-               "vga: cannot translate capture destination vaddr=" FMT_WORD,
-               (word_t)cur);
+        Assert(vga_guest_write_chunk(cur, remain, &host, &chunk, &paddr), "vga: cannot translate capture destination vaddr=" FMT_WORD, (word_t)cur);
         memcpy(host, (const uint8_t *)vmem + done, chunk);
 #if defined(CONFIG_ISA_riscv32) || defined(CONFIG_ISA_riscv64)
         /*
@@ -420,8 +406,7 @@ static void vgactl_io_handler(uint32_t offset, int len, bool is_write)
         const int y = (int)(pos >> 16);
         const int w = (int)(size & 0xffffu);
         const int h = (int)(size >> 16);
-        vga_blit_from_guest((vaddr_t)vgactl_port_base[NEMU_VGACTL_BLIT_SRC],
-                            x, y, w, h);
+        vga_blit_from_guest((vaddr_t)vgactl_port_base[NEMU_VGACTL_BLIT_SRC], x, y, w, h);
         vgactl_port_base[NEMU_VGACTL_BLIT_CMD] = 0;
     }
     else if (reg == NEMU_VGACTL_CAPTURE_CMD)
@@ -507,8 +492,7 @@ static void vmem_io_handler(uint32_t offset, int len, bool is_write)
 
     if (start_row == end_row)
     {
-        mark_vmem_dirty_rect((int)(start_pixel % (uint64_t)width), start_row,
-                             (int)(end_pixel % (uint64_t)width), end_row);
+        mark_vmem_dirty_rect((int)(start_pixel % (uint64_t)width), start_row, (int)(end_pixel % (uint64_t)width), end_row);
     }
     else
     {
@@ -536,14 +520,11 @@ static void init_screen()
     sprintf(title, "%s-NEMU", str(__GUEST_ISA__));
     SDL_Init(SDL_INIT_VIDEO);
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-    SDL_CreateWindowAndRenderer(
-        SCREEN_W * (MUXDEF(CONFIG_VGA_SIZE_400x300, 2, 1)),
-        SCREEN_H * (MUXDEF(CONFIG_VGA_SIZE_400x300, 2, 1)),
-        SDL_WINDOW_RESIZABLE, &window, &renderer);
+    SDL_CreateWindowAndRenderer(SCREEN_W * (MUXDEF(CONFIG_VGA_SIZE_400x300, 2, 1)), SCREEN_H * (MUXDEF(CONFIG_VGA_SIZE_400x300, 2, 1)),
+                                SDL_WINDOW_RESIZABLE, &window, &renderer);
     SDL_SetWindowTitle(window, title);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
-                                SDL_TEXTUREACCESS_STATIC, SCREEN_W, SCREEN_H);
+    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, SCREEN_W, SCREEN_H);
     SDL_UpdateTexture(texture, NULL, vmem, SCREEN_W * sizeof(uint32_t));
     SDL_RenderPresent(renderer);
 }
@@ -653,7 +634,9 @@ static inline void update_screen()
     SDL_RenderPresent(renderer);
 }
 #else
-static void init_screen() {}
+static void init_screen()
+{
+}
 
 void vga_translate_mouse_position(int *x, int *y)
 {
@@ -690,7 +673,9 @@ void vga_translate_mouse_position(int *x, int *y)
         *y = 0;
 }
 
-static inline void update_screen() {}
+static inline void update_screen()
+{
+}
 #endif
 
 void vga_update_screen()
@@ -698,9 +683,7 @@ void vga_update_screen()
     if (vgactl_port_base[NEMU_VGACTL_SYNC] != 0)
     {
         const bool had_dirty = vmem_dirty;
-        const uint64_t dirty_area = had_dirty
-                                        ? (uint64_t)(dirty_x1 - dirty_x0 + 1) * (uint64_t)(dirty_y1 - dirty_y0 + 1)
-                                        : 0;
+        const uint64_t dirty_area = had_dirty ? (uint64_t)(dirty_x1 - dirty_x0 + 1) * (uint64_t)(dirty_y1 - dirty_y0 + 1) : 0;
         update_screen();
         vga_fps_count_frame(had_dirty, dirty_area);
         vgactl_port_base[NEMU_VGACTL_SYNC] = 0;
@@ -718,27 +701,21 @@ void init_vga()
     memset(vgactl_port_base, 0, VGACTL_NR_REGS * sizeof(uint32_t));
     vgactl_port_base[NEMU_VGACTL_INFO] = (screen_width() << 16) | screen_height();
 #ifdef CONFIG_HAS_PORT_IO
-    add_pio_map("vgactl", CONFIG_VGA_CTL_PORT, vgactl_port_base,
-                VGACTL_NR_REGS * sizeof(uint32_t), vgactl_io_handler);
+    add_pio_map("vgactl", CONFIG_VGA_CTL_PORT, vgactl_port_base, VGACTL_NR_REGS * sizeof(uint32_t), vgactl_io_handler);
 #else
     /*
      * Every VGACTL read observes only the current register backing: the handler
      * returns immediately when is_write is false.  Opt in explicitly so the
      * RV64 JIT may bypass the callback for all architectural integer widths.
      */
-    add_mmio_map_with_direct_read(
-        "vgactl", CONFIG_VGA_CTL_MMIO, vgactl_port_base,
-        VGACTL_NR_REGS * sizeof(uint32_t), vgactl_io_handler,
-        IO_MAP_DIRECT_READ_ALL);
+    add_mmio_map_with_direct_read("vgactl", CONFIG_VGA_CTL_MMIO, vgactl_port_base, VGACTL_NR_REGS * sizeof(uint32_t), vgactl_io_handler,
+                                  IO_MAP_DIRECT_READ_ALL);
     /*
      * BLIT_SRC is a passive staging word until a separate BLIT_CMD write. An
      * exact four-byte direct store is therefore callback-equivalent, while the
      * neighbouring SYNC and command registers must remain helper-backed.
      */
-    add_mmio_direct_write_region(
-        CONFIG_VGA_CTL_MMIO +
-            NEMU_VGACTL_BLIT_SRC * (uint32_t)sizeof(uint32_t),
-        sizeof(uint32_t), IO_MAP_DIRECT_WRITE_4);
+    add_mmio_direct_write_region(CONFIG_VGA_CTL_MMIO + NEMU_VGACTL_BLIT_SRC * (uint32_t)sizeof(uint32_t), sizeof(uint32_t), IO_MAP_DIRECT_WRITE_4);
 #endif
 
     vmem = new_space(screen_size());

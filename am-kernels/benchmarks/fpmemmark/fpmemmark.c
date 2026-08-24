@@ -22,14 +22,10 @@ enum
 #define FPMEMMARK_DOUBLEWORD_BASE UINT64_C(0x7ff0000000000000)
 #define FPMEMMARK_PAYLOAD_MASK UINT64_C(0x003fffff)
 
-_Static_assert(FPMEMMARK_WARMUP_ROUNDS > 0,
-               "the warm-up must execute the loop");
-_Static_assert(FPMEMMARK_TIMED_ROUNDS > 0,
-               "the timed run must execute the loop");
-_Static_assert(FPMEMMARK_WARMUP_ROUNDS <= FPMEMMARK_PAYLOAD_MASK,
-               "the warm-up counter must fit below the NaN fields");
-_Static_assert(FPMEMMARK_TIMED_ROUNDS <= FPMEMMARK_PAYLOAD_MASK,
-               "the timed counter must fit below the NaN fields");
+_Static_assert(FPMEMMARK_WARMUP_ROUNDS > 0, "the warm-up must execute the loop");
+_Static_assert(FPMEMMARK_TIMED_ROUNDS > 0, "the timed run must execute the loop");
+_Static_assert(FPMEMMARK_WARMUP_ROUNDS <= FPMEMMARK_PAYLOAD_MASK, "the warm-up counter must fit below the NaN fields");
+_Static_assert(FPMEMMARK_TIMED_ROUNDS <= FPMEMMARK_PAYLOAD_MASK, "the timed counter must fit below the NaN fields");
 
 typedef struct
 {
@@ -90,9 +86,7 @@ asm(".section .text\n"
     ".size rv64_fpmemmark_kernel, .-rv64_fpmemmark_kernel\n"
     ".option pop\n");
 
-extern uint64_t rv64_fpmemmark_kernel(fp_memory_pair_t *,
-                                      fp_memory_pair_t *, uint64_t,
-                                      uint64_t *);
+extern uint64_t rv64_fpmemmark_kernel(fp_memory_pair_t *, fp_memory_pair_t *, uint64_t, uint64_t *);
 
 static uint64_t uptime_us(void)
 {
@@ -156,19 +150,15 @@ int main(void)
     };
     uint64_t warmup_checksum = 0;
     uint64_t checksum = 0;
-    const uint64_t expected_checksum =
-        expected_rolling_checksum(FPMEMMARK_TIMED_ROUNDS);
-    const uint64_t expected_warmup_checksum =
-        expected_rolling_checksum(FPMEMMARK_WARMUP_ROUNDS);
+    const uint64_t expected_checksum = expected_rolling_checksum(FPMEMMARK_TIMED_ROUNDS);
+    const uint64_t expected_warmup_checksum = expected_rolling_checksum(FPMEMMARK_WARMUP_ROUNDS);
     const uint32_t expected_final_word = FPMEMMARK_WORD_BASE | UINT32_C(1);
-    const uint64_t expected_final_doubleword =
-        FPMEMMARK_DOUBLEWORD_BASE | UINT64_C(1);
+    const uint64_t expected_final_doubleword = FPMEMMARK_DOUBLEWORD_BASE | UINT64_C(1);
 
     ioe_init();
 
     const uintptr_t old_mstatus = read_mstatus();
-    write_mstatus((old_mstatus & ~MSTATUS_FS_MASK) |
-                  MSTATUS_FS_INITIAL);
+    write_mstatus((old_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
     write_fflags(UINT64_C(0x1f));
 
     /*
@@ -176,31 +166,19 @@ int main(void)
      * publication, and direct-backedge installation from the steady-state
      * measurement.
      */
-    const uint64_t warmup_mismatch = rv64_fpmemmark_kernel(
-        &source, &destination, FPMEMMARK_WARMUP_ROUNDS,
-        &warmup_checksum);
+    const uint64_t warmup_mismatch = rv64_fpmemmark_kernel(&source, &destination, FPMEMMARK_WARMUP_ROUNDS, &warmup_checksum);
 
     const uint64_t start = uptime_us();
-    const uint64_t mismatch = rv64_fpmemmark_kernel(
-        &source, &destination, FPMEMMARK_TIMED_ROUNDS, &checksum);
+    const uint64_t mismatch = rv64_fpmemmark_kernel(&source, &destination, FPMEMMARK_TIMED_ROUNDS, &checksum);
     const uint64_t end = uptime_us();
     const uintptr_t final_mstatus = read_mstatus();
     const uint32_t checksum_hi = (uint32_t)(checksum >> 32);
     const uint32_t checksum_lo = (uint32_t)checksum;
-    const bool pass =
-        warmup_mismatch == 0 &&
-        warmup_checksum == expected_warmup_checksum &&
-        mismatch == 0 &&
-        checksum == expected_checksum &&
-        source.word == expected_final_word &&
-        source.padding == UINT32_C(0xa5a55a5a) &&
-        source.doubleword == expected_final_doubleword &&
-        destination.word == expected_final_word &&
-        destination.padding == UINT32_C(0x5aa5c33c) &&
-        destination.doubleword == expected_final_doubleword &&
-        read_fflags() == UINT64_C(0x1f) &&
-        (final_mstatus & MSTATUS_FS_MASK) == MSTATUS_FS_DIRTY &&
-        (final_mstatus & MSTATUS_SD) != 0;
+    const bool pass = warmup_mismatch == 0 && warmup_checksum == expected_warmup_checksum && mismatch == 0 && checksum == expected_checksum &&
+                      source.word == expected_final_word && source.padding == UINT32_C(0xa5a55a5a) &&
+                      source.doubleword == expected_final_doubleword && destination.word == expected_final_word &&
+                      destination.padding == UINT32_C(0x5aa5c33c) && destination.doubleword == expected_final_doubleword &&
+                      read_fflags() == UINT64_C(0x1f) && (final_mstatus & MSTATUS_FS_MASK) == MSTATUS_FS_DIRTY && (final_mstatus & MSTATUS_SD) != 0;
 
     printf("fpmemmark_us: %d\n", (int)(end - start));
     printf("fpmemmark_checksum_hi: 0x%x\n", checksum_hi);

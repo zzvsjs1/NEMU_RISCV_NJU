@@ -30,7 +30,10 @@ void lock()
         ;
 }
 
-void unlock() { atomic_xchg(&locked, 0); }
+void unlock()
+{
+    atomic_xchg(&locked, 0);
+}
 
 void func(void *arg)
 {
@@ -46,11 +49,8 @@ void func(void *arg)
 }
 
 Task tasks[] = {
-    {.name = "A", .entry = func},
-    {.name = "B", .entry = func},
-    {.name = "C", .entry = func},
-    {.name = "D", .entry = func},
-    {.name = "E", .entry = func},
+    {.name = "A", .entry = func}, {.name = "B", .entry = func}, {.name = "C", .entry = func},
+    {.name = "D", .entry = func}, {.name = "E", .entry = func},
 };
 
 // ------------------

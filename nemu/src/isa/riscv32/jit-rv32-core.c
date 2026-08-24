@@ -65,8 +65,7 @@ static bool jit_env_flag_enabled(const char *name)
 {
 #if RV32_JIT_ENABLED
     const char *value = getenv(name);
-    return value != NULL && value[0] != '\0' &&
-           !(value[0] == '0' && value[1] == '\0');
+    return value != NULL && value[0] != '\0' && !(value[0] == '0' && value[1] == '\0');
 #else
     (void)name;
     return false;
@@ -130,8 +129,7 @@ bool rv32_jit_code_init(void)
         return true;
     }
 
-    void *mem = mmap(NULL, RV32_JIT_CODE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
-                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    void *mem = mmap(NULL, RV32_JIT_CODE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
     if (mem == MAP_FAILED)
     {
@@ -144,8 +142,7 @@ bool rv32_jit_code_init(void)
     rv32_jit_code_used = 0;
     isa_jit_invalidation_active = true;
     jit_cache_clear();
-    Log("jit: RISC-V32 x86-64 code cache enabled, size = %u bytes",
-        RV32_JIT_CODE_SIZE);
+    Log("jit: RISC-V32 x86-64 code cache enabled, size = %u bytes", RV32_JIT_CODE_SIZE);
     return true;
 #else
     return false;
@@ -272,9 +269,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
 
     JIT_STAT_INC(exec_requests);
 
-    uint32_t batch_budget = remaining > RV32_JIT_BATCH_MAX_INSNS
-                                ? RV32_JIT_BATCH_MAX_INSNS
-                                : (uint32_t)remaining;
+    uint32_t batch_budget = remaining > RV32_JIT_BATCH_MAX_INSNS ? RV32_JIT_BATCH_MAX_INSNS : (uint32_t)remaining;
 
     if (batch_budget > device_budget)
     {
@@ -333,8 +328,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
         rv32_jit_entry_budget = remaining_budget;
         rv32_jit_loop_extra = 0;
         const uint32_t ran = block->entry();
-        Assert(ran > 0 && ran <= remaining_budget,
-               "jit: invalid executed count %u", ran);
+        Assert(ran > 0 && ran <= remaining_budget, "jit: invalid executed count %u", ran);
         JIT_STAT_INC(blocks_executed);
         JIT_STAT_ADD(executed_insns, ran);
         total += ran;
@@ -356,8 +350,7 @@ void isa_jit_dump_stats(void)
     }
 
 #if RV32_JIT_STATS
-    if (!jit_stats_enabled || !RV32_JIT_ENABLED ||
-        (rv32_jit_code == NULL && rv32_jit_stats.exec_requests == 0))
+    if (!jit_stats_enabled || !RV32_JIT_ENABLED || (rv32_jit_code == NULL && rv32_jit_stats.exec_requests == 0))
     {
         return;
     }

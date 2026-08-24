@@ -38,9 +38,8 @@ void x86_vaddr_write_kernel(vaddr_t addr, int len, word_t data);
 static void push32(word_t val)
 {
     cpu.esp -= 4;
-    Assert(cpu.esp + 3 <= cpu.seg_cache[X86_SREG_SS].limit,
-           "x86 interrupt stack push exceeds SS limit: esp=%#x limit=%#x",
-           cpu.esp, cpu.seg_cache[X86_SREG_SS].limit);
+    Assert(cpu.esp + 3 <= cpu.seg_cache[X86_SREG_SS].limit, "x86 interrupt stack push exceeds SS limit: esp=%#x limit=%#x", cpu.esp,
+           cpu.seg_cache[X86_SREG_SS].limit);
     x86_vaddr_write_kernel(cpu.seg_cache[X86_SREG_SS].base + cpu.esp, 4, val);
 }
 
@@ -50,9 +49,7 @@ static void read_gdt_desc(uint16_t selector, uint32_t *lo, uint32_t *hi)
 
     Assert((selector & ~0x3u) != 0, "x86 uses a null selector %#x in protected interrupt delivery", selector);
     Assert((selector & 0x4u) == 0, "x86 LDT selector %#x is not supported in this NEMU x86 subset", selector);
-    Assert(desc_off + 7 <= cpu.gdtr_limit,
-           "x86 selector %#x exceeds GDT limit %#x during interrupt delivery",
-           selector, cpu.gdtr_limit);
+    Assert(desc_off + 7 <= cpu.gdtr_limit, "x86 selector %#x exceeds GDT limit %#x during interrupt delivery", selector, cpu.gdtr_limit);
 
     vaddr_t desc_addr = cpu.gdtr_base + desc_off;
     *lo = x86_vaddr_read_kernel(desc_addr, 4);
@@ -89,11 +86,9 @@ static uint32_t interrupt_target_cpl(uint16_t selector, int old_cpl, uint32_t *l
     bool conforming = (type & X86_DESC_TYPE_CONFORMING) != 0;
 
     Assert(desc_present(hi), "x86 interrupt target selector %#x is non-present", selector);
-    Assert(desc_system(hi) && (type & X86_DESC_TYPE_CODE) != 0,
-           "x86 interrupt target selector %#x is not an executable code segment", selector);
-    Assert(conforming || (int)dpl <= old_cpl,
-           "x86 interrupt target selector %#x has DPL %u below current privilege rules from CPL %d",
-           selector, dpl, old_cpl);
+    Assert(desc_system(hi) && (type & X86_DESC_TYPE_CODE) != 0, "x86 interrupt target selector %#x is not an executable code segment", selector);
+    Assert(conforming || (int)dpl <= old_cpl, "x86 interrupt target selector %#x has DPL %u below current privilege rules from CPL %d", selector, dpl,
+           old_cpl);
 
     /*
      * Non-conforming interrupt targets enter the descriptor DPL.  Conforming code
@@ -117,24 +112,20 @@ static void validate_interrupt_stack(uint16_t selector, int target_cpl, uint32_t
     bool writable = (type & X86_DESC_TYPE_WRITABLE) != 0;
 
     Assert(desc_present(hi), "x86 interrupt stack selector %#x is non-present", selector);
-    Assert(desc_system(hi) && !code && writable,
-           "x86 interrupt stack selector %#x is not a writable data segment", selector);
-    Assert((int)dpl == target_cpl && (int)rpl == target_cpl,
-           "x86 interrupt stack selector %#x has DPL %u/RPL %u for target CPL %d",
-           selector, dpl, rpl, target_cpl);
+    Assert(desc_system(hi) && !code && writable, "x86 interrupt stack selector %#x is not a writable data segment", selector);
+    Assert((int)dpl == target_cpl && (int)rpl == target_cpl, "x86 interrupt stack selector %#x has DPL %u/RPL %u for target CPL %d", selector, dpl,
+           rpl, target_cpl);
 
     *lo_out = lo;
     *hi_out = hi;
 }
 
-static word_t raise_intr(word_t NO, vaddr_t ret_addr, bool software,
-                         bool has_error_code, word_t error_code)
+static word_t raise_intr(word_t NO, vaddr_t ret_addr, bool software, bool has_error_code, word_t error_code)
 {
     Assert(NO < 256, "x86 interrupt number out of range: " FMT_WORD, NO);
 
     vaddr_t gate = cpu.idtr_base + NO * 8;
-    Assert((NO * 8 + 7) <= cpu.idtr_limit,
-           "x86 interrupt " FMT_WORD " exceeds IDT limit %#x", NO, cpu.idtr_limit);
+    Assert((NO * 8 + 7) <= cpu.idtr_limit, "x86 interrupt " FMT_WORD " exceeds IDT limit %#x", NO, cpu.idtr_limit);
 
     uint32_t off_low = x86_vaddr_read_kernel(gate, 2);
     uint32_t selector = x86_vaddr_read_kernel(gate + 2, 2) & 0xffffu;
@@ -145,11 +136,9 @@ static word_t raise_intr(word_t NO, vaddr_t ret_addr, bool software,
     uint32_t target = off_low | (off_high << 16);
 
     Assert((attr & 0x8000) != 0, "x86 interrupt " FMT_WORD " uses a non-present gate", NO);
-    Assert(type == 0xe || type == 0xf,
-           "x86 interrupt " FMT_WORD " uses unsupported gate type %#x", NO, type);
-    Assert(!software || (cpu.cs & 0x3) <= gate_dpl,
-           "x86 software interrupt " FMT_WORD " from CPL %u exceeds gate DPL %u",
-           NO, cpu.cs & 0x3, gate_dpl);
+    Assert(type == 0xe || type == 0xf, "x86 interrupt " FMT_WORD " uses unsupported gate type %#x", NO, type);
+    Assert(!software || (cpu.cs & 0x3) <= gate_dpl, "x86 software interrupt " FMT_WORD " from CPL %u exceeds gate DPL %u", NO, cpu.cs & 0x3,
+           gate_dpl);
 
     word_t old_eflags = cpu.eflags | 0x2;
     word_t old_cs = cpu.cs;
@@ -170,8 +159,7 @@ static word_t raise_intr(word_t NO, vaddr_t ret_addr, bool software,
          */
         uint32_t esp_off = 4u + (uint32_t)new_cpl * 8u;
         uint32_t ss_off = esp_off + 4u;
-        Assert(cpu.tss_limit >= ss_off + 3u,
-               "x86 TSS is too small for CPL %d stack slot: limit %#x", new_cpl, cpu.tss_limit);
+        Assert(cpu.tss_limit >= ss_off + 3u, "x86 TSS is too small for CPL %d stack slot: limit %#x", new_cpl, cpu.tss_limit);
 
         word_t esp0 = x86_vaddr_read_kernel(cpu.tss_base + esp_off, 4);
         word_t ss0 = x86_vaddr_read_kernel(cpu.tss_base + ss_off, 4) & 0xffffu;
@@ -223,10 +211,7 @@ word_t isa_raise_intr_err(word_t NO, vaddr_t ret_addr, word_t errcode)
 
 void x86_raise_page_fault(void)
 {
-    Assert(x86_exception_env_valid,
-           "x86 page fault outside instruction execution: pc=" FMT_WORD
-           " cr2=%#x err=%#x",
-           cpu.pc, cpu.cr2, cpu.pf_errcode);
+    Assert(x86_exception_env_valid, "x86 page fault outside instruction execution: pc=" FMT_WORD " cr2=%#x err=%#x", cpu.pc, cpu.cr2, cpu.pf_errcode);
 
     x86_exception_target = isa_raise_intr_err(14, cpu.pc, cpu.pf_errcode);
     x86_mmu_clear_cpl_override();

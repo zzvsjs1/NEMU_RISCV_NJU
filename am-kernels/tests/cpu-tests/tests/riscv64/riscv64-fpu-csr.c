@@ -30,8 +30,7 @@ enum
  * FS-Off case: using an FPR while handling the expected illegal instruction
  * would recursively trap and hide the behaviour being tested.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -62,8 +61,7 @@ extern void rv64_fpu_csr_trap_handler(void);
  * labels let the C test prove that the expected instruction, rather than a
  * nearby setup instruction, caused the trap.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -204,8 +202,7 @@ static void test_fs_off_blocks_fp_csr_access(void)
     check(rv64_fpu_probe_fcsr_with_fs_off() == UINT64_C(0x5a));
     check(rv64_fpu_csr_trap_count == 1);
     check(rv64_fpu_csr_saved_mcause == 2);
-    check(rv64_fpu_csr_saved_mepc ==
-          (uintptr_t)rv64_fpu_fs_off_csr_insn);
+    check(rv64_fpu_csr_saved_mepc == (uintptr_t)rv64_fpu_fs_off_csr_insn);
 
     write_mstatus(old_mstatus);
     write_mtvec(old_mtvec);

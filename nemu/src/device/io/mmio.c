@@ -25,8 +25,7 @@ static IOMap *fetch_mmio_map(paddr_t addr)
     return last_map;
 }
 
-static void report_mmio_overlap(const char *name1, paddr_t l1, paddr_t r1,
-                                const char *name2, paddr_t l2, paddr_t r2)
+static void report_mmio_overlap(const char *name1, paddr_t l1, paddr_t r1, const char *name2, paddr_t l2, paddr_t r2)
 {
     panic("MMIO region %s@[" FMT_PADDR ", " FMT_PADDR "] is overlapped "
           "with %s@[" FMT_PADDR ", " FMT_PADDR "]",
@@ -38,15 +37,12 @@ static void report_mmio_overlap(const char *name1, paddr_t l1, paddr_t r1,
  * add_mmio_map() callers enter below with no direct widths and therefore retain
  * the callback-backed behaviour by default.
  */
-void add_mmio_map_with_direct_read(
-    const char *name, paddr_t addr, void *space, uint32_t len,
-    io_callback_t callback, uint8_t direct_read_widths)
+void add_mmio_map_with_direct_read(const char *name, paddr_t addr, void *space, uint32_t len, io_callback_t callback, uint8_t direct_read_widths)
 {
     assert(nr_map < NR_MAP);
     assert(len > 0);
     assert((direct_read_widths & ~IO_MAP_DIRECT_READ_ALL) == 0u);
-    assert(direct_read_widths == IO_MAP_DIRECT_READ_NONE ||
-           !direct_routes_frozen);
+    assert(direct_read_widths == IO_MAP_DIRECT_READ_NONE || !direct_routes_frozen);
     assert(direct_read_widths == IO_MAP_DIRECT_READ_NONE || space != NULL);
     assert((direct_read_widths & IO_MAP_DIRECT_READ_2) == 0u || len >= 2u);
     assert((direct_read_widths & IO_MAP_DIRECT_READ_4) == 0u || len >= 4u);
@@ -59,19 +55,16 @@ void add_mmio_map_with_direct_read(
     const paddr_t pmem_left = (paddr_t)CONFIG_MBASE;
     const paddr_t pmem_right = (paddr_t)CONFIG_MBASE + CONFIG_MSIZE;
 
-    if (in_pmem(left) || in_pmem(right) || in_pmem_range(left, len) ||
-        (left < pmem_left && right >= pmem_right))
+    if (in_pmem(left) || in_pmem(right) || in_pmem_range(left, len) || (left < pmem_left && right >= pmem_right))
     {
-        report_mmio_overlap(name, left, right,
-                            "pmem", pmem_left, pmem_right - 1u);
+        report_mmio_overlap(name, left, right, "pmem", pmem_left, pmem_right - 1u);
     }
 
     for (int i = 0; i < nr_map; i++)
     {
         if (left <= maps[i].high && right >= maps[i].low)
         {
-            report_mmio_overlap(name, left, right,
-                                maps[i].name, maps[i].low, maps[i].high);
+            report_mmio_overlap(name, left, right, maps[i].name, maps[i].low, maps[i].high);
         }
     }
 
@@ -89,19 +82,16 @@ void add_mmio_map_with_direct_read(
         .direct_read_widths = direct_read_widths,
     };
 
-    Log("Add mmio map '%s' at [" FMT_PADDR ", " FMT_PADDR "]",
-        maps[nr_map].name, maps[nr_map].low, maps[nr_map].high);
+    Log("Add mmio map '%s' at [" FMT_PADDR ", " FMT_PADDR "]", maps[nr_map].name, maps[nr_map].low, maps[nr_map].high);
 
     nr_map++;
     last_map = NULL;
 }
 
 /* Conservatively register a callback-backed map with no generated-code bypass. */
-void add_mmio_map(const char *name, paddr_t addr, void *space, uint32_t len,
-                  io_callback_t callback)
+void add_mmio_map(const char *name, paddr_t addr, void *space, uint32_t len, io_callback_t callback)
 {
-    add_mmio_map_with_direct_read(
-        name, addr, space, len, callback, IO_MAP_DIRECT_READ_NONE);
+    add_mmio_map_with_direct_read(name, addr, space, len, callback, IO_MAP_DIRECT_READ_NONE);
 }
 
 /* Count the maps which have explicitly approved at least one direct-read width. */
@@ -147,8 +137,7 @@ const IOMap *mmio_direct_read_map(size_t direct_index)
  * map. The owning map is resolved here so callers cannot accidentally pair a
  * physical range with unrelated host backing.
  */
-void add_mmio_direct_write_region(
-    paddr_t addr, uint32_t len, uint8_t direct_write_widths)
+void add_mmio_direct_write_region(paddr_t addr, uint32_t len, uint8_t direct_write_widths)
 {
     assert(nr_direct_write_region < NR_DIRECT_WRITE_REGION);
     assert(!direct_routes_frozen);
@@ -184,15 +173,13 @@ void add_mmio_direct_write_region(
         assert(right < region->low || left > region->high);
     }
 
-    direct_write_regions[nr_direct_write_region] =
-        (IODirectWriteRegion){
-            .map_name = owner->name,
-            .low = left,
-            .high = right,
-            .space = (uint8_t *)owner->space +
-                     (size_t)(left - owner->low),
-            .direct_write_widths = direct_write_widths,
-        };
+    direct_write_regions[nr_direct_write_region] = (IODirectWriteRegion){
+        .map_name = owner->name,
+        .low = left,
+        .high = right,
+        .space = (uint8_t *)owner->space + (size_t)(left - owner->low),
+        .direct_write_widths = direct_write_widths,
+    };
 
     nr_direct_write_region++;
 }

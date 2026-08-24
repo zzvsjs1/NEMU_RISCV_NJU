@@ -60,8 +60,7 @@ enum
  * register fields because COP0 and shift instructions attach architectural
  * meaning to fields that are not always ordinary operands.
  */
-static void decode_operand(Decode *s, int *rd, int *rs, int *rt, int *sa,
-                           word_t *src1, word_t *src2, word_t *imm, int type)
+static void decode_operand(Decode *s, int *rd, int *rs, int *rt, int *sa, word_t *src1, word_t *src2, word_t *imm, int type)
 {
     const uint32_t inst = s->isa.inst;
     const int rs_idx = BITS(inst, 25, 21);
@@ -174,22 +173,19 @@ static word_t *mips32_cp0_address(uint32_t rd, uint32_t select)
     }
 }
 
-static void mips32_move_from_cp0(Decode *s, uint32_t rt, uint32_t rd,
-                                uint32_t select)
+static void mips32_move_from_cp0(Decode *s, uint32_t rt, uint32_t rd, uint32_t select)
 {
     word_t *cp0 = mips32_cp0_address(rd, select);
 
     if (cp0 == NULL)
     {
-        panic("unsupported MIPS32 CP0 register/select rd=%u select=%u pc=" FMT_WORD,
-              rd, select, s->pc);
+        panic("unsupported MIPS32 CP0 register/select rd=%u select=%u pc=" FMT_WORD, rd, select, s->pc);
     }
 
     R(rt) = *cp0;
 }
 
-static void mips32_move_to_cp0(Decode *s, uint32_t rt, uint32_t rd,
-                              uint32_t select)
+static void mips32_move_to_cp0(Decode *s, uint32_t rt, uint32_t rd, uint32_t select)
 {
     word_t *cp0 = mips32_cp0_address(rd, select);
     const word_t value = R(rt);
@@ -197,8 +193,7 @@ static void mips32_move_to_cp0(Decode *s, uint32_t rt, uint32_t rd,
 
     if (cp0 == NULL)
     {
-        panic("unsupported MIPS32 CP0 register/select rd=%u select=%u pc=" FMT_WORD,
-              rd, select, s->pc);
+        panic("unsupported MIPS32 CP0 register/select rd=%u select=%u pc=" FMT_WORD, rd, select, s->pc);
     }
 
     switch (rd)
@@ -211,8 +206,7 @@ static void mips32_move_to_cp0(Decode *s, uint32_t rt, uint32_t rd,
         return;
     case MIPS32_CP0_CAUSE:
         /* Only IV and the two software interrupt-pending bits are writable. */
-        cpu.cause = (cpu.cause & ~cause_writable_mask) |
-                    (value & cause_writable_mask);
+        cpu.cause = (cpu.cause & ~cause_writable_mask) | (value & cause_writable_mask);
         return;
     case MIPS32_CP0_EPC:
         cpu.epc = value;
@@ -279,8 +273,7 @@ static word_t mips32_load_word_left(word_t old_value, vaddr_t address)
         return memory_word;
     }
 
-    return (memory_word << shift) |
-           (old_value & (((word_t)1u << shift) - 1u));
+    return (memory_word << shift) | (old_value & (((word_t)1u << shift) - 1u));
 }
 
 static word_t mips32_load_word_right(word_t old_value, vaddr_t address)
@@ -295,8 +288,7 @@ static word_t mips32_load_word_right(word_t old_value, vaddr_t address)
         return memory_word;
     }
 
-    return (old_value & (~(word_t)0u << (32u - shift))) |
-           (memory_word >> shift);
+    return (old_value & (~(word_t)0u << (32u - shift))) | (memory_word >> shift);
 }
 
 static void mips32_store_word_left(vaddr_t address, word_t value)
@@ -313,8 +305,7 @@ static void mips32_store_word_left(vaddr_t address, word_t value)
     }
 
     const word_t mask = ((word_t)1u << (32u - shift)) - 1u;
-    Mw(aligned, 4,
-       (memory_word & ~mask) | ((value >> shift) & mask));
+    Mw(aligned, 4, (memory_word & ~mask) | ((value >> shift) & mask));
 }
 
 static void mips32_store_word_right(vaddr_t address, word_t value)
@@ -331,8 +322,7 @@ static void mips32_store_word_right(vaddr_t address, word_t value)
     }
 
     const word_t mask = ~(word_t)0u << shift;
-    Mw(aligned, 4,
-       (memory_word & ~mask) | ((value << shift) & mask));
+    Mw(aligned, 4, (memory_word & ~mask) | ((value << shift) & mask));
 }
 
 /*
@@ -362,91 +352,78 @@ static int decode_exec(Decode *s)
     INSTPAT("000000 ????? ????? ????? 00000 000100", sllv, R, R(rd) = src2 << (src1 & 0x1fu));
     INSTPAT("000000 ????? ????? ????? 00000 000110", srlv, R, R(rd) = src2 >> (src1 & 0x1fu));
     INSTPAT("000000 ????? ????? ????? 00000 000111", srav, R, R(rd) = (word_t)((sword_t)src2 >> (src1 & 0x1fu)));
-    INSTPAT("000000 ????? 00000 00000 00000 001000", jr, R,
-            {
-                if (rs == 31)
-                    ftrace_ret(s->pc);
+    INSTPAT("000000 ????? 00000 00000 00000 001000", jr, R, {
+        if (rs == 31)
+            ftrace_ret(s->pc);
 
-                mips32_finish_control_transfer(s, src1);
-            });
-    INSTPAT("000000 ????? 00000 ????? 00000 001001", jalr, R,
-            {
-                const vaddr_t target = src1;
+        mips32_finish_control_transfer(s, src1);
+    });
+    INSTPAT("000000 ????? 00000 ????? 00000 001001", jalr, R, {
+        const vaddr_t target = src1;
 
-                if (rd == 0 && rs == 31)
-                    ftrace_ret(s->pc);
-                else if (rd != 0)
-                    ftrace_call(s->pc, target);
+        if (rd == 0 && rs == 31)
+            ftrace_ret(s->pc);
+        else if (rd != 0)
+            ftrace_call(s->pc, target);
 
-                R(rd) = s->pc + 8;
-                mips32_finish_control_transfer(s, target);
-            });
+        R(rd) = s->pc + 8;
+        mips32_finish_control_transfer(s, target);
+    });
     /* Release-2 hazard-barrier forms have identical effects in this pipeline-free model. */
-    INSTPAT("000000 ????? 00000 00000 10000 001000", jr_hb, R,
-            {
-                if (rs == 31)
-                    ftrace_ret(s->pc);
+    INSTPAT("000000 ????? 00000 00000 10000 001000", jr_hb, R, {
+        if (rs == 31)
+            ftrace_ret(s->pc);
 
-                mips32_finish_control_transfer(s, src1);
-            });
-    INSTPAT("000000 ????? 00000 ????? 10000 001001", jalr_hb, R,
-            {
-                const vaddr_t target = src1;
+        mips32_finish_control_transfer(s, src1);
+    });
+    INSTPAT("000000 ????? 00000 ????? 10000 001001", jalr_hb, R, {
+        const vaddr_t target = src1;
 
-                if (rd == 0 && rs == 31)
-                    ftrace_ret(s->pc);
-                else if (rd != 0)
-                    ftrace_call(s->pc, target);
+        if (rd == 0 && rs == 31)
+            ftrace_ret(s->pc);
+        else if (rd != 0)
+            ftrace_call(s->pc, target);
 
-                R(rd) = s->pc + 8;
-                mips32_finish_control_transfer(s, target);
-            });
-    INSTPAT("000000 ????? ????? ????? 00000 001010", movz, R,
-            if (src2 == 0)
-                R(rd) = src1);
-    INSTPAT("000000 ????? ????? ????? 00000 001011", movn, R,
-            if (src2 != 0)
-                R(rd) = src1);
-    INSTPAT("000000 ????? ????? ????? ????? 001100", syscall, N,
-            s->dnpc = isa_raise_intr(MIPS32_EXC_SYS, s->pc));
+        R(rd) = s->pc + 8;
+        mips32_finish_control_transfer(s, target);
+    });
+    INSTPAT("000000 ????? ????? ????? 00000 001010", movz, R, if (src2 == 0) R(rd) = src1);
+    INSTPAT("000000 ????? ????? ????? 00000 001011", movn, R, if (src2 != 0) R(rd) = src1);
+    INSTPAT("000000 ????? ????? ????? ????? 001100", syscall, N, s->dnpc = isa_raise_intr(MIPS32_EXC_SYS, s->pc));
     INSTPAT("000000 00000 00000 00000 ????? 001111", sync, N, );
     INSTPAT("000000 00000 00000 ????? 00000 010000", mfhi, R, R(rd) = cpu.hi);
     INSTPAT("000000 ????? 00000 00000 00000 010001", mthi, R, cpu.hi = src1);
     INSTPAT("000000 00000 00000 ????? 00000 010010", mflo, R, R(rd) = cpu.lo);
     INSTPAT("000000 ????? 00000 00000 00000 010011", mtlo, R, cpu.lo = src1);
-    INSTPAT("000000 ????? ????? 00000 00000 011000", mult, R,
-            {
-                const int64_t product = (int64_t)(int32_t)src1 * (int64_t)(int32_t)src2;
-                cpu.lo = (word_t)product;
-                cpu.hi = (word_t)((uint64_t)product >> 32);
-            });
-    INSTPAT("000000 ????? ????? 00000 00000 011001", multu, R,
-            {
-                const uint64_t product = (uint64_t)src1 * (uint64_t)src2;
-                cpu.lo = (word_t)product;
-                cpu.hi = (word_t)(product >> 32);
-            });
+    INSTPAT("000000 ????? ????? 00000 00000 011000", mult, R, {
+        const int64_t product = (int64_t)(int32_t)src1 * (int64_t)(int32_t)src2;
+        cpu.lo = (word_t)product;
+        cpu.hi = (word_t)((uint64_t)product >> 32);
+    });
+    INSTPAT("000000 ????? ????? 00000 00000 011001", multu, R, {
+        const uint64_t product = (uint64_t)src1 * (uint64_t)src2;
+        cpu.lo = (word_t)product;
+        cpu.hi = (word_t)(product >> 32);
+    });
     INSTPAT("000000 ????? ????? 00000 00000 011010", div, R, mips32_divide_signed(src1, src2));
     INSTPAT("000000 ????? ????? 00000 00000 011011", divu, R, mips32_divide_unsigned(src1, src2));
-    INSTPAT("000000 ????? ????? ????? 00000 100000", add, R,
-            {
-                word_t result = 0;
+    INSTPAT("000000 ????? ????? ????? 00000 100000", add, R, {
+        word_t result = 0;
 
-                if (mips32_signed_add_overflows(src1, src2, &result))
-                    s->dnpc = isa_raise_intr(MIPS32_EXC_OV, s->pc);
-                else
-                    R(rd) = result;
-            });
+        if (mips32_signed_add_overflows(src1, src2, &result))
+            s->dnpc = isa_raise_intr(MIPS32_EXC_OV, s->pc);
+        else
+            R(rd) = result;
+    });
     INSTPAT("000000 ????? ????? ????? 00000 100001", addu, R, R(rd) = src1 + src2);
-    INSTPAT("000000 ????? ????? ????? 00000 100010", sub, R,
-            {
-                word_t result = 0;
+    INSTPAT("000000 ????? ????? ????? 00000 100010", sub, R, {
+        word_t result = 0;
 
-                if (mips32_signed_sub_overflows(src1, src2, &result))
-                    s->dnpc = isa_raise_intr(MIPS32_EXC_OV, s->pc);
-                else
-                    R(rd) = result;
-            });
+        if (mips32_signed_sub_overflows(src1, src2, &result))
+            s->dnpc = isa_raise_intr(MIPS32_EXC_OV, s->pc);
+        else
+            R(rd) = result;
+    });
     INSTPAT("000000 ????? ????? ????? 00000 100011", subu, R, R(rd) = src1 - src2);
     INSTPAT("000000 ????? ????? ????? 00000 100100", and, R, R(rd) = src1 & src2);
     INSTPAT("000000 ????? ????? ????? 00000 100101", or, R, R(rd) = src1 | src2);
@@ -454,93 +431,69 @@ static int decode_exec(Decode *s)
     INSTPAT("000000 ????? ????? ????? 00000 100111", nor, R, R(rd) = ~(src1 | src2));
     INSTPAT("000000 ????? ????? ????? 00000 101010", slt, R, R(rd) = (sword_t)src1 < (sword_t)src2);
     INSTPAT("000000 ????? ????? ????? 00000 101011", sltu, R, R(rd) = src1 < src2);
-    INSTPAT("000000 ????? ????? ????? ????? 110000", tge, R,
-            mips32_raise_trap_if(s, (sword_t)src1 >= (sword_t)src2));
-    INSTPAT("000000 ????? ????? ????? ????? 110001", tgeu, R,
-            mips32_raise_trap_if(s, src1 >= src2));
-    INSTPAT("000000 ????? ????? ????? ????? 110010", tlt, R,
-            mips32_raise_trap_if(s, (sword_t)src1 < (sword_t)src2));
-    INSTPAT("000000 ????? ????? ????? ????? 110011", tltu, R,
-            mips32_raise_trap_if(s, src1 < src2));
-    INSTPAT("000000 ????? ????? ????? ????? 110100", teq, R,
-            mips32_raise_trap_if(s, src1 == src2));
-    INSTPAT("000000 ????? ????? ????? ????? 110110", tne, R,
-            mips32_raise_trap_if(s, src1 != src2));
+    INSTPAT("000000 ????? ????? ????? ????? 110000", tge, R, mips32_raise_trap_if(s, (sword_t)src1 >= (sword_t)src2));
+    INSTPAT("000000 ????? ????? ????? ????? 110001", tgeu, R, mips32_raise_trap_if(s, src1 >= src2));
+    INSTPAT("000000 ????? ????? ????? ????? 110010", tlt, R, mips32_raise_trap_if(s, (sword_t)src1 < (sword_t)src2));
+    INSTPAT("000000 ????? ????? ????? ????? 110011", tltu, R, mips32_raise_trap_if(s, src1 < src2));
+    INSTPAT("000000 ????? ????? ????? ????? 110100", teq, R, mips32_raise_trap_if(s, src1 == src2));
+    INSTPAT("000000 ????? ????? ????? ????? 110110", tne, R, mips32_raise_trap_if(s, src1 != src2));
 
     /* REGIMM: the rt field selects the branch or immediate-trap operation. */
-    INSTPAT("000001 ????? 00000 ????? ????? ??????", bltz, B,
-            mips32_branch(s, (sword_t)src1 < 0, imm));
-    INSTPAT("000001 ????? 00001 ????? ????? ??????", bgez, B,
-            mips32_branch(s, (sword_t)src1 >= 0, imm));
-    INSTPAT("000001 ????? 01000 ????? ????? ??????", tgei, I,
-            mips32_raise_trap_if(s, (sword_t)src1 >= (sword_t)imm));
-    INSTPAT("000001 ????? 01001 ????? ????? ??????", tgeiu, I,
-            mips32_raise_trap_if(s, src1 >= imm));
-    INSTPAT("000001 ????? 01010 ????? ????? ??????", tlti, I,
-            mips32_raise_trap_if(s, (sword_t)src1 < (sword_t)imm));
-    INSTPAT("000001 ????? 01011 ????? ????? ??????", tltiu, I,
-            mips32_raise_trap_if(s, src1 < imm));
-    INSTPAT("000001 ????? 01100 ????? ????? ??????", teqi, I,
-            mips32_raise_trap_if(s, src1 == imm));
-    INSTPAT("000001 ????? 01110 ????? ????? ??????", tnei, I,
-            mips32_raise_trap_if(s, src1 != imm));
-    INSTPAT("000001 ????? 10000 ????? ????? ??????", bltzal, B,
-            {
-                const bool taken = (sword_t)src1 < 0;
+    INSTPAT("000001 ????? 00000 ????? ????? ??????", bltz, B, mips32_branch(s, (sword_t)src1 < 0, imm));
+    INSTPAT("000001 ????? 00001 ????? ????? ??????", bgez, B, mips32_branch(s, (sword_t)src1 >= 0, imm));
+    INSTPAT("000001 ????? 01000 ????? ????? ??????", tgei, I, mips32_raise_trap_if(s, (sword_t)src1 >= (sword_t)imm));
+    INSTPAT("000001 ????? 01001 ????? ????? ??????", tgeiu, I, mips32_raise_trap_if(s, src1 >= imm));
+    INSTPAT("000001 ????? 01010 ????? ????? ??????", tlti, I, mips32_raise_trap_if(s, (sword_t)src1 < (sword_t)imm));
+    INSTPAT("000001 ????? 01011 ????? ????? ??????", tltiu, I, mips32_raise_trap_if(s, src1 < imm));
+    INSTPAT("000001 ????? 01100 ????? ????? ??????", teqi, I, mips32_raise_trap_if(s, src1 == imm));
+    INSTPAT("000001 ????? 01110 ????? ????? ??????", tnei, I, mips32_raise_trap_if(s, src1 != imm));
+    INSTPAT("000001 ????? 10000 ????? ????? ??????", bltzal, B, {
+        const bool taken = (sword_t)src1 < 0;
 
-                if (taken)
-                {
-                    const vaddr_t target = s->snpc + imm;
-                    R(31) = s->pc + 8;
-                    ftrace_call(s->pc, target);
-                }
+        if (taken)
+        {
+            const vaddr_t target = s->snpc + imm;
+            R(31) = s->pc + 8;
+            ftrace_call(s->pc, target);
+        }
 
-                mips32_branch(s, taken, imm);
-            });
-    INSTPAT("000001 ????? 10001 ????? ????? ??????", bgezal, B,
-            {
-                const bool taken = (sword_t)src1 >= 0;
+        mips32_branch(s, taken, imm);
+    });
+    INSTPAT("000001 ????? 10001 ????? ????? ??????", bgezal, B, {
+        const bool taken = (sword_t)src1 >= 0;
 
-                if (taken)
-                {
-                    const vaddr_t target = s->snpc + imm;
-                    R(31) = s->pc + 8;
-                    ftrace_call(s->pc, target);
-                }
+        if (taken)
+        {
+            const vaddr_t target = s->snpc + imm;
+            R(31) = s->pc + 8;
+            ftrace_call(s->pc, target);
+        }
 
-                mips32_branch(s, taken, imm);
-            });
+        mips32_branch(s, taken, imm);
+    });
 
     /* Primary opcodes: jumps, branches, immediate ALU operations, and LUI. */
-    INSTPAT("000010 ????? ????? ????? ????? ??????", j, J,
-            mips32_finish_control_transfer(s, (s->snpc & 0xf0000000u) | imm));
-    INSTPAT("000011 ????? ????? ????? ????? ??????", jal, J,
-            {
-                const vaddr_t target = (s->snpc & 0xf0000000u) | imm;
-                R(31) = s->pc + 8;
-                ftrace_call(s->pc, target);
-                mips32_finish_control_transfer(s, target);
-            });
-    INSTPAT("000100 ????? ????? ????? ????? ??????", beq, B,
-            mips32_branch(s, src1 == src2, imm));
-    INSTPAT("000101 ????? ????? ????? ????? ??????", bne, B,
-            mips32_branch(s, src1 != src2, imm));
-    INSTPAT("000110 ????? 00000 ????? ????? ??????", blez, B,
-            mips32_branch(s, (sword_t)src1 <= 0, imm));
-    INSTPAT("000111 ????? 00000 ????? ????? ??????", bgtz, B,
-            mips32_branch(s, (sword_t)src1 > 0, imm));
-    INSTPAT("001000 ????? ????? ????? ????? ??????", addi, I,
-            {
-                word_t result = 0;
+    INSTPAT("000010 ????? ????? ????? ????? ??????", j, J, mips32_finish_control_transfer(s, (s->snpc & 0xf0000000u) | imm));
+    INSTPAT("000011 ????? ????? ????? ????? ??????", jal, J, {
+        const vaddr_t target = (s->snpc & 0xf0000000u) | imm;
+        R(31) = s->pc + 8;
+        ftrace_call(s->pc, target);
+        mips32_finish_control_transfer(s, target);
+    });
+    INSTPAT("000100 ????? ????? ????? ????? ??????", beq, B, mips32_branch(s, src1 == src2, imm));
+    INSTPAT("000101 ????? ????? ????? ????? ??????", bne, B, mips32_branch(s, src1 != src2, imm));
+    INSTPAT("000110 ????? 00000 ????? ????? ??????", blez, B, mips32_branch(s, (sword_t)src1 <= 0, imm));
+    INSTPAT("000111 ????? 00000 ????? ????? ??????", bgtz, B, mips32_branch(s, (sword_t)src1 > 0, imm));
+    INSTPAT("001000 ????? ????? ????? ????? ??????", addi, I, {
+        word_t result = 0;
 
-                if (mips32_signed_add_overflows(src1, imm, &result))
-                    s->dnpc = isa_raise_intr(MIPS32_EXC_OV, s->pc);
-                else
-                    R(rd) = result;
-            });
+        if (mips32_signed_add_overflows(src1, imm, &result))
+            s->dnpc = isa_raise_intr(MIPS32_EXC_OV, s->pc);
+        else
+            R(rd) = result;
+    });
     INSTPAT("001001 ????? ????? ????? ????? ??????", addiu, I, R(rd) = src1 + imm);
-    INSTPAT("001010 ????? ????? ????? ????? ??????", slti, I,
-            R(rd) = (sword_t)src1 < (sword_t)imm);
+    INSTPAT("001010 ????? ????? ????? ????? ??????", slti, I, R(rd) = (sword_t)src1 < (sword_t)imm);
     INSTPAT("001011 ????? ????? ????? ????? ??????", sltiu, I, R(rd) = src1 < imm);
     INSTPAT("001100 ????? ????? ????? ????? ??????", andi, U, R(rd) = src1 & imm);
     INSTPAT("001101 ????? ????? ????? ????? ??????", ori, U, R(rd) = src1 | imm);
@@ -551,67 +504,47 @@ static int decode_exec(Decode *s)
      * The final three bits are CP0 select.  Only select zero is implemented;
      * the helpers report unsupported register/select pairs precisely.
      */
-    INSTPAT("010000 00000 ????? ????? 00000 000???", mfc0, N,
-            mips32_move_from_cp0(s, rt, rd, BITS(s->isa.inst, 2, 0)));
-    INSTPAT("010000 00100 ????? ????? 00000 000???", mtc0, N,
-            mips32_move_to_cp0(s, rt, rd, BITS(s->isa.inst, 2, 0)));
-    INSTPAT("010000 10000 00000 00000 00000 001000", tlbp, N,
-            mips32_tlbp());
-    INSTPAT("010000 10000 00000 00000 00000 000010", tlbwi, N,
-            mips32_tlbwi());
-    INSTPAT("010000 10000 00000 00000 00000 000110", tlbwr, N,
-            mips32_tlbwr());
-    INSTPAT("010000 10000 00000 00000 00000 011000", eret, N,
-            {
-                s->dnpc = cpu.epc;
-                cpu.status &= ~MIPS32_STATUS_EXL;
-                etrace_eret(s->dnpc, cpu.status);
-            });
+    INSTPAT("010000 00000 ????? ????? 00000 000???", mfc0, N, mips32_move_from_cp0(s, rt, rd, BITS(s->isa.inst, 2, 0)));
+    INSTPAT("010000 00100 ????? ????? 00000 000???", mtc0, N, mips32_move_to_cp0(s, rt, rd, BITS(s->isa.inst, 2, 0)));
+    INSTPAT("010000 10000 00000 00000 00000 001000", tlbp, N, mips32_tlbp());
+    INSTPAT("010000 10000 00000 00000 00000 000010", tlbwi, N, mips32_tlbwi());
+    INSTPAT("010000 10000 00000 00000 00000 000110", tlbwr, N, mips32_tlbwr());
+    INSTPAT("010000 10000 00000 00000 00000 011000", eret, N, {
+        s->dnpc = cpu.epc;
+        cpu.status &= ~MIPS32_STATUS_EXL;
+        etrace_eret(s->dnpc, cpu.status);
+    });
 
     /* SPECIAL2 integer operations and the architectural SDBBP test trap. */
     INSTPAT("011100 ????? ????? ????? 00000 000010", mul, R, R(rd) = src1 * src2);
 
     /* Pre-Release-6 CLZ/CLO duplicate rd in rt; keep that encoded field matchable. */
-    INSTPAT("011100 ????? ????? ????? 00000 100000", clz, R,
-            R(rd) = src1 == 0 ? 32 : (word_t)__builtin_clz(src1));
-    INSTPAT("011100 ????? ????? ????? 00000 100001", clo, R,
-            R(rd) = src1 == UINT32_MAX ? 32 : (word_t)__builtin_clz(~src1));
-    INSTPAT("011100 ????? ????? ????? ????? 111111", sdbbp, N,
-            {
-                difftest_skip_ref();
-                NEMUTRAP(s->pc, R(2));
-            });
+    INSTPAT("011100 ????? ????? ????? 00000 100000", clz, R, R(rd) = src1 == 0 ? 32 : (word_t)__builtin_clz(src1));
+    INSTPAT("011100 ????? ????? ????? 00000 100001", clo, R, R(rd) = src1 == UINT32_MAX ? 32 : (word_t)__builtin_clz(~src1));
+    INSTPAT("011100 ????? ????? ????? ????? 111111", sdbbp, N, {
+        difftest_skip_ref();
+        NEMUTRAP(s->pc, R(2));
+    });
 
     /* Loads and stores use the sign-extended I-format effective address. */
-    INSTPAT("100000 ????? ????? ????? ????? ??????", lb, I,
-            R(rd) = (word_t)(sword_t)(int8_t)Mr(src1 + imm, 1));
-    INSTPAT("100001 ????? ????? ????? ????? ??????", lh, I,
-            R(rd) = (word_t)(sword_t)(int16_t)Mr(src1 + imm, 2));
-    INSTPAT("100010 ????? ????? ????? ????? ??????", lwl, I,
-            R(rd) = mips32_load_word_left(R(rd), src1 + imm));
-    INSTPAT("100011 ????? ????? ????? ????? ??????", lw, I,
-            R(rd) = Mr(src1 + imm, 4));
+    INSTPAT("100000 ????? ????? ????? ????? ??????", lb, I, R(rd) = (word_t)(sword_t)(int8_t)Mr(src1 + imm, 1));
+    INSTPAT("100001 ????? ????? ????? ????? ??????", lh, I, R(rd) = (word_t)(sword_t)(int16_t)Mr(src1 + imm, 2));
+    INSTPAT("100010 ????? ????? ????? ????? ??????", lwl, I, R(rd) = mips32_load_word_left(R(rd), src1 + imm));
+    INSTPAT("100011 ????? ????? ????? ????? ??????", lw, I, R(rd) = Mr(src1 + imm, 4));
     INSTPAT("100100 ????? ????? ????? ????? ??????", lbu, I, R(rd) = Mr(src1 + imm, 1));
-    INSTPAT("100101 ????? ????? ????? ????? ??????", lhu, I,
-            R(rd) = Mr(src1 + imm, 2));
-    INSTPAT("100110 ????? ????? ????? ????? ??????", lwr, I,
-            R(rd) = mips32_load_word_right(R(rd), src1 + imm));
+    INSTPAT("100101 ????? ????? ????? ????? ??????", lhu, I, R(rd) = Mr(src1 + imm, 2));
+    INSTPAT("100110 ????? ????? ????? ????? ??????", lwr, I, R(rd) = mips32_load_word_right(R(rd), src1 + imm));
     INSTPAT("101000 ????? ????? ????? ????? ??????", sb, I, Mw(src1 + imm, 1, R(rd)));
-    INSTPAT("101001 ????? ????? ????? ????? ??????", sh, I,
-            Mw(src1 + imm, 2, R(rd)));
-    INSTPAT("101010 ????? ????? ????? ????? ??????", swl, I,
-            mips32_store_word_left(src1 + imm, R(rd)));
-    INSTPAT("101011 ????? ????? ????? ????? ??????", sw, I,
-            Mw(src1 + imm, 4, R(rd)));
-    INSTPAT("101110 ????? ????? ????? ????? ??????", swr, I,
-            mips32_store_word_right(src1 + imm, R(rd)));
+    INSTPAT("101001 ????? ????? ????? ????? ??????", sh, I, Mw(src1 + imm, 2, R(rd)));
+    INSTPAT("101010 ????? ????? ????? ????? ??????", swl, I, mips32_store_word_left(src1 + imm, R(rd)));
+    INSTPAT("101011 ????? ????? ????? ????? ??????", sw, I, Mw(src1 + imm, 4, R(rd)));
+    INSTPAT("101110 ????? ????? ????? ????? ??????", swr, I, mips32_store_word_right(src1 + imm, R(rd)));
 
     /* AM's private exact encoding terminates a NEMU test image. */
-    INSTPAT("111100 00000 00000 00000 00000 000000", nemu_trap, N,
-            {
-                difftest_skip_ref();
-                NEMUTRAP(s->pc, R(2));
-            });
+    INSTPAT("111100 00000 00000 00000 00000 000000", nemu_trap, N, {
+        difftest_skip_ref();
+        NEMUTRAP(s->pc, R(2));
+    });
     INSTPAT("?????? ????? ????? ????? ????? ??????", inv, N, INV(s->pc));
     INSTPAT_END();
 

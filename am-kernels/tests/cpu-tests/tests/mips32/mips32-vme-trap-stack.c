@@ -24,8 +24,7 @@
  * stack-region leaf table.  Dirty allocator output proves the test depends on
  * AM's page-table initialisation rather than host BSS behaviour.
  */
-static uint8_t page_table_pages[PAGE_TABLE_PAGE_COUNT][PAGE_SIZE]
-    __attribute__((aligned(PAGE_SIZE)));
+static uint8_t page_table_pages[PAGE_TABLE_PAGE_COUNT][PAGE_SIZE] __attribute__((aligned(PAGE_SIZE)));
 static unsigned allocated_page_count;
 
 /*
@@ -33,19 +32,13 @@ static unsigned allocated_page_count;
  * physical pages.  The distinct stack fill patterns also make an accidental
  * reload through the newly selected address space return obviously bad data.
  */
-static uint32_t user_a_code_page[PAGE_WORD_COUNT]
-    __attribute__((aligned(PAGE_SIZE)));
-static uint32_t user_b_code_page[PAGE_WORD_COUNT]
-    __attribute__((aligned(PAGE_SIZE)));
-static uint8_t user_a_stack_page[PAGE_SIZE]
-    __attribute__((aligned(PAGE_SIZE)));
-static uint8_t user_b_stack_page[PAGE_SIZE]
-    __attribute__((aligned(PAGE_SIZE)));
+static uint32_t user_a_code_page[PAGE_WORD_COUNT] __attribute__((aligned(PAGE_SIZE)));
+static uint32_t user_b_code_page[PAGE_WORD_COUNT] __attribute__((aligned(PAGE_SIZE)));
+static uint8_t user_a_stack_page[PAGE_SIZE] __attribute__((aligned(PAGE_SIZE)));
+static uint8_t user_b_stack_page[PAGE_SIZE] __attribute__((aligned(PAGE_SIZE)));
 
-static uint8_t user_a_context_stack[CONTEXT_STACK_SIZE]
-    __attribute__((aligned(16)));
-static uint8_t user_b_context_stack[CONTEXT_STACK_SIZE]
-    __attribute__((aligned(16)));
+static uint8_t user_a_context_stack[CONTEXT_STACK_SIZE] __attribute__((aligned(16)));
+static uint8_t user_b_context_stack[CONTEXT_STACK_SIZE] __attribute__((aligned(16)));
 
 static AddrSpace address_space_a;
 static AddrSpace address_space_b;
@@ -77,12 +70,9 @@ static const uint32_t user_b_code[] = {
     0x00000000u, /* nop */
 };
 
-_Static_assert(sizeof(user_a_code) <= sizeof(user_a_code_page),
-               "User A code must fit in one page");
-_Static_assert(sizeof(user_b_code) <= sizeof(user_b_code_page),
-               "User B code must fit in one page");
-_Static_assert((USER_STACK_TOP & 0x0fu) == 0u,
-               "Initial user stacks must be 16-byte aligned");
+_Static_assert(sizeof(user_a_code) <= sizeof(user_a_code_page), "User A code must fit in one page");
+_Static_assert(sizeof(user_b_code) <= sizeof(user_b_code_page), "User B code must fit in one page");
+_Static_assert((USER_STACK_TOP & 0x0fu) == 0u, "Initial user stacks must be 16-byte aligned");
 
 static void *allocate_page(int size)
 {
@@ -187,24 +177,16 @@ int main(void)
     check(address_space_a.ptr != address_space_b.ptr);
 
     map(&address_space_a, (void *)USER_CODE_VA, user_a_code_page, MMAP_READ);
-    map(&address_space_a, (void *)USER_STACK_VA, user_a_stack_page,
-        MMAP_READ | MMAP_WRITE);
+    map(&address_space_a, (void *)USER_STACK_VA, user_a_stack_page, MMAP_READ | MMAP_WRITE);
     map(&address_space_b, (void *)USER_CODE_VA, user_b_code_page, MMAP_READ);
-    map(&address_space_b, (void *)USER_STACK_VA, user_b_stack_page,
-        MMAP_READ | MMAP_WRITE);
+    map(&address_space_b, (void *)USER_STACK_VA, user_b_stack_page, MMAP_READ | MMAP_WRITE);
     check(allocated_page_count == PAGE_TABLE_PAGE_COUNT);
 
-    const Area context_stack_a =
-        RANGE(user_a_context_stack,
-              user_a_context_stack + sizeof(user_a_context_stack));
-    const Area context_stack_b =
-        RANGE(user_b_context_stack,
-              user_b_context_stack + sizeof(user_b_context_stack));
+    const Area context_stack_a = RANGE(user_a_context_stack, user_a_context_stack + sizeof(user_a_context_stack));
+    const Area context_stack_b = RANGE(user_b_context_stack, user_b_context_stack + sizeof(user_b_context_stack));
 
-    user_context_a =
-        ucontext(&address_space_a, context_stack_a, (void *)USER_CODE_VA);
-    user_context_b =
-        ucontext(&address_space_b, context_stack_b, (void *)USER_CODE_VA);
+    user_context_a = ucontext(&address_space_a, context_stack_a, (void *)USER_CODE_VA);
+    user_context_b = ucontext(&address_space_b, context_stack_b, (void *)USER_CODE_VA);
     check(user_context_a != NULL);
     check(user_context_b != NULL);
     check(user_context_a != user_context_b);

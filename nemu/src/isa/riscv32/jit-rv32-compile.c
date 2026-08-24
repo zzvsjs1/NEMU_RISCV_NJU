@@ -19,8 +19,7 @@ static size_t jit_align_up(size_t value, size_t align)
 static bool jit_instr_is_control_flow(uint32_t instr)
 {
     const uint32_t opcode = instr & RISCV_OPCODE_MASK;
-    return opcode == RISCV_OPCODE_BRANCH || opcode == RISCV_OPCODE_JAL ||
-           opcode == RISCV_OPCODE_JALR;
+    return opcode == RISCV_OPCODE_BRANCH || opcode == RISCV_OPCODE_JAL || opcode == RISCV_OPCODE_JALR;
 }
 
 /*
@@ -75,8 +74,7 @@ bool rv32_jit_block_matches(const rv32_jit_block_t *block, vaddr_t pc)
      * their native block if the recorded physical source bytes are unchanged.
      */
 
-    if ((cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) !=
-        RISCV_SATP_MODE_BARE)
+    if ((cpu.csr.satp & RV32_JIT_SATP_MODE_MASK) != RISCV_SATP_MODE_BARE)
     {
         uint32_t offset = 0;
 
@@ -90,14 +88,12 @@ bool rv32_jit_block_matches(const rv32_jit_block_t *block, vaddr_t pc)
              * of cases where the normal interpreter path needs to raise or report the
              * underlying memory problem.
              */
-            if (!rv32_jit_translate_ifetch(check_pc, &now) ||
-                now != block->paddr_start + (paddr_t)offset)
+            if (!rv32_jit_translate_ifetch(check_pc, &now) || now != block->paddr_start + (paddr_t)offset)
             {
                 return false;
             }
 
-            const uint32_t page_left =
-                PAGE_SIZE - (uint32_t)(check_pc & PAGE_MASK);
+            const uint32_t page_left = PAGE_SIZE - (uint32_t)(check_pc & PAGE_MASK);
             const uint32_t remaining = block->source_len - offset;
             offset += page_left < remaining ? page_left : remaining;
         }
@@ -130,8 +126,7 @@ static bool __attribute__((unused)) jit_opcode_is_fp(uint32_t opcode)
 }
 
 /* Publish a negative cache entry for an instruction this JIT cannot translate. */
-static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr,
-                                 uint32_t source_len, uint32_t instr)
+static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr, uint32_t source_len, uint32_t instr)
 {
     JIT_STAT_INC(blocks_unsupported);
 #if RV32_JIT_STATS
@@ -168,8 +163,7 @@ static void jit_mark_unsupported(vaddr_t pc, paddr_t paddr,
 }
 
 /* Cheaply pre-scan whether this block can use loop-aware branch exits. */
-static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
-                                             paddr_t first_paddr)
+static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns, paddr_t first_paddr)
 {
     vaddr_t cur_pc = pc;
     uint32_t count = 0;
@@ -179,14 +173,12 @@ static bool jit_block_has_chainable_backedge(vaddr_t pc, uint32_t max_insns,
     {
         paddr_t cur_paddr = 0;
 
-        if (!rv32_jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr) ||
-            cur_paddr != first_paddr + (paddr_t)source_len)
+        if (!rv32_jit_translate_ifetch(cur_pc, &cur_paddr) || !in_pmem(cur_paddr) || cur_paddr != first_paddr + (paddr_t)source_len)
         {
             return false;
         }
 
-        const uint32_t instr =
-            vaddr_ifetch(cur_pc, RISCV_BASE_INSN_BYTES);
+        const uint32_t instr = vaddr_ifetch(cur_pc, RISCV_BASE_INSN_BYTES);
         const uint32_t opcode = instr & RISCV_OPCODE_MASK;
 
         if (!rv32_jit_instr_can_chain_body(instr))
@@ -251,8 +243,7 @@ rv32_jit_block_t *rv32_jit_compile_block(vaddr_t pc, uint32_t max_insns)
         return NULL;
     }
 
-    const bool loop_count_needed =
-        jit_block_has_chainable_backedge(pc, max_insns, first_paddr);
+    const bool loop_count_needed = jit_block_has_chainable_backedge(pc, max_insns, first_paddr);
     const uint8_t *block_start_native = w.cur;
     vaddr_t cur_pc = pc;
     uint32_t count = 0;
@@ -290,8 +281,7 @@ rv32_jit_block_t *rv32_jit_compile_block(vaddr_t pc, uint32_t max_insns)
             break;
         }
 
-        const uint32_t instr =
-            vaddr_ifetch(cur_pc, RISCV_BASE_INSN_BYTES);
+        const uint32_t instr = vaddr_ifetch(cur_pc, RISCV_BASE_INSN_BYTES);
         uint8_t *instr_start = w.cur;
         /*
          * Native bytes and compile-time register-cache metadata describe the same
@@ -331,9 +321,7 @@ rv32_jit_block_t *rv32_jit_compile_block(vaddr_t pc, uint32_t max_insns)
         {
             bool branch_chained = false;
 
-            if (!rv32_jit_emit_branch(&w, &regs, instr, cur_pc, pc,
-                                   block_start_native, loop_count_needed, chain_safe,
-                                   &branch_chained, count + 1u))
+            if (!rv32_jit_emit_branch(&w, &regs, instr, cur_pc, pc, block_start_native, loop_count_needed, chain_safe, &branch_chained, count + 1u))
             {
                 w.cur = instr_start;
                 rv32_jit_reg_cache_restore(&regs, &regs_start);
@@ -365,8 +353,7 @@ rv32_jit_block_t *rv32_jit_compile_block(vaddr_t pc, uint32_t max_insns)
             w.cur = instr_start;
             rv32_jit_reg_cache_restore(&regs, &regs_start);
 
-            if (!rv32_jit_emit_load_store(&w, &regs, instr, cur_pc, count + 1u,
-                                       loop_count_needed))
+            if (!rv32_jit_emit_load_store(&w, &regs, instr, cur_pc, count + 1u, loop_count_needed))
             {
                 /*
                  * Emitters may fail after writing a prefix of an x86 instruction. Roll
@@ -394,13 +381,11 @@ rv32_jit_block_t *rv32_jit_compile_block(vaddr_t pc, uint32_t max_insns)
 
     if (count == 0)
     {
-        jit_mark_unsupported(pc, first_paddr, RISCV_BASE_INSN_BYTES,
-                             unsupported_instr);
+        jit_mark_unsupported(pc, first_paddr, RISCV_BASE_INSN_BYTES, unsupported_instr);
         return NULL;
     }
 
-    if (!rv32_jit_emit_block_exit(&w, &regs, cur_pc, count,
-                                  block_sets_pc, chained_loop))
+    if (!rv32_jit_emit_block_exit(&w, &regs, cur_pc, count, block_sets_pc, chained_loop))
     {
         return NULL;
     }

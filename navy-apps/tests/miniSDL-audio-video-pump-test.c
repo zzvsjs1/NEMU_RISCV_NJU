@@ -12,8 +12,7 @@
     { \
         if (!(cond)) \
         { \
-            fprintf(stderr, "%s:%d: check failed: %s\n", \
-                    __FILE__, __LINE__, #cond); \
+            fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #cond); \
             exit(1); \
         } \
     } while (0)
@@ -121,9 +120,7 @@ int main(void)
      */
     fake_audio_free = fake_audio_capacity;
 
-    SDL_Surface *surface = SDL_CreateRGBSurface(0, 2, 2, 32,
-                                                DEFAULT_RMASK, DEFAULT_GMASK,
-                                                DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *surface = SDL_CreateRGBSurface(0, 2, 2, 32, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
     CHECK(surface != NULL);
     SDL_UpdateRect(surface, 0, 0, 0, 0);
 

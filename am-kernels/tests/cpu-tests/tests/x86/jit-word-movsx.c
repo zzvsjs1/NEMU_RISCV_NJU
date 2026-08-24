@@ -2,12 +2,7 @@
 #include <stdint.h>
 
 static const int8_t rel8_values[] = {
-    -128,
-    -7,
-    -1,
-    0,
-    1,
-    0x7f,
+    -128, -7, -1, 0, 1, 0x7f,
 };
 
 static uint32_t movsx_word_mem_sum(void)
@@ -17,10 +12,7 @@ static uint32_t movsx_word_mem_sum(void)
     for (int i = 0; i < (int)(sizeof(rel8_values) / sizeof(rel8_values[0])); i++)
     {
         uint32_t edx = 0x12345678u;
-        asm volatile("movsbw %1, %%dx"
-                     : "+d"(edx)
-                     : "m"(rel8_values[i])
-                     : "cc");
+        asm volatile("movsbw %1, %%dx" : "+d"(edx) : "m"(rel8_values[i]) : "cc");
         sum += edx;
     }
 
@@ -34,10 +26,7 @@ static uint32_t movsx_word_reg_sum(void)
     for (int i = 0; i < (int)(sizeof(rel8_values) / sizeof(rel8_values[0])); i++)
     {
         uint32_t edx = 0x9abc0000u | (uint8_t)rel8_values[i];
-        asm volatile("movsbw %%dl, %%dx"
-                     : "+d"(edx)
-                     :
-                     : "cc");
+        asm volatile("movsbw %%dl, %%dx" : "+d"(edx) : : "cc");
         sum += edx;
     }
 

@@ -148,8 +148,7 @@ static uint16_t read_u16le(const uint8_t *p)
 
 static uint32_t read_u32le(const uint8_t *p)
 {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
 static int16_t read_s16le(const uint8_t *p)
@@ -333,14 +332,11 @@ static int refill_music(Mix_Music *music)
         if (out_channels == 1)
         {
             short *mono = (short *)music->decoded;
-            frames = stb_vorbis_get_samples_short(
-                music->vorbis, 1, &mono, MUSIC_DECODE_FRAMES);
+            frames = stb_vorbis_get_samples_short(music->vorbis, 1, &mono, MUSIC_DECODE_FRAMES);
         }
         else
         {
-            frames = stb_vorbis_get_samples_short_interleaved(
-                music->vorbis, out_channels, music->decoded,
-                MUSIC_DECODE_FRAMES * out_channels);
+            frames = stb_vorbis_get_samples_short_interleaved(music->vorbis, out_channels, music->decoded, MUSIC_DECODE_FRAMES * out_channels);
         }
 
         if (frames > 0)
@@ -772,8 +768,7 @@ static Mix_Music *open_music_from_memory(uint8_t *data, int len)
 
 static Mix_Chunk *load_wav_from_memory(const uint8_t *data, int len)
 {
-    if (data == NULL || len < 44 || memcmp(data, "RIFF", 4) != 0 ||
-        memcmp(data + 8, "WAVE", 4) != 0)
+    if (data == NULL || len < 44 || memcmp(data, "RIFF", 4) != 0 || memcmp(data + 8, "WAVE", 4) != 0)
     {
         set_error("Invalid WAV file");
         return NULL;
@@ -841,8 +836,7 @@ static Mix_Chunk *load_wav_from_memory(const uint8_t *data, int len)
         return NULL;
     }
 
-    if (audio_format != 1 || frequency == 0 || channels == 0 ||
-        channels > MAX_OUTPUT_CHANNELS || (bits != 8 && bits != 16))
+    if (audio_format != 1 || frequency == 0 || channels == 0 || channels > MAX_OUTPUT_CHANNELS || (bits != 8 && bits != 16))
     {
         set_error("Unsupported WAV format");
         return NULL;
@@ -993,8 +987,7 @@ int Mix_OpenAudio(int frequency, uint16_t format, int channels, int chunksize)
     device.callback = mixer_callback;
     device_bytes_per_sample = bytes_per_sample(device.format);
 
-    if (device_bytes_per_sample == 0 || device.channels < 1 ||
-        device.channels > MAX_OUTPUT_CHANNELS)
+    if (device_bytes_per_sample == 0 || device.channels < 1 || device.channels > MAX_OUTPUT_CHANNELS)
     {
         SDL_CloseAudio();
         memset(&device, 0, sizeof(device));
@@ -1481,8 +1474,7 @@ int Mix_SetMusicPosition(double position)
         return -1;
     }
 
-    if (music->frequency <= 0 ||
-        position > (double)UINT_MAX / (double)music->frequency)
+    if (music->frequency <= 0 || position > (double)UINT_MAX / (double)music->frequency)
     {
         SDL_UnlockAudio();
         set_error("Music seek position is too large");

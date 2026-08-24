@@ -15,10 +15,7 @@ int main(void)
     const uintptr_t address = (uintptr_t)NEMU_AUDIO_CROSSING_SD;
     const uint64_t value = UINT64_C(0x8877665544332211);
 
-    asm volatile("sd %0, 0(%1)"
-                 :
-                 : "r"(value), "r"(address)
-                 : "memory");
+    asm volatile("sd %0, 0(%1)" : : "r"(value), "r"(address) : "memory");
 
     /* Reaching the normal return is a host-gate failure. */
     return 0;

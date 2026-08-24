@@ -23,9 +23,7 @@ static uint64_t addw_raw(uint64_t lhs, uint64_t rhs)
 {
     uint64_t out;
 
-    asm volatile("addw %0, %1, %2"
-                 : "=r"(out)
-                 : "r"(lhs), "r"(rhs));
+    asm volatile("addw %0, %1, %2" : "=r"(out) : "r"(lhs), "r"(rhs));
     return out;
 }
 
@@ -33,9 +31,7 @@ static uint64_t mulw_raw(uint64_t lhs, uint64_t rhs)
 {
     uint64_t out;
 
-    asm volatile("mulw %0, %1, %2"
-                 : "=r"(out)
-                 : "r"(lhs), "r"(rhs));
+    asm volatile("mulw %0, %1, %2" : "=r"(out) : "r"(lhs), "r"(rhs));
     return out;
 }
 
@@ -45,24 +41,15 @@ static bool check_wop_edges(void)
     uint64_t other = 1u;
     uint64_t distinct = addw_raw(value, other);
 
-    asm volatile("addw %0, %0, %1"
-                 : "+r"(value)
-                 : "r"(other));
+    asm volatile("addw %0, %0, %1" : "+r"(value) : "r"(other));
 
     other = 0xffffffffu;
-    asm volatile("addw %0, %1, %0"
-                 : "+r"(other)
-                 : "r"(1u));
+    asm volatile("addw %0, %1, %0" : "+r"(other) : "r"(1u));
 
     uint64_t product = 0xffffffffu;
-    asm volatile("mulw %0, %0, %1"
-                 : "+r"(product)
-                 : "r"(2u));
+    asm volatile("mulw %0, %0, %1" : "+r"(product) : "r"(2u));
 
-    return distinct == sext32(0x80000000u) &&
-           value == sext32(0x80000000u) &&
-           other == 0 &&
-           product == sext32(0xfffffffeu) &&
+    return distinct == sext32(0x80000000u) && value == sext32(0x80000000u) && other == 0 && product == sext32(0xfffffffeu) &&
            mulw_raw(0x80000000u, 1u) == sext32(0x80000000u);
 }
 
@@ -83,8 +70,7 @@ static uint32_t run_wop_kernel(void)
                      "mulw %[b], %[b], %[c]\n"
                      "addw %[c], %[c], %[d]\n"
                      "mulw %[d], %[d], %[a]"
-                     : [a] "+r"(a), [b] "+r"(b),
-                       [c] "+r"(c), [d] "+r"(d));
+                     : [a] "+r"(a), [b] "+r"(b), [c] "+r"(c), [d] "+r"(d));
     }
 
     return (uint32_t)(a ^ (b >> 7) ^ (c >> 13) ^ (d >> 19));

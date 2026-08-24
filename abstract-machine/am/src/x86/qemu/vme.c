@@ -4,20 +4,22 @@ const struct mmu_config mmu = {
     .pgsize = 4096,
 #if __x86_64__
     .ptlevels = 4,
-    .pgtables = {
-        {"CR3", 0x000000000000, 0, 0},
-        {"PML4", 0xff8000000000, 39, 9},
-        {"PDPT", 0x007fc0000000, 30, 9},
-        {"PD", 0x00003fe00000, 21, 9},
-        {"PT", 0x0000001ff000, 12, 9},
-    },
+    .pgtables =
+        {
+            {"CR3", 0x000000000000, 0, 0},
+            {"PML4", 0xff8000000000, 39, 9},
+            {"PDPT", 0x007fc0000000, 30, 9},
+            {"PD", 0x00003fe00000, 21, 9},
+            {"PT", 0x0000001ff000, 12, 9},
+        },
 #else
     .ptlevels = 2,
-    .pgtables = {
-        {"CR3", 0x00000000, 0, 0},
-        {"PD", 0xffc00000, 22, 10},
-        {"PT", 0x003ff000, 12, 10},
-    },
+    .pgtables =
+        {
+            {"CR3", 0x00000000, 0, 0},
+            {"PD", 0xffc00000, 22, 10},
+            {"PT", 0x003ff000, 12, 10},
+        },
 #endif
 };
 
@@ -124,9 +126,7 @@ bool vme_init(void *(*_pgalloc)(int size), void (*_pgfree)(void *))
 
         if (vma->kernel)
         {
-            for (uintptr_t cur = (uintptr_t)vma->area.start;
-                 cur != (uintptr_t)vma->area.end;
-                 cur += mmu.pgsize)
+            for (uintptr_t cur = (uintptr_t)vma->area.start; cur != (uintptr_t)vma->area.end; cur += mmu.pgsize)
             {
                 *ptwalk(&as, cur, PTE_W) = cur | PTE_P | PTE_W;
             }
@@ -153,9 +153,7 @@ void protect(AddrSpace *as)
         {
             const struct ptinfo *info = &mmu.pgtables[1]; // level-1 page table
 
-            for (uintptr_t cur = (uintptr_t)vma->area.start;
-                 cur != (uintptr_t)vma->area.end;
-                 cur += (1L << info->shift))
+            for (uintptr_t cur = (uintptr_t)vma->area.start; cur != (uintptr_t)vma->area.end; cur += (1L << info->shift))
             {
                 int index = indexof(cur, info);
                 upt[index] = kpt[index];
@@ -176,9 +174,7 @@ void unprotect(AddrSpace *as)
 void map(AddrSpace *as, void *va, void *pa, int prot)
 {
     panic_on(!IN_RANGE(va, uvm_area), "mapping an invalid address");
-    panic_on((uintptr_t)va != ROUNDDOWN(va, mmu.pgsize) ||
-                 (uintptr_t)pa != ROUNDDOWN(pa, mmu.pgsize),
-             "non-page-boundary address");
+    panic_on((uintptr_t)va != ROUNDDOWN(va, mmu.pgsize) || (uintptr_t)pa != ROUNDDOWN(pa, mmu.pgsize), "non-page-boundary address");
 
     uintptr_t *ptentry = ptwalk(as, (uintptr_t)va, PTE_W | PTE_U);
 

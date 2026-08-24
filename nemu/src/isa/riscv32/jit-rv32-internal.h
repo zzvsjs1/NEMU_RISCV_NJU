@@ -24,10 +24,8 @@
  * Keep architectural constants and generated-code data layouts centralised so
  * moving implementation ownership cannot silently change the native ABI.
  */
-#if defined(__x86_64__) && defined(CONFIG_RV32_JIT) && \
-    defined(CONFIG_TARGET_NATIVE_ELF) && !defined(CONFIG_TRACE) && \
-    !defined(CONFIG_DIFFTEST) && !defined(CONFIG_WATCHPOINT) && \
-    !defined(CONFIG_MTRACE) && !defined(CONFIG_FTRACE)
+#if defined(__x86_64__) && defined(CONFIG_RV32_JIT) && defined(CONFIG_TARGET_NATIVE_ELF) && !defined(CONFIG_TRACE) && !defined(CONFIG_DIFFTEST) && \
+    !defined(CONFIG_WATCHPOINT) && !defined(CONFIG_MTRACE) && !defined(CONFIG_FTRACE)
 #define RV32_JIT_ENABLED 1
 #else
 #define RV32_JIT_ENABLED 0
@@ -60,9 +58,7 @@
 #define RV32_JIT_SOURCE_CHUNK_SHIFT 7u
 #define RV32_JIT_SOURCE_CHUNK_SIZE (1u << RV32_JIT_SOURCE_CHUNK_SHIFT)
 #define RV32_JIT_SOURCE_CHUNK_MASK (RV32_JIT_SOURCE_CHUNK_SIZE - 1u)
-#define RV32_JIT_PMEM_CHUNK_COUNT \
-    (((size_t)CONFIG_MSIZE + (size_t)RV32_JIT_SOURCE_CHUNK_SIZE - 1u) / \
-     (size_t)RV32_JIT_SOURCE_CHUNK_SIZE)
+#define RV32_JIT_PMEM_CHUNK_COUNT (((size_t)CONFIG_MSIZE + (size_t)RV32_JIT_SOURCE_CHUNK_SIZE - 1u) / (size_t)RV32_JIT_SOURCE_CHUNK_SIZE)
 /*
  * Preserve the concise JIT paging vocabulary while taking every architectural
  * SATP and PTE value from the common ISA definitions.
@@ -74,8 +70,7 @@
 #define RV32_JIT_PTE_W RISCV_PTE_W
 #define RV32_JIT_PTE_X RISCV_PTE_X
 #define RV32_JIT_TLB_SIZE 128u
-#define RV32_JIT_PMEM_PAGE_COUNT \
-    (((size_t)CONFIG_MSIZE + (size_t)PAGE_SIZE - 1u) / (size_t)PAGE_SIZE)
+#define RV32_JIT_PMEM_PAGE_COUNT (((size_t)CONFIG_MSIZE + (size_t)PAGE_SIZE - 1u) / (size_t)PAGE_SIZE)
 #ifdef CONFIG_RV32_JIT_STATS
 #define RV32_JIT_STATS 1
 #else
@@ -137,7 +132,6 @@ typedef struct
      */
     rv32_jit_entry_t entry;
 } rv32_jit_block_t;
-
 
 #if RV32_JIT_STATS
 typedef struct
@@ -373,54 +367,18 @@ bool rv32_jit_translate_ifetch(vaddr_t pc, paddr_t *paddr);
 bool rv32_jit_block_matches(const rv32_jit_block_t *block, vaddr_t pc);
 
 void rv32_jit_reg_cache_init(rv32_jit_reg_cache_t *regs);
-void rv32_jit_reg_cache_restore(
-    rv32_jit_reg_cache_t *regs,
-    const rv32_jit_reg_cache_t *snapshot);
+void rv32_jit_reg_cache_restore(rv32_jit_reg_cache_t *regs, const rv32_jit_reg_cache_t *snapshot);
 bool rv32_jit_emit_prologue(rv32_jit_writer_t *writer);
-bool rv32_jit_emit_block_exit(
-    rv32_jit_writer_t *writer,
-    rv32_jit_reg_cache_t *regs,
-    vaddr_t next_pc,
-    uint32_t completed_count,
-    bool pc_already_set,
-    bool return_loop_count);
-bool rv32_jit_emit_load_store(
-    rv32_jit_writer_t *writer,
-    rv32_jit_reg_cache_t *regs,
-    uint32_t instr,
-    vaddr_t pc,
-    uint32_t completed_count,
-    bool loop_count_needed);
-bool rv32_jit_emit_branch(
-    rv32_jit_writer_t *writer,
-    rv32_jit_reg_cache_t *regs,
-    uint32_t instr,
-    vaddr_t pc,
-    vaddr_t block_start_pc,
-    const uint8_t *block_start_native,
-    bool loop_count_needed,
-    bool chain_safe,
-    bool *branch_chained,
-    uint32_t completed_count);
-bool rv32_jit_emit_control_flow(
-    rv32_jit_writer_t *writer,
-    rv32_jit_reg_cache_t *regs,
-    uint32_t instr,
-    vaddr_t pc,
-    uint32_t completed_count);
-bool rv32_jit_emit_alu(
-    rv32_jit_writer_t *writer,
-    rv32_jit_reg_cache_t *regs,
-    uint32_t instr,
-    vaddr_t pc);
+bool rv32_jit_emit_block_exit(rv32_jit_writer_t *writer, rv32_jit_reg_cache_t *regs, vaddr_t next_pc, uint32_t completed_count, bool pc_already_set,
+                              bool return_loop_count);
+bool rv32_jit_emit_load_store(rv32_jit_writer_t *writer, rv32_jit_reg_cache_t *regs, uint32_t instr, vaddr_t pc, uint32_t completed_count,
+                              bool loop_count_needed);
+bool rv32_jit_emit_branch(rv32_jit_writer_t *writer, rv32_jit_reg_cache_t *regs, uint32_t instr, vaddr_t pc, vaddr_t block_start_pc,
+                          const uint8_t *block_start_native, bool loop_count_needed, bool chain_safe, bool *branch_chained, uint32_t completed_count);
+bool rv32_jit_emit_control_flow(rv32_jit_writer_t *writer, rv32_jit_reg_cache_t *regs, uint32_t instr, vaddr_t pc, uint32_t completed_count);
+bool rv32_jit_emit_alu(rv32_jit_writer_t *writer, rv32_jit_reg_cache_t *regs, uint32_t instr, vaddr_t pc);
 #ifdef CONFIG_RISCV_FPU
-bool rv32_jit_emit_fpu(
-    rv32_jit_writer_t *writer,
-    rv32_jit_reg_cache_t *regs,
-    uint32_t instr,
-    vaddr_t pc,
-    uint32_t completed_count,
-    bool *ends_block);
+bool rv32_jit_emit_fpu(rv32_jit_writer_t *writer, rv32_jit_reg_cache_t *regs, uint32_t instr, vaddr_t pc, uint32_t completed_count, bool *ends_block);
 #endif
 bool rv32_jit_instr_can_chain_body(uint32_t instr);
 

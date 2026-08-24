@@ -88,8 +88,7 @@ static void map_identity_window(void)
 
     for (uint64_t l1 = 0; l1 < IDENTITY_L1_ENTRIES; l1++)
     {
-        identity_l1[vpn1(IDENTITY_BASE) + l1] =
-            pte_for_page(identity_l0[l1], PTE_V);
+        identity_l1[vpn1(IDENTITY_BASE) + l1] = pte_for_page(identity_l0[l1], PTE_V);
 
         for (uint64_t i = 0; i < 512ull; i++)
         {
@@ -109,9 +108,7 @@ static void map_data_alias(const void *page)
 
     for (uint64_t i = 0; i < 512ull; i++)
     {
-        const uintptr_t pa =
-            (uintptr_t)((vpn1(DATA_ALIAS_VA) * 512ull + i) * PAGE_SIZE +
-                        IDENTITY_BASE);
+        const uintptr_t pa = (uintptr_t)((vpn1(DATA_ALIAS_VA) * 512ull + i) * PAGE_SIZE + IDENTITY_BASE);
 
         data_alias_l0[i] = ((uint64_t)(pa >> 12) << 10) | leaf_flags;
     }
@@ -163,22 +160,20 @@ static void enter_supervisor_mode(void)
 {
     uintptr_t mstatus;
 
-    asm volatile(
-        "csrr %[mstatus], mstatus\n"
-        "li t0, %[mpp_mask]\n"
-        "not t0, t0\n"
-        "and %[mstatus], %[mstatus], t0\n"
-        "li t0, %[mpp_s]\n"
-        "or %[mstatus], %[mstatus], t0\n"
-        "csrw mstatus, %[mstatus]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        : [mstatus] "=&r"(mstatus)
-        : [mpp_mask] "i"(MSTATUS_MPP_MPIE_MASK),
-          [mpp_s] "i"(MSTATUS_MPP_S)
-        : "t0", "memory");
+    asm volatile("csrr %[mstatus], mstatus\n"
+                 "li t0, %[mpp_mask]\n"
+                 "not t0, t0\n"
+                 "and %[mstatus], %[mstatus], t0\n"
+                 "li t0, %[mpp_s]\n"
+                 "or %[mstatus], %[mstatus], t0\n"
+                 "csrw mstatus, %[mstatus]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 : [mstatus] "=&r"(mstatus)
+                 : [mpp_mask] "i"(MSTATUS_MPP_MPIE_MASK), [mpp_s] "i"(MSTATUS_MPP_S)
+                 : "t0", "memory");
 }
 
 /* Issue several same-page loads so a data-TLB fill can be followed by hits. */
@@ -189,17 +184,13 @@ static uint64_t load_alias_repeated(uint64_t *alias)
     uint64_t a2;
     uint64_t a3;
 
-    asm volatile(
-        "ld %[a0], 0(%[alias])\n"
-        "ld %[a1], 8(%[alias])\n"
-        "ld %[a2], 16(%[alias])\n"
-        "ld %[a3], 24(%[alias])\n"
-        : [a0] "=&r"(a0),
-          [a1] "=&r"(a1),
-          [a2] "=&r"(a2),
-          [a3] "=&r"(a3)
-        : [alias] "r"(alias)
-        : "memory");
+    asm volatile("ld %[a0], 0(%[alias])\n"
+                 "ld %[a1], 8(%[alias])\n"
+                 "ld %[a2], 16(%[alias])\n"
+                 "ld %[a3], 24(%[alias])\n"
+                 : [a0] "=&r"(a0), [a1] "=&r"(a1), [a2] "=&r"(a2), [a3] "=&r"(a3)
+                 : [alias] "r"(alias)
+                 : "memory");
 
     return a0 ^ a1 ^ a2 ^ a3;
 }
@@ -207,11 +198,7 @@ static uint64_t load_alias_repeated(uint64_t *alias)
 /* Store through the alias to exercise the write-translation helper path too. */
 static void store_alias_value(uint64_t *alias, uint64_t value)
 {
-    asm volatile("sd %[value], 32(%[alias])"
-                 :
-                 : [alias] "r"(alias),
-                   [value] "r"(value)
-                 : "memory");
+    asm volatile("sd %[value], 32(%[alias])" : : [alias] "r"(alias), [value] "r"(value) : "memory");
 }
 
 /* Small call target that should become a native block before the source rewrite. */
@@ -231,11 +218,7 @@ static void rewrite_source_word_same_value(void)
      * store still targets compiled source bytes and must therefore take the
      * helper path so native block invalidation happens before more JIT entry.
      */
-    asm volatile("sw %[original], 0(%[target])"
-                 :
-                 : [target] "r"(target),
-                   [original] "r"(original)
-                 : "memory");
+    asm volatile("sw %[original], 0(%[target])" : : [target] "r"(target), [original] "r"(original) : "memory");
 }
 
 /* Exercise the source-chunk guard used by inline translated stores. */
@@ -274,8 +257,7 @@ static void test_sv39_data_tlb(void)
      * the new translation visible.  A stale JIT data-TLB entry would keep
      * reading data_page_a and fail the second checksum below.
      */
-    data_alias_l0[vpn0(DATA_ALIAS_VA)] =
-        pte_for_page(data_page_b, PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
+    data_alias_l0[vpn0(DATA_ALIAS_VA)] = pte_for_page(data_page_b, PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D);
     sfence_vma_all();
 
     check(load_alias_repeated(alias) == 0xccccccccccccccccull);

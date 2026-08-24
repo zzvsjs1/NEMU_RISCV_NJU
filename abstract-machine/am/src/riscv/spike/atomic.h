@@ -30,21 +30,26 @@ typedef struct
 #define atomic_swap(ptr, swp) __sync_lock_test_and_set(ptr, swp)
 #define atomic_cas(ptr, cmp, swp) __sync_val_compare_and_swap(ptr, cmp, swp)
 #else
-#define atomic_binop(ptr, inc, op) ({ \
-  long flags = disable_irqsave(); \
-  typeof(*(ptr)) res = atomic_read(ptr); \
-  atomic_set(ptr, op); \
-  enable_irqrestore(flags); \
-  res; })
+#define atomic_binop(ptr, inc, op) \
+    ({ \
+        long flags = disable_irqsave(); \
+        typeof(*(ptr)) res = atomic_read(ptr); \
+        atomic_set(ptr, op); \
+        enable_irqrestore(flags); \
+        res; \
+    })
 #define atomic_add(ptr, inc) atomic_binop(ptr, inc, res + (inc))
 #define atomic_or(ptr, inc) atomic_binop(ptr, inc, res | (inc))
 #define atomic_swap(ptr, inc) atomic_binop(ptr, inc, (inc))
-#define atomic_cas(ptr, cmp, swp) ({ \
-  long flags = disable_irqsave(); \
-  typeof(*(ptr)) res = *(volatile typeof(*(ptr)) *)(ptr); \
-  if (res == (cmp)) *(volatile typeof(ptr))(ptr) = (swp); \
-  enable_irqrestore(flags); \
-  res; })
+#define atomic_cas(ptr, cmp, swp) \
+    ({ \
+        long flags = disable_irqsave(); \
+        typeof(*(ptr)) res = *(volatile typeof(*(ptr)) *)(ptr); \
+        if (res == (cmp)) \
+            *(volatile typeof(ptr))(ptr) = (swp); \
+        enable_irqrestore(flags); \
+        res; \
+    })
 #endif
 
 static inline int spinlock_trylock(spinlock_t *lock)

@@ -16,22 +16,21 @@ static uint64_t run_alternate_return_hint_loop(void)
     uint64_t sum = 0;
     uint64_t laps = 4096;
 
-    asm volatile(
-        ".option push\n"
-        ".option norvc\n"
-        "1:\n"
-        "  la t0, 2f\n"
-        "  addi t0, t0, -4\n"
-        "  jalr zero, 4(t0)\n"
-        ".balign 4\n"
-        "2:\n"
-        "  addi %[sum], %[sum], 1\n"
-        "  addi %[laps], %[laps], -1\n"
-        "  bnez %[laps], 1b\n"
-        ".option pop\n"
-        : [sum] "+&r"(sum), [laps] "+&r"(laps)
-        :
-        : "t0", "memory");
+    asm volatile(".option push\n"
+                 ".option norvc\n"
+                 "1:\n"
+                 "  la t0, 2f\n"
+                 "  addi t0, t0, -4\n"
+                 "  jalr zero, 4(t0)\n"
+                 ".balign 4\n"
+                 "2:\n"
+                 "  addi %[sum], %[sum], 1\n"
+                 "  addi %[laps], %[laps], -1\n"
+                 "  bnez %[laps], 1b\n"
+                 ".option pop\n"
+                 : [sum] "+&r"(sum), [laps] "+&r"(laps)
+                 :
+                 : "t0", "memory");
 
     return sum;
 }

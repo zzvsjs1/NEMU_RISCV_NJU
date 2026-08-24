@@ -7,7 +7,9 @@ struct Edge
 {
     int from, to, cap, flow;
 
-    Edge() {}
+    Edge()
+    {
+    }
 
     Edge(int from, int to, int cap, int flow)
     {
@@ -18,8 +20,7 @@ struct Edge
     }
 };
 
-template <typename T>
-static inline T min(T x, T y)
+template <typename T> static inline T min(T x, T y)
 {
     return x < y ? x : y;
 }

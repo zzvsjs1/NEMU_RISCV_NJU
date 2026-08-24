@@ -22,9 +22,7 @@ void NDL_DrawRect(uint32_t *pixels, int x, int y, int w, int h)
 
 int main(void)
 {
-    SDL_Surface *surface = SDL_CreateRGBSurface(0, 2, 2, 8,
-                                                DEFAULT_RMASK, DEFAULT_GMASK,
-                                                DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *surface = SDL_CreateRGBSurface(0, 2, 2, 8, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
     assert(surface != NULL);
 
     SDL_Color full[256];

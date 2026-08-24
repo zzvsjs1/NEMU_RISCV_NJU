@@ -52,11 +52,9 @@ static bool jit_opcode_may_be_in_loop_prescan(uint32_t instr)
 #ifdef CONFIG_RISCV_FPU
     case RV64_FP_OPCODE_LOAD:
     case RV64_FP_OPCODE_STORE:
-        return rv64_jit_decode_fp_memory(instr) !=
-               RV64_JIT_FP_MEMORY_INVALID;
+        return rv64_jit_decode_fp_memory(instr) != RV64_JIT_FP_MEMORY_INVALID;
     case RV64_FP_OPCODE_OP:
-        return rv64_jit_decode_fp_exact(instr) !=
-               RV64_JIT_FP_EXACT_INVALID;
+        return rv64_jit_decode_fp_exact(instr) != RV64_JIT_FP_EXACT_INVALID;
 #endif
     default:
         return false;
@@ -103,8 +101,7 @@ static bool jit_collect_stable_loop_regs(uint32_t instr, uint32_t *reg_mask)
          * All valid M members are now helper-free and leave R8 available for
          * the seventh loop-carried guest register.
          */
-        if (rv64_instr_funct7(instr) == RV64_FUNCT7_MULDIV &&
-            opcode == RV64_OPCODE_OP_32)
+        if (rv64_instr_funct7(instr) == RV64_FUNCT7_MULDIV && opcode == RV64_OPCODE_OP_32)
         {
             switch (rv64_instr_funct3(instr))
             {
@@ -174,9 +171,7 @@ static bool jit_collect_stable_loop_regs(uint32_t instr, uint32_t *reg_mask)
  * branches are followed along their fall-through path; only a self-backedge is
  * a candidate for native loop chaining.
  */
-static rv64_jit_loop_scan_t
-jit_prescan_self_backedge(vaddr_t pc, uint32_t max_insns,
-                          bool uses_translated_ifetch)
+static rv64_jit_loop_scan_t jit_prescan_self_backedge(vaddr_t pc, uint32_t max_insns, bool uses_translated_ifetch)
 {
     rv64_jit_loop_scan_t result = {0};
     vaddr_t candidate_pc = pc;
@@ -184,27 +179,20 @@ jit_prescan_self_backedge(vaddr_t pc, uint32_t max_insns,
     uint32_t stable_reg_mask = 0;
     bool stable_mapping_eligible = true;
 
-    while (scanned_insn_count < max_insns &&
-           scanned_insn_count < RV64_JIT_TRACE_MAX_INSNS)
+    while (scanned_insn_count < max_insns && scanned_insn_count < RV64_JIT_TRACE_MAX_INSNS)
     {
         paddr_t candidate_paddr = 0;
         bool candidate_uses_translated_ifetch = false;
 
-        if (!rv64_jit_translate_ifetch_ex(
-                candidate_pc, &candidate_paddr,
-                &candidate_uses_translated_ifetch) ||
-            !in_pmem(candidate_paddr) ||
+        if (!rv64_jit_translate_ifetch_ex(candidate_pc, &candidate_paddr, &candidate_uses_translated_ifetch) || !in_pmem(candidate_paddr) ||
             candidate_uses_translated_ifetch != uses_translated_ifetch)
         {
             return result;
         }
 
-        const uint32_t instr =
-            (uint32_t)vaddr_ifetch(candidate_pc, RV64_INSN_SIZE);
+        const uint32_t instr = (uint32_t)vaddr_ifetch(candidate_pc, RV64_INSN_SIZE);
         const uint32_t opcode = instr & RV64_OPCODE_MASK;
-        const bool is_self_backedge =
-            opcode == RV64_OPCODE_BRANCH &&
-            candidate_pc + imm_b(instr) == pc;
+        const bool is_self_backedge = opcode == RV64_OPCODE_BRANCH && candidate_pc + imm_b(instr) == pc;
 
         if (!jit_opcode_may_be_in_loop_prescan(instr))
         {
@@ -217,14 +205,12 @@ jit_prescan_self_backedge(vaddr_t pc, uint32_t max_insns,
          * neither architectural values nor the cached retired count are safe
          * there. Stable mapping is therefore limited to one terminal backedge.
          */
-        if (stable_mapping_eligible &&
-            opcode == RV64_OPCODE_BRANCH && !is_self_backedge)
+        if (stable_mapping_eligible && opcode == RV64_OPCODE_BRANCH && !is_self_backedge)
         {
             stable_mapping_eligible = false;
         }
 
-        if (stable_mapping_eligible &&
-            !jit_collect_stable_loop_regs(instr, &stable_reg_mask))
+        if (stable_mapping_eligible && !jit_collect_stable_loop_regs(instr, &stable_reg_mask))
         {
             stable_mapping_eligible = false;
         }
@@ -236,8 +222,7 @@ jit_prescan_self_backedge(vaddr_t pc, uint32_t max_insns,
 
             if (stable_mapping_eligible)
             {
-                const uint32_t reg_count =
-                    (uint32_t)__builtin_popcount(stable_reg_mask);
+                const uint32_t reg_count = (uint32_t)__builtin_popcount(stable_reg_mask);
 
                 if (reg_count > 0 && reg_count <= RV64_JIT_HREG_COUNT)
                 {
@@ -282,8 +267,7 @@ static uint32_t jit_gpr_mask_bit(uint32_t reg)
  * the heuristic more conservative because dirty victims are never discarded;
  * the real emitter remains the authority for instruction support and traps.
  */
-static bool jit_decode_gpr_use_def(uint32_t instr, uint32_t *uses,
-                                   uint32_t *defs, bool *terminal)
+static bool jit_decode_gpr_use_def(uint32_t instr, uint32_t *uses, uint32_t *defs, bool *terminal)
 {
     const uint32_t opcode = instr & RV64_OPCODE_MASK;
     const uint32_t rd_bit = jit_gpr_mask_bit(rv64_instr_rd(instr));
@@ -372,35 +356,27 @@ static bool jit_decode_gpr_use_def(uint32_t instr, uint32_t *uses,
  * as compilation. This is a compile-time hint only: source metadata and the
  * real emitter still decide the published block prefix.
  */
-static rv64_jit_gpr_liveness_scan_t
-jit_prescan_gpr_liveness(vaddr_t pc, uint32_t max_insns,
-                         bool uses_translated_ifetch)
+static rv64_jit_gpr_liveness_scan_t jit_prescan_gpr_liveness(vaddr_t pc, uint32_t max_insns, bool uses_translated_ifetch)
 {
     rv64_jit_gpr_liveness_scan_t scan = {0};
     vaddr_t candidate_pc = pc;
 
-    while (scan.count < max_insns &&
-           scan.count < RV64_JIT_TRACE_MAX_INSNS)
+    while (scan.count < max_insns && scan.count < RV64_JIT_TRACE_MAX_INSNS)
     {
         paddr_t candidate_paddr = 0;
         bool candidate_uses_translated_ifetch = false;
 
-        if (!rv64_jit_translate_ifetch_ex(
-                candidate_pc, &candidate_paddr,
-                &candidate_uses_translated_ifetch) ||
-            !in_pmem(candidate_paddr) ||
+        if (!rv64_jit_translate_ifetch_ex(candidate_pc, &candidate_paddr, &candidate_uses_translated_ifetch) || !in_pmem(candidate_paddr) ||
             candidate_uses_translated_ifetch != uses_translated_ifetch)
         {
             break;
         }
 
-        const uint32_t instr =
-            (uint32_t)vaddr_ifetch(candidate_pc, RV64_INSN_SIZE);
+        const uint32_t instr = (uint32_t)vaddr_ifetch(candidate_pc, RV64_INSN_SIZE);
         rv64_jit_gpr_liveness_t *item = &scan.insns[scan.count];
         bool terminal = false;
 
-        if (!jit_decode_gpr_use_def(
-                instr, &item->uses, &item->defs, &terminal))
+        if (!jit_decode_gpr_use_def(instr, &item->uses, &item->defs, &terminal))
         {
             break;
         }
@@ -518,18 +494,12 @@ typedef struct
  * including the ifetch refs collected for it, and record why this block stopped.
  * A negative cache entry is published later only when no instruction was kept.
  */
-static bool jit_handle_emit_failure(rv64_jit_writer_t *w,
-                                    rv64_jit_reg_cache_t *regs,
-                                    rv64_jit_source_builder_t *source,
-                                    rv64_jit_ifetch_ref_builder_t *ifetch_refs,
-                                    rv64_jit_mmio_route_builder_t *mmio_routes,
-                                    const rv64_jit_compile_snapshot_t *snapshot,
-                                    uint32_t instr,
-                                    rv64_jit_block_end_reason_t *block_end_reason,
+static bool jit_handle_emit_failure(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs, rv64_jit_source_builder_t *source,
+                                    rv64_jit_ifetch_ref_builder_t *ifetch_refs, rv64_jit_mmio_route_builder_t *mmio_routes,
+                                    const rv64_jit_compile_snapshot_t *snapshot, uint32_t instr, rv64_jit_block_end_reason_t *block_end_reason,
                                     bool *arena_overflowed)
 {
-    rv64_jit_emitter_checkpoint_restore(
-        &snapshot->emitter, w, regs, mmio_routes);
+    rv64_jit_emitter_checkpoint_restore(&snapshot->emitter, w, regs, mmio_routes);
     *source = snapshot->source;
     *ifetch_refs = snapshot->ifetch_refs;
 
@@ -556,14 +526,11 @@ static bool jit_handle_emit_failure(rv64_jit_writer_t *w,
  * persistent counterparts additionally acquire cache-slot list ownership when
  * the block is published.
  */
-static bool jit_finalise_links(rv64_jit_writer_t *w,
-                               rv64_jit_link_builder_t *links,
-                               rv64_jit_link_t **records)
+static bool jit_finalise_links(rv64_jit_writer_t *w, rv64_jit_link_builder_t *links, rv64_jit_link_t **records)
 {
     Assert(links != NULL, "jit: missing RV64 direct-link builder");
     Assert(records != NULL, "jit: missing RV64 direct-link sidecar result");
-    Assert(links->state.count <= RV64_JIT_BLOCK_MAX_LINKS,
-           "jit: too many RV64 direct-link records");
+    Assert(links->state.count <= RV64_JIT_BLOCK_MAX_LINKS, "jit: too many RV64 direct-link records");
     *records = NULL;
 
     if (links->state.count == 0)
@@ -571,11 +538,9 @@ static bool jit_finalise_links(rv64_jit_writer_t *w,
         return true;
     }
 
-    const uintptr_t aligned =
-        rv64_jit_align_up((uintptr_t)w->cur, _Alignof(rv64_jit_link_t));
+    const uintptr_t aligned = rv64_jit_align_up((uintptr_t)w->cur, _Alignof(rv64_jit_link_t));
     const size_t padding = (size_t)(aligned - (uintptr_t)w->cur);
-    const size_t record_bytes =
-        (size_t)links->state.count * sizeof(rv64_jit_link_t);
+    const size_t record_bytes = (size_t)links->state.count * sizeof(rv64_jit_link_t);
     const size_t available = (size_t)(w->end - w->cur);
 
     if (padding > available || record_bytes > available - padding)
@@ -617,15 +582,11 @@ static bool jit_finalise_links(rv64_jit_writer_t *w,
  * dependency references, and set `valid` last.  Finally advance arena usage so
  * a later compilation cannot overwrite the new block.
  */
-static rv64_jit_block_t *jit_publish_compiled_block(
-    rv64_jit_writer_t *w, const rv64_jit_publish_info_t *info)
+static rv64_jit_block_t *jit_publish_compiled_block(rv64_jit_writer_t *w, const rv64_jit_publish_info_t *info)
 {
-    Assert(info->native_code_end >= w->start &&
-               info->allocation_end >= info->native_code_end &&
-               info->allocation_end == w->cur,
+    Assert(info->native_code_end >= w->start && info->allocation_end >= info->native_code_end && info->allocation_end == w->cur,
            "jit: invalid native-code/sidecar publication bounds");
-    __builtin___clear_cache((char *)w->start,
-                            (char *)info->native_code_end);
+    __builtin___clear_cache((char *)w->start, (char *)info->native_code_end);
 
     rv64_jit_block_t *block = rv64_jit_cache_slot(info->start_pc);
     rv64_jit_block_discard(block);
@@ -642,9 +603,7 @@ static rv64_jit_block_t *jit_publish_compiled_block(
         .paddr_start = info->first_paddr,
         .source_len = info->source->source_len,
         .source_segment_count = info->source->segment_count,
-        .ifetch_pt_page_count = info->uses_translated_ifetch
-                                    ? info->ifetch_refs->count
-                                    : 0,
+        .ifetch_pt_page_count = info->uses_translated_ifetch ? info->ifetch_refs->count : 0,
         .insn_count = info->compiled_insn_count,
         .entry = (rv64_jit_entry_t)w->start,
         .body_entry = (rv64_jit_entry_t)info->native_body_entry,
@@ -653,28 +612,22 @@ static rv64_jit_block_t *jit_publish_compiled_block(
         .outgoing_link_count = info->link_count,
         .indirect_pic = info->indirect_pic,
     };
-    memcpy(block->source_segments, info->source->segments,
-           sizeof(info->source->segments));
-    memcpy(block->ifetch_pt_pages, info->ifetch_refs->pages,
-           block->ifetch_pt_page_count * sizeof(block->ifetch_pt_pages[0]));
+    memcpy(block->source_segments, info->source->segments, sizeof(info->source->segments));
+    memcpy(block->ifetch_pt_pages, info->ifetch_refs->pages, block->ifetch_pt_page_count * sizeof(block->ifetch_pt_pages[0]));
     rv64_jit_ifetch_refs_ref(block);
     rv64_jit_source_chunks_ref(block);
     rv64_jit_source_reverse_map_add(block);
     block->valid = true;
 
-    rv64_jit_code_used =
-        (size_t)(info->allocation_end - rv64_jit_code);
+    rv64_jit_code_used = (size_t)(info->allocation_end - rv64_jit_code);
     rv64_jit_links_source_published(block);
     rv64_jit_links_target_published(block);
-    rv64_jit_perf_map_publish(
-        block, w->start,
-        (size_t)(info->native_code_end - w->start));
+    rv64_jit_perf_map_publish(block, w->start, (size_t)(info->native_code_end - w->start));
     return block;
 }
 
 /* Record compile-time counters after publication has definitely succeeded. */
-static void jit_record_compilation_stats(const rv64_jit_publish_info_t *info,
-                                         rv64_jit_block_end_reason_t end_reason)
+static void jit_record_compilation_stats(const rv64_jit_publish_info_t *info, rv64_jit_block_end_reason_t end_reason)
 {
     JIT_STAT_INC(blocks_compiled);
     rv64_jit_stat_block_end(end_reason);
@@ -704,8 +657,7 @@ static void jit_record_compilation_stats(const rv64_jit_publish_info_t *info,
     if (info->stable_loop_reg_count != 0)
     {
         JIT_STAT_INC(stable_loop_blocks);
-        JIT_STAT_ADD(stable_loop_preloaded_regs,
-                     info->stable_loop_reg_count);
+        JIT_STAT_ADD(stable_loop_preloaded_regs, info->stable_loop_reg_count);
     }
 
     JIT_STAT_ADD(compiled_insns, info->compiled_insn_count);
@@ -725,12 +677,9 @@ static jit_instruction_emit_outcome_t jit_make_instruction_emit_outcome(jit_inst
  * the caller inspects the writer's attempt-wide overflow flag only after it has
  * restored the instruction checkpoint.
  */
-static jit_instruction_emit_outcome_t
-jit_emit_instruction(rv64_jit_writer_t *w,
-                     rv64_jit_reg_cache_t *regs,
-                     rv64_jit_mmio_route_builder_t *mmio_routes,
-                     const jit_block_emit_plan_t *plan,
-                     const jit_instruction_emit_request_t *request)
+static jit_instruction_emit_outcome_t jit_emit_instruction(rv64_jit_writer_t *w, rv64_jit_reg_cache_t *regs,
+                                                           rv64_jit_mmio_route_builder_t *mmio_routes, const jit_block_emit_plan_t *plan,
+                                                           const jit_instruction_emit_request_t *request)
 {
     const uint32_t opcode = request->instr & RV64_OPCODE_MASK;
 
@@ -747,9 +696,8 @@ jit_emit_instruction(rv64_jit_writer_t *w,
         const bool uses_data_translation = rv64_jit_decode_fp_memory(request->instr) != RV64_JIT_FP_MEMORY_INVALID &&
                                            (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != RV64_JIT_SATP_MODE_BARE;
 
-        return jit_make_instruction_emit_outcome(
-            fp_ends_block ? JIT_INSTRUCTION_EMIT_STOP_FP_MEMORY : JIT_INSTRUCTION_EMIT_CONTINUE,
-            uses_data_translation ? JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION : JIT_INSTRUCTION_EFFECT_NONE);
+        return jit_make_instruction_emit_outcome(fp_ends_block ? JIT_INSTRUCTION_EMIT_STOP_FP_MEMORY : JIT_INSTRUCTION_EMIT_CONTINUE,
+                                                 uses_data_translation ? JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION : JIT_INSTRUCTION_EFFECT_NONE);
     }
 #endif
 
@@ -775,10 +723,9 @@ jit_emit_instruction(rv64_jit_writer_t *w,
             return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_FAILED, JIT_INSTRUCTION_EFFECT_NONE);
         }
 
-        return jit_make_instruction_emit_outcome(
-            JIT_INSTRUCTION_EMIT_CONTINUE,
-            (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != RV64_JIT_SATP_MODE_BARE
-                ? JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION : JIT_INSTRUCTION_EFFECT_NONE);
+        return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_CONTINUE, (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != RV64_JIT_SATP_MODE_BARE
+                                                                                    ? JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION
+                                                                                    : JIT_INSTRUCTION_EFFECT_NONE);
     }
 
     if (opcode == RV64_OPCODE_STORE)
@@ -792,10 +739,9 @@ jit_emit_instruction(rv64_jit_writer_t *w,
             return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_FAILED, JIT_INSTRUCTION_EFFECT_NONE);
         }
 
-        return jit_make_instruction_emit_outcome(
-            JIT_INSTRUCTION_EMIT_CONTINUE,
-            (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != RV64_JIT_SATP_MODE_BARE
-                ? JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION : JIT_INSTRUCTION_EFFECT_NONE);
+        return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_CONTINUE, (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != RV64_JIT_SATP_MODE_BARE
+                                                                                    ? JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION
+                                                                                    : JIT_INSTRUCTION_EFFECT_NONE);
     }
 
     if (opcode == RV64_OPCODE_BRANCH)
@@ -810,8 +756,8 @@ jit_emit_instruction(rv64_jit_writer_t *w,
             return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_FAILED, JIT_INSTRUCTION_EFFECT_NONE);
         }
 
-        return jit_make_instruction_emit_outcome(
-            emitted_native_backedge ? JIT_INSTRUCTION_EMIT_STOP_CHAINED_LOOP : JIT_INSTRUCTION_EMIT_CONTINUE, JIT_INSTRUCTION_EFFECT_NONE);
+        return jit_make_instruction_emit_outcome(emitted_native_backedge ? JIT_INSTRUCTION_EMIT_STOP_CHAINED_LOOP : JIT_INSTRUCTION_EMIT_CONTINUE,
+                                                 JIT_INSTRUCTION_EFFECT_NONE);
     }
 
     if (!rv64_jit_emit_instr(w, regs, request->instr, request->pc, request->completed_before + 1u))
@@ -843,9 +789,7 @@ jit_emit_instruction(rv64_jit_writer_t *w,
  * interpreter fallback so the public wrapper can perform one controlled arena
  * reset without ever creating an unsupported-instruction cache entry.
  */
-static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
-                                                uint32_t max_insns,
-                                                bool *arena_overflowed)
+static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc, uint32_t max_insns, bool *arena_overflowed)
 {
     *arena_overflowed = false;
 
@@ -858,12 +802,8 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     rv64_jit_emitter_checkpoint_validate_once();
 #endif
 
-    if (rv64_jit_code_used + RV64_JIT_BLOCK_CODE_HEADROOM +
-        RV64_JIT_MMIO_ROUTE_MAX_ALLOCATION +
-            RV64_JIT_INDIRECT_JUMP_CACHE_MAX_ALLOCATION +
-            RV64_JIT_INDIRECT_PIC_MAX_ALLOCATION +
-            _Alignof(rv64_jit_link_t) - 1u +
-            RV64_JIT_BLOCK_MAX_LINKS * sizeof(rv64_jit_link_t) >
+    if (rv64_jit_code_used + RV64_JIT_BLOCK_CODE_HEADROOM + RV64_JIT_MMIO_ROUTE_MAX_ALLOCATION + RV64_JIT_INDIRECT_JUMP_CACHE_MAX_ALLOCATION +
+            RV64_JIT_INDIRECT_PIC_MAX_ALLOCATION + _Alignof(rv64_jit_link_t) - 1u + RV64_JIT_BLOCK_MAX_LINKS * sizeof(rv64_jit_link_t) >
         RV64_JIT_CODE_SIZE)
     {
         rv64_jit_arena_reset();
@@ -874,9 +814,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     paddr_t first_paddr = 0;
     bool uses_translated_ifetch = false;
 
-    if (!rv64_jit_translate_ifetch_ex(pc, &first_paddr,
-                                      &uses_translated_ifetch) ||
-        !in_pmem(first_paddr))
+    if (!rv64_jit_translate_ifetch_ex(pc, &first_paddr, &uses_translated_ifetch) || !in_pmem(first_paddr))
     {
         return NULL;
     }
@@ -902,35 +840,26 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     rv64_jit_reg_cache_init(&regs);
     rv64_jit_mmio_route_builder_t mmio_routes = {0};
     rv64_jit_emitter_checkpoint_t attempt_checkpoint;
-    rv64_jit_emitter_checkpoint_capture(
-        &attempt_checkpoint, &w, &regs, &mmio_routes);
+    rv64_jit_emitter_checkpoint_capture(&attempt_checkpoint, &w, &regs, &mmio_routes);
 
     if (!rv64_jit_emit_prologue(&w))
     {
         *arena_overflowed = w.overflowed;
-        rv64_jit_emitter_checkpoint_restore(
-            &attempt_checkpoint, &w, &regs, &mmio_routes);
+        rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
-    const rv64_jit_loop_scan_t loop_scan =
-        jit_prescan_self_backedge(pc, max_insns,
-                                  uses_translated_ifetch);
-    const rv64_jit_gpr_liveness_scan_t liveness_scan =
-        jit_prescan_gpr_liveness(pc, max_insns,
-                                 uses_translated_ifetch);
+    const rv64_jit_loop_scan_t loop_scan = jit_prescan_self_backedge(pc, max_insns, uses_translated_ifetch);
+    const rv64_jit_gpr_liveness_scan_t liveness_scan = jit_prescan_gpr_liveness(pc, max_insns, uses_translated_ifetch);
     const uint8_t *native_body_entry = w.cur;
     const uint8_t *loop_body_entry = native_body_entry;
 
     if (loop_scan.stable_reg_count != 0)
     {
-        if (!rv64_jit_prepare_stable_loop_regs(
-                &w, &regs, loop_scan.stable_reg_mask,
-                loop_scan.loop_insn_count))
+        if (!rv64_jit_prepare_stable_loop_regs(&w, &regs, loop_scan.stable_reg_mask, loop_scan.loop_insn_count))
         {
             *arena_overflowed = w.overflowed;
-            rv64_jit_emitter_checkpoint_restore(
-                &attempt_checkpoint, &w, &regs, &mmio_routes);
+            rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
             return NULL;
         }
 
@@ -960,12 +889,10 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     rv64_jit_ifetch_ref_builder_t ifetch_refs = {0};
     bool needs_data_translation_guard = false;
     bool used_stable_loop = false;
-    rv64_jit_compile_exit_state_t exit_state =
-        RV64_JIT_COMPILE_NEEDS_FALLTHROUGH_EXIT;
+    rv64_jit_compile_exit_state_t exit_state = RV64_JIT_COMPILE_NEEDS_FALLTHROUGH_EXIT;
     rv64_jit_block_end_reason_t block_end_reason = RV64_JIT_BLOCK_END_BUDGET;
 
-    while (compiled_insn_count < max_insns &&
-           compiled_insn_count < RV64_JIT_TRACE_MAX_INSNS)
+    while (compiled_insn_count < max_insns && compiled_insn_count < RV64_JIT_TRACE_MAX_INSNS)
     {
         /*
          * Re-translate every guest instruction, even inside one block. This keeps
@@ -976,30 +903,23 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         bool instruction_uses_translated_ifetch = false;
         rv64_jit_ifetch_ref_builder_t ifetch_refs_start = ifetch_refs;
 
-        if (!rv64_jit_translate_ifetch_collect(
-                guest_pc, &instruction_paddr,
-                &instruction_uses_translated_ifetch, &ifetch_refs) ||
-            !in_pmem(instruction_paddr) ||
-            instruction_uses_translated_ifetch != uses_translated_ifetch)
+        if (!rv64_jit_translate_ifetch_collect(guest_pc, &instruction_paddr, &instruction_uses_translated_ifetch, &ifetch_refs) ||
+            !in_pmem(instruction_paddr) || instruction_uses_translated_ifetch != uses_translated_ifetch)
         {
             ifetch_refs = ifetch_refs_start;
             block_end_reason = RV64_JIT_BLOCK_END_SOURCE_BOUNDARY;
             break;
         }
 
-        const uint32_t instr =
-            (uint32_t)vaddr_ifetch(guest_pc, RV64_INSN_SIZE);
+        const uint32_t instr = (uint32_t)vaddr_ifetch(guest_pc, RV64_INSN_SIZE);
         uint32_t current_uses = 0;
         uint32_t current_defs = 0;
         bool current_terminal = false;
 
         if (compiled_insn_count < liveness_scan.count)
         {
-            current_uses =
-                liveness_scan.insns[compiled_insn_count].uses;
-            rv64_jit_reg_cache_set_liveness(
-                &regs, current_uses,
-                liveness_scan.insns[compiled_insn_count].live_after);
+            current_uses = liveness_scan.insns[compiled_insn_count].uses;
+            rv64_jit_reg_cache_set_liveness(&regs, current_uses, liveness_scan.insns[compiled_insn_count].live_after);
         }
         else
         {
@@ -1008,22 +928,17 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
              * exact boundary. Pin this instruction's operands but disable
              * future-use preference for the remaining prefix.
              */
-            (void)jit_decode_gpr_use_def(
-                instr, &current_uses, &current_defs,
-                &current_terminal);
-            rv64_jit_reg_cache_set_liveness(
-                &regs, current_uses, UINT32_MAX);
+            (void)jit_decode_gpr_use_def(instr, &current_uses, &current_defs, &current_terminal);
+            rv64_jit_reg_cache_set_liveness(&regs, current_uses, UINT32_MAX);
         }
 
         rv64_jit_compile_snapshot_t instr_snapshot = {
             .source = source,
             .ifetch_refs = ifetch_refs_start,
         };
-        rv64_jit_emitter_checkpoint_capture(
-            &instr_snapshot.emitter, &w, &regs, &mmio_routes);
+        rv64_jit_emitter_checkpoint_capture(&instr_snapshot.emitter, &w, &regs, &mmio_routes);
 
-        if (!rv64_jit_source_builder_append(&source, instruction_paddr,
-                                            RV64_INSN_SIZE))
+        if (!rv64_jit_source_builder_append(&source, instruction_paddr, RV64_INSN_SIZE))
         {
             ifetch_refs = ifetch_refs_start;
             block_end_reason = RV64_JIT_BLOCK_END_SOURCE_BOUNDARY;
@@ -1040,10 +955,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
 
         if (emit_outcome.kind == JIT_INSTRUCTION_EMIT_FAILED)
         {
-            if (!jit_handle_emit_failure(
-                    &w, &regs, &source, &ifetch_refs, &mmio_routes,
-                    &instr_snapshot, instr, &block_end_reason,
-                    arena_overflowed))
+            if (!jit_handle_emit_failure(&w, &regs, &source, &ifetch_refs, &mmio_routes, &instr_snapshot, instr, &block_end_reason, arena_overflowed))
             {
                 rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
                 return NULL;
@@ -1102,12 +1014,10 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     {
         if (block_end_reason == RV64_JIT_BLOCK_END_UNSUPPORTED_AFTER_PREFIX)
         {
-            rv64_jit_mark_unsupported(pc, first_paddr,
-                                      uses_translated_ifetch);
+            rv64_jit_mark_unsupported(pc, first_paddr, uses_translated_ifetch);
         }
 
-        rv64_jit_emitter_checkpoint_restore(
-            &attempt_checkpoint, &w, &regs, &mmio_routes);
+        rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -1119,15 +1029,11 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
      */
     if (exit_state == RV64_JIT_COMPILE_NEEDS_FALLTHROUGH_EXIT &&
         !(rv64_jit_direct_link_enabled()
-              ? rv64_jit_emit_direct_link_exit(
-                    &w, &regs, guest_pc, compiled_insn_count,
-                    needs_data_translation_guard, NULL)
-              : rv64_jit_emit_plain_block_exit(
-                    &w, &regs, guest_pc, compiled_insn_count)))
+              ? rv64_jit_emit_direct_link_exit(&w, &regs, guest_pc, compiled_insn_count, needs_data_translation_guard, NULL)
+              : rv64_jit_emit_plain_block_exit(&w, &regs, guest_pc, compiled_insn_count)))
     {
         *arena_overflowed = w.overflowed;
-        rv64_jit_emitter_checkpoint_restore(
-            &attempt_checkpoint, &w, &regs, &mmio_routes);
+        rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -1141,13 +1047,10 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     const uint8_t *chain_entry = NULL;
 
     if (!uses_translated_ifetch && !needs_data_translation_guard &&
-        !rv64_jit_emit_chain_entry(
-            &w, pc, compiled_insn_count,
-            native_body_entry, &chain_entry))
+        !rv64_jit_emit_chain_entry(&w, pc, compiled_insn_count, native_body_entry, &chain_entry))
     {
         *arena_overflowed = w.overflowed;
-        rv64_jit_emitter_checkpoint_restore(
-            &attempt_checkpoint, &w, &regs, &mmio_routes);
+        rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -1157,34 +1060,28 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
      */
     const uint8_t *native_code_end = w.cur;
 
-    Assert(!(indirect_pic.state.used && indirect_jump_cache.state.used),
-           "jit: one RV64 block selected both indirect cache kinds");
+    Assert(!(indirect_pic.state.used && indirect_jump_cache.state.used), "jit: one RV64 block selected both indirect cache kinds");
 
     if (!rv64_jit_finalise_mmio_routes(&w, &mmio_routes))
     {
         *arena_overflowed = w.overflowed;
-        rv64_jit_emitter_checkpoint_restore(
-            &attempt_checkpoint, &w, &regs, &mmio_routes);
+        rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
-    if (!rv64_jit_finalise_indirect_jump_cache(
-            &w, &indirect_jump_cache))
+    if (!rv64_jit_finalise_indirect_jump_cache(&w, &indirect_jump_cache))
     {
         *arena_overflowed = w.overflowed;
-        rv64_jit_emitter_checkpoint_restore(
-            &attempt_checkpoint, &w, &regs, &mmio_routes);
+        rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
     rv64_jit_indirect_pic_t *indirect_pic_sidecar = NULL;
 
-    if (!rv64_jit_finalise_indirect_pic(
-            &w, &indirect_pic, &indirect_pic_sidecar))
+    if (!rv64_jit_finalise_indirect_pic(&w, &indirect_pic, &indirect_pic_sidecar))
     {
         *arena_overflowed = w.overflowed;
-        rv64_jit_emitter_checkpoint_restore(
-            &attempt_checkpoint, &w, &regs, &mmio_routes);
+        rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -1193,8 +1090,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
     if (!jit_finalise_links(&w, &links, &link_records))
     {
         *arena_overflowed = w.overflowed;
-        rv64_jit_emitter_checkpoint_restore(
-            &attempt_checkpoint, &w, &regs, &mmio_routes);
+        rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
         return NULL;
     }
 
@@ -1205,8 +1101,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         .uses_translated_ifetch = uses_translated_ifetch,
         .needs_data_translation_guard = needs_data_translation_guard,
         .compiled_insn_count = compiled_insn_count,
-        .stable_loop_reg_count =
-            used_stable_loop ? loop_scan.stable_reg_count : 0,
+        .stable_loop_reg_count = used_stable_loop ? loop_scan.stable_reg_count : 0,
         .native_body_entry = native_body_entry,
         .chain_entry = chain_entry,
         .native_code_end = native_code_end,
@@ -1218,8 +1113,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         .ifetch_refs = &ifetch_refs,
     };
 
-    rv64_jit_block_t *block =
-        jit_publish_compiled_block(&w, &publish_info);
+    rv64_jit_block_t *block = jit_publish_compiled_block(&w, &publish_info);
     jit_record_compilation_stats(&publish_info, block_end_reason);
     return block;
 }
@@ -1236,8 +1130,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
 rv64_jit_block_t *rv64_jit_compile_block(vaddr_t pc, uint32_t max_insns)
 {
     bool arena_overflowed = false;
-    rv64_jit_block_t *block =
-        jit_compile_block_once(pc, max_insns, &arena_overflowed);
+    rv64_jit_block_t *block = jit_compile_block_once(pc, max_insns, &arena_overflowed);
 
     if (block != NULL || !arena_overflowed)
     {

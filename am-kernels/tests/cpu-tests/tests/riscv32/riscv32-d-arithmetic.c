@@ -24,8 +24,7 @@ enum
  * skips each rejected four-byte D instruction so the test reaches an ordinary
  * failed check instead of recursing through an FP-using handler or hanging.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -54,8 +53,7 @@ extern void rv32_d_arithmetic_trap_handler(void);
  */
 #define FP_ASM_BINARY_D(name, instruction) \
     ".globl " #name "\n" \
-    ".type " #name ", @function\n" \
-    #name ":\n" \
+    ".type " #name ", @function\n" #name ":\n" \
     "  fld f0, 0(a0)\n" \
     "  fld f1, 0(a1)\n" \
     "  " #instruction " f0, f0, f1, rne\n" \
@@ -65,8 +63,7 @@ extern void rv32_d_arithmetic_trap_handler(void);
 
 #define FP_ASM_UNARY_D(name, instruction) \
     ".globl " #name "\n" \
-    ".type " #name ", @function\n" \
-    #name ":\n" \
+    ".type " #name ", @function\n" #name ":\n" \
     "  fld f0, 0(a0)\n" \
     "  " #instruction " f0, f0, rne\n" \
     "  fsd f0, 0(a1)\n" \
@@ -75,8 +72,7 @@ extern void rv32_d_arithmetic_trap_handler(void);
 
 #define FP_ASM_FMA_D(name, instruction) \
     ".globl " #name "\n" \
-    ".type " #name ", @function\n" \
-    #name ":\n" \
+    ".type " #name ", @function\n" #name ":\n" \
     "  fld f0, 0(a0)\n" \
     "  fld f1, 0(a1)\n" \
     "  fld f2, 0(a2)\n" \
@@ -87,8 +83,7 @@ extern void rv32_d_arithmetic_trap_handler(void);
 
 #define FP_ASM_CVT_W_D_STATIC(name, rounding_mode) \
     ".globl " #name "\n" \
-    ".type " #name ", @function\n" \
-    #name ":\n" \
+    ".type " #name ", @function\n" #name ":\n" \
     "  fld f0, 0(a0)\n" \
     "  fcvt.w.d a0, f0, " #rounding_mode "\n" \
     "  ret\n" \
@@ -96,128 +91,115 @@ extern void rv32_d_arithmetic_trap_handler(void);
 
 #define FP_ASM_CVT_S_D_STATIC(name, rounding_mode) \
     ".globl " #name "\n" \
-    ".type " #name ", @function\n" \
-    #name ":\n" \
+    ".type " #name ", @function\n" #name ":\n" \
     "  fld f0, 0(a0)\n" \
     "  fcvt.s.d f0, f0, " #rounding_mode "\n" \
     "  fsd f0, 0(a1)\n" \
     "  ret\n" \
     ".size " #name ", .-" #name "\n"
 
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
     ".option arch, +f\n"
     ".option arch, +d\n"
 
-    FP_ASM_BINARY_D(rv32_d_add, fadd.d)
-    FP_ASM_BINARY_D(rv32_d_sub, fsub.d)
-    FP_ASM_BINARY_D(rv32_d_mul, fmul.d)
-    FP_ASM_BINARY_D(rv32_d_div, fdiv.d)
-    FP_ASM_UNARY_D(rv32_d_sqrt, fsqrt.d)
+    FP_ASM_BINARY_D(rv32_d_add, fadd.d) FP_ASM_BINARY_D(rv32_d_sub, fsub.d) FP_ASM_BINARY_D(rv32_d_mul, fmul.d) FP_ASM_BINARY_D(rv32_d_div, fdiv.d)
+        FP_ASM_UNARY_D(rv32_d_sqrt, fsqrt.d)
 
-    FP_ASM_FMA_D(rv32_d_madd, fmadd.d)
-    FP_ASM_FMA_D(rv32_d_msub, fmsub.d)
-    FP_ASM_FMA_D(rv32_d_nmsub, fnmsub.d)
-    FP_ASM_FMA_D(rv32_d_nmadd, fnmadd.d)
+            FP_ASM_FMA_D(rv32_d_madd, fmadd.d) FP_ASM_FMA_D(rv32_d_msub, fmsub.d) FP_ASM_FMA_D(rv32_d_nmsub, fnmsub.d)
+                FP_ASM_FMA_D(rv32_d_nmadd, fnmadd.d)
 
-    FP_ASM_CVT_W_D_STATIC(rv32_d_cvt_w_d_rne, rne)
-    FP_ASM_CVT_W_D_STATIC(rv32_d_cvt_w_d_rtz, rtz)
-    FP_ASM_CVT_W_D_STATIC(rv32_d_cvt_w_d_rdn, rdn)
-    FP_ASM_CVT_W_D_STATIC(rv32_d_cvt_w_d_rup, rup)
-    FP_ASM_CVT_W_D_STATIC(rv32_d_cvt_w_d_rmm, rmm)
+                    FP_ASM_CVT_W_D_STATIC(rv32_d_cvt_w_d_rne, rne) FP_ASM_CVT_W_D_STATIC(rv32_d_cvt_w_d_rtz, rtz)
+                        FP_ASM_CVT_W_D_STATIC(rv32_d_cvt_w_d_rdn, rdn) FP_ASM_CVT_W_D_STATIC(rv32_d_cvt_w_d_rup, rup)
+                            FP_ASM_CVT_W_D_STATIC(rv32_d_cvt_w_d_rmm, rmm)
 
-    FP_ASM_CVT_S_D_STATIC(rv32_d_cvt_s_d_rne, rne)
-    FP_ASM_CVT_S_D_STATIC(rv32_d_cvt_s_d_rtz, rtz)
-    FP_ASM_CVT_S_D_STATIC(rv32_d_cvt_s_d_rdn, rdn)
-    FP_ASM_CVT_S_D_STATIC(rv32_d_cvt_s_d_rup, rup)
-    FP_ASM_CVT_S_D_STATIC(rv32_d_cvt_s_d_rmm, rmm)
+                                FP_ASM_CVT_S_D_STATIC(rv32_d_cvt_s_d_rne, rne) FP_ASM_CVT_S_D_STATIC(rv32_d_cvt_s_d_rtz, rtz)
+                                    FP_ASM_CVT_S_D_STATIC(rv32_d_cvt_s_d_rdn, rdn) FP_ASM_CVT_S_D_STATIC(rv32_d_cvt_s_d_rup, rup)
+                                        FP_ASM_CVT_S_D_STATIC(rv32_d_cvt_s_d_rmm, rmm)
 
-    ".globl rv32_d_cvt_w_d_dyn\n"
-    ".type rv32_d_cvt_w_d_dyn, @function\n"
-    "rv32_d_cvt_w_d_dyn:\n"
-    "  fld f0, 0(a0)\n"
-    "  fcvt.w.d a0, f0, dyn\n"
-    "  ret\n"
-    ".size rv32_d_cvt_w_d_dyn, .-rv32_d_cvt_w_d_dyn\n"
+                                            ".globl rv32_d_cvt_w_d_dyn\n"
+                                            ".type rv32_d_cvt_w_d_dyn, @function\n"
+                                            "rv32_d_cvt_w_d_dyn:\n"
+                                            "  fld f0, 0(a0)\n"
+                                            "  fcvt.w.d a0, f0, dyn\n"
+                                            "  ret\n"
+                                            ".size rv32_d_cvt_w_d_dyn, .-rv32_d_cvt_w_d_dyn\n"
 
-    ".globl rv32_d_cvt_s_d_dyn\n"
-    ".type rv32_d_cvt_s_d_dyn, @function\n"
-    "rv32_d_cvt_s_d_dyn:\n"
-    "  fld f0, 0(a0)\n"
-    "  fcvt.s.d f0, f0, dyn\n"
-    "  fsd f0, 0(a1)\n"
-    "  ret\n"
-    ".size rv32_d_cvt_s_d_dyn, .-rv32_d_cvt_s_d_dyn\n"
+                                            ".globl rv32_d_cvt_s_d_dyn\n"
+                                            ".type rv32_d_cvt_s_d_dyn, @function\n"
+                                            "rv32_d_cvt_s_d_dyn:\n"
+                                            "  fld f0, 0(a0)\n"
+                                            "  fcvt.s.d f0, f0, dyn\n"
+                                            "  fsd f0, 0(a1)\n"
+                                            "  ret\n"
+                                            ".size rv32_d_cvt_s_d_dyn, .-rv32_d_cvt_s_d_dyn\n"
 
-    ".globl rv32_d_cvt_wu_d\n"
-    ".type rv32_d_cvt_wu_d, @function\n"
-    "rv32_d_cvt_wu_d:\n"
-    "  fld f0, 0(a0)\n"
-    "  fcvt.wu.d a0, f0, rtz\n"
-    "  ret\n"
-    ".size rv32_d_cvt_wu_d, .-rv32_d_cvt_wu_d\n"
+                                            ".globl rv32_d_cvt_wu_d\n"
+                                            ".type rv32_d_cvt_wu_d, @function\n"
+                                            "rv32_d_cvt_wu_d:\n"
+                                            "  fld f0, 0(a0)\n"
+                                            "  fcvt.wu.d a0, f0, rtz\n"
+                                            "  ret\n"
+                                            ".size rv32_d_cvt_wu_d, .-rv32_d_cvt_wu_d\n"
 
-    ".globl rv32_d_cvt_d_w\n"
-    ".type rv32_d_cvt_d_w, @function\n"
-    "rv32_d_cvt_d_w:\n"
-    "  fcvt.d.w f0, a0\n"
-    "  fsd f0, 0(a1)\n"
-    "  ret\n"
-    ".size rv32_d_cvt_d_w, .-rv32_d_cvt_d_w\n"
+                                            ".globl rv32_d_cvt_d_w\n"
+                                            ".type rv32_d_cvt_d_w, @function\n"
+                                            "rv32_d_cvt_d_w:\n"
+                                            "  fcvt.d.w f0, a0\n"
+                                            "  fsd f0, 0(a1)\n"
+                                            "  ret\n"
+                                            ".size rv32_d_cvt_d_w, .-rv32_d_cvt_d_w\n"
 
-    ".globl rv32_d_cvt_d_wu\n"
-    ".type rv32_d_cvt_d_wu, @function\n"
-    "rv32_d_cvt_d_wu:\n"
-    "  fcvt.d.wu f0, a0\n"
-    "  fsd f0, 0(a1)\n"
-    "  ret\n"
-    ".size rv32_d_cvt_d_wu, .-rv32_d_cvt_d_wu\n"
+                                            ".globl rv32_d_cvt_d_wu\n"
+                                            ".type rv32_d_cvt_d_wu, @function\n"
+                                            "rv32_d_cvt_d_wu:\n"
+                                            "  fcvt.d.wu f0, a0\n"
+                                            "  fsd f0, 0(a1)\n"
+                                            "  ret\n"
+                                            ".size rv32_d_cvt_d_wu, .-rv32_d_cvt_d_wu\n"
 
-    ".globl rv32_d_cvt_s_d\n"
-    ".type rv32_d_cvt_s_d, @function\n"
-    "rv32_d_cvt_s_d:\n"
-    "  fld f0, 0(a0)\n"
-    "  fcvt.s.d f0, f0, rne\n"
-    /*
-     * FSD deliberately observes the complete FLEN=64 destination register.
-     * A correct FCVT.S.D result has its binary32 payload NaN-boxed.
-     */
-    "  fsd f0, 0(a1)\n"
-    "  ret\n"
-    ".size rv32_d_cvt_s_d, .-rv32_d_cvt_s_d\n"
+                                            ".globl rv32_d_cvt_s_d\n"
+                                            ".type rv32_d_cvt_s_d, @function\n"
+                                            "rv32_d_cvt_s_d:\n"
+                                            "  fld f0, 0(a0)\n"
+                                            "  fcvt.s.d f0, f0, rne\n"
+                                            /*
+                                             * FSD deliberately observes the complete FLEN=64 destination register.
+                                             * A correct FCVT.S.D result has its binary32 payload NaN-boxed.
+                                             */
+                                            "  fsd f0, 0(a1)\n"
+                                            "  ret\n"
+                                            ".size rv32_d_cvt_s_d, .-rv32_d_cvt_s_d\n"
 
-    ".globl rv32_d_cvt_d_s\n"
-    ".type rv32_d_cvt_d_s, @function\n"
-    "rv32_d_cvt_d_s:\n"
-    "  flw f0, 0(a0)\n"
-    "  fcvt.d.s f0, f0\n"
-    "  fsd f0, 0(a1)\n"
-    "  ret\n"
-    ".size rv32_d_cvt_d_s, .-rv32_d_cvt_d_s\n"
+                                            ".globl rv32_d_cvt_d_s\n"
+                                            ".type rv32_d_cvt_d_s, @function\n"
+                                            "rv32_d_cvt_d_s:\n"
+                                            "  flw f0, 0(a0)\n"
+                                            "  fcvt.d.s f0, f0\n"
+                                            "  fsd f0, 0(a1)\n"
+                                            "  ret\n"
+                                            ".size rv32_d_cvt_d_s, .-rv32_d_cvt_d_s\n"
 
-    ".globl rv32_d_cvt_d_malformed_s\n"
-    ".type rv32_d_cvt_d_malformed_s, @function\n"
-    "rv32_d_cvt_d_malformed_s:\n"
-    /*
-     * Loading all 64 bits permits construction of a deliberately malformed
-     * binary32 NaN box.  FCVT.D.S must consume it as a canonical NaN.
-     */
-    "  fld f0, 0(a0)\n"
-    "  fcvt.d.s f0, f0\n"
-    "  fsd f0, 0(a1)\n"
-    "  ret\n"
-    ".size rv32_d_cvt_d_malformed_s, .-rv32_d_cvt_d_malformed_s\n"
+                                            ".globl rv32_d_cvt_d_malformed_s\n"
+                                            ".type rv32_d_cvt_d_malformed_s, @function\n"
+                                            "rv32_d_cvt_d_malformed_s:\n"
+                                            /*
+                                             * Loading all 64 bits permits construction of a deliberately malformed
+                                             * binary32 NaN box.  FCVT.D.S must consume it as a canonical NaN.
+                                             */
+                                            "  fld f0, 0(a0)\n"
+                                            "  fcvt.d.s f0, f0\n"
+                                            "  fsd f0, 0(a1)\n"
+                                            "  ret\n"
+                                            ".size rv32_d_cvt_d_malformed_s, .-rv32_d_cvt_d_malformed_s\n"
 
-    ".option pop\n");
+                                            ".option pop\n");
 
-typedef void (*binary_d_operation_t)(const uint64_t *, const uint64_t *,
-                                     uint64_t *);
+typedef void (*binary_d_operation_t)(const uint64_t *, const uint64_t *, uint64_t *);
 typedef void (*unary_d_operation_t)(const uint64_t *, uint64_t *);
-typedef void (*fma_d_operation_t)(const uint64_t *, const uint64_t *,
-                                  const uint64_t *, uint64_t *);
+typedef void (*fma_d_operation_t)(const uint64_t *, const uint64_t *, const uint64_t *, uint64_t *);
 typedef uint32_t (*cvt_w_d_operation_t)(const uint64_t *);
 typedef void (*cvt_s_d_operation_t)(const uint64_t *, uint64_t *);
 
@@ -226,14 +208,10 @@ extern void rv32_d_sub(const uint64_t *, const uint64_t *, uint64_t *);
 extern void rv32_d_mul(const uint64_t *, const uint64_t *, uint64_t *);
 extern void rv32_d_div(const uint64_t *, const uint64_t *, uint64_t *);
 extern void rv32_d_sqrt(const uint64_t *, uint64_t *);
-extern void rv32_d_madd(const uint64_t *, const uint64_t *,
-                        const uint64_t *, uint64_t *);
-extern void rv32_d_msub(const uint64_t *, const uint64_t *,
-                        const uint64_t *, uint64_t *);
-extern void rv32_d_nmsub(const uint64_t *, const uint64_t *,
-                         const uint64_t *, uint64_t *);
-extern void rv32_d_nmadd(const uint64_t *, const uint64_t *,
-                         const uint64_t *, uint64_t *);
+extern void rv32_d_madd(const uint64_t *, const uint64_t *, const uint64_t *, uint64_t *);
+extern void rv32_d_msub(const uint64_t *, const uint64_t *, const uint64_t *, uint64_t *);
+extern void rv32_d_nmsub(const uint64_t *, const uint64_t *, const uint64_t *, uint64_t *);
+extern void rv32_d_nmadd(const uint64_t *, const uint64_t *, const uint64_t *, uint64_t *);
 extern uint32_t rv32_d_cvt_w_d_rne(const uint64_t *);
 extern uint32_t rv32_d_cvt_w_d_rtz(const uint64_t *);
 extern uint32_t rv32_d_cvt_w_d_rdn(const uint64_t *);
@@ -294,38 +272,31 @@ static void write_frm(uintptr_t value)
     asm volatile("csrw 0x002, %0" : : "r"(value) : "memory");
 }
 
-static uint64_t run_binary_d(binary_d_operation_t operation,
-                             uint64_t lhs_bits, uint64_t rhs_bits)
+static uint64_t run_binary_d(binary_d_operation_t operation, uint64_t lhs_bits, uint64_t rhs_bits)
 {
     uint64_t lhs __attribute__((aligned(8))) = lhs_bits;
     uint64_t rhs __attribute__((aligned(8))) = rhs_bits;
-    uint64_t result __attribute__((aligned(8))) =
-        UINT64_C(0xfeedfacecafebeef);
+    uint64_t result __attribute__((aligned(8))) = UINT64_C(0xfeedfacecafebeef);
 
     operation(&lhs, &rhs, &result);
     return result;
 }
 
-static uint64_t run_unary_d(unary_d_operation_t operation,
-                            uint64_t source_bits)
+static uint64_t run_unary_d(unary_d_operation_t operation, uint64_t source_bits)
 {
     uint64_t source __attribute__((aligned(8))) = source_bits;
-    uint64_t result __attribute__((aligned(8))) =
-        UINT64_C(0xfeedfacecafebeef);
+    uint64_t result __attribute__((aligned(8))) = UINT64_C(0xfeedfacecafebeef);
 
     operation(&source, &result);
     return result;
 }
 
-static uint64_t run_fma_d(fma_d_operation_t operation,
-                          uint64_t lhs_bits, uint64_t rhs_bits,
-                          uint64_t addend_bits)
+static uint64_t run_fma_d(fma_d_operation_t operation, uint64_t lhs_bits, uint64_t rhs_bits, uint64_t addend_bits)
 {
     uint64_t lhs __attribute__((aligned(8))) = lhs_bits;
     uint64_t rhs __attribute__((aligned(8))) = rhs_bits;
     uint64_t addend __attribute__((aligned(8))) = addend_bits;
-    uint64_t result __attribute__((aligned(8))) =
-        UINT64_C(0xfeedfacecafebeef);
+    uint64_t result __attribute__((aligned(8))) = UINT64_C(0xfeedfacecafebeef);
 
     operation(&lhs, &rhs, &addend, &result);
     return result;
@@ -336,33 +307,17 @@ static void test_arithmetic_operations(void)
     write_fflags(0);
 
     /* 1.5 + 2.25 = 3.75 exactly in binary64. */
-    check(run_binary_d(rv32_d_add,
-                       UINT64_C(0x3ff8000000000000),
-                       UINT64_C(0x4002000000000000)) ==
-          UINT64_C(0x400e000000000000));
-    check(run_binary_d(rv32_d_sub,
-                       UINT64_C(0x400e000000000000),
-                       UINT64_C(0x4002000000000000)) ==
-          UINT64_C(0x3ff8000000000000));
-    check(run_binary_d(rv32_d_mul,
-                       UINT64_C(0x3ff8000000000000),
-                       UINT64_C(0x4000000000000000)) ==
-          UINT64_C(0x4008000000000000));
-    check(run_binary_d(rv32_d_div,
-                       UINT64_C(0x4008000000000000),
-                       UINT64_C(0x4000000000000000)) ==
-          UINT64_C(0x3ff8000000000000));
-    check(run_unary_d(rv32_d_sqrt,
-                      UINT64_C(0x4010000000000000)) ==
-          UINT64_C(0x4000000000000000));
+    check(run_binary_d(rv32_d_add, UINT64_C(0x3ff8000000000000), UINT64_C(0x4002000000000000)) == UINT64_C(0x400e000000000000));
+    check(run_binary_d(rv32_d_sub, UINT64_C(0x400e000000000000), UINT64_C(0x4002000000000000)) == UINT64_C(0x3ff8000000000000));
+    check(run_binary_d(rv32_d_mul, UINT64_C(0x3ff8000000000000), UINT64_C(0x4000000000000000)) == UINT64_C(0x4008000000000000));
+    check(run_binary_d(rv32_d_div, UINT64_C(0x4008000000000000), UINT64_C(0x4000000000000000)) == UINT64_C(0x3ff8000000000000));
+    check(run_unary_d(rv32_d_sqrt, UINT64_C(0x4010000000000000)) == UINT64_C(0x4000000000000000));
 
     /*
      * IEEE-754 square root preserves the sign of zero.  This distinguishes
      * negative zero from an implementation that normalises both zeros.
      */
-    check(run_unary_d(rv32_d_sqrt,
-                      UINT64_C(0x8000000000000000)) ==
-          UINT64_C(0x8000000000000000));
+    check(run_unary_d(rv32_d_sqrt, UINT64_C(0x8000000000000000)) == UINT64_C(0x8000000000000000));
     check(read_fflags() == 0);
 }
 
@@ -373,14 +328,10 @@ static void test_fused_operations(void)
     const uint64_t four = UINT64_C(0x4010000000000000);
 
     write_fflags(0);
-    check(run_fma_d(rv32_d_madd, two, three, four) ==
-          UINT64_C(0x4024000000000000));
-    check(run_fma_d(rv32_d_msub, two, three, four) ==
-          UINT64_C(0x4000000000000000));
-    check(run_fma_d(rv32_d_nmsub, two, three, four) ==
-          UINT64_C(0xc000000000000000));
-    check(run_fma_d(rv32_d_nmadd, two, three, four) ==
-          UINT64_C(0xc024000000000000));
+    check(run_fma_d(rv32_d_madd, two, three, four) == UINT64_C(0x4024000000000000));
+    check(run_fma_d(rv32_d_msub, two, three, four) == UINT64_C(0x4000000000000000));
+    check(run_fma_d(rv32_d_nmsub, two, three, four) == UINT64_C(0xc000000000000000));
+    check(run_fma_d(rv32_d_nmadd, two, three, four) == UINT64_C(0xc024000000000000));
     check(read_fflags() == 0);
 
     /*
@@ -389,10 +340,7 @@ static void test_fused_operations(void)
      * A separately rounded multiply becomes exactly one and would incorrectly
      * produce positive zero, so this literal detects a non-fused FMSUB.
      */
-    check(run_fma_d(rv32_d_msub,
-                    UINT64_C(0x3ff0000000000001),
-                    UINT64_C(0x3fefffffffffffff),
-                    UINT64_C(0x3ff0000000000000)) ==
+    check(run_fma_d(rv32_d_msub, UINT64_C(0x3ff0000000000001), UINT64_C(0x3fefffffffffffff), UINT64_C(0x3ff0000000000000)) ==
           UINT64_C(0x3c9ffffffffffffe));
 
     /*
@@ -400,10 +348,7 @@ static void test_fused_operations(void)
      * a quiet NaN.  The architectural result is the canonical binary64 NaN.
      */
     write_fflags(0);
-    check(run_fma_d(rv32_d_madd,
-                    UINT64_C(0x7ff0000000000000),
-                    UINT64_C(0x0000000000000000),
-                    UINT64_C(0x7ff8000000000123)) ==
+    check(run_fma_d(rv32_d_madd, UINT64_C(0x7ff0000000000000), UINT64_C(0x0000000000000000), UINT64_C(0x7ff8000000000123)) ==
           UINT64_C(0x7ff8000000000000));
     check(read_fflags() == FFLAG_NV);
 }
@@ -428,11 +373,7 @@ static void test_static_and_dynamic_rounding_modes(void)
         {3u, UINT32_C(0xfffffffd), 3u}, /* RMM */
     };
     static const cvt_w_d_operation_t static_operation[5] = {
-        rv32_d_cvt_w_d_rne,
-        rv32_d_cvt_w_d_rtz,
-        rv32_d_cvt_w_d_rdn,
-        rv32_d_cvt_w_d_rup,
-        rv32_d_cvt_w_d_rmm,
+        rv32_d_cvt_w_d_rne, rv32_d_cvt_w_d_rtz, rv32_d_cvt_w_d_rdn, rv32_d_cvt_w_d_rup, rv32_d_cvt_w_d_rmm,
     };
 
     for (size_t rm = 0; rm < 5; ++rm)
@@ -440,8 +381,7 @@ static void test_static_and_dynamic_rounding_modes(void)
         for (size_t case_index = 0; case_index < 3; ++case_index)
         {
             write_fflags(0);
-            check(static_operation[rm](&input[case_index]) ==
-                  expected[rm][case_index]);
+            check(static_operation[rm](&input[case_index]) == expected[rm][case_index]);
             check(read_fflags() == FFLAG_NX);
         }
     }
@@ -453,8 +393,7 @@ static void test_static_and_dynamic_rounding_modes(void)
         for (size_t case_index = 0; case_index < 3; ++case_index)
         {
             write_fflags(0);
-            check(rv32_d_cvt_w_d_dyn(&input[case_index]) ==
-                  expected[rm][case_index]);
+            check(rv32_d_cvt_w_d_dyn(&input[case_index]) == expected[rm][case_index]);
             check(read_fflags() == FFLAG_NX);
         }
     }
@@ -475,28 +414,14 @@ static void test_cross_precision_rounding_modes(void)
         UINT64_C(0x3ff0000018000000),
     };
     static const uint64_t expected[5][3] = {
-        {UINT64_C(0xffffffff3f800000),
-         UINT64_C(0xffffffffbf800000),
-         UINT64_C(0xffffffff3f800001)}, /* RNE */
-        {UINT64_C(0xffffffff3f800000),
-         UINT64_C(0xffffffffbf800000),
-         UINT64_C(0xffffffff3f800000)}, /* RTZ */
-        {UINT64_C(0xffffffff3f800000),
-         UINT64_C(0xffffffffbf800001),
-         UINT64_C(0xffffffff3f800000)}, /* RDN */
-        {UINT64_C(0xffffffff3f800001),
-         UINT64_C(0xffffffffbf800000),
-         UINT64_C(0xffffffff3f800001)}, /* RUP */
-        {UINT64_C(0xffffffff3f800001),
-         UINT64_C(0xffffffffbf800001),
-         UINT64_C(0xffffffff3f800001)}, /* RMM */
+        {UINT64_C(0xffffffff3f800000), UINT64_C(0xffffffffbf800000), UINT64_C(0xffffffff3f800001)}, /* RNE */
+        {UINT64_C(0xffffffff3f800000), UINT64_C(0xffffffffbf800000), UINT64_C(0xffffffff3f800000)}, /* RTZ */
+        {UINT64_C(0xffffffff3f800000), UINT64_C(0xffffffffbf800001), UINT64_C(0xffffffff3f800000)}, /* RDN */
+        {UINT64_C(0xffffffff3f800001), UINT64_C(0xffffffffbf800000), UINT64_C(0xffffffff3f800001)}, /* RUP */
+        {UINT64_C(0xffffffff3f800001), UINT64_C(0xffffffffbf800001), UINT64_C(0xffffffff3f800001)}, /* RMM */
     };
     static const cvt_s_d_operation_t static_operation[5] = {
-        rv32_d_cvt_s_d_rne,
-        rv32_d_cvt_s_d_rtz,
-        rv32_d_cvt_s_d_rdn,
-        rv32_d_cvt_s_d_rup,
-        rv32_d_cvt_s_d_rmm,
+        rv32_d_cvt_s_d_rne, rv32_d_cvt_s_d_rtz, rv32_d_cvt_s_d_rdn, rv32_d_cvt_s_d_rup, rv32_d_cvt_s_d_rmm,
     };
     uint64_t result __attribute__((aligned(8)));
 
@@ -534,45 +459,28 @@ static void test_nan_infinity_and_exception_flags(void)
      * RISC-V binary64 NaN, discarding the input payload.
      */
     write_fflags(0);
-    check(run_binary_d(rv32_d_add,
-                       UINT64_C(0x7ff0000000000001),
-                       UINT64_C(0x3ff0000000000000)) ==
-          UINT64_C(0x7ff8000000000000));
+    check(run_binary_d(rv32_d_add, UINT64_C(0x7ff0000000000001), UINT64_C(0x3ff0000000000000)) == UINT64_C(0x7ff8000000000000));
     check(read_fflags() == FFLAG_NV);
 
     /* A quiet NaN is also canonicalised, but it does not itself raise NV. */
     write_fflags(0);
-    check(run_binary_d(rv32_d_add,
-                       UINT64_C(0x7ff8000000000123),
-                       UINT64_C(0x3ff0000000000000)) ==
-          UINT64_C(0x7ff8000000000000));
+    check(run_binary_d(rv32_d_add, UINT64_C(0x7ff8000000000123), UINT64_C(0x3ff0000000000000)) == UINT64_C(0x7ff8000000000000));
     check(read_fflags() == 0);
 
     write_fflags(0);
-    check(run_binary_d(rv32_d_div,
-                       UINT64_C(0x3ff0000000000000),
-                       UINT64_C(0x0000000000000000)) ==
-          UINT64_C(0x7ff0000000000000));
+    check(run_binary_d(rv32_d_div, UINT64_C(0x3ff0000000000000), UINT64_C(0x0000000000000000)) == UINT64_C(0x7ff0000000000000));
     check(read_fflags() == FFLAG_DZ);
 
     /* An exact later operation must not clear an accrued divide-by-zero flag. */
-    check(run_binary_d(rv32_d_mul,
-                       UINT64_C(0x4000000000000000),
-                       UINT64_C(0x4008000000000000)) ==
-          UINT64_C(0x4018000000000000));
+    check(run_binary_d(rv32_d_mul, UINT64_C(0x4000000000000000), UINT64_C(0x4008000000000000)) == UINT64_C(0x4018000000000000));
     check(read_fflags() == FFLAG_DZ);
 
     write_fflags(0);
-    check(run_unary_d(rv32_d_sqrt,
-                      UINT64_C(0xbff0000000000000)) ==
-          UINT64_C(0x7ff8000000000000));
+    check(run_unary_d(rv32_d_sqrt, UINT64_C(0xbff0000000000000)) == UINT64_C(0x7ff8000000000000));
     check(read_fflags() == FFLAG_NV);
 
     write_fflags(0);
-    check(run_binary_d(rv32_d_mul,
-                       UINT64_C(0x7fefffffffffffff),
-                       UINT64_C(0x4000000000000000)) ==
-          UINT64_C(0x7ff0000000000000));
+    check(run_binary_d(rv32_d_mul, UINT64_C(0x7fefffffffffffff), UINT64_C(0x4000000000000000)) == UINT64_C(0x7ff0000000000000));
     check(read_fflags() == (FFLAG_OF | FFLAG_NX));
 
     /*
@@ -581,26 +489,17 @@ static void test_nan_infinity_and_exception_flags(void)
      * so this case raises NX without UF.
      */
     write_fflags(0);
-    check(run_binary_d(rv32_d_mul,
-                       UINT64_C(0x000ffffffffffff0),
-                       UINT64_C(0x3ff0000000000010)) ==
-          UINT64_C(0x0010000000000000));
+    check(run_binary_d(rv32_d_mul, UINT64_C(0x000ffffffffffff0), UINT64_C(0x3ff0000000000010)) == UINT64_C(0x0010000000000000));
     check(read_fflags() == FFLAG_NX);
 
     /* An exactly representable subnormal result raises no exception flags. */
     write_fflags(0);
-    check(run_binary_d(rv32_d_mul,
-                       UINT64_C(0x0010000000000000),
-                       UINT64_C(0x3fe0000000000000)) ==
-          UINT64_C(0x0008000000000000));
+    check(run_binary_d(rv32_d_mul, UINT64_C(0x0010000000000000), UINT64_C(0x3fe0000000000000)) == UINT64_C(0x0008000000000000));
     check(read_fflags() == 0);
 
     /* A tiny, inexact halfway result rounds to even and raises UF together with NX. */
     write_fflags(0);
-    check(run_binary_d(rv32_d_mul,
-                       UINT64_C(0x0010000000000001),
-                       UINT64_C(0x3fe0000000000000)) ==
-          UINT64_C(0x0008000000000000));
+    check(run_binary_d(rv32_d_mul, UINT64_C(0x0010000000000001), UINT64_C(0x3fe0000000000000)) == UINT64_C(0x0008000000000000));
     check(read_fflags() == (FFLAG_UF | FFLAG_NX));
 
     /*
@@ -608,19 +507,11 @@ static void test_nan_infinity_and_exception_flags(void)
      * OF|NX, NV, and UF|NX respectively, producing all five low fflags bits.
      */
     write_fflags(0);
-    (void)run_binary_d(rv32_d_div,
-                       UINT64_C(0x3ff0000000000000),
-                       UINT64_C(0x0000000000000000));
-    (void)run_binary_d(rv32_d_mul,
-                       UINT64_C(0x7fefffffffffffff),
-                       UINT64_C(0x4000000000000000));
-    (void)run_unary_d(rv32_d_sqrt,
-                      UINT64_C(0xbff0000000000000));
-    (void)run_binary_d(rv32_d_mul,
-                       UINT64_C(0x0010000000000001),
-                       UINT64_C(0x3fe0000000000000));
-    check(read_fflags() ==
-          (FFLAG_NV | FFLAG_DZ | FFLAG_OF | FFLAG_UF | FFLAG_NX));
+    (void)run_binary_d(rv32_d_div, UINT64_C(0x3ff0000000000000), UINT64_C(0x0000000000000000));
+    (void)run_binary_d(rv32_d_mul, UINT64_C(0x7fefffffffffffff), UINT64_C(0x4000000000000000));
+    (void)run_unary_d(rv32_d_sqrt, UINT64_C(0xbff0000000000000));
+    (void)run_binary_d(rv32_d_mul, UINT64_C(0x0010000000000001), UINT64_C(0x3fe0000000000000));
+    check(read_fflags() == (FFLAG_NV | FFLAG_DZ | FFLAG_OF | FFLAG_UF | FFLAG_NX));
 }
 
 static void test_integer_and_cross_precision_conversions(void)

@@ -53,8 +53,7 @@ __attribute__((noinline)) void invalid_inst(vaddr_t thispc)
     set_nemu_state(NEMU_ABORT, thispc, -1);
 }
 
-def_rtl(hostcall, uint32_t id, rtlreg_t *dest, const rtlreg_t *src1,
-        const rtlreg_t *src2, word_t imm)
+def_rtl(hostcall, uint32_t id, rtlreg_t *dest, const rtlreg_t *src1, const rtlreg_t *src2, word_t imm)
 {
     /*
      * Host calls are the escape hatch from guest instruction semantics to NEMU

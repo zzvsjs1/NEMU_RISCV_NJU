@@ -57,28 +57,21 @@ __attribute__((noinline)) static void run_pop_rm_cases(void)
     memory_dest = 0;
     reg_dest = 0;
 
-    asm volatile(
-        "movl %%esp, %%edi\n\t"
-        "movl %[mem_top], %%esp\n\t"
-        "popl (%[mem_dst])\n\t"
-        "movl %%esp, %[after_mem]\n\t"
-        "movl %[esp_top], %%esp\n\t"
-        "popl (%%esp)\n\t"
-        "movl %%esp, %[after_esp]\n\t"
-        "movl %[reg_top], %%esp\n\t"
-        ".byte 0x8f, 0xc0\n\t"
-        "movl %%eax, %[reg_out]\n\t"
-        "movl %%esp, %[after_reg]\n\t"
-        "movl %%edi, %%esp"
-        : [after_mem] "=m"(after_mem_pop),
-          [after_esp] "=m"(after_esp_pop),
-          [after_reg] "=m"(after_reg_pop),
-          [reg_out] "=m"(reg_dest)
-        : [mem_top] "r"(&pop_stack[3]),
-          [esp_top] "r"(&pop_stack[5]),
-          [reg_top] "r"(&pop_stack[9]),
-          [mem_dst] "r"(&memory_dest)
-        : "eax", "edi", "cc", "memory");
+    asm volatile("movl %%esp, %%edi\n\t"
+                 "movl %[mem_top], %%esp\n\t"
+                 "popl (%[mem_dst])\n\t"
+                 "movl %%esp, %[after_mem]\n\t"
+                 "movl %[esp_top], %%esp\n\t"
+                 "popl (%%esp)\n\t"
+                 "movl %%esp, %[after_esp]\n\t"
+                 "movl %[reg_top], %%esp\n\t"
+                 ".byte 0x8f, 0xc0\n\t"
+                 "movl %%eax, %[reg_out]\n\t"
+                 "movl %%esp, %[after_reg]\n\t"
+                 "movl %%edi, %%esp"
+                 : [after_mem] "=m"(after_mem_pop), [after_esp] "=m"(after_esp_pop), [after_reg] "=m"(after_reg_pop), [reg_out] "=m"(reg_dest)
+                 : [mem_top] "r"(&pop_stack[3]), [esp_top] "r"(&pop_stack[5]), [reg_top] "r"(&pop_stack[9]), [mem_dst] "r"(&memory_dest)
+                 : "eax", "edi", "cc", "memory");
 }
 
 int main()

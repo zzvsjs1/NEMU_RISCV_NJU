@@ -26,9 +26,7 @@ int main(void)
     uint8_t raw[16];
     memset(raw, 0, sizeof(raw));
 
-    SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(raw + 1, 1, 1, 32, 4,
-                                                    DEFAULT_RMASK, DEFAULT_GMASK,
-                                                    DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(raw + 1, 1, 1, 32, 4, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
     assert(surface != NULL);
 
     uint32_t colour = SDL_MapRGBA(surface->format, 0x80, 0x01, 0x02, 0xff);

@@ -4,9 +4,7 @@ static uint32_t values[6] __attribute__((aligned(4096)));
 static uint16_t word_values[2] __attribute__((aligned(4096)));
 static uint8_t byte_values[2] __attribute__((aligned(4096)));
 
-static void run_mem_alu(uint8_t *cf, uint8_t *zf, uint8_t *sf,
-                        uint8_t *byte_sf, uint8_t *word_cf, uint8_t *byte_zf,
-                        uint8_t *word_sf)
+static void run_mem_alu(uint8_t *cf, uint8_t *zf, uint8_t *sf, uint8_t *byte_sf, uint8_t *word_cf, uint8_t *byte_zf, uint8_t *word_sf)
 {
     uint8_t carry = 0;
     uint8_t zero = 0;
@@ -27,47 +25,33 @@ static void run_mem_alu(uint8_t *cf, uint8_t *zf, uint8_t *sf,
     byte_values[0] = 0x7fu;
     byte_values[1] = 0xf0u;
 
-    asm volatile(
-        "movl $7, %%eax\n\t"
-        "addl %%eax, %[add_mem]\n\t"
-        "subl $5, %[sub_mem]\n\t"
-        "setb %[cf]\n\t"
-        "addl $1, %[of_mem]\n\t"
-        "xorl $0xffffffff, %[xor_mem]\n\t"
-        "movl %[cmp_mem], %%eax\n\t"
-        "cmpl %%eax, %[cmp_mem]\n\t"
-        "setz %[zf]\n\t"
-        "movl $0x0f0f0000, %%eax\n\t"
-        "testl %%eax, %[test_mem]\n\t"
-        "sets %[sf]\n\t"
-        "addb $1, %[byte_add]\n\t"
-        "sets %[byte_sf]\n\t"
-        "subw $0x0100, %[word_sub]\n\t"
-        "setb %[word_cf]\n\t"
-        "movb $0x0f, %%al\n\t"
-        "testb %%al, %[byte_test]\n\t"
-        "setz %[byte_zf]\n\t"
-        "movw $0x8000, %%ax\n\t"
-        "testw %%ax, %[word_test]\n\t"
-        "sets %[word_sf]"
-        : [add_mem] "+m"(values[0]),
-          [sub_mem] "+m"(values[1]),
-          [of_mem] "+m"(values[2]),
-          [xor_mem] "+m"(values[3]),
-          [byte_add] "+m"(byte_values[0]),
-          [word_sub] "+m"(word_values[0]),
-          [cf] "=qm"(carry),
-          [zf] "=qm"(zero),
-          [sf] "=qm"(sign),
-          [byte_sf] "=qm"(byte_sign),
-          [word_cf] "=qm"(word_carry),
-          [byte_zf] "=qm"(byte_zero),
-          [word_sf] "=qm"(word_sign)
-        : [cmp_mem] "m"(values[4]),
-          [test_mem] "m"(values[5]),
-          [byte_test] "m"(byte_values[1]),
-          [word_test] "m"(word_values[1])
-        : "eax", "memory", "cc");
+    asm volatile("movl $7, %%eax\n\t"
+                 "addl %%eax, %[add_mem]\n\t"
+                 "subl $5, %[sub_mem]\n\t"
+                 "setb %[cf]\n\t"
+                 "addl $1, %[of_mem]\n\t"
+                 "xorl $0xffffffff, %[xor_mem]\n\t"
+                 "movl %[cmp_mem], %%eax\n\t"
+                 "cmpl %%eax, %[cmp_mem]\n\t"
+                 "setz %[zf]\n\t"
+                 "movl $0x0f0f0000, %%eax\n\t"
+                 "testl %%eax, %[test_mem]\n\t"
+                 "sets %[sf]\n\t"
+                 "addb $1, %[byte_add]\n\t"
+                 "sets %[byte_sf]\n\t"
+                 "subw $0x0100, %[word_sub]\n\t"
+                 "setb %[word_cf]\n\t"
+                 "movb $0x0f, %%al\n\t"
+                 "testb %%al, %[byte_test]\n\t"
+                 "setz %[byte_zf]\n\t"
+                 "movw $0x8000, %%ax\n\t"
+                 "testw %%ax, %[word_test]\n\t"
+                 "sets %[word_sf]"
+                 : [add_mem] "+m"(values[0]), [sub_mem] "+m"(values[1]), [of_mem] "+m"(values[2]), [xor_mem] "+m"(values[3]),
+                   [byte_add] "+m"(byte_values[0]), [word_sub] "+m"(word_values[0]), [cf] "=qm"(carry), [zf] "=qm"(zero), [sf] "=qm"(sign),
+                   [byte_sf] "=qm"(byte_sign), [word_cf] "=qm"(word_carry), [byte_zf] "=qm"(byte_zero), [word_sf] "=qm"(word_sign)
+                 : [cmp_mem] "m"(values[4]), [test_mem] "m"(values[5]), [byte_test] "m"(byte_values[1]), [word_test] "m"(word_values[1])
+                 : "eax", "memory", "cc");
 
     *cf = carry;
     *zf = zero;

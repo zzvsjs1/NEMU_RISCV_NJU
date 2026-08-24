@@ -90,10 +90,9 @@ static void __am_gpu_fbdraw(AM_GPU_FBDRAW_T *draw)
     NDL_DrawRect((uint32_t *)draw->pixels, draw->x, draw->y, draw->w, draw->h);
 }
 
-static const char *key_names[256] = {
-    [AM_KEY_NONE] = "NONE",
+static const char *key_names[256] = {[AM_KEY_NONE] = "NONE",
 #define KEY_NAME(key) [AM_KEY_##key] = #key,
-    AM_KEYS(KEY_NAME)
+                                     AM_KEYS(KEY_NAME)
 #undef KEY_NAME
 };
 
@@ -203,8 +202,7 @@ static void __am_input_mouse(AM_INPUT_MOUSE_T *mouse)
     int wheel_y = 0;
     char button_name[16] = {};
 
-    if (strcmp(prefix, "mm") == 0 &&
-        sscanf(event, "%*s %d %d %d", &x, &y, &buttons) == 3)
+    if (strcmp(prefix, "mm") == 0 && sscanf(event, "%*s %d %d %d", &x, &y, &buttons) == 3)
     {
         mouse->type = AM_MOUSE_MOVE;
         mouse->x = x;
@@ -216,12 +214,9 @@ static void __am_input_mouse(AM_INPUT_MOUSE_T *mouse)
         return;
     }
 
-    if ((strcmp(prefix, "md") == 0 || strcmp(prefix, "mu") == 0) &&
-        sscanf(event, "%*s %15s %d %d %d", button_name, &x, &y, &buttons) == 4)
+    if ((strcmp(prefix, "md") == 0 || strcmp(prefix, "mu") == 0) && sscanf(event, "%*s %15s %d %d %d", button_name, &x, &y, &buttons) == 4)
     {
-        mouse->type = strcmp(prefix, "md") == 0
-                          ? AM_MOUSE_BUTTON_DOWN
-                          : AM_MOUSE_BUTTON_UP;
+        mouse->type = strcmp(prefix, "md") == 0 ? AM_MOUSE_BUTTON_DOWN : AM_MOUSE_BUTTON_UP;
         mouse->x = x;
         mouse->y = y;
         mouse->button = lookup_mouse_button(button_name);
@@ -231,8 +226,7 @@ static void __am_input_mouse(AM_INPUT_MOUSE_T *mouse)
         return;
     }
 
-    if (strcmp(prefix, "mw") == 0 &&
-        sscanf(event, "%*s %d %d %d %d %d", &wheel_x, &wheel_y, &x, &y, &buttons) == 5)
+    if (strcmp(prefix, "mw") == 0 && sscanf(event, "%*s %d %d %d %d %d", &wheel_x, &wheel_y, &x, &y, &buttons) == 5)
     {
         mouse->type = AM_MOUSE_WHEEL;
         mouse->x = x;
@@ -324,11 +318,20 @@ static void __am_timer_config(AM_TIMER_CONFIG_T *cfg)
     cfg->has_rtc = true;
 }
 
-static void __am_input_config(AM_INPUT_CONFIG_T *cfg) { cfg->present = true; }
+static void __am_input_config(AM_INPUT_CONFIG_T *cfg)
+{
+    cfg->present = true;
+}
 
-static void __am_uart_config(AM_UART_CONFIG_T *cfg) { cfg->present = false; }
+static void __am_uart_config(AM_UART_CONFIG_T *cfg)
+{
+    cfg->present = false;
+}
 
-static void __am_net_config(AM_NET_CONFIG_T *cfg) { cfg->present = false; }
+static void __am_net_config(AM_NET_CONFIG_T *cfg)
+{
+    cfg->present = false;
+}
 
 typedef void (*handler_t)(void *buf);
 /*
@@ -337,24 +340,12 @@ typedef void (*handler_t)(void *buf);
  * services that are meaningful above nanos-lite.
  */
 static void *lut[128] = {
-    [AM_TIMER_CONFIG] = __am_timer_config,
-    [AM_TIMER_RTC] = __am_timer_rtc,
-    [AM_TIMER_UPTIME] = __am_timer_uptime,
-    [AM_INPUT_CONFIG] = __am_input_config,
-    [AM_INPUT_KEYBRD] = __am_input_keybrd,
-    [AM_INPUT_MOUSE] = __am_input_mouse,
-    [AM_GPU_CONFIG] = __am_gpu_config,
-    [AM_GPU_FBDRAW] = __am_gpu_fbdraw,
-    [AM_GPU_STATUS] = __am_gpu_status,
-    [AM_UART_CONFIG] = __am_uart_config,
-    [AM_AUDIO_CONFIG] = __am_audio_config,
-    [AM_AUDIO_CTRL] = __am_audio_ctrl,
-    [AM_AUDIO_STATUS] = __am_audio_status,
-    [AM_AUDIO_PLAY] = __am_audio_play,
-    [AM_DISK_CONFIG] = __am_disk_config,
-    [AM_DISK_STATUS] = __am_disk_status,
-    [AM_DISK_BLKIO] = __am_disk_blkio,
-    [AM_NET_CONFIG] = __am_net_config,
+    [AM_TIMER_CONFIG] = __am_timer_config, [AM_TIMER_RTC] = __am_timer_rtc,       [AM_TIMER_UPTIME] = __am_timer_uptime,
+    [AM_INPUT_CONFIG] = __am_input_config, [AM_INPUT_KEYBRD] = __am_input_keybrd, [AM_INPUT_MOUSE] = __am_input_mouse,
+    [AM_GPU_CONFIG] = __am_gpu_config,     [AM_GPU_FBDRAW] = __am_gpu_fbdraw,     [AM_GPU_STATUS] = __am_gpu_status,
+    [AM_UART_CONFIG] = __am_uart_config,   [AM_AUDIO_CONFIG] = __am_audio_config, [AM_AUDIO_CTRL] = __am_audio_ctrl,
+    [AM_AUDIO_STATUS] = __am_audio_status, [AM_AUDIO_PLAY] = __am_audio_play,     [AM_DISK_CONFIG] = __am_disk_config,
+    [AM_DISK_STATUS] = __am_disk_status,   [AM_DISK_BLKIO] = __am_disk_blkio,     [AM_NET_CONFIG] = __am_net_config,
 };
 
 void ioe_read(int reg, void *buf)

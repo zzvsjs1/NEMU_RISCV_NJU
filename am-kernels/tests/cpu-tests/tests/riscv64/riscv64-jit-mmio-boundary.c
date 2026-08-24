@@ -20,10 +20,7 @@ int main(void)
      * Literal assembly guarantees one naturally aligned eight-byte guest load.
      * Reaching the return is a test failure detected by the host-side gate.
      */
-    asm volatile("ld %0, 0(%1)"
-                 : "=r"(observed)
-                 : "r"(address)
-                 : "memory");
+    asm volatile("ld %0, 0(%1)" : "=r"(observed) : "r"(address) : "memory");
     (void)observed;
     return 0;
 }

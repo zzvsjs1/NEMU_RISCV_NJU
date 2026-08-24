@@ -197,8 +197,7 @@ static int test_mips_loader_accepts_em_mips(void)
 {
     PCB pcb = {0};
 
-    _Static_assert(EXPECT_TYPE == EM_MIPS,
-                   "MIPS ELF e_machine must use EM_MIPS rather than e_flags");
+    _Static_assert(EXPECT_TYPE == EM_MIPS, "MIPS ELF e_machine must use EM_MIPS rather than e_flags");
 
     prepare_mips_elf();
     reset_mock_state();
@@ -286,8 +285,7 @@ static int test_stack_exact_fit_preserves_the_abi_layout(void)
 
 int main(void)
 {
-    if (test_mips_loader_accepts_em_mips() != 0 ||
-        test_stack_preflight_halts_before_any_copy() != 0 ||
+    if (test_mips_loader_accepts_em_mips() != 0 || test_stack_preflight_halts_before_any_copy() != 0 ||
         test_stack_exact_fit_preserves_the_abi_layout() != 0)
     {
         return 1;

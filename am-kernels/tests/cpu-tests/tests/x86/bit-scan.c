@@ -25,10 +25,7 @@ static uint8_t bsr32_zero_sets_zf(uint32_t value)
 {
     uint32_t result = 0xdeadbeef;
     uint8_t zf;
-    asm volatile("bsrl %2, %0; setz %1"
-                 : "+r"(result), "=qm"(zf)
-                 : "r"(value)
-                 : "cc");
+    asm volatile("bsrl %2, %0; setz %1" : "+r"(result), "=qm"(zf) : "r"(value) : "cc");
     return zf;
 }
 

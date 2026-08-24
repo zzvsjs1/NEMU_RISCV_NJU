@@ -43,8 +43,8 @@ int main(void)
     static uint8_t pixels[GUARD_BYTES];
     memset(pixels, 0x5a, sizeof(pixels));
 
-    SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(pixels, SURFACE_W, SURFACE_H, 8,
-                                                    SURFACE_W, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *surface =
+        SDL_CreateRGBSurfaceFrom(pixels, SURFACE_W, SURFACE_H, 8, SURFACE_W, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
 
     SDL_Rect below_surface = {
         .x = 1,

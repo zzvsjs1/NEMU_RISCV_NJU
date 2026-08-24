@@ -3,6 +3,7 @@ IndentWidth: 4
 TabWidth: 4
 UseTab: Never
 BreakBeforeBraces: Allman
+AllowShortFunctionsOnASingleLine: None
 AlignEscapedNewlines: DontAlign
 ColumnLimit: 150
 SortIncludes: Never

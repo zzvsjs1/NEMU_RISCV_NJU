@@ -212,10 +212,10 @@ typedef struct
 
 /* Every decode row must state its operation, GPR access, and precision. */
 #define FP_OP_DECODE(kind_value, access_value, double_value) \
-    ((fp_op_decode_t){                                      \
-        .kind = (kind_value),                               \
-        .gpr_access = (access_value),                       \
-        .is_double = (double_value),                        \
+    ((fp_op_decode_t){ \
+        .kind = (kind_value), \
+        .gpr_access = (access_value), \
+        .is_double = (double_value), \
     })
 
 /*
@@ -251,8 +251,7 @@ enum riscv_fp_class_bit
 #define RISCV_FP32_FRACTION_MASK UINT32_C(0x007fffff)
 #define RISCV_FP32_QUIET_NAN_BIT UINT32_C(0x00400000)
 #define RISCV_FP32_POSITIVE_INFINITY RISCV_FP32_EXPONENT_MASK
-#define RISCV_FP32_CANONICAL_NAN \
-    (RISCV_FP32_POSITIVE_INFINITY | RISCV_FP32_QUIET_NAN_BIT)
+#define RISCV_FP32_CANONICAL_NAN (RISCV_FP32_POSITIVE_INFINITY | RISCV_FP32_QUIET_NAN_BIT)
 #define RISCV_FP32_BOX_MASK UINT64_C(0xffffffff00000000)
 
 /*
@@ -266,8 +265,7 @@ enum riscv_fp_class_bit
 #define RISCV_FP64_FRACTION_MASK UINT64_C(0x000fffffffffffff)
 #define RISCV_FP64_QUIET_NAN_BIT UINT64_C(0x0008000000000000)
 #define RISCV_FP64_POSITIVE_INFINITY RISCV_FP64_EXPONENT_MASK
-#define RISCV_FP64_CANONICAL_NAN \
-    (RISCV_FP64_POSITIVE_INFINITY | RISCV_FP64_QUIET_NAN_BIT)
+#define RISCV_FP64_CANONICAL_NAN (RISCV_FP64_POSITIVE_INFINITY | RISCV_FP64_QUIET_NAN_BIT)
 
 /* Several unary encodings require the otherwise unused `rs2` field to be 0. */
 enum
@@ -317,9 +315,7 @@ static inline uint32_t fp_fmt(uint32_t inst)
 
 static inline word_t fp_imm_i(uint32_t inst)
 {
-    return (word_t)SEXT(
-        BITS(inst, RISCV_FP_INST_MSB, RISCV_FP_INST_I_IMM_LO),
-        RISCV_FP_INST_IMMEDIATE_WIDTH);
+    return (word_t)SEXT(BITS(inst, RISCV_FP_INST_MSB, RISCV_FP_INST_I_IMM_LO), RISCV_FP_INST_IMMEDIATE_WIDTH);
 }
 
 static inline word_t fp_imm_s(uint32_t inst)
@@ -331,12 +327,8 @@ static inline word_t fp_imm_s(uint32_t inst)
      * ORed in as immediate bits [4:0].  Sign-extending the reconstructed
      * twelve-bit value then produces the XLEN-wide byte offset.
      */
-    const uint32_t raw =
-        (BITS(inst, RISCV_FP_INST_MSB,
-              RISCV_FP_INST_S_IMM_HIGH_LO)
-         << RISCV_FP_INST_S_IMM_LOW_WIDTH) |
-        BITS(inst, RISCV_FP_INST_S_IMM_LOW_HI,
-             RISCV_FP_INST_S_IMM_LOW_LO);
+    const uint32_t raw = (BITS(inst, RISCV_FP_INST_MSB, RISCV_FP_INST_S_IMM_HIGH_LO) << RISCV_FP_INST_S_IMM_LOW_WIDTH) |
+                         BITS(inst, RISCV_FP_INST_S_IMM_LOW_HI, RISCV_FP_INST_S_IMM_LOW_LO);
     return (word_t)SEXT(raw, RISCV_FP_INST_IMMEDIATE_WIDTH);
 }
 
@@ -415,11 +407,8 @@ static uint64_t fp_load_doubleword(word_t address)
 #ifdef CONFIG_RV64
     return (uint64_t)vaddr_read(address, RISCV_FP64_BYTES);
 #else
-    const uint64_t low =
-        (uint32_t)vaddr_read(address, RISCV_FP32_BYTES);
-    const uint64_t high =
-        (uint32_t)vaddr_read(address + RISCV_FP32_BYTES,
-                             RISCV_FP32_BYTES);
+    const uint64_t low = (uint32_t)vaddr_read(address, RISCV_FP32_BYTES);
+    const uint64_t high = (uint32_t)vaddr_read(address + RISCV_FP32_BYTES, RISCV_FP32_BYTES);
 
     return low | (high << 32);
 #endif
@@ -431,9 +420,7 @@ static void fp_store_doubleword(word_t address, uint64_t value)
     vaddr_write(address, RISCV_FP64_BYTES, value);
 #else
     vaddr_write(address, RISCV_FP32_BYTES, (uint32_t)value);
-    vaddr_write(address + RISCV_FP32_BYTES,
-                RISCV_FP32_BYTES,
-                (uint32_t)(value >> 32));
+    vaddr_write(address + RISCV_FP32_BYTES, RISCV_FP32_BYTES, (uint32_t)(value >> 32));
 #endif
 }
 #endif
@@ -465,9 +452,7 @@ static inline uint32_t fp_unbox_s(riscv_fpr_t value)
      * canonical NaN, but raw transfer instructions deliberately bypass this
      * helper and retain their payload bits.
      */
-    return (value & RISCV_FP32_BOX_MASK) == RISCV_FP32_BOX_MASK
-               ? (uint32_t)value
-               : RISCV_FP32_CANONICAL_NAN;
+    return (value & RISCV_FP32_BOX_MASK) == RISCV_FP32_BOX_MASK ? (uint32_t)value : RISCV_FP32_CANONICAL_NAN;
 #else
     return value;
 #endif
@@ -475,14 +460,12 @@ static inline uint32_t fp_unbox_s(riscv_fpr_t value)
 
 static inline bool fp_is_nan_s(uint32_t value)
 {
-    return (value & RISCV_FP32_MAGNITUDE_MASK) >
-           RISCV_FP32_POSITIVE_INFINITY;
+    return (value & RISCV_FP32_MAGNITUDE_MASK) > RISCV_FP32_POSITIVE_INFINITY;
 }
 
 static inline bool fp_is_nan_d(uint64_t value)
 {
-    return (value & RISCV_FP64_MAGNITUDE_MASK) >
-           RISCV_FP64_POSITIVE_INFINITY;
+    return (value & RISCV_FP64_MAGNITUDE_MASK) > RISCV_FP64_POSITIVE_INFINITY;
 }
 
 static inline float32_t fp_read_s(uint32_t index)
@@ -514,8 +497,7 @@ static inline void fp_write_d(uint32_t index, float64_t value)
  * for RNE, RTZ, RDN, RUP, and RMM.  Dynamic rm=111 reads frm; every effective
  * value above RMM is rejected before arithmetic state can change.
  */
-static bool fp_resolve_rounding_mode(Decode *s, uint32_t encoded,
-                                     uint_fast8_t *resolved)
+static bool fp_resolve_rounding_mode(Decode *s, uint32_t encoded, uint_fast8_t *resolved)
 {
     uint32_t rm = encoded;
 
@@ -546,8 +528,7 @@ static void fp_begin_softfloat(uint_fast8_t rounding_mode)
 
 static void fp_finish_softfloat(void)
 {
-    const uint32_t raised =
-        (uint32_t)softfloat_exceptionFlags & RISCV_FFLAGS_MASK;
+    const uint32_t raised = (uint32_t)softfloat_exceptionFlags & RISCV_FFLAGS_MASK;
 
     softfloat_exceptionFlags = 0;
 
@@ -639,15 +620,13 @@ static void fp_exec_add(Decode *s, uint32_t inst, bool is_double)
 
     if (is_double)
     {
-        const float64_t result =
-            f64_add(fp_read_d(fp_rs1(inst)), fp_read_d(fp_rs2(inst)));
+        const float64_t result = f64_add(fp_read_d(fp_rs1(inst)), fp_read_d(fp_rs2(inst)));
         fp_finish_softfloat();
         fp_write_d(fp_rd(inst), result);
     }
     else
     {
-        const float32_t result =
-            f32_add(fp_read_s(fp_rs1(inst)), fp_read_s(fp_rs2(inst)));
+        const float32_t result = f32_add(fp_read_s(fp_rs1(inst)), fp_read_s(fp_rs2(inst)));
         fp_finish_softfloat();
         fp_write_s(fp_rd(inst), result);
     }
@@ -660,9 +639,7 @@ enum fp_binary_operation
     FP_BINARY_DIV,
 };
 
-static void fp_exec_binary_arithmetic(Decode *s, uint32_t inst,
-                                      bool is_double,
-                                      enum fp_binary_operation operation)
+static void fp_exec_binary_arithmetic(Decode *s, uint32_t inst, bool is_double, enum fp_binary_operation operation)
 {
     uint_fast8_t rm = 0;
 
@@ -723,8 +700,7 @@ static void fp_exec_sqrt(Decode *s, uint32_t inst, bool is_double)
 {
     uint_fast8_t rm = 0;
 
-    if (fp_rs2(inst) != RISCV_FP_RS2_UNUSED ||
-        !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
+    if (fp_rs2(inst) != RISCV_FP_RS2_UNUSED || !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
     {
         if (fp_rs2(inst) != RISCV_FP_RS2_UNUSED)
         {
@@ -835,18 +811,12 @@ static void fp_exec_min_max(Decode *s, uint32_t inst, bool is_double)
         {
             if (mode == RISCV_FP_MINIMUM)
             {
-                const bool less =
-                    f64_lt_quiet(lhs, rhs) ||
-                    (f64_eq(lhs, rhs) &&
-                     (lhs.v & RISCV_FP64_SIGN_MASK));
+                const bool less = f64_lt_quiet(lhs, rhs) || (f64_eq(lhs, rhs) && (lhs.v & RISCV_FP64_SIGN_MASK));
                 result = (less || rhs_nan) ? lhs : rhs;
             }
             else
             {
-                const bool greater =
-                    f64_lt_quiet(rhs, lhs) ||
-                    (f64_eq(rhs, lhs) &&
-                     (rhs.v & RISCV_FP64_SIGN_MASK));
+                const bool greater = f64_lt_quiet(rhs, lhs) || (f64_eq(rhs, lhs) && (rhs.v & RISCV_FP64_SIGN_MASK));
                 result = (greater || rhs_nan) ? lhs : rhs;
             }
         }
@@ -874,18 +844,12 @@ static void fp_exec_min_max(Decode *s, uint32_t inst, bool is_double)
         {
             if (mode == RISCV_FP_MINIMUM)
             {
-                const bool less =
-                    f32_lt_quiet(lhs, rhs) ||
-                    (f32_eq(lhs, rhs) &&
-                     (lhs.v & RISCV_FP32_SIGN_MASK));
+                const bool less = f32_lt_quiet(lhs, rhs) || (f32_eq(lhs, rhs) && (lhs.v & RISCV_FP32_SIGN_MASK));
                 result = (less || rhs_nan) ? lhs : rhs;
             }
             else
             {
-                const bool greater =
-                    f32_lt_quiet(rhs, lhs) ||
-                    (f32_eq(rhs, lhs) &&
-                     (rhs.v & RISCV_FP32_SIGN_MASK));
+                const bool greater = f32_lt_quiet(rhs, lhs) || (f32_eq(rhs, lhs) && (rhs.v & RISCV_FP32_SIGN_MASK));
                 result = (greater || rhs_nan) ? lhs : rhs;
             }
         }
@@ -974,34 +938,23 @@ static word_t fp_classify_s(float32_t value)
     {
         if (fraction == 0)
         {
-            return fp_class_mask(
-                sign ? RISCV_FP_CLASS_NEGATIVE_INFINITY
-                     : RISCV_FP_CLASS_POSITIVE_INFINITY);
+            return fp_class_mask(sign ? RISCV_FP_CLASS_NEGATIVE_INFINITY : RISCV_FP_CLASS_POSITIVE_INFINITY);
         }
 
-        return fp_class_mask(
-            (fraction & RISCV_FP32_QUIET_NAN_BIT)
-                ? RISCV_FP_CLASS_QUIET_NAN
-                : RISCV_FP_CLASS_SIGNALLING_NAN);
+        return fp_class_mask((fraction & RISCV_FP32_QUIET_NAN_BIT) ? RISCV_FP_CLASS_QUIET_NAN : RISCV_FP_CLASS_SIGNALLING_NAN);
     }
 
     if (exponent == 0)
     {
         if (fraction == 0)
         {
-            return fp_class_mask(
-                sign ? RISCV_FP_CLASS_NEGATIVE_ZERO
-                     : RISCV_FP_CLASS_POSITIVE_ZERO);
+            return fp_class_mask(sign ? RISCV_FP_CLASS_NEGATIVE_ZERO : RISCV_FP_CLASS_POSITIVE_ZERO);
         }
 
-        return fp_class_mask(
-            sign ? RISCV_FP_CLASS_NEGATIVE_SUBNORMAL
-                 : RISCV_FP_CLASS_POSITIVE_SUBNORMAL);
+        return fp_class_mask(sign ? RISCV_FP_CLASS_NEGATIVE_SUBNORMAL : RISCV_FP_CLASS_POSITIVE_SUBNORMAL);
     }
 
-    return fp_class_mask(
-        sign ? RISCV_FP_CLASS_NEGATIVE_NORMAL
-             : RISCV_FP_CLASS_POSITIVE_NORMAL);
+    return fp_class_mask(sign ? RISCV_FP_CLASS_NEGATIVE_NORMAL : RISCV_FP_CLASS_POSITIVE_NORMAL);
 }
 
 #ifdef CONFIG_RISCV_D
@@ -1021,34 +974,23 @@ static word_t fp_classify_d(float64_t value)
     {
         if (fraction == 0)
         {
-            return fp_class_mask(
-                sign ? RISCV_FP_CLASS_NEGATIVE_INFINITY
-                     : RISCV_FP_CLASS_POSITIVE_INFINITY);
+            return fp_class_mask(sign ? RISCV_FP_CLASS_NEGATIVE_INFINITY : RISCV_FP_CLASS_POSITIVE_INFINITY);
         }
 
-        return fp_class_mask(
-            (fraction & RISCV_FP64_QUIET_NAN_BIT)
-                ? RISCV_FP_CLASS_QUIET_NAN
-                : RISCV_FP_CLASS_SIGNALLING_NAN);
+        return fp_class_mask((fraction & RISCV_FP64_QUIET_NAN_BIT) ? RISCV_FP_CLASS_QUIET_NAN : RISCV_FP_CLASS_SIGNALLING_NAN);
     }
 
     if (exponent == 0)
     {
         if (fraction == 0)
         {
-            return fp_class_mask(
-                sign ? RISCV_FP_CLASS_NEGATIVE_ZERO
-                     : RISCV_FP_CLASS_POSITIVE_ZERO);
+            return fp_class_mask(sign ? RISCV_FP_CLASS_NEGATIVE_ZERO : RISCV_FP_CLASS_POSITIVE_ZERO);
         }
 
-        return fp_class_mask(
-            sign ? RISCV_FP_CLASS_NEGATIVE_SUBNORMAL
-                 : RISCV_FP_CLASS_POSITIVE_SUBNORMAL);
+        return fp_class_mask(sign ? RISCV_FP_CLASS_NEGATIVE_SUBNORMAL : RISCV_FP_CLASS_POSITIVE_SUBNORMAL);
     }
 
-    return fp_class_mask(
-        sign ? RISCV_FP_CLASS_NEGATIVE_NORMAL
-             : RISCV_FP_CLASS_POSITIVE_NORMAL);
+    return fp_class_mask(sign ? RISCV_FP_CLASS_NEGATIVE_NORMAL : RISCV_FP_CLASS_POSITIVE_NORMAL);
 }
 #endif
 
@@ -1149,19 +1091,14 @@ static inline word_t fp_sign_extend_word(uint32_t value)
     return (word_t)(int64_t)(int32_t)value;
 }
 
-static void fp_exec_float_to_integer(Decode *s, uint32_t inst,
-                                     bool is_double)
+static void fp_exec_float_to_integer(Decode *s, uint32_t inst, bool is_double)
 {
     uint_fast8_t rm = 0;
     word_t result = 0;
     const uint32_t destination_type = fp_rs2(inst);
-    const uint32_t maximum_type =
-        MUXDEF(CONFIG_RV64,
-               RISCV_FP_INT_TYPE_LU,
-               RISCV_FP_INT_TYPE_WU);
+    const uint32_t maximum_type = MUXDEF(CONFIG_RV64, RISCV_FP_INT_TYPE_LU, RISCV_FP_INT_TYPE_WU);
 
-    if (destination_type > maximum_type ||
-        !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
+    if (destination_type > maximum_type || !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
     {
         if (destination_type > maximum_type)
         {
@@ -1180,16 +1117,14 @@ static void fp_exec_float_to_integer(Decode *s, uint32_t inst,
         switch (destination_type)
         {
         case RISCV_FP_INT_TYPE_W:
-            result = fp_sign_extend_word(
-                (uint32_t)f64_to_i32(source, rm, true));
+            result = fp_sign_extend_word((uint32_t)f64_to_i32(source, rm, true));
             break;
         case RISCV_FP_INT_TYPE_WU:
             /*
              * RV64 sign-extends both W and WU conversion results from bit 31,
              * even though the WU operation itself produces an unsigned word.
              */
-            result = fp_sign_extend_word(
-                (uint32_t)f64_to_ui32(source, rm, true));
+            result = fp_sign_extend_word((uint32_t)f64_to_ui32(source, rm, true));
             break;
         case RISCV_FP_INT_TYPE_L:
             result = (word_t)f64_to_i64(source, rm, true);
@@ -1206,12 +1141,10 @@ static void fp_exec_float_to_integer(Decode *s, uint32_t inst,
         switch (destination_type)
         {
         case RISCV_FP_INT_TYPE_W:
-            result = fp_sign_extend_word(
-                (uint32_t)f32_to_i32(source, rm, true));
+            result = fp_sign_extend_word((uint32_t)f32_to_i32(source, rm, true));
             break;
         case RISCV_FP_INT_TYPE_WU:
-            result = fp_sign_extend_word(
-                (uint32_t)f32_to_ui32(source, rm, true));
+            result = fp_sign_extend_word((uint32_t)f32_to_ui32(source, rm, true));
             break;
         case RISCV_FP_INT_TYPE_L:
             result = (word_t)f32_to_i64(source, rm, true);
@@ -1226,19 +1159,14 @@ static void fp_exec_float_to_integer(Decode *s, uint32_t inst,
     gpr(fp_rd(inst)) = result;
 }
 
-static void fp_exec_integer_to_float(Decode *s, uint32_t inst,
-                                     bool is_double)
+static void fp_exec_integer_to_float(Decode *s, uint32_t inst, bool is_double)
 {
     uint_fast8_t rm = 0;
     const uint32_t source_type = fp_rs2(inst);
     const word_t source = gpr(fp_rs1(inst));
-    const uint32_t maximum_type =
-        MUXDEF(CONFIG_RV64,
-               RISCV_FP_INT_TYPE_LU,
-               RISCV_FP_INT_TYPE_WU);
+    const uint32_t maximum_type = MUXDEF(CONFIG_RV64, RISCV_FP_INT_TYPE_LU, RISCV_FP_INT_TYPE_WU);
 
-    if (source_type > maximum_type ||
-        !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
+    if (source_type > maximum_type || !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
     {
         if (source_type > maximum_type)
         {
@@ -1299,8 +1227,7 @@ static void fp_exec_integer_to_float(Decode *s, uint32_t inst,
 }
 
 #ifdef CONFIG_RISCV_D
-static void fp_exec_cross_precision(Decode *s, uint32_t inst,
-                                    bool destination_double)
+static void fp_exec_cross_precision(Decode *s, uint32_t inst, bool destination_double)
 {
     uint_fast8_t rm = 0;
     /*
@@ -1308,12 +1235,9 @@ static void fp_exec_cross_precision(Decode *s, uint32_t inst,
      * names the source precision.  The source must therefore be S when the
      * destination is D, and D when the destination is S.
      */
-    const uint32_t required_rs2 =
-        destination_double ? RISCV_FP_FORMAT_SINGLE
-                           : RISCV_FP_FORMAT_DOUBLE;
+    const uint32_t required_rs2 = destination_double ? RISCV_FP_FORMAT_SINGLE : RISCV_FP_FORMAT_DOUBLE;
 
-    if (fp_rs2(inst) != required_rs2 ||
-        !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
+    if (fp_rs2(inst) != required_rs2 || !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
     {
         if (fp_rs2(inst) != required_rs2)
         {
@@ -1353,19 +1277,11 @@ static void fp_exec_fused(Decode *s, uint32_t inst)
      * fused operation; performing separate multiply/subtract calls would round
      * twice and give observably different edge-case results.
      */
-    const bool negate_product =
-        opcode == RISCV_FP_OPCODE_FNMSUB ||
-        opcode == RISCV_FP_OPCODE_FNMADD;
-    const bool negate_addend =
-        opcode == RISCV_FP_OPCODE_FMSUB ||
-        opcode == RISCV_FP_OPCODE_FNMADD;
-    const uint32_t maximum_format =
-        MUXDEF(CONFIG_RISCV_D,
-               RISCV_FP_FORMAT_DOUBLE,
-               RISCV_FP_FORMAT_SINGLE);
+    const bool negate_product = opcode == RISCV_FP_OPCODE_FNMSUB || opcode == RISCV_FP_OPCODE_FNMADD;
+    const bool negate_addend = opcode == RISCV_FP_OPCODE_FMSUB || opcode == RISCV_FP_OPCODE_FNMADD;
+    const uint32_t maximum_format = MUXDEF(CONFIG_RISCV_D, RISCV_FP_FORMAT_DOUBLE, RISCV_FP_FORMAT_SINGLE);
 
-    if (format > maximum_format ||
-        !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
+    if (format > maximum_format || !fp_resolve_rounding_mode(s, fp_rm(inst), &rm))
     {
         if (format > maximum_format)
         {
@@ -1459,11 +1375,9 @@ static inline fp_op_decode_t fp_decode_op(uint32_t inst)
     case RISCV_FP_FUNCT7_FMIN_MAX_D:
         return FP_OP_DECODE(FP_OP_MIN_MAX, FP_GPR_ACCESS_NONE, true);
     case RISCV_FP_FUNCT7_FCVT_S_D:
-        return FP_OP_DECODE(
-            FP_OP_CROSS_PRECISION, FP_GPR_ACCESS_NONE, false);
+        return FP_OP_DECODE(FP_OP_CROSS_PRECISION, FP_GPR_ACCESS_NONE, false);
     case RISCV_FP_FUNCT7_FCVT_D_S:
-        return FP_OP_DECODE(
-            FP_OP_CROSS_PRECISION, FP_GPR_ACCESS_NONE, true);
+        return FP_OP_DECODE(FP_OP_CROSS_PRECISION, FP_GPR_ACCESS_NONE, true);
 #endif
     case RISCV_FP_FUNCT7_FSQRT_S:
         return FP_OP_DECODE(FP_OP_SQRT, FP_GPR_ACCESS_NONE, false);
@@ -1472,43 +1386,33 @@ static inline fp_op_decode_t fp_decode_op(uint32_t inst)
         return FP_OP_DECODE(FP_OP_SQRT, FP_GPR_ACCESS_NONE, true);
 #endif
     case RISCV_FP_FUNCT7_FCOMPARE_S:
-        return FP_OP_DECODE(
-            FP_OP_COMPARE, FP_GPR_ACCESS_WRITE_RD, false);
+        return FP_OP_DECODE(FP_OP_COMPARE, FP_GPR_ACCESS_WRITE_RD, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FCOMPARE_D:
-        return FP_OP_DECODE(
-            FP_OP_COMPARE, FP_GPR_ACCESS_WRITE_RD, true);
+        return FP_OP_DECODE(FP_OP_COMPARE, FP_GPR_ACCESS_WRITE_RD, true);
 #endif
     case RISCV_FP_FUNCT7_FCVT_INT_S:
-        return FP_OP_DECODE(
-            FP_OP_FLOAT_TO_INTEGER, FP_GPR_ACCESS_WRITE_RD, false);
+        return FP_OP_DECODE(FP_OP_FLOAT_TO_INTEGER, FP_GPR_ACCESS_WRITE_RD, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FCVT_INT_D:
-        return FP_OP_DECODE(
-            FP_OP_FLOAT_TO_INTEGER, FP_GPR_ACCESS_WRITE_RD, true);
+        return FP_OP_DECODE(FP_OP_FLOAT_TO_INTEGER, FP_GPR_ACCESS_WRITE_RD, true);
 #endif
     case RISCV_FP_FUNCT7_FCVT_S_INT:
-        return FP_OP_DECODE(
-            FP_OP_INTEGER_TO_FLOAT, FP_GPR_ACCESS_READ_RS1, false);
+        return FP_OP_DECODE(FP_OP_INTEGER_TO_FLOAT, FP_GPR_ACCESS_READ_RS1, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FCVT_D_INT:
-        return FP_OP_DECODE(
-            FP_OP_INTEGER_TO_FLOAT, FP_GPR_ACCESS_READ_RS1, true);
+        return FP_OP_DECODE(FP_OP_INTEGER_TO_FLOAT, FP_GPR_ACCESS_READ_RS1, true);
 #endif
     case RISCV_FP_FUNCT7_FMV_X_W_FCLASS_S:
-        return FP_OP_DECODE(
-            FP_OP_MOVE_OR_CLASS, FP_GPR_ACCESS_WRITE_RD, false);
+        return FP_OP_DECODE(FP_OP_MOVE_OR_CLASS, FP_GPR_ACCESS_WRITE_RD, false);
     case RISCV_FP_FUNCT7_FMV_W_X:
-        return FP_OP_DECODE(
-            FP_OP_MOVE_OR_CLASS, FP_GPR_ACCESS_READ_RS1, false);
+        return FP_OP_DECODE(FP_OP_MOVE_OR_CLASS, FP_GPR_ACCESS_READ_RS1, false);
 #ifdef CONFIG_RISCV_D
     case RISCV_FP_FUNCT7_FMV_X_D_FCLASS_D:
-        return FP_OP_DECODE(
-            FP_OP_MOVE_OR_CLASS, FP_GPR_ACCESS_WRITE_RD, true);
+        return FP_OP_DECODE(FP_OP_MOVE_OR_CLASS, FP_GPR_ACCESS_WRITE_RD, true);
 #ifdef CONFIG_RV64
     case RISCV_FP_FUNCT7_FMV_D_X:
-        return FP_OP_DECODE(
-            FP_OP_MOVE_OR_CLASS, FP_GPR_ACCESS_READ_RS1, true);
+        return FP_OP_DECODE(FP_OP_MOVE_OR_CLASS, FP_GPR_ACCESS_READ_RS1, true);
 #endif
 #endif
     default:
@@ -1526,16 +1430,13 @@ static void fp_exec_op(Decode *s, uint32_t inst)
         fp_exec_add(s, inst, decoded.is_double);
         return;
     case FP_OP_SUB:
-        fp_exec_binary_arithmetic(
-            s, inst, decoded.is_double, FP_BINARY_SUB);
+        fp_exec_binary_arithmetic(s, inst, decoded.is_double, FP_BINARY_SUB);
         return;
     case FP_OP_MUL:
-        fp_exec_binary_arithmetic(
-            s, inst, decoded.is_double, FP_BINARY_MUL);
+        fp_exec_binary_arithmetic(s, inst, decoded.is_double, FP_BINARY_MUL);
         return;
     case FP_OP_DIV:
-        fp_exec_binary_arithmetic(
-            s, inst, decoded.is_double, FP_BINARY_DIV);
+        fp_exec_binary_arithmetic(s, inst, decoded.is_double, FP_BINARY_DIV);
         return;
     case FP_OP_SIGN:
         fp_exec_sign_injection(s, inst, decoded.is_double);
@@ -1692,8 +1593,7 @@ riscv_fpu_gpr_effect_t riscv_fpu_gpr_effect(uint32_t inst)
     }
 
     const fp_op_decode_t decoded = fp_decode_op(inst);
-    if (decoded.kind == FP_OP_INVALID ||
-        decoded.gpr_access == FP_GPR_ACCESS_UNKNOWN)
+    if (decoded.kind == FP_OP_INVALID || decoded.gpr_access == FP_GPR_ACCESS_UNKNOWN)
     {
         return (riscv_fpu_gpr_effect_t){0};
     }

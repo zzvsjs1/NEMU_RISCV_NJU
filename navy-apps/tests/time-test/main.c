@@ -84,8 +84,6 @@ int main(void)
 
     assert(clock() != (clock_t)-1);
 
-    printf("time-test PASS: realtime=%ld.%06ld monotonic=%ld.%09ld\n",
-           (long)tv1.tv_sec, (long)tv1.tv_usec,
-           (long)mono2.tv_sec, (long)mono2.tv_nsec);
+    printf("time-test PASS: realtime=%ld.%06ld monotonic=%ld.%09ld\n", (long)tv1.tv_sec, (long)tv1.tv_usec, (long)mono2.tv_sec, (long)mono2.tv_nsec);
     return 0;
 }

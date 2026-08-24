@@ -25,8 +25,7 @@
 #error "Unsupported platform"
 #endif
 
-static size_t (*cs_disasm_dl)(csh handle, const uint8_t *code,
-                              size_t code_size, uint64_t address, size_t count, cs_insn **insn);
+static size_t (*cs_disasm_dl)(csh handle, const uint8_t *code, size_t code_size, uint64_t address, size_t count, cs_insn **insn);
 static void (*cs_free_dl)(cs_insn *insn, size_t count);
 
 static csh handle;
@@ -47,10 +46,9 @@ void init_disasm()
     cs_free_dl = dlsym(dl_handle, "cs_free");
     assert(cs_free_dl);
 
-    cs_arch arch = MUXDEF(CONFIG_ISA_x86, CS_ARCH_X86,
-                          MUXDEF(CONFIG_ISA_mips32, CS_ARCH_MIPS,
-                                 MUXDEF(CONFIG_ISA_riscv, CS_ARCH_RISCV,
-                                        MUXDEF(CONFIG_ISA_loongarch32r, CS_ARCH_LOONGARCH, -1))));
+    cs_arch arch = MUXDEF(
+        CONFIG_ISA_x86, CS_ARCH_X86,
+        MUXDEF(CONFIG_ISA_mips32, CS_ARCH_MIPS, MUXDEF(CONFIG_ISA_riscv, CS_ARCH_RISCV, MUXDEF(CONFIG_ISA_loongarch32r, CS_ARCH_LOONGARCH, -1))));
     cs_mode mode = MUXDEF(CONFIG_ISA_x86, CS_MODE_32,
                           MUXDEF(CONFIG_ISA_mips32, CS_MODE_MIPS32,
                                  MUXDEF(CONFIG_ISA_riscv, MUXDEF(CONFIG_ISA64, CS_MODE_RISCV64, CS_MODE_RISCV32) | CS_MODE_RISCVC,

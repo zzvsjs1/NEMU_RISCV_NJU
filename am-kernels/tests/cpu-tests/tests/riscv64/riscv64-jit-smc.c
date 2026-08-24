@@ -12,8 +12,7 @@ static uint32_t smc_code[2] __attribute__((aligned(16))) = {
 };
 
 /* Keep the wrapper's transfer indirect so one unchanged JALR owns the PIC. */
-static smc_func_t volatile smc_target =
-    (smc_func_t)(uintptr_t)smc_code;
+static smc_func_t volatile smc_target = (smc_func_t)(uintptr_t)smc_code;
 
 /*
  * Tail-jump through one unchanged, non-return-hinted JALR source. Keeping the
@@ -24,8 +23,7 @@ static smc_func_t volatile smc_target =
  */
 extern uint64_t call_smc_jump_cache(smc_func_t target);
 
-asm(
-    ".option push\n"
+asm(".option push\n"
     ".option norvc\n"
     ".balign 4\n"
     ".globl call_smc_jump_cache\n"

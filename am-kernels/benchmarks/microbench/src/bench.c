@@ -8,7 +8,10 @@ Setting *setting;
 
 static char *hbrk;
 
-static uint64_t uptime() { return io_read(AM_TIMER_UPTIME).us; }
+static uint64_t uptime()
+{
+    return io_read(AM_TIMER_UPTIME).us;
+}
 
 static char *format_time(uint64_t us)
 {
@@ -38,8 +41,7 @@ static char *format_time(uint64_t us)
         .settings = {_s, _m, _l, _h}, \
     },
 
-Benchmark benchmarks[] = {
-    BENCHMARK_LIST(ENTRY)};
+Benchmark benchmarks[] = {BENCHMARK_LIST(ENTRY)};
 
 // Running a benchmark
 static void bench_prepare(Result *res)

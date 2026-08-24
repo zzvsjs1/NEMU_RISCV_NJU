@@ -69,13 +69,12 @@ int main()
      * so the kernel checks that CF and ZF are still set in the #PF frame.
      */
     volatile uint8_t *text = (volatile uint8_t *)(uintptr_t)read_cs;
-    asm volatile(
-        "xorl %%eax, %%eax\n\t"
-        "stc\n\t"
-        "addb $1, (%0)"
-        :
-        : "r"(text)
-        : "eax", "cc", "memory");
+    asm volatile("xorl %%eax, %%eax\n\t"
+                 "stc\n\t"
+                 "addb $1, (%0)"
+                 :
+                 : "r"(text)
+                 : "eax", "cc", "memory");
 
     return 5;
 }

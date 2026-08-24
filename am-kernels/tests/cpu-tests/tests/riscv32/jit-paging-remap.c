@@ -126,8 +126,7 @@ static void install_page_tables(void)
     const uint32_t table_flags = PTE_V;
     root_pt[IDENTITY_BASE >> 22] = pte_for_page(identity_l0, table_flags);
     root_pt[ALIAS_VA >> 22] = pte_for_page(alias_l0, table_flags);
-    alias_l0[(ALIAS_VA >> 12) & 0x3ffu] =
-        pte_for_page(code_page_a, PTE_V | PTE_R | PTE_X | PTE_A);
+    alias_l0[(ALIAS_VA >> 12) & 0x3ffu] = pte_for_page(code_page_a, PTE_V | PTE_R | PTE_X | PTE_A);
 }
 
 static void enable_sv32(void)
@@ -152,24 +151,21 @@ static void enter_supervisor_mode(void)
      * the generated-code calls in S-mode so this test follows the privileged
      * architecture instead of relying on a direct-address shortcut.
      */
-    asm volatile(
-        "csrr %[mstatus], mstatus\n"
-        "li t0, %[mpp_mask]\n"
-        "not t0, t0\n"
-        "and %[mstatus], %[mstatus], t0\n"
-        "li t0, %[mpp_s]\n"
-        "or %[mstatus], %[mstatus], t0\n"
-        "ori %[mstatus], %[mstatus], %[mpie]\n"
-        "csrw mstatus, %[mstatus]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        : [mstatus] "=&r"(mstatus)
-        : [mpp_mask] "i"(MSTATUS_MPP_MASK),
-          [mpp_s] "i"(MSTATUS_MPP_S),
-          [mpie] "i"(MSTATUS_MPIE)
-        : "t0", "memory");
+    asm volatile("csrr %[mstatus], mstatus\n"
+                 "li t0, %[mpp_mask]\n"
+                 "not t0, t0\n"
+                 "and %[mstatus], %[mstatus], t0\n"
+                 "li t0, %[mpp_s]\n"
+                 "or %[mstatus], %[mstatus], t0\n"
+                 "ori %[mstatus], %[mstatus], %[mpie]\n"
+                 "csrw mstatus, %[mstatus]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 : [mstatus] "=&r"(mstatus)
+                 : [mpp_mask] "i"(MSTATUS_MPP_MASK), [mpp_s] "i"(MSTATUS_MPP_S), [mpie] "i"(MSTATUS_MPIE)
+                 : "t0", "memory");
 }
 
 static void prepare_generated_code(void)
@@ -202,8 +198,7 @@ int main()
      * physical instructions. A stale JIT block would keep returning 7 here because
      * the virtual PC and satp tag are unchanged.
      */
-    alias_l0[(ALIAS_VA >> 12) & 0x3ffu] =
-        pte_for_page(code_page_b, PTE_V | PTE_R | PTE_X | PTE_A);
+    alias_l0[(ALIAS_VA >> 12) & 0x3ffu] = pte_for_page(code_page_b, PTE_V | PTE_R | PTE_X | PTE_A);
     local_sfence_vma();
 
     const int second = fn();

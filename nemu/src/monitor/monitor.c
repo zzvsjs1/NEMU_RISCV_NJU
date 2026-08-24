@@ -66,14 +66,10 @@ static long load_img()
 static int parse_args(int argc, char *argv[])
 {
     const struct option table[] = {
-        {"batch", no_argument, NULL, 'b'},
-        {"log", required_argument, NULL, 'l'},
-        {"diff", required_argument, NULL, 'd'},
-        {"elf", required_argument, NULL, 'f'},
-        {"port", required_argument, NULL, 'p'},
-        {"expr", required_argument, NULL, 'e'},
-        {"help", no_argument, NULL, 'h'},
-        {0, 0, NULL, 0},
+        {"batch", no_argument, NULL, 'b'},      {"log", required_argument, NULL, 'l'},
+        {"diff", required_argument, NULL, 'd'}, {"elf", required_argument, NULL, 'f'},
+        {"port", required_argument, NULL, 'p'}, {"expr", required_argument, NULL, 'e'},
+        {"help", no_argument, NULL, 'h'},       {0, 0, NULL, 0},
     };
 
     int o;
@@ -166,10 +162,9 @@ static void exprTest()
         }
         else if (res != a)
         {
-            printf(ANSI_FMT(
-                       "Cal failed Input: " FMT_DECIMAL_WORD " %s\n"
-                       "The out is " FMT_DECIMAL_WORD "\n",
-                       ANSI_FG_RED),
+            printf(ANSI_FMT("Cal failed Input: " FMT_DECIMAL_WORD " %s\n"
+                            "The out is " FMT_DECIMAL_WORD "\n",
+                            ANSI_FG_RED),
                    a, otherBuffer, res);
         }
 

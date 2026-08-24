@@ -26,13 +26,22 @@ int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained)
     return -1;
 }
 
-void SDL_CloseAudio(void) {}
+void SDL_CloseAudio(void)
+{
+}
 
-void SDL_PauseAudio(int pause_on) { (void)pause_on; }
+void SDL_PauseAudio(int pause_on)
+{
+    (void)pause_on;
+}
 
-void SDL_LockAudio(void) {}
+void SDL_LockAudio(void)
+{
+}
 
-void SDL_UnlockAudio(void) {}
+void SDL_UnlockAudio(void)
+{
+}
 
 static int64_t memory_size(SDL_RWops *rw)
 {

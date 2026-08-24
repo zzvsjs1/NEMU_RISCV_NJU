@@ -1,14 +1,12 @@
 // Author:  Douglas Wilhelm Harder
 // Copyright (c) 2009 by Douglas Wilhelm Harder.  All rights reserved.
 
-template <typename T>
-T max(T a, T b)
+template <typename T> T max(T a, T b)
 {
     return a > b ? a : b;
 }
 
-template <typename T>
-class Updatable_heap
+template <typename T> class Updatable_heap
 {
   private:
     int M;
@@ -33,8 +31,7 @@ class Updatable_heap
     int length(T const &) const;
 };
 
-template <typename T>
-class Updatable_heap<T>::Step
+template <typename T> class Updatable_heap<T>::Step
 {
   public:
     T element;
@@ -50,8 +47,7 @@ class Updatable_heap<T>::Step
     int weight() const;
 };
 
-template <typename T>
-void Updatable_heap<T>::init(int m)
+template <typename T> void Updatable_heap<T>::init(int m)
 {
     M = m;
     heap = (Step **)bench_alloc(sizeof(void *) * M);
@@ -65,8 +61,7 @@ void Updatable_heap<T>::init(int m)
     }
 }
 
-template <typename T>
-Updatable_heap<T>::~Updatable_heap()
+template <typename T> Updatable_heap<T>::~Updatable_heap()
 {
     for (int i = 0; i < M; ++i)
     {
@@ -80,8 +75,7 @@ Updatable_heap<T>::~Updatable_heap()
     }
 }
 
-template <typename T>
-T Updatable_heap<T>::pop()
+template <typename T> T Updatable_heap<T>::pop()
 {
     if (size() == 0)
     {
@@ -108,8 +102,7 @@ T Updatable_heap<T>::pop()
     return top;
 }
 
-template <typename T>
-void inline Updatable_heap<T>::swap(int i, int j)
+template <typename T> void inline Updatable_heap<T>::swap(int i, int j)
 {
     Step *tmp = heap[j];
     heap[j] = heap[i];
@@ -119,8 +112,7 @@ void inline Updatable_heap<T>::swap(int i, int j)
     heap[j]->heap_index = j;
 }
 
-template <typename T>
-void Updatable_heap<T>::percolate_down()
+template <typename T> void Updatable_heap<T>::percolate_down()
 {
     int n = 1;
 
@@ -151,8 +143,7 @@ void Updatable_heap<T>::percolate_down()
     }
 }
 
-template <typename T>
-void Updatable_heap<T>::percolate_up(int n)
+template <typename T> void Updatable_heap<T>::percolate_up(int n)
 {
     while (n != 1)
     {
@@ -170,8 +161,7 @@ void Updatable_heap<T>::percolate_up(int n)
     }
 }
 
-template <typename T>
-void Updatable_heap<T>::push(T const &pz, int path_length)
+template <typename T> void Updatable_heap<T>::push(T const &pz, int path_length)
 {
     Step *ptr = pointer(pz);
 
@@ -202,28 +192,24 @@ void Updatable_heap<T>::push(T const &pz, int path_length)
     }
 }
 
-template <typename T>
-int Updatable_heap<T>::size() const
+template <typename T> int Updatable_heap<T>::size() const
 {
     return heap_size;
 }
 
-template <typename T>
-int Updatable_heap<T>::maximum_size() const
+template <typename T> int Updatable_heap<T>::maximum_size() const
 {
     return maximum_heap_size;
 }
 
-template <typename T>
-int Updatable_heap<T>::length(T const &pz) const
+template <typename T> int Updatable_heap<T>::length(T const &pz) const
 {
     Step *ptr = pointer(pz);
 
     return (ptr == 0) ? 2147483647 : ptr->length();
 }
 
-template <typename T>
-typename Updatable_heap<T>::Step *Updatable_heap<T>::pointer(T const &pz) const
+template <typename T> typename Updatable_heap<T>::Step *Updatable_heap<T>::pointer(T const &pz) const
 {
     for (Step *ptr = hash_table[pz.hash() & (M - 1)]; ptr != 0; ptr = ptr->next)
     {
@@ -242,8 +228,7 @@ typename Updatable_heap<T>::Step *Updatable_heap<T>::pointer(T const &pz) const
  * ************************************************ *
  ****************************************************/
 
-template <typename T>
-void Updatable_heap<T>::Step::init(T const &pz, Step *n, int hi, int dist)
+template <typename T> void Updatable_heap<T>::Step::init(T const &pz, Step *n, int hi, int dist)
 {
     element = pz;
     next = n;
@@ -254,14 +239,12 @@ void Updatable_heap<T>::Step::init(T const &pz, Step *n, int hi, int dist)
     previous_step = 0;
 }
 
-template <typename T>
-int Updatable_heap<T>::Step::length() const
+template <typename T> int Updatable_heap<T>::Step::length() const
 {
     return path_length;
 }
 
-template <typename T>
-int Updatable_heap<T>::Step::weight() const
+template <typename T> int Updatable_heap<T>::Step::weight() const
 {
     return path_weight;
 }

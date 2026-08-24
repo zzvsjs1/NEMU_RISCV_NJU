@@ -12,8 +12,7 @@
     { \
         if (!(cond)) \
         { \
-            fprintf(stderr, "CHECK failed: %s at %s:%d\n", #cond, __FILE__, \
-                    __LINE__); \
+            fprintf(stderr, "CHECK failed: %s at %s:%d\n", #cond, __FILE__, __LINE__); \
             exit(1); \
         } \
     } while (0)
@@ -62,8 +61,7 @@ static void check_sdl12_compatibility_surface(void)
      * Lock this expectation down so a future compatibility edit does not make Doom
      * take the legacy workaround path unnecessarily.
      */
-    CHECK(SDL_VERSIONNUM(linked->major, linked->minor, linked->patch) >=
-          SDL_VERSIONNUM(1, 2, 9));
+    CHECK(SDL_VERSIONNUM(linked->major, linked->minor, linked->patch) >= SDL_VERSIONNUM(1, 2, 9));
 }
 
 static int64_t memory_size(SDL_RWops *rw)

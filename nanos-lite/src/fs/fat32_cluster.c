@@ -53,8 +53,7 @@ static int checked_fat_copy_end_offset(const Fat32Volume *vol, unsigned fat_inde
         return -1;
     }
 
-    const uint64_t fat_end_sector =
-        (uint64_t)vol->reserved_sector_count + (uint64_t)(fat_index + 1u) * (uint64_t)vol->fat_size_sectors;
+    const uint64_t fat_end_sector = (uint64_t)vol->reserved_sector_count + (uint64_t)(fat_index + 1u) * (uint64_t)vol->fat_size_sectors;
 
     if (fat_end_sector > SIZE_MAX / FAT32_SECTOR_SIZE)
     {
@@ -65,8 +64,7 @@ static int checked_fat_copy_end_offset(const Fat32Volume *vol, unsigned fat_inde
     return 0;
 }
 
-static int fat_cache_contains(const Fat32Volume *vol, unsigned fat_index,
-                              size_t sector_offset, size_t entry_offset)
+static int fat_cache_contains(const Fat32Volume *vol, unsigned fat_index, size_t sector_offset, size_t entry_offset)
 {
     if (vol == 0 || !vol->fat_sector_cache_valid || vol->fat_sector_cache_fat_index != fat_index)
     {
@@ -80,9 +78,7 @@ static int fat_cache_contains(const Fat32Volume *vol, unsigned fat_index,
     return entry_start >= cache_start && entry_start + FAT32_ENTRY_SIZE <= cache_end;
 }
 
-static int checked_fat_entry_location(const Fat32Volume *vol, uint32_t cluster,
-                                      unsigned fat_index, size_t *byte_offset,
-                                      size_t *entry_offset)
+static int checked_fat_entry_location(const Fat32Volume *vol, uint32_t cluster, unsigned fat_index, size_t *byte_offset, size_t *entry_offset)
 {
     if (vol == 0 || byte_offset == 0 || entry_offset == 0)
     {
@@ -103,8 +99,7 @@ static int checked_fat_entry_location(const Fat32Volume *vol, uint32_t cluster,
         return -1;
     }
 
-    const uint64_t fat_entry_count =
-        (uint64_t)vol->fat_size_sectors * FAT32_SECTOR_SIZE / FAT32_ENTRY_SIZE;
+    const uint64_t fat_entry_count = (uint64_t)vol->fat_size_sectors * FAT32_SECTOR_SIZE / FAT32_ENTRY_SIZE;
     const uint64_t fat_offset = (uint64_t)cluster * FAT32_ENTRY_SIZE;
 
     if ((uint64_t)cluster >= fat_entry_count)
@@ -340,7 +335,8 @@ int fat32_load_fsinfo(Fat32Volume *vol)
         return -1;
     }
 
-    if (get_le32(&sector[0]) != FAT32_FSINFO_LEAD_SIG || get_le32(&sector[484]) != FAT32_FSINFO_STRUCT_SIG || get_le32(&sector[508]) != FAT32_FSINFO_TRAIL_SIG)
+    if (get_le32(&sector[0]) != FAT32_FSINFO_LEAD_SIG || get_le32(&sector[484]) != FAT32_FSINFO_STRUCT_SIG ||
+        get_le32(&sector[508]) != FAT32_FSINFO_TRAIL_SIG)
     {
         return 0;
     }
@@ -399,7 +395,8 @@ int fat32_flush_fsinfo(const Fat32Volume *vol)
             return -1;
         }
 
-        if (get_le32(&sector[0]) != FAT32_FSINFO_LEAD_SIG || get_le32(&sector[484]) != FAT32_FSINFO_STRUCT_SIG || get_le32(&sector[508]) != FAT32_FSINFO_TRAIL_SIG)
+        if (get_le32(&sector[0]) != FAT32_FSINFO_LEAD_SIG || get_le32(&sector[484]) != FAT32_FSINFO_STRUCT_SIG ||
+            get_le32(&sector[508]) != FAT32_FSINFO_TRAIL_SIG)
         {
             continue;
         }

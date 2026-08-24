@@ -33,8 +33,7 @@ enum
     MOUSE_BUTTON_RIGHT_MASK = 1u << 2,
 };
 
-#define MOUSE_SUPPORTED_BUTTON_MASK \
-    (MOUSE_BUTTON_LEFT_MASK | MOUSE_BUTTON_MIDDLE_MASK | MOUSE_BUTTON_RIGHT_MASK)
+#define MOUSE_SUPPORTED_BUTTON_MASK (MOUSE_BUTTON_LEFT_MASK | MOUSE_BUTTON_MIDDLE_MASK | MOUSE_BUTTON_RIGHT_MASK)
 
 typedef struct
 {
@@ -365,7 +364,9 @@ static void load_mouse_script(void)
     free(buf);
 }
 #else
-static void load_mouse_script(void) {}
+static void load_mouse_script(void)
+{
+}
 #endif
 
 void init_mouse(void)
@@ -375,12 +376,10 @@ void init_mouse(void)
     mouse_latched = (MouseEvent){.type = MOUSE_EVENT_NONE};
 
 #ifdef CONFIG_HAS_PORT_IO
-    add_pio_map("mouse", CONFIG_MOUSE_DATA_PORT, mouse_base,
-                7 * sizeof(uint32_t), mouse_data_io_handler);
+    add_pio_map("mouse", CONFIG_MOUSE_DATA_PORT, mouse_base, 7 * sizeof(uint32_t), mouse_data_io_handler);
 #endif
 
-    add_mmio_map("mouse", CONFIG_MOUSE_DATA_MMIO, mouse_base,
-                 7 * sizeof(uint32_t), mouse_data_io_handler);
+    add_mmio_map("mouse", CONFIG_MOUSE_DATA_MMIO, mouse_base, 7 * sizeof(uint32_t), mouse_data_io_handler);
 
     load_mouse_script();
 }

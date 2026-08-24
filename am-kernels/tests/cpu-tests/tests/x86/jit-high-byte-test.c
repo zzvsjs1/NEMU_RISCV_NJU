@@ -10,21 +10,16 @@ static uint32_t test_ah_01_flags(uint32_t value)
     uint8_t cf = 0;
     uint8_t of = 0;
 
-    asm volatile(
-        "movl %[value], %%eax\n\t"
-        "testb $0x01, %%ah\n\t"
-        "setz %[zf]\n\t"
-        "sets %[sf]\n\t"
-        "setc %[cf]\n\t"
-        "seto %[of]\n\t"
-        "movl %%eax, %[after]\n\t"
-        : [after] "=m"(after),
-          [zf] "=qm"(zf),
-          [sf] "=qm"(sf),
-          [cf] "=qm"(cf),
-          [of] "=qm"(of)
-        : [value] "r"(value)
-        : "eax", "cc", "memory");
+    asm volatile("movl %[value], %%eax\n\t"
+                 "testb $0x01, %%ah\n\t"
+                 "setz %[zf]\n\t"
+                 "sets %[sf]\n\t"
+                 "setc %[cf]\n\t"
+                 "seto %[of]\n\t"
+                 "movl %%eax, %[after]\n\t"
+                 : [after] "=m"(after), [zf] "=qm"(zf), [sf] "=qm"(sf), [cf] "=qm"(cf), [of] "=qm"(of)
+                 : [value] "r"(value)
+                 : "eax", "cc", "memory");
 
     result |= after;
     result ^= (uint32_t)zf << 24;
@@ -41,17 +36,14 @@ static uint32_t test_ah_80_flags(uint32_t value)
     uint8_t zf = 0;
     uint8_t sf = 0;
 
-    asm volatile(
-        "movl %[value], %%eax\n\t"
-        "testb $0x80, %%ah\n\t"
-        "setz %[zf]\n\t"
-        "sets %[sf]\n\t"
-        "movl %%eax, %[after]\n\t"
-        : [after] "=m"(after),
-          [zf] "=qm"(zf),
-          [sf] "=qm"(sf)
-        : [value] "r"(value)
-        : "eax", "cc", "memory");
+    asm volatile("movl %[value], %%eax\n\t"
+                 "testb $0x80, %%ah\n\t"
+                 "setz %[zf]\n\t"
+                 "sets %[sf]\n\t"
+                 "movl %%eax, %[after]\n\t"
+                 : [after] "=m"(after), [zf] "=qm"(zf), [sf] "=qm"(sf)
+                 : [value] "r"(value)
+                 : "eax", "cc", "memory");
 
     result |= after;
     result ^= (uint32_t)zf << 24;
@@ -66,17 +58,14 @@ static uint32_t test_dh_40_flags(uint32_t value)
     uint8_t zf = 0;
     uint8_t sf = 0;
 
-    asm volatile(
-        "movl %[value], %%edx\n\t"
-        "testb $0x40, %%dh\n\t"
-        "setz %[zf]\n\t"
-        "sets %[sf]\n\t"
-        "movl %%edx, %[after]\n\t"
-        : [after] "=m"(after),
-          [zf] "=qm"(zf),
-          [sf] "=qm"(sf)
-        : [value] "r"(value)
-        : "edx", "cc", "memory");
+    asm volatile("movl %[value], %%edx\n\t"
+                 "testb $0x40, %%dh\n\t"
+                 "setz %[zf]\n\t"
+                 "sets %[sf]\n\t"
+                 "movl %%edx, %[after]\n\t"
+                 : [after] "=m"(after), [zf] "=qm"(zf), [sf] "=qm"(sf)
+                 : [value] "r"(value)
+                 : "edx", "cc", "memory");
 
     result |= after;
     result ^= (uint32_t)zf << 24;

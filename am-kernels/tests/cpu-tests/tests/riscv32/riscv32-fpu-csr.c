@@ -22,8 +22,7 @@ volatile uint32_t rv32_fpu_csr_saved_mepc = UINT32_MAX;
  * FS-Off illegal instruction, and any unexpectedly missing F support, to
  * return to integer-only C code without recursively trapping.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -52,8 +51,7 @@ extern void rv32_fpu_csr_trap_handler(void);
  * These helpers keep the global C ABI integer-only.  The F instructions are
  * enabled only inside this local assembler option block.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -199,8 +197,7 @@ static void test_fs_off_blocks_fp_csr_access(void)
     check(result == UINT32_C(0x5a));
     check(rv32_fpu_csr_trap_count == 1);
     check(rv32_fpu_csr_saved_mcause == 2);
-    check(rv32_fpu_csr_saved_mepc ==
-          (uintptr_t)rv32_fpu_fs_off_csr_insn);
+    check(rv32_fpu_csr_saved_mepc == (uintptr_t)rv32_fpu_fs_off_csr_insn);
 }
 
 static void test_fcsr_aliases_and_fs_state(void)
@@ -280,8 +277,7 @@ static void test_fcsr_aliases_and_fs_state(void)
     check(fcsr_after_clean_read == UINT32_C(0x75));
     check((clean_after_read & MSTATUS_FS_MASK) == MSTATUS_FS_CLEAN);
     check((clean_after_read & MSTATUS_SD) == 0);
-    check((extension_fields_after_write &
-           (MSTATUS_VS_MASK | MSTATUS_XS_MASK)) == 0);
+    check((extension_fields_after_write & (MSTATUS_VS_MASK | MSTATUS_XS_MASK)) == 0);
     check((extension_fields_after_write & MSTATUS_SD) == 0);
     check((dirty_after_fpr_write & MSTATUS_FS_MASK) == MSTATUS_FS_DIRTY);
     check((dirty_after_fpr_write & MSTATUS_SD) != 0);

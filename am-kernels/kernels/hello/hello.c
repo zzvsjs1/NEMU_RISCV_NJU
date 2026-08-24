@@ -3,9 +3,8 @@
 
 int main(const char *args)
 {
-    const char *fmt =
-        "Hello, AbstractMachine!\n"
-        "mainargs = '%'.\n";
+    const char *fmt = "Hello, AbstractMachine!\n"
+                      "mainargs = '%'.\n";
 
     for (const char *p = fmt; *p; p++)
     {

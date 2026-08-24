@@ -73,21 +73,20 @@ static struct
     const char *name;
     const char *description;
     int (*handler)(char *);
-} cmd_table[] =
-    {
-        {"help", "Display informations about all supported commands", cmd_help},
-        {"c", "Continue the execution of the program", cmd_c},
-        {"q", "Exit NEMU", cmd_q},
+} cmd_table[] = {
+    {"help", "Display informations about all supported commands", cmd_help},
+    {"c", "Continue the execution of the program", cmd_c},
+    {"q", "Exit NEMU", cmd_q},
 
-        {"si", "Execute [N] instructions. The empty n will execute 1 instruction.", cmd_excu_n_instructions},
-        {"info", "Print the register or break point informations", cmd_print_program_info},
-        {"x", "x N EXPR. Scan the memory with the base address EXPR.", cmd_scan_memory},
-        {"p", "Print the result by a expression", cmd_expr},
-        {"w", "w expr. Add a watch point. The result will calculate by expression.", cmd_add_wp},
-        {"d", "d [i]. Delete the no.i watch point", cmd_del_wp},
-        {"set", "set reg_name val. Set a register to specific value.", cmd_set_register_val},
-        {"save", "save [path]. Save NEMU snapshot to path.", cmd_save},
-        {"load", "load [path]. Load NEMU snapshot from path.", cmd_load},
+    {"si", "Execute [N] instructions. The empty n will execute 1 instruction.", cmd_excu_n_instructions},
+    {"info", "Print the register or break point informations", cmd_print_program_info},
+    {"x", "x N EXPR. Scan the memory with the base address EXPR.", cmd_scan_memory},
+    {"p", "Print the result by a expression", cmd_expr},
+    {"w", "w expr. Add a watch point. The result will calculate by expression.", cmd_add_wp},
+    {"d", "d [i]. Delete the no.i watch point", cmd_del_wp},
+    {"set", "set reg_name val. Set a register to specific value.", cmd_set_register_val},
+    {"save", "save [path]. Save NEMU snapshot to path.", cmd_save},
+    {"load", "load [path]. Load NEMU snapshot from path.", cmd_load},
 
 };
 
@@ -106,10 +105,9 @@ static int cmd_excu_n_instructions(char *args)
     {
         if (sscanf(args, "%" SCNu64, &n) != 1)
         {
-            PRI_ERR(
-                "Cannot perform string to integer conversion."
-                " The input value \"%s\" is invalid.\n",
-                args);
+            PRI_ERR("Cannot perform string to integer conversion."
+                    " The input value \"%s\" is invalid.\n",
+                    args);
 
             return 0;
         }

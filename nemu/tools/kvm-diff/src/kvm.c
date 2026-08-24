@@ -112,8 +112,7 @@ static void kvm_setsregs(const struct kvm_sregs *r)
 
 static void *create_mem(int slot, uintptr_t base, size_t mem_size)
 {
-    void *mem = mmap(NULL, mem_size, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    void *mem = mmap(NULL, mem_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
 
     if (mem == MAP_FAILED)
     {
@@ -161,8 +160,7 @@ static void vm_init(size_t mem_size)
 
     if (api_ver != KVM_API_VERSION)
     {
-        fprintf(stderr, "Got KVM api version %d, expected %d\n",
-                api_ver, KVM_API_VERSION);
+        fprintf(stderr, "Got KVM api version %d, expected %d\n", api_ver, KVM_API_VERSION);
         assert(0);
     }
 
@@ -204,8 +202,7 @@ static void vcpu_init()
         assert(0);
     }
 
-    vcpu.kvm_run = mmap(NULL, vcpu_mmap_size, PROT_READ | PROT_WRITE,
-                        MAP_SHARED, vcpu.fd, 0);
+    vcpu.kvm_run = mmap(NULL, vcpu_mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED, vcpu.fd, 0);
 
     if (vcpu.kvm_run == MAP_FAILED)
     {
@@ -226,9 +223,7 @@ static const uint8_t mbr[] = {
     0xeb, 0xfe, // jmp here
 
     // GDT
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0xff, 0xff, 0x00, 0x00, 0x00, 0x9a, 0xcf, 0x00,
-    0xff, 0xff, 0x00, 0x00, 0x00, 0x92, 0xcf, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x9a, 0xcf, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x92, 0xcf, 0x00,
 
     // GDT descriptor
     0x17, 0x00, 0x10, 0x7c, 0x00, 0x00};
@@ -372,8 +367,8 @@ static void kvm_exec(uint64_t n)
         {
             if (vcpu.kvm_run->exit_reason == KVM_EXIT_HLT)
                 return;
-            fprintf(stderr, "Got exit_reason %d at pc = 0x%llx, expected KVM_EXIT_DEBUG (%d)\n",
-                    vcpu.kvm_run->exit_reason, vcpu.kvm_run->s.regs.regs.rip, KVM_EXIT_DEBUG);
+            fprintf(stderr, "Got exit_reason %d at pc = 0x%llx, expected KVM_EXIT_DEBUG (%d)\n", vcpu.kvm_run->exit_reason,
+                    vcpu.kvm_run->s.regs.regs.rip, KVM_EXIT_DEBUG);
             assert(0);
         }
         else
@@ -386,8 +381,8 @@ static void kvm_exec(uint64_t n)
                 uint32_t eflag_addr = va2pa(vcpu.kvm_run->s.regs.regs.rsp + eflag_offset);
                 *(uint32_t *)(vm.mem + eflag_addr) &= ~RFLAGS_FIX_MASK;
 
-                Assert(vcpu.entry == vcpu.kvm_run->debug.arch.pc,
-                       "entry not match, right = 0x%llx, wrong = 0x%x", vcpu.kvm_run->debug.arch.pc, vcpu.entry);
+                Assert(vcpu.entry == vcpu.kvm_run->debug.arch.pc, "entry not match, right = 0x%llx, wrong = 0x%x", vcpu.kvm_run->debug.arch.pc,
+                       vcpu.entry);
                 kvm_set_step_mode(false, 0);
                 vcpu.int_wp_state = STATE_IDLE;
                 //Log("exception = %d, pc = %llx, dr6 = %llx, dr7 = %llx", vcpu.kvm_run->debug.arch.exception,
@@ -395,8 +390,8 @@ static void kvm_exec(uint64_t n)
             }
             else if (vcpu.int_wp_state == STATE_IRET_INSTR)
             {
-                Assert(vcpu.entry == vcpu.kvm_run->debug.arch.pc,
-                       "entry not match, right = 0x%llx, wrong = 0x%x", vcpu.kvm_run->debug.arch.pc, vcpu.entry);
+                Assert(vcpu.entry == vcpu.kvm_run->debug.arch.pc, "entry not match, right = 0x%llx, wrong = 0x%x", vcpu.kvm_run->debug.arch.pc,
+                       vcpu.entry);
                 kvm_set_step_mode(false, 0);
                 vcpu.int_wp_state = STATE_IDLE;
             }
@@ -476,8 +471,7 @@ __EXPORT void difftest_raise_intr(word_t NO)
     uint32_t pgate_vaddr = vcpu.kvm_run->s.regs.sregs.idt.base + NO * 8;
     uint32_t pgate = va2pa(pgate_vaddr);
     // assume code.base = 0
-    uint32_t entry = vm.mem[pgate] | (vm.mem[pgate + 1] << 8) |
-                     (vm.mem[pgate + 6] << 16) | (vm.mem[pgate + 7] << 24);
+    uint32_t entry = vm.mem[pgate] | (vm.mem[pgate + 1] << 8) | (vm.mem[pgate + 6] << 16) | (vm.mem[pgate + 7] << 24);
     kvm_set_step_mode(true, entry);
     vcpu.int_wp_state = STATE_INT_INSTR;
     vcpu.has_error_code = (NO == 14);

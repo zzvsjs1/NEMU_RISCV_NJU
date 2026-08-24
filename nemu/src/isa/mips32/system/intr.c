@@ -20,8 +20,7 @@ jmp_buf mips32_exception_env;
 bool mips32_exception_env_valid = false;
 vaddr_t mips32_exception_target = 0;
 
-static vaddr_t mips32_raise_exception(word_t exception, vaddr_t epc,
-                                      bool refill)
+static vaddr_t mips32_raise_exception(word_t exception, vaddr_t epc, bool refill)
 {
     const bool old_exl = (cpu.status & MIPS32_STATUS_EXL) != 0;
 
@@ -38,8 +37,7 @@ static vaddr_t mips32_raise_exception(word_t exception, vaddr_t epc,
         cpu.cause &= ~(1u << 31);
     }
 
-    cpu.cause = (cpu.cause & ~(0x1fu << 2)) |
-                ((exception & 0x1fu) << 2);
+    cpu.cause = (cpu.cause & ~(0x1fu << 2)) | ((exception & 0x1fu) << 2);
     cpu.status |= MIPS32_STATUS_EXL;
 
     /*
@@ -47,9 +45,7 @@ static vaddr_t mips32_raise_exception(word_t exception, vaddr_t epc,
      * miss must instead use the general vector so a broken handler cannot
      * recursively re-enter a refill path while preserving the outer EPC.
      */
-    const vaddr_t vector = refill && !old_exl
-                               ? 0x80000000u
-                               : MIPS32_EXC_VECTOR;
+    const vaddr_t vector = refill && !old_exl ? 0x80000000u : MIPS32_EXC_VECTOR;
 
     /* ETrace observes only fully committed architectural exception state. */
     etrace_exception(exception, cpu.epc, vector, cpu.cause, cpu.status);
@@ -63,10 +59,7 @@ vaddr_t isa_raise_intr(word_t NO, vaddr_t epc)
 
 void mips32_raise_tlb_exception(void)
 {
-    Assert(mips32_exception_env_valid,
-           "MIPS32 TLB exception outside instruction: pc=" FMT_WORD
-           " badvaddr=" FMT_WORD,
-           cpu.pc, cpu.badvaddr);
+    Assert(mips32_exception_env_valid, "MIPS32 TLB exception outside instruction: pc=" FMT_WORD " badvaddr=" FMT_WORD, cpu.pc, cpu.badvaddr);
 
     word_t exception;
 
@@ -84,8 +77,7 @@ void mips32_raise_tlb_exception(void)
 
     /* Consume the miss before the refill handler retries the instruction. */
     cpu.tlb_fault = MIPS32_TLB_FAULT_NONE;
-    mips32_exception_target =
-        mips32_raise_exception(exception, cpu.pc, true);
+    mips32_exception_target = mips32_raise_exception(exception, cpu.pc, true);
     longjmp(mips32_exception_env, 1);
 }
 
@@ -101,9 +93,7 @@ word_t isa_query_intr()
      * masks described by the architecture. The global IE/EXL/ERL gates remain
      * active.
      */
-    const bool interrupts_enabled =
-        (cpu.status & MIPS32_STATUS_IE) != 0u &&
-        (cpu.status & (MIPS32_STATUS_EXL | MIPS32_STATUS_ERL)) == 0u;
+    const bool interrupts_enabled = (cpu.status & MIPS32_STATUS_IE) != 0u && (cpu.status & (MIPS32_STATUS_EXL | MIPS32_STATUS_ERL)) == 0u;
 
     if (cpu.INTR && interrupts_enabled)
     {

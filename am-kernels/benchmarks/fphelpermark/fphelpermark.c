@@ -106,8 +106,7 @@ static void write_fflags(uintptr_t value)
  */
 static uint64_t reference_result(uint64_t rounds)
 {
-    return (UINT64_C(10) * rounds) ^ (UINT64_C(4) * rounds) ^
-           UINT64_C(10);
+    return (UINT64_C(10) * rounds) ^ (UINT64_C(4) * rounds) ^ UINT64_C(10);
 }
 
 int main(void)
@@ -119,19 +118,15 @@ int main(void)
     write_fflags(0);
 
     /* Exclude initial translation and direct-link installation from timing. */
-    const uint64_t warm_result =
-        rv64_fphelpermark_kernel(FPHELPERMARK_WARMUP_ROUNDS);
+    const uint64_t warm_result = rv64_fphelpermark_kernel(FPHELPERMARK_WARMUP_ROUNDS);
 
     const uint64_t start = uptime_us();
-    const uint64_t result =
-        rv64_fphelpermark_kernel(FPHELPERMARK_TIMED_ROUNDS);
+    const uint64_t result = rv64_fphelpermark_kernel(FPHELPERMARK_TIMED_ROUNDS);
     const uint64_t end = uptime_us();
     const uint64_t expected = reference_result(FPHELPERMARK_TIMED_ROUNDS);
     const uint32_t checksum_hi = (uint32_t)(result >> 32);
     const uint32_t checksum_lo = (uint32_t)result;
-    const bool pass =
-        warm_result == reference_result(FPHELPERMARK_WARMUP_ROUNDS) &&
-        result == expected && read_fflags() == 0;
+    const bool pass = warm_result == reference_result(FPHELPERMARK_WARMUP_ROUNDS) && result == expected && read_fflags() == 0;
 
     printf("fphelpermark_total_us: %d\n", (int)(end - start));
     printf("fphelpermark_checksum_hi: 0x%x\n", checksum_hi);

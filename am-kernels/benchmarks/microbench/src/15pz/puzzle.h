@@ -2,8 +2,7 @@
 // Copyright (c) 2009 by Douglas Wilhelm Harder.  All rights reserved.
 // Url: https://ece.uwaterloo.ca/~dwharder/aads/Algorithms/N_puzzles/
 
-template <int N>
-class N_puzzle
+template <int N> class N_puzzle
 {
   private:
     bool puzzle_valid;
@@ -14,7 +13,10 @@ class N_puzzle
 
     void determine_hash();
 
-    static int abs(int n) { return (n < 0) ? -n : n; }
+    static int abs(int n)
+    {
+        return (n < 0) ? -n : n;
+    }
 
   public:
     N_puzzle();
@@ -43,9 +45,7 @@ class N_puzzle
     N_puzzle static solution();
 };
 
-template <int N>
-N_puzzle<N>::N_puzzle() : puzzle_valid(true),
-                          manhattan_distance(0)
+template <int N> N_puzzle<N>::N_puzzle() : puzzle_valid(true), manhattan_distance(0)
 {
     int array[N * N];
 
@@ -82,9 +82,7 @@ N_puzzle<N>::N_puzzle() : puzzle_valid(true),
     determine_hash();
 }
 
-template <int N>
-N_puzzle<N>::N_puzzle(int array[N * N]) : puzzle_valid(true),
-                                          manhattan_distance(0)
+template <int N> N_puzzle<N>::N_puzzle(int array[N * N]) : puzzle_valid(true), manhattan_distance(0)
 {
     bool check[N * N];
 
@@ -133,8 +131,7 @@ N_puzzle<N>::N_puzzle(int array[N * N]) : puzzle_valid(true),
  * Determine a hash value for the puzzle.
  */
 
-template <int N>
-void N_puzzle<N>::determine_hash()
+template <int N> void N_puzzle<N>::determine_hash()
 {
     hash_value = 0;
 
@@ -148,11 +145,8 @@ void N_puzzle<N>::determine_hash()
 }
 
 template <int N>
-N_puzzle<N>::N_puzzle(N_puzzle const &pz) : puzzle_valid(pz.puzzle_valid),
-                                            zero_i(pz.zero_i),
-                                            zero_j(pz.zero_j),
-                                            manhattan_distance(pz.manhattan_distance),
-                                            hash_value(pz.hash_value)
+N_puzzle<N>::N_puzzle(N_puzzle const &pz)
+    : puzzle_valid(pz.puzzle_valid), zero_i(pz.zero_i), zero_j(pz.zero_j), manhattan_distance(pz.manhattan_distance), hash_value(pz.hash_value)
 {
     for (int i = 0; i < N; ++i)
     {
@@ -163,8 +157,7 @@ N_puzzle<N>::N_puzzle(N_puzzle const &pz) : puzzle_valid(pz.puzzle_valid),
     }
 }
 
-template <int N>
-N_puzzle<N> &N_puzzle<N>::operator=(N_puzzle const &rhs)
+template <int N> N_puzzle<N> &N_puzzle<N>::operator=(N_puzzle const &rhs)
 {
     puzzle_valid = rhs.puzzle_valid;
     zero_i = rhs.zero_i;
@@ -187,8 +180,7 @@ N_puzzle<N> &N_puzzle<N>::operator=(N_puzzle const &rhs)
  *  the blank is not in the last row.
  */
 
-template <int N>
-bool N_puzzle<N>::tile_up_possible() const
+template <int N> bool N_puzzle<N>::tile_up_possible() const
 {
     return puzzle_valid && (zero_i != N - 1);
 }
@@ -198,8 +190,7 @@ bool N_puzzle<N>::tile_up_possible() const
  *  the blank is not in the first row.
  */
 
-template <int N>
-bool N_puzzle<N>::tile_down_possible() const
+template <int N> bool N_puzzle<N>::tile_down_possible() const
 {
     return puzzle_valid && (zero_i != 0);
 }
@@ -209,8 +200,7 @@ bool N_puzzle<N>::tile_down_possible() const
  *  the blank is not in the last column.
  */
 
-template <int N>
-bool N_puzzle<N>::tile_left_possible() const
+template <int N> bool N_puzzle<N>::tile_left_possible() const
 {
     return puzzle_valid && (zero_j != N - 1);
 }
@@ -220,14 +210,12 @@ bool N_puzzle<N>::tile_left_possible() const
  *  the blank is not in the first column.
  */
 
-template <int N>
-bool N_puzzle<N>::tile_right_possible() const
+template <int N> bool N_puzzle<N>::tile_right_possible() const
 {
     return puzzle_valid && (zero_j != 0);
 }
 
-template <int N>
-N_puzzle<N> N_puzzle<N>::tile_up() const
+template <int N> N_puzzle<N> N_puzzle<N>::tile_up() const
 {
     if (!puzzle_valid)
     {
@@ -242,9 +230,7 @@ N_puzzle<N> N_puzzle<N>::tile_up() const
         return result;
     }
 
-    result.manhattan_distance +=
-        abs(((puzzle[zero_i + 1][zero_j] - 1) / N) - zero_i) -
-        abs(((puzzle[zero_i + 1][zero_j] - 1) / N) - (zero_i + 1));
+    result.manhattan_distance += abs(((puzzle[zero_i + 1][zero_j] - 1) / N) - zero_i) - abs(((puzzle[zero_i + 1][zero_j] - 1) / N) - (zero_i + 1));
 
     result.puzzle[zero_i][zero_j] = puzzle[zero_i + 1][zero_j];
     ++result.zero_i;
@@ -255,8 +241,7 @@ N_puzzle<N> N_puzzle<N>::tile_up() const
     return result;
 }
 
-template <int N>
-N_puzzle<N> N_puzzle<N>::tile_down() const
+template <int N> N_puzzle<N> N_puzzle<N>::tile_down() const
 {
     if (!puzzle_valid)
     {
@@ -271,9 +256,7 @@ N_puzzle<N> N_puzzle<N>::tile_down() const
         return result;
     }
 
-    result.manhattan_distance +=
-        abs(((puzzle[zero_i - 1][zero_j] - 1) / N) - zero_i) -
-        abs(((puzzle[zero_i - 1][zero_j] - 1) / N) - (zero_i - 1));
+    result.manhattan_distance += abs(((puzzle[zero_i - 1][zero_j] - 1) / N) - zero_i) - abs(((puzzle[zero_i - 1][zero_j] - 1) / N) - (zero_i - 1));
 
     result.puzzle[zero_i][zero_j] = puzzle[zero_i - 1][zero_j];
     --result.zero_i;
@@ -284,8 +267,7 @@ N_puzzle<N> N_puzzle<N>::tile_down() const
     return result;
 }
 
-template <int N>
-N_puzzle<N> N_puzzle<N>::tile_left() const
+template <int N> N_puzzle<N> N_puzzle<N>::tile_left() const
 {
     if (!puzzle_valid)
     {
@@ -300,9 +282,7 @@ N_puzzle<N> N_puzzle<N>::tile_left() const
         return result;
     }
 
-    result.manhattan_distance +=
-        abs(((puzzle[zero_i][zero_j + 1] - 1) % N) - zero_j) -
-        abs(((puzzle[zero_i][zero_j + 1] - 1) % N) - (zero_j + 1));
+    result.manhattan_distance += abs(((puzzle[zero_i][zero_j + 1] - 1) % N) - zero_j) - abs(((puzzle[zero_i][zero_j + 1] - 1) % N) - (zero_j + 1));
 
     result.puzzle[zero_i][zero_j] = puzzle[zero_i][zero_j + 1];
     ++result.zero_j;
@@ -313,8 +293,7 @@ N_puzzle<N> N_puzzle<N>::tile_left() const
     return result;
 }
 
-template <int N>
-N_puzzle<N> N_puzzle<N>::tile_right() const
+template <int N> N_puzzle<N> N_puzzle<N>::tile_right() const
 {
     if (!puzzle_valid)
     {
@@ -329,9 +308,7 @@ N_puzzle<N> N_puzzle<N>::tile_right() const
         return result;
     }
 
-    result.manhattan_distance +=
-        abs(((puzzle[zero_i][zero_j - 1] - 1) % N) - zero_j) -
-        abs(((puzzle[zero_i][zero_j - 1] - 1) % N) - (zero_j - 1));
+    result.manhattan_distance += abs(((puzzle[zero_i][zero_j - 1] - 1) % N) - zero_j) - abs(((puzzle[zero_i][zero_j - 1] - 1) % N) - (zero_j - 1));
 
     result.puzzle[zero_i][zero_j] = puzzle[zero_i][zero_j - 1];
     --result.zero_j;
@@ -351,8 +328,7 @@ N_puzzle<N> N_puzzle<N>::tile_right() const
  *  Memory:     O(n)
  */
 
-template <int N>
-bool N_puzzle<N>::solvable() const
+template <int N> bool N_puzzle<N>::solvable() const
 {
     if (!valid())
     {
@@ -394,8 +370,7 @@ bool N_puzzle<N>::solvable() const
     return ((parity & 1) == 0);
 }
 
-template <int N>
-bool N_puzzle<N>::valid() const
+template <int N> bool N_puzzle<N>::valid() const
 {
     return puzzle_valid;
 }
@@ -405,8 +380,7 @@ bool N_puzzle<N>::valid() const
  *  between the puzzle and the solution.
  */
 
-template <int N>
-int N_puzzle<N>::lower_bound() const
+template <int N> int N_puzzle<N>::lower_bound() const
 {
     // The Manhattan distance
     return valid() ? manhattan_distance : N * N * N;
@@ -444,8 +418,7 @@ int N_puzzle<N>::lower_bound() const
  *    Otherwise, check all entries to see if they are the same.
  */
 
-template <int N>
-bool N_puzzle<N>::operator==(N_puzzle const &rhs) const
+template <int N> bool N_puzzle<N>::operator==(N_puzzle const &rhs) const
 {
     if (!valid() || !rhs.valid() || hash() != rhs.hash())
     {
@@ -475,8 +448,7 @@ bool N_puzzle<N>::operator==(N_puzzle const &rhs) const
  *    Otherwise, check all entries to see if they are the same.
  */
 
-template <int N>
-bool N_puzzle<N>::operator!=(N_puzzle const &rhs) const
+template <int N> bool N_puzzle<N>::operator!=(N_puzzle const &rhs) const
 {
     if (!valid() || !rhs.valid())
     {
@@ -508,8 +480,7 @@ bool N_puzzle<N>::operator!=(N_puzzle const &rhs) const
  *   Returns the pre-calculated hash value.
  */
 
-template <int N>
-unsigned int N_puzzle<N>::hash() const
+template <int N> unsigned int N_puzzle<N>::hash() const
 {
     return valid() ? hash_value : 0;
 }
@@ -525,8 +496,7 @@ unsigned int N_puzzle<N>::hash() const
  *                      13  14  15
  */
 
-template <int N>
-N_puzzle<N> N_puzzle<N>::solution()
+template <int N> N_puzzle<N> N_puzzle<N>::solution()
 {
     int array[N * N];
 

@@ -30,20 +30,14 @@ static void check_bound(IOMap *map, paddr_t addr, int len, bool is_write)
 
     if (map == NULL)
     {
-        Assert(map != NULL,
-               "I/O %s access at " FMT_PADDR
-               " is out of bound at pc = " FMT_WORD,
-               access_kind, addr, cpu.pc);
+        Assert(map != NULL, "I/O %s access at " FMT_PADDR " is out of bound at pc = " FMT_WORD, access_kind, addr, cpu.pc);
     }
     else
     {
         const paddr_t map_size = map->high - map->low + 1u;
         const bool starts_inside = addr >= map->low;
         const paddr_t offset = starts_inside ? addr - map->low : 0u;
-        const bool whole_span_inside =
-            starts_inside &&
-            (paddr_t)len <= map_size &&
-            offset <= map_size - (paddr_t)len;
+        const bool whole_span_inside = starts_inside && (paddr_t)len <= map_size && offset <= map_size - (paddr_t)len;
 
         /*
          * Subtracting from the proven map size avoids overflow in
@@ -51,11 +45,9 @@ static void check_bound(IOMap *map, paddr_t addr, int len, bool is_write)
          * so an invalid device operation has no partial side effect.
          */
         Assert(whole_span_inside,
-               "I/O %s access at " FMT_PADDR
-               " with len=%d is out of bound "
+               "I/O %s access at " FMT_PADDR " with len=%d is out of bound "
                "{%s} [" FMT_PADDR ", " FMT_PADDR "] at pc = " FMT_WORD,
-               access_kind, addr, len, map->name,
-               map->low, map->high, cpu.pc);
+               access_kind, addr, len, map->name, map->low, map->high, cpu.pc);
     }
 }
 
@@ -86,8 +78,8 @@ word_t map_read(paddr_t addr, int len, IOMap *map)
      */
     invoke_callback(map->callback, offset, len, false); // prepare data to read
     word_t ret = host_read(map->space + offset, len);
-    IFDEF(CONFIG_DTRACE, log_write("dtrace read  pc=" FMT_WORD " device=%s addr=" FMT_PADDR " len=%d data=" FMT_WORD "\n",
-                                   cpu.pc, map->name, addr, len, ret));
+    IFDEF(CONFIG_DTRACE,
+          log_write("dtrace read  pc=" FMT_WORD " device=%s addr=" FMT_PADDR " len=%d data=" FMT_WORD "\n", cpu.pc, map->name, addr, len, ret));
     return ret;
 }
 
@@ -103,6 +95,6 @@ void map_write(paddr_t addr, int len, word_t data, IOMap *map)
      * any response registers in the same mapped space.
      */
     invoke_callback(map->callback, offset, len, true);
-    IFDEF(CONFIG_DTRACE, log_write("dtrace write pc=" FMT_WORD " device=%s addr=" FMT_PADDR " len=%d data=" FMT_WORD "\n",
-                                   cpu.pc, map->name, addr, len, data));
+    IFDEF(CONFIG_DTRACE,
+          log_write("dtrace write pc=" FMT_WORD " device=%s addr=" FMT_PADDR " len=%d data=" FMT_WORD "\n", cpu.pc, map->name, addr, len, data));
 }

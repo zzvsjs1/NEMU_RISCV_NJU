@@ -18,8 +18,7 @@ volatile uint32_t rv32_fpu_trap_mtval = UINT32_MAX;
  * Advancing mepc lets each probe inspect the state that an illegal or
  * misaligned floating-point instruction was required not to modify.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -316,8 +315,7 @@ static void reset_trap(void)
     rv32_fpu_trap_mtval = UINT32_MAX;
 }
 
-static void check_trap(uint32_t cause, const char *instruction,
-                       uintptr_t expected_tval)
+static void check_trap(uint32_t cause, const char *instruction, uintptr_t expected_tval)
 {
     check(rv32_fpu_trap_count == 1);
     check(rv32_fpu_trap_mcause == cause);
@@ -342,16 +340,12 @@ static void test_fs_off_and_reserved_rounding(uintptr_t base_mstatus)
 
     write_mstatus((base_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
     reset_trap();
-    check(rv32_fpu_bad_static_rm(sentinel,
-                                UINT32_C(0x3f800000),
-                                UINT32_C(0x40000000)) == sentinel);
+    check(rv32_fpu_bad_static_rm(sentinel, UINT32_C(0x3f800000), UINT32_C(0x40000000)) == sentinel);
     check_trap(2, rv32_fpu_bad_static_rm_insn, 0);
 
     write_frm(5);
     reset_trap();
-    check(rv32_fpu_bad_dynamic_rm(sentinel,
-                                 UINT32_C(0x3f800000),
-                                 UINT32_C(0x40000000)) == sentinel);
+    check(rv32_fpu_bad_dynamic_rm(sentinel, UINT32_C(0x3f800000), UINT32_C(0x40000000)) == sentinel);
     check_trap(2, rv32_fpu_bad_dynamic_rm_insn, 0);
     write_frm(0);
 }
@@ -402,35 +396,27 @@ static void test_rv32_rejects_d_and_long_conversions(void)
     check(storage[1] == UINT32_C(0x55667788));
 
     reset_trap();
-    check(rv32_fpu_illegal_madd_d(fp_sentinel,
-                                  UINT32_C(0x3f800000),
-                                  UINT32_C(0x40000000)) == fp_sentinel);
+    check(rv32_fpu_illegal_madd_d(fp_sentinel, UINT32_C(0x3f800000), UINT32_C(0x40000000)) == fp_sentinel);
     check_trap(2, rv32_fpu_illegal_madd_d_insn, 0);
 
     reset_trap();
-    check(rv32_fpu_illegal_cvt_s_d(UINT32_C(0x3f800000),
-                                   fp_sentinel) == fp_sentinel);
+    check(rv32_fpu_illegal_cvt_s_d(UINT32_C(0x3f800000), fp_sentinel) == fp_sentinel);
     check_trap(2, rv32_fpu_illegal_cvt_s_d_insn, 0);
 
     reset_trap();
-    check(rv32_fpu_illegal_move_x_d(UINT32_C(0x3f800000)) ==
-          UINT32_C(0x13579bdf));
+    check(rv32_fpu_illegal_move_x_d(UINT32_C(0x3f800000)) == UINT32_C(0x13579bdf));
     check_trap(2, rv32_fpu_illegal_move_x_d_insn, 0);
 
     reset_trap();
-    check(rv32_fpu_illegal_add_d(fp_sentinel,
-                                UINT32_C(0x3f800000),
-                                UINT32_C(0x40000000)) == fp_sentinel);
+    check(rv32_fpu_illegal_add_d(fp_sentinel, UINT32_C(0x3f800000), UINT32_C(0x40000000)) == fp_sentinel);
     check_trap(2, rv32_fpu_illegal_add_d_insn, 0);
 
     reset_trap();
-    check(rv32_fpu_illegal_fcvt_l_s(UINT32_C(0x3f800000)) ==
-          UINT32_C(0x13579bdf));
+    check(rv32_fpu_illegal_fcvt_l_s(UINT32_C(0x3f800000)) == UINT32_C(0x13579bdf));
     check_trap(2, rv32_fpu_illegal_fcvt_l_s_insn, 0);
 
     reset_trap();
-    check(rv32_fpu_illegal_fcvt_s_l(UINT32_C(1), fp_sentinel) ==
-          fp_sentinel);
+    check(rv32_fpu_illegal_fcvt_s_l(UINT32_C(1), fp_sentinel) == fp_sentinel);
     check_trap(2, rv32_fpu_illegal_fcvt_s_l_insn, 0);
 }
 

@@ -4,33 +4,20 @@
 #include <inttypes.h>
 #include <stddef.h>
 
-_Static_assert(sizeof(CPU_state) == DIFFTEST_REG_SIZE,
-               "RISC-V DiffTest ABI must cover the full CPU_state");
-_Static_assert(offsetof(CPU_state, gpr) == offsetof(riscv_difftest_state_t, gpr),
-               "RISC-V DiffTest GPR offset drifted");
-_Static_assert(offsetof(CPU_state, pc) == offsetof(riscv_difftest_state_t, pc),
-               "RISC-V DiffTest PC offset drifted");
-_Static_assert(offsetof(CPU_state, csr.satp) == offsetof(riscv_difftest_state_t, csr.satp),
-               "RISC-V DiffTest satp offset drifted");
-_Static_assert(offsetof(CPU_state, csr.mtval) == offsetof(riscv_difftest_state_t, csr.mtval),
-               "RISC-V DiffTest mtval offset drifted");
-_Static_assert(offsetof(CPU_state, prvi) == offsetof(riscv_difftest_state_t, prvi),
-               "RISC-V DiffTest privilege offset drifted");
-_Static_assert(offsetof(CPU_state, INTR) == offsetof(riscv_difftest_state_t, INTR),
-               "RISC-V DiffTest interrupt-pending offset drifted");
+_Static_assert(sizeof(CPU_state) == DIFFTEST_REG_SIZE, "RISC-V DiffTest ABI must cover the full CPU_state");
+_Static_assert(offsetof(CPU_state, gpr) == offsetof(riscv_difftest_state_t, gpr), "RISC-V DiffTest GPR offset drifted");
+_Static_assert(offsetof(CPU_state, pc) == offsetof(riscv_difftest_state_t, pc), "RISC-V DiffTest PC offset drifted");
+_Static_assert(offsetof(CPU_state, csr.satp) == offsetof(riscv_difftest_state_t, csr.satp), "RISC-V DiffTest satp offset drifted");
+_Static_assert(offsetof(CPU_state, csr.mtval) == offsetof(riscv_difftest_state_t, csr.mtval), "RISC-V DiffTest mtval offset drifted");
+_Static_assert(offsetof(CPU_state, prvi) == offsetof(riscv_difftest_state_t, prvi), "RISC-V DiffTest privilege offset drifted");
+_Static_assert(offsetof(CPU_state, INTR) == offsetof(riscv_difftest_state_t, INTR), "RISC-V DiffTest interrupt-pending offset drifted");
 
 #ifdef CONFIG_RISCV_FPU
-_Static_assert(RISCV_FPR_NUM == RISCV_DIFFTEST_FPR_NUM,
-               "RISC-V DiffTest FPR count drifted");
-_Static_assert(RISCV_FCSR_MASK == RISCV_DIFFTEST_FCSR_MASK,
-               "RISC-V DiffTest fcsr mask drifted");
-_Static_assert(sizeof(((CPU_state *)0)->fpr[0]) ==
-                   sizeof(((riscv_difftest_state_t *)0)->fpr[0]),
-               "RISC-V DiffTest FPR width drifted");
-_Static_assert(offsetof(CPU_state, fpr) == offsetof(riscv_difftest_state_t, fpr),
-               "RISC-V DiffTest FPR offset drifted");
-_Static_assert(offsetof(CPU_state, fcsr) == offsetof(riscv_difftest_state_t, fcsr),
-               "RISC-V DiffTest FCSR offset drifted");
+_Static_assert(RISCV_FPR_NUM == RISCV_DIFFTEST_FPR_NUM, "RISC-V DiffTest FPR count drifted");
+_Static_assert(RISCV_FCSR_MASK == RISCV_DIFFTEST_FCSR_MASK, "RISC-V DiffTest fcsr mask drifted");
+_Static_assert(sizeof(((CPU_state *)0)->fpr[0]) == sizeof(((riscv_difftest_state_t *)0)->fpr[0]), "RISC-V DiffTest FPR width drifted");
+_Static_assert(offsetof(CPU_state, fpr) == offsetof(riscv_difftest_state_t, fpr), "RISC-V DiffTest FPR offset drifted");
+_Static_assert(offsetof(CPU_state, fcsr) == offsetof(riscv_difftest_state_t, fcsr), "RISC-V DiffTest FCSR offset drifted");
 #endif
 
 #ifdef CONFIG_RV64
@@ -49,14 +36,8 @@ _Static_assert(offsetof(CPU_state, fcsr) == offsetof(riscv_difftest_state_t, fcs
  * intentionally outside this DiffTest mask.
  */
 #define RISCV_DIFF_MSTATUS_MASK \
-    (RISCV_MSTATUS_MIE | \
-     RISCV_MSTATUS_MPIE | \
-     RISCV_MSTATUS_MPP_MASK | \
-     RISCV_MSTATUS_MPRV | \
-     RISCV_MSTATUS_SUM | \
-     RISCV_MSTATUS_MXR | \
-     (word_t)RISCV64_MSTATUS_UXL_SXL_MASK | \
-     RISCV_DIFF_FP_MSTATUS_MASK)
+    (RISCV_MSTATUS_MIE | RISCV_MSTATUS_MPIE | RISCV_MSTATUS_MPP_MASK | RISCV_MSTATUS_MPRV | RISCV_MSTATUS_SUM | RISCV_MSTATUS_MXR | \
+     (word_t)RISCV64_MSTATUS_UXL_SXL_MASK | RISCV_DIFF_FP_MSTATUS_MASK)
 #else
 #define RISCV_DIFF_GPR(state, idx) ((state)->gpr[idx]._32)
 #define RISCV_DIFF_REG_NAME_LEN 4
@@ -90,43 +71,28 @@ static bool riscv_difftest_same_state(CPU_state *ref_r)
         }
     }
 
-    if ((ref_r->fcsr & RISCV_FCSR_MASK) !=
-        (cpu.fcsr & RISCV_FCSR_MASK))
+    if ((ref_r->fcsr & RISCV_FCSR_MASK) != (cpu.fcsr & RISCV_FCSR_MASK))
     {
         return false;
     }
 #endif
 
-    return ref_r->pc == cpu.pc &&
-           ref_r->csr.satp == cpu.csr.satp &&
-           ref_r->csr.mcause == cpu.csr.mcause &&
-           ref_r->csr.mepc == cpu.csr.mepc &&
-           riscv_difftest_same_mstatus(ref_r->csr.mstatus, cpu.csr.mstatus) &&
-           ref_r->csr.mtvec == cpu.csr.mtvec &&
-           ref_r->csr.mscratch == cpu.csr.mscratch &&
-           ref_r->csr.mtval == cpu.csr.mtval &&
-           ref_r->prvi == cpu.prvi;
+    return ref_r->pc == cpu.pc && ref_r->csr.satp == cpu.csr.satp && ref_r->csr.mcause == cpu.csr.mcause && ref_r->csr.mepc == cpu.csr.mepc &&
+           riscv_difftest_same_mstatus(ref_r->csr.mstatus, cpu.csr.mstatus) && ref_r->csr.mtvec == cpu.csr.mtvec &&
+           ref_r->csr.mscratch == cpu.csr.mscratch && ref_r->csr.mtval == cpu.csr.mtval && ref_r->prvi == cpu.prvi;
 }
 
 static void riscv_difftest_print_reg(size_t idx, word_t ref, word_t dut)
 {
     if (ref == dut)
     {
-        printf("%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN
-               "     DUT: " FMT_WORD "\n",
-               reg_name(idx, RISCV_DIFF_REG_NAME_LEN),
-               ref, " ", ref, " ",
-               (sword_t)ref,
-               dut);
+        printf("%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN "     DUT: " FMT_WORD "\n",
+               reg_name(idx, RISCV_DIFF_REG_NAME_LEN), ref, " ", ref, " ", (sword_t)ref, dut);
     }
     else
     {
-        PRI_ERR("%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN
-                "     DUT: " FMT_WORD "\n",
-                reg_name(idx, RISCV_DIFF_REG_NAME_LEN),
-                ref, " ", ref, " ",
-                (sword_t)ref,
-                dut);
+        PRI_ERR("%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN "     DUT: " FMT_WORD "\n",
+                reg_name(idx, RISCV_DIFF_REG_NAME_LEN), ref, " ", ref, " ", (sword_t)ref, dut);
     }
 }
 
@@ -134,15 +100,13 @@ static void riscv_difftest_print_named(const char *name, word_t ref, word_t dut)
 {
     if (ref == dut)
     {
-        printf("%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN
-               "     DUT: " FMT_WORD "\n",
-               name, ref, " ", ref, " ", (sword_t)ref, dut);
+        printf("%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN "     DUT: " FMT_WORD "\n", name, ref, " ", ref, " ",
+               (sword_t)ref, dut);
     }
     else
     {
-        PRI_ERR("%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN
-                "     DUT: " FMT_WORD "\n",
-                name, ref, " ", ref, " ", (sword_t)ref, dut);
+        PRI_ERR("%-10s " FMT_WORD "%-10s" FMT_DECIMAL_WORD "%-10s" FMT_DECIMAL_WORD_SIGN "     DUT: " FMT_WORD "\n", name, ref, " ", ref, " ",
+                (sword_t)ref, dut);
     }
 }
 
@@ -153,27 +117,19 @@ static void riscv_difftest_print_named(const char *name, word_t ref, word_t dut)
  * dedicated FLEN-wide path so a mismatch in bits 63:32 is never truncated by
  * the ordinary XLEN-wide register printer.
  */
-static void riscv_difftest_print_fpr(const char *name,
-                                     uint64_t ref,
-                                     uint64_t dut)
+static void riscv_difftest_print_fpr(const char *name, uint64_t ref, uint64_t dut)
 {
     if (ref == dut)
     {
-        printf("%-10s 0x%016" PRIx64 "%-10s%" PRIu64
-               "%-10s%" PRId64 "     DUT: 0x%016" PRIx64 "\n",
-               name, ref, " ", ref, " ", (int64_t)ref, dut);
+        printf("%-10s 0x%016" PRIx64 "%-10s%" PRIu64 "%-10s%" PRId64 "     DUT: 0x%016" PRIx64 "\n", name, ref, " ", ref, " ", (int64_t)ref, dut);
     }
     else
     {
-        PRI_ERR("%-10s 0x%016" PRIx64 "%-10s%" PRIu64
-                "%-10s%" PRId64 "     DUT: 0x%016" PRIx64 "\n",
-                name, ref, " ", ref, " ", (int64_t)ref, dut);
+        PRI_ERR("%-10s 0x%016" PRIx64 "%-10s%" PRIu64 "%-10s%" PRId64 "     DUT: 0x%016" PRIx64 "\n", name, ref, " ", ref, " ", (int64_t)ref, dut);
     }
 }
 #else
-static void riscv_difftest_print_fpr(const char *name,
-                                     uint32_t ref,
-                                     uint32_t dut)
+static void riscv_difftest_print_fpr(const char *name, uint32_t ref, uint32_t dut)
 {
     riscv_difftest_print_named(name, (word_t)ref, (word_t)dut);
 }
@@ -206,9 +162,7 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
         riscv_difftest_print_fpr(name, ref_r->fpr[i], cpu.fpr[i]);
     }
 
-    riscv_difftest_print_named("fcsr",
-                               ref_r->fcsr & RISCV_FCSR_MASK,
-                               cpu.fcsr & RISCV_FCSR_MASK);
+    riscv_difftest_print_named("fcsr", ref_r->fcsr & RISCV_FCSR_MASK, cpu.fcsr & RISCV_FCSR_MASK);
 #endif
 
     riscv_difftest_print_named("pc", ref_r->pc, cpu.pc);

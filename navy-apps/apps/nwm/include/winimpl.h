@@ -71,8 +71,7 @@ class WindowSwitcher : public Window
         for (int x = 0; x < w1; x++)
             for (int y = 0; y < h1; y++)
             {
-                uint32_t col = win->canvas[(y * win->h / h1) * win->w +
-                                           (x * win->w / w1)];
+                uint32_t col = win->canvas[(y * win->h / h1) * win->w + (x * win->w / w1)];
                 col &= 0xffffff;
                 //if (col & 0xff000000) {
                 //  col = border_col;
@@ -132,8 +131,7 @@ class WindowSwitcher : public Window
                 {
                     for (int i = 0; i < preview_px + 4; i++)
                         for (int j = 0; j < preview_px + 4; j++)
-                            if ((i == 0 || i == preview_px + 3) &&
-                                (j == 0 || j == preview_px + 3))
+                            if ((i == 0 || i == preview_px + 3) && (j == 0 || j == preview_px + 3))
                             {
                             }
                             else

@@ -31,11 +31,7 @@ static void fork_child(const char *nterm_proc)
     sprintf(env_lines, "LINES=%d", term->h);
     char env_columns[32];
     sprintf(env_columns, "COLUMNS=%d", term->w);
-    const char *envp[] = {
-        env_lines,
-        env_columns,
-        "TERM=ansi",
-        NULL};
+    const char *envp[] = {env_lines, env_columns, "TERM=ansi", NULL};
 
     // Two unidirectional pipes emulate the stdin/stdout sides of a terminal.
     // The child sees only file descriptors 0, 1, and 2; NTerm keeps the other

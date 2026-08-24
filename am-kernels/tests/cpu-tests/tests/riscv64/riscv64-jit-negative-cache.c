@@ -19,10 +19,7 @@ static uint32_t jal_zero_offset(uint32_t offset)
      * JAL immediates are split as imm[20|10:1|11|19:12].  The low bit is not
      * stored because JAL targets are at least halfword-aligned.
      */
-    return (((offset >> 20) & 0x1u) << 31) |
-           (((offset >> 1) & 0x3ffu) << 21) |
-           (((offset >> 11) & 0x1u) << 20) |
-           (((offset >> 12) & 0xffu) << 12) |
+    return (((offset >> 20) & 0x1u) << 31) | (((offset >> 1) & 0x3ffu) << 21) | (((offset >> 11) & 0x1u) << 20) | (((offset >> 12) & 0xffu) << 12) |
            0x6fu;
 }
 

@@ -12,8 +12,7 @@
     { \
         if (!(cond)) \
         { \
-            fprintf(stderr, "%s:%d: check failed: %s\n", \
-                    __FILE__, __LINE__, #cond); \
+            fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #cond); \
             exit(1); \
         } \
     } while (0)
@@ -220,9 +219,7 @@ static void write_u32le(int fd, uint32_t value)
     write_all(fd, b, sizeof(b));
 }
 
-static char *make_pcm_wav(uint16_t channels, uint16_t bits_per_sample,
-                          uint16_t block_align, uint32_t data_size,
-                          int include_pad)
+static char *make_pcm_wav(uint16_t channels, uint16_t bits_per_sample, uint16_t block_align, uint32_t data_size, int include_pad)
 {
     char template[] = "/tmp/minisdl-audio-XXXXXX";
     int fd = mkstemp(template);

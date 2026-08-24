@@ -90,8 +90,7 @@ static int test_sv39_lookup_returns_null_for_missing_mapping(void)
 
 int main(void)
 {
-    if (test_sv39_lookup_returns_leaf_physical_page() != 0 ||
-        test_sv39_lookup_returns_null_for_missing_mapping() != 0)
+    if (test_sv39_lookup_returns_leaf_physical_page() != 0 || test_sv39_lookup_returns_null_for_missing_mapping() != 0)
     {
         return 1;
     }
@@ -156,8 +155,7 @@ static int test_sv32_lookup_returns_null_for_missing_mapping(void)
 
 int main(void)
 {
-    if (test_sv32_lookup_returns_leaf_physical_page() != 0 ||
-        test_sv32_lookup_returns_null_for_missing_mapping() != 0)
+    if (test_sv32_lookup_returns_leaf_physical_page() != 0 || test_sv32_lookup_returns_null_for_missing_mapping() != 0)
     {
         return 1;
     }
@@ -217,8 +215,7 @@ static int prepare_mips32_mapping(uintptr_t va, uint32_t **root_out, void **leaf
      * the CP0 EntryLo bit positions instead of using the RISC-V PTE layout.
      */
     root[directory_index] = make_mips32_pte(level0, MIPS32_PTE_V);
-    level0[table_index] =
-        make_mips32_pte(leaf, MIPS32_PTE_V | MIPS32_PTE_D);
+    level0[table_index] = make_mips32_pte(leaf, MIPS32_PTE_V | MIPS32_PTE_D);
 
     *root_out = root;
     *leaf_out = leaf;
@@ -265,8 +262,7 @@ static int test_mips32_lookup_returns_null_for_invalid_pte(void)
 
 int main(void)
 {
-    if (test_mips32_lookup_returns_raw_address_leaf() != 0 ||
-        test_mips32_lookup_returns_null_for_invalid_pde() != 0 ||
+    if (test_mips32_lookup_returns_raw_address_leaf() != 0 || test_mips32_lookup_returns_null_for_invalid_pde() != 0 ||
         test_mips32_lookup_returns_null_for_invalid_pte() != 0)
     {
         return 1;
@@ -332,8 +328,7 @@ static int test_x86_lookup_returns_null_for_missing_mapping(void)
 
 int main(void)
 {
-    if (test_x86_lookup_returns_leaf_physical_page() != 0 ||
-        test_x86_lookup_returns_null_for_missing_mapping() != 0)
+    if (test_x86_lookup_returns_leaf_physical_page() != 0 || test_x86_lookup_returns_null_for_missing_mapping() != 0)
     {
         return 1;
     }

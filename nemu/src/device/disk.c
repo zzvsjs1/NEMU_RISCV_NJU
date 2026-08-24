@@ -82,8 +82,7 @@ static void map_disk_image(void)
 
     if (fd < 0)
     {
-        Log("disk: cannot map %s image '%s': %s",
-            disk_img_source, disk_img_path, strerror(errno));
+        Log("disk: cannot map %s image '%s': %s", disk_img_source, disk_img_path, strerror(errno));
         return;
     }
 
@@ -91,16 +90,14 @@ static void map_disk_image(void)
 
     if (map == MAP_FAILED)
     {
-        Log("disk: mmap disabled for %s image '%s': %s",
-            disk_img_source, disk_img_path, strerror(errno));
+        Log("disk: mmap disabled for %s image '%s': %s", disk_img_source, disk_img_path, strerror(errno));
         return;
     }
 
     disk_map = (uint8_t *)map;
     disk_map_size = disk_img_size;
 
-    Log("disk: mapped %s image '%s' for fast reads, size = %zu bytes",
-        disk_img_source, disk_img_path, disk_map_size);
+    Log("disk: mapped %s image '%s' for fast reads, size = %zu bytes", disk_img_source, disk_img_path, disk_map_size);
 }
 
 static bool try_open_disk_image(const char *path, const char *source)
@@ -142,8 +139,7 @@ static bool try_open_disk_image(const char *path, const char *source)
     snprintf(disk_img_path, sizeof(disk_img_path), "%s", path);
     snprintf(disk_img_source, sizeof(disk_img_source), "%s", source);
     map_disk_image();
-    Log("disk: using %s image '%s', size = %zu bytes, blocks = %u",
-        source, path, disk_img_size, disk_blkcnt);
+    Log("disk: using %s image '%s', size = %zu bytes, blocks = %u", source, path, disk_img_size, disk_blkcnt);
     return true;
 }
 
@@ -183,9 +179,7 @@ static void open_disk_image(void)
 
 static uint8_t *guest_buffer_to_host(uint32_t guest_addr, size_t bytes, paddr_t *out_paddr)
 {
-    Assert(guest_addr >= PMEM_BASE,
-           "disk: guest DMA address 0x%08x is below PMEM base 0x%08x",
-           guest_addr, (uint32_t)PMEM_BASE);
+    Assert(guest_addr >= PMEM_BASE, "disk: guest DMA address 0x%08x is below PMEM base 0x%08x", guest_addr, (uint32_t)PMEM_BASE);
 
     /*
      * The guest provides a PMEM address in the MMIO register.  Keep the offset
@@ -197,8 +191,7 @@ static uint8_t *guest_buffer_to_host(uint32_t guest_addr, size_t bytes, paddr_t 
     const paddr_t paddr = (paddr_t)CONFIG_MBASE + pmem_offset;
 
     Assert(bytes <= CONFIG_MSIZE && paddr >= (paddr_t)CONFIG_MBASE && paddr + bytes <= (paddr_t)CONFIG_MBASE + CONFIG_MSIZE,
-           "disk: guest DMA range [0x%08x, 0x%08x) is outside PMEM",
-           guest_addr, guest_addr + (uint32_t)bytes);
+           "disk: guest DMA range [0x%08x, 0x%08x) is outside PMEM", guest_addr, guest_addr + (uint32_t)bytes);
 
     *out_paddr = paddr;
     return guest_to_host(paddr);
@@ -208,9 +201,7 @@ static void read_blocks(uint8_t *buf, uint32_t blkno, uint32_t blkcnt)
 {
     const size_t bytes = (size_t)blkcnt * DISK_BLKSZ;
     const size_t offset = (size_t)blkno * DISK_BLKSZ;
-    const size_t available = offset < disk_img_size
-                                 ? (bytes < disk_img_size - offset ? bytes : disk_img_size - offset)
-                                 : 0;
+    const size_t available = offset < disk_img_size ? (bytes < disk_img_size - offset ? bytes : disk_img_size - offset) : 0;
 
     if (available > 0)
     {
@@ -224,9 +215,7 @@ static void read_blocks(uint8_t *buf, uint32_t blkno, uint32_t blkcnt)
             Assert(ret == 0, "disk: seek before read failed: %s", strerror(errno));
 
             size_t got = fread(buf, 1, available, disk_img);
-            Assert(got == available,
-                   "disk: read failed at block %u count %u: %s",
-                   blkno, blkcnt, strerror(errno));
+            Assert(got == available, "disk: read failed at block %u count %u: %s", blkno, blkcnt, strerror(errno));
             clearerr(disk_img);
         }
     }
@@ -253,8 +242,7 @@ static void write_blocks(const uint8_t *buf, uint32_t blkno, uint32_t blkcnt)
     Assert(ret == 0, "disk: seek before write failed: %s", strerror(errno));
 
     size_t put = fwrite(buf, 1, bytes, disk_img);
-    Assert(put == bytes, "disk: write failed at block %u count %u: %s",
-           blkno, blkcnt, strerror(errno));
+    Assert(put == bytes, "disk: write failed at block %u count %u: %s", blkno, blkcnt, strerror(errno));
     Assert(fflush(disk_img) == 0, "disk: flush failed: %s", strerror(errno));
 
     /*
@@ -286,9 +274,8 @@ static void do_blkio(void)
     const size_t bytes = (size_t)blkcnt * DISK_BLKSZ;
 
     Assert(blkcnt > 0, "disk: block count must be positive");
-    Assert(blkno <= disk_blkcnt && blkcnt <= disk_blkcnt - blkno,
-           "disk: block range [%u, %u) exceeds block count %u",
-           blkno, blkno + blkcnt, disk_blkcnt);
+    Assert(blkno <= disk_blkcnt && blkcnt <= disk_blkcnt - blkno, "disk: block range [%u, %u) exceeds block count %u", blkno, blkno + blkcnt,
+           disk_blkcnt);
 
     disk_base[reg_ready] = 0;
     paddr_t dma_paddr = 0;
@@ -322,16 +309,14 @@ static void do_blkio(void)
 
 static void disk_io_handler(uint32_t offset, int len, bool is_write)
 {
-    Assert(offset % sizeof(uint32_t) == 0 && len == sizeof(uint32_t),
-           "disk: only aligned 32-bit MMIO accesses are supported");
+    Assert(offset % sizeof(uint32_t) == 0 && len == sizeof(uint32_t), "disk: only aligned 32-bit MMIO accesses are supported");
 
     const uint32_t reg = offset / sizeof(uint32_t);
     Assert(reg < nr_reg, "disk: register %u is outside the disk MMIO range", reg);
 
     if (is_write && reg == reg_cmd)
     {
-        Assert(disk_base[reg_cmd] == DISK_CMD_GO,
-               "disk: unsupported command %u", disk_base[reg_cmd]);
+        Assert(disk_base[reg_cmd] == DISK_CMD_GO, "disk: unsupported command %u", disk_base[reg_cmd]);
         do_blkio();
         disk_base[reg_cmd] = 0;
     }
@@ -346,10 +331,8 @@ void init_disk()
     publish_disk_config();
 
 #ifdef CONFIG_HAS_PORT_IO
-    add_pio_map("disk", CONFIG_DISK_CTL_PORT, disk_base, space_size,
-                disk_io_handler);
+    add_pio_map("disk", CONFIG_DISK_CTL_PORT, disk_base, space_size, disk_io_handler);
 #else
-    add_mmio_map("disk", CONFIG_DISK_CTL_MMIO, disk_base, space_size,
-                 disk_io_handler);
+    add_mmio_map("disk", CONFIG_DISK_CTL_MMIO, disk_base, space_size, disk_io_handler);
 #endif
 }

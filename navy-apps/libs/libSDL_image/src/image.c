@@ -166,8 +166,7 @@ int IMG_isPNG(SDL_RWops *src)
      * Format probes must not consume bytes.  Save and restore the RWops position
      * so a later IMG_Load_RW() sees the same stream contents.
      */
-    static const uint8_t png_magic[8] = {
-        0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+    static const uint8_t png_magic[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
     uint8_t buf[8];
     int64_t pos = SDL_RWtell(src);
 

@@ -45,8 +45,7 @@ static void validate_context_storage(const Context *c)
  */
 static void map_alignment_panic(uintptr_t vaddr, uintptr_t paddr)
 {
-    printf("MIPS32 map unaligned va=%p pa=%p\n",
-           (void *)vaddr, (void *)paddr);
+    printf("MIPS32 map unaligned va=%p pa=%p\n", (void *)vaddr, (void *)paddr);
     panic("MIPS32 map received an unaligned address");
 }
 
@@ -70,15 +69,14 @@ void __am_tlb_clear(void)
     {
         const uintptr_t entryhi = 0x80000000u | (index << 13);
 
-        asm volatile(
-            "mtc0 %0, $0\n\t"
-            "mtc0 %1, $10\n\t"
-            "mtc0 %2, $2\n\t"
-            "mtc0 %2, $3\n\t"
-            "tlbwi\n\t"
-            :
-            : "r"(index), "r"(entryhi), "r"(zero)
-            : "memory");
+        asm volatile("mtc0 %0, $0\n\t"
+                     "mtc0 %1, $10\n\t"
+                     "mtc0 %2, $2\n\t"
+                     "mtc0 %2, $3\n\t"
+                     "tlbwi\n\t"
+                     :
+                     : "r"(index), "r"(entryhi), "r"(zero)
+                     : "memory");
     }
 }
 
@@ -100,8 +98,7 @@ static uintptr_t refill_entrylo(uintptr_t vaddr)
     if ((pte & PTE_V) == 0u)
         return 0u;
 
-    return ((pte & MIPS32_PTE_ADDR_MASK) >> 6) |
-           (pte & (PTE_V | PTE_D));
+    return ((pte & MIPS32_PTE_ADDR_MASK) >> 6) | (pte & (PTE_V | PTE_D));
 }
 
 void __am_tlb_refill(void)
@@ -128,22 +125,19 @@ void __am_tlb_refill(void)
         const unsigned exception = (unsigned)((cause >> 2) & 0x1fu);
 
         /* panic() is literal-only, so print every diagnostic value first. */
-        printf("MIPS32 unmapped refill va=%p vpn2=%p half=%s access=%s\n",
-               (void *)badvaddr, (void *)pair_vaddr,
-               odd_page ? "odd" : "even",
+        printf("MIPS32 unmapped refill va=%p vpn2=%p half=%s access=%s\n", (void *)badvaddr, (void *)pair_vaddr, odd_page ? "odd" : "even",
                exception == 3u ? "write" : "read/ifetch");
         panic("MIPS32 software TLB refill found no selected mapping");
     }
 
     /* Install the even/odd pair under its VPN2 tag. */
-    asm volatile(
-        "mtc0 %0, $2\n\t"
-        "mtc0 %1, $3\n\t"
-        "mtc0 %2, $10\n\t"
-        "tlbwr\n\t"
-        :
-        : "r"(entrylo0), "r"(entrylo1), "r"(pair_vaddr)
-        : "memory");
+    asm volatile("mtc0 %0, $2\n\t"
+                 "mtc0 %1, $3\n\t"
+                 "mtc0 %2, $10\n\t"
+                 "tlbwr\n\t"
+                 :
+                 : "r"(entrylo0), "r"(entrylo1), "r"(pair_vaddr)
+                 : "memory");
 }
 
 bool vme_init(void *(*pgalloc_f)(int), void (*pgfree_f)(void *))
@@ -242,8 +236,7 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
     if (((vaddr | paddr) & (PGSIZE - 1u)) != 0u)
         map_alignment_panic(vaddr, paddr);
 
-    if (vaddr < (uintptr_t)as->area.start ||
-        vaddr >= (uintptr_t)as->area.end)
+    if (vaddr < (uintptr_t)as->area.start || vaddr >= (uintptr_t)as->area.end)
     {
         map_virtual_address_panic("outside address space", vaddr);
     }
@@ -263,8 +256,7 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
 
         /* See protect(): a leaf-table page must not depend on allocator data. */
         memset(ptable, 0, PGSIZE);
-        pdir[directory_index] =
-            ((uintptr_t)ptable & MIPS32_PTE_ADDR_MASK) | PTE_V;
+        pdir[directory_index] = ((uintptr_t)ptable & MIPS32_PTE_ADDR_MASK) | PTE_V;
     }
     else
     {
@@ -279,8 +271,7 @@ void map(AddrSpace *as, void *va, void *pa, int prot)
      * permissions.  A mapped leaf is valid and dirty so both loads and stores
      * can proceed.
      */
-    ptable[table_index] =
-        (paddr & MIPS32_PTE_ADDR_MASK) | PTE_V | PTE_D;
+    ptable[table_index] = (paddr & MIPS32_PTE_ADDR_MASK) | PTE_V | PTE_D;
 
     /* A cached translation must never survive a page-table modification. */
     __am_tlb_clear();
@@ -294,8 +285,7 @@ Context *ucontext(AddrSpace *as, Area kstack, void *entry)
     const uintptr_t top = (uintptr_t)kstack.end & ~(uintptr_t)0x0fu;
 
     assert(top >= start);
-    assert(top - start >=
-           sizeof(Context) + MIPS32_NORMAL_TRAP_PREFIX_SIZE);
+    assert(top - start >= sizeof(Context) + MIPS32_NORMAL_TRAP_PREFIX_SIZE);
 
     Context *const c = (Context *)(top - sizeof(Context));
 

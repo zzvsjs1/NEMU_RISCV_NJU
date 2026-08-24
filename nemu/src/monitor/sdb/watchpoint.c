@@ -167,19 +167,10 @@ bool checkEachWpAndPrint()
         if (cur->lastVal != newVal)
         {
             ret = true;
-            printf(ANSI_FMT(
-                       "Watch point [%d] HIT.    Expr: %s.    Old: " FMT_WORD
-                       " " FMT_DECIMAL_WORD
-                       "    New: " FMT_WORD
-                       " " FMT_DECIMAL_WORD
-                       " \n",
-                       ANSI_FG_RED),
-                   cur->NO,
-                   cur->exprStr,
-                   cur->lastVal,
-                   cur->lastVal,
-                   newVal,
-                   newVal);
+            printf(ANSI_FMT("Watch point [%d] HIT.    Expr: %s.    Old: " FMT_WORD " " FMT_DECIMAL_WORD "    New: " FMT_WORD " " FMT_DECIMAL_WORD
+                            " \n",
+                            ANSI_FG_RED),
+                   cur->NO, cur->exprStr, cur->lastVal, cur->lastVal, newVal, newVal);
         }
 
         cur->lastVal = newVal;
@@ -200,12 +191,6 @@ void printWpByInfoCommand()
 
     for (WP *cur = head; cur; cur = cur->next)
     {
-        printf(
-            ANSI_FMT(
-                "%-5" FMT_WORD_PURE "%-32s%-32" FMT_WORD_PURE "\n",
-                ANSI_FG_MAGENTA),
-            (word_t)cur->NO,
-            cur->exprStr,
-            cur->lastVal);
+        printf(ANSI_FMT("%-5" FMT_WORD_PURE "%-32s%-32" FMT_WORD_PURE "\n", ANSI_FG_MAGENTA), (word_t)cur->NO, cur->exprStr, cur->lastVal);
     }
 }

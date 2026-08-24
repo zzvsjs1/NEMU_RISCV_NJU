@@ -17,14 +17,7 @@ static uint32_t load_sum(const uint32_t *data, int n)
 int main()
 {
     static const uint32_t data[] = {
-        0x00000001u,
-        0x12345678u,
-        0x80000000u,
-        0x7fffffffu,
-        0xa5a5a5a5u,
-        0x01020304u,
-        0xffffffffu,
-        0x13579bdfu,
+        0x00000001u, 0x12345678u, 0x80000000u, 0x7fffffffu, 0xa5a5a5a5u, 0x01020304u, 0xffffffffu, 0x13579bdfu,
     };
 
     uint32_t expected = 0;

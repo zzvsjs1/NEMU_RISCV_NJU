@@ -5,11 +5,8 @@
 
 #define REG_FMT ("%-8s " FMT_WORD "%-5s" FMT_DECIMAL_WORD "%-5s" FMT_DECIMAL_WORD_SIGN "\n")
 
-const char *regs[] = {
-    "$0", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
-    "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5",
-    "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7",
-    "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
+const char *regs[] = {"$0", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0",  "a1",  "a2", "a3", "a4", "a5",
+                      "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 
 typedef struct
 {
@@ -19,20 +16,14 @@ typedef struct
 
 static const csr_disp_t csr_list[] = {
 #ifdef CONFIG_RISCV_FPU
-    {RISCV_CSR_FFLAGS, "fflags"},
-    {RISCV_CSR_FRM, "frm"},
-    {RISCV_CSR_FCSR, "fcsr"},
+    {RISCV_CSR_FFLAGS, "fflags"}, {RISCV_CSR_FRM, "frm"},           {RISCV_CSR_FCSR, "fcsr"},
 #endif
-    {RISCV_CSR_SATP, "satp"},
-    {RISCV_CSR_MSTATUS, "mstatus"},
+    {RISCV_CSR_SATP, "satp"},     {RISCV_CSR_MSTATUS, "mstatus"},
 #ifdef CONFIG_RISCV_FPU
     {RISCV_CSR_MISA, "misa"},
 #endif
-    {RISCV_CSR_MTVEC, "mtvec"},
-    {RISCV_CSR_MSCRATCH, "mscratch"},
-    {RISCV_CSR_MEPC, "mepc"},
-    {RISCV_CSR_MCAUSE, "mcause"},
-    {RISCV_CSR_MTVAL, "mtval"},
+    {RISCV_CSR_MTVEC, "mtvec"},   {RISCV_CSR_MSCRATCH, "mscratch"}, {RISCV_CSR_MEPC, "mepc"},
+    {RISCV_CSR_MCAUSE, "mcause"}, {RISCV_CSR_MTVAL, "mtval"},
 };
 
 /* Keep the CSR table length derived from the table itself to avoid drift. */
@@ -153,13 +144,8 @@ word_t getCSRValue(const word_t address)
          * extension bits; D is added whenever the configured FLEN is 64.
          * Zicsr/Zifencei are not represented in misa's single-letter bitmap.
          */
-        word_t misa =
-            ((word_t)RISCV_MISA_MXL_ENCODING << RISCV_MISA_MXL_SHIFT) |
-            ((word_t)1u << ('I' - 'A')) |
-            ((word_t)1u << ('M' - 'A')) |
-            ((word_t)1u << ('F' - 'A')) |
-            ((word_t)1u << ('S' - 'A')) |
-            ((word_t)1u << ('U' - 'A'));
+        word_t misa = ((word_t)RISCV_MISA_MXL_ENCODING << RISCV_MISA_MXL_SHIFT) | ((word_t)1u << ('I' - 'A')) | ((word_t)1u << ('M' - 'A')) |
+                      ((word_t)1u << ('F' - 'A')) | ((word_t)1u << ('S' - 'A')) | ((word_t)1u << ('U' - 'A'));
 
 #ifdef CONFIG_RISCV_D
         misa |= (word_t)1u << ('D' - 'A');
@@ -185,22 +171,16 @@ void setCSRValue(const word_t address, word_t value)
     switch (address)
     {
     case RISCV_CSR_FFLAGS:
-        cpu.fcsr = (cpu.fcsr & ~RISCV_FFLAGS_MASK) |
-                   ((uint32_t)value & RISCV_FFLAGS_MASK);
-        cpu.csr.mstatus =
-            riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
+        cpu.fcsr = (cpu.fcsr & ~RISCV_FFLAGS_MASK) | ((uint32_t)value & RISCV_FFLAGS_MASK);
+        cpu.csr.mstatus = riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
         return;
     case RISCV_CSR_FRM:
-        cpu.fcsr = (cpu.fcsr & ~RISCV_FRM_MASK) |
-                   (((uint32_t)value & RISCV_FRM_VALUE_MASK)
-                    << RISCV_FRM_SHIFT);
-        cpu.csr.mstatus =
-            riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
+        cpu.fcsr = (cpu.fcsr & ~RISCV_FRM_MASK) | (((uint32_t)value & RISCV_FRM_VALUE_MASK) << RISCV_FRM_SHIFT);
+        cpu.csr.mstatus = riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
         return;
     case RISCV_CSR_FCSR:
         cpu.fcsr = (uint32_t)value & RISCV_FCSR_MASK;
-        cpu.csr.mstatus =
-            riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
+        cpu.csr.mstatus = riscv_mstatus_mark_fp_dirty(cpu.csr.mstatus);
         return;
     case RISCV_CSR_MISA:
         /*
@@ -214,9 +194,7 @@ void setCSRValue(const word_t address, word_t value)
 #endif
 
     rtlreg_t *csr = getCSRAddress(address);
-    *csr = address == RISCV_CSR_MSTATUS
-               ? riscv_mstatus_normalise(value)
-               : value;
+    *csr = address == RISCV_CSR_MSTATUS ? riscv_mstatus_normalise(value) : value;
 }
 
 /*
@@ -271,8 +249,7 @@ bool isCSRWriteable(const word_t csrAddr)
      * Privilege is encoded in the neighbouring address field and is checked by
      * the instruction path before this helper is called.
      */
-    const uint32_t access_type =
-        (csrAddr >> RISCV_CSR_ACCESS_SHIFT) & RISCV_CSR_ACCESS_MASK;
+    const uint32_t access_type = (csrAddr >> RISCV_CSR_ACCESS_SHIFT) & RISCV_CSR_ACCESS_MASK;
     return access_type != RISCV_CSR_ACCESS_READ_ONLY;
 }
 

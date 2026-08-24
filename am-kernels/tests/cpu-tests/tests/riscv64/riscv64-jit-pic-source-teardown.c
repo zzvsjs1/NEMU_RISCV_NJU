@@ -11,8 +11,7 @@ typedef uint64_t (*pic_target_t)(void);
  * chunk. The wrappers use fixed JAL edges, leaving source_pic_entry's explicit
  * JALR as the only general-JALR PIC involved in the teardown observation.
  */
-asm(
-    ".option push\n"
+asm(".option push\n"
     ".option norvc\n"
     ".pushsection .text\n"
     ".balign 64\n"
@@ -43,8 +42,7 @@ asm(
     ".popsection\n"
     ".option pop\n");
 
-extern uint64_t call_source_pic(pic_target_t a0_target,
-                                pic_target_t a1_target);
+extern uint64_t call_source_pic(pic_target_t a0_target, pic_target_t a1_target);
 extern uint64_t call_target_direct(void);
 extern uint32_t source_pic_entry[];
 extern uint32_t target_pic_entry[];
@@ -56,8 +54,7 @@ static void local_fence_i(void)
 
 static void test_pic_source_teardown(void)
 {
-    pic_target_t target =
-        (pic_target_t)(uintptr_t)target_pic_entry;
+    pic_target_t target = (pic_target_t)(uintptr_t)target_pic_entry;
 
     for (uint32_t i = 0; i < 8u; i++)
     {

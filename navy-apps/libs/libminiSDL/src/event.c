@@ -5,9 +5,7 @@
 
 #define keyname(k) #k,
 
-static const char *keyname[] = {
-    "NONE",
-    _KEYS(keyname)};
+static const char *keyname[] = {"NONE", _KEYS(keyname)};
 #define KEANAME_COUNT (sizeof(keyname) / sizeof(keyname[0]))
 
 static uint8_t keyStates[KEANAME_COUNT] = {0};
@@ -230,8 +228,7 @@ static void pumpInputEvents(void)
         int x = 0, y = 0, buttons = 0, dx = 0, dy = 0;
         char button_name[16] = {};
 
-        if (strcmp(prefix, "mm") == 0 &&
-            sscanf(buf, "%*s %d %d %d", &x, &y, &buttons) == 3)
+        if (strcmp(prefix, "mm") == 0 && sscanf(buf, "%*s %d %d %d", &x, &y, &buttons) == 3)
         {
             /*
              * NDL reports physical framebuffer coordinates.  NEMU may already have
@@ -250,8 +247,7 @@ static void pumpInputEvents(void)
             continue;
         }
 
-        if ((strcmp(prefix, "md") == 0 || strcmp(prefix, "mu") == 0) &&
-            sscanf(buf, "%*s %15s %d %d %d", button_name, &x, &y, &buttons) == 4)
+        if ((strcmp(prefix, "md") == 0 || strcmp(prefix, "mu") == 0) && sscanf(buf, "%*s %15s %d %d %d", button_name, &x, &y, &buttons) == 4)
         {
             /* Remove the centred canvas border before publishing the button event. */
             NDL_TranslateMouse(&x, &y);
@@ -267,8 +263,7 @@ static void pumpInputEvents(void)
             continue;
         }
 
-        if (strcmp(prefix, "mw") == 0 &&
-            sscanf(buf, "%*s %d %d %d %d %d", &dx, &dy, &x, &y, &buttons) == 5)
+        if (strcmp(prefix, "mw") == 0 && sscanf(buf, "%*s %d %d %d %d %d", &dx, &dy, &x, &y, &buttons) == 5)
         {
             if (dy == 0)
             {
@@ -289,8 +284,7 @@ static void pumpInputEvents(void)
 
         char name[32] = {};
 
-        if ((strcmp(prefix, "kd") != 0 && strcmp(prefix, "ku") != 0) ||
-            sscanf(buf, "%*s %31s", name) != 1)
+        if ((strcmp(prefix, "kd") != 0 && strcmp(prefix, "ku") != 0) || sscanf(buf, "%*s %31s", name) != 1)
         {
             continue;
         }

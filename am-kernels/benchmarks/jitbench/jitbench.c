@@ -21,8 +21,7 @@ static uint32_t rotl32(uint32_t value, unsigned shift)
 
 static void print_ms(const char *name, uint64_t usec)
 {
-    printf("%s: %d.%03d ms\n", name, (int)(usec / 1000u),
-           (int)(usec % 1000u));
+    printf("%s: %d.%03d ms\n", name, (int)(usec / 1000u), (int)(usec % 1000u));
 }
 
 /*

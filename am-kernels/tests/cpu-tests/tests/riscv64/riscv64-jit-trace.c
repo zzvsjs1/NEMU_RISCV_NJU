@@ -14,16 +14,15 @@ static uint64_t run_long_fallthrough_trace(void)
     uint64_t out = 0;
     uint64_t laps = 32;
 
-    asm volatile(
-        "1:\n"
-        ".rept 96\n"
-        "addi %[out], %[out], 1\n"
-        ".endr\n"
-        "addi %[laps], %[laps], -1\n"
-        "bnez %[laps], 1b\n"
-        : [out] "+r"(out), [laps] "+r"(laps)
-        :
-        : "memory");
+    asm volatile("1:\n"
+                 ".rept 96\n"
+                 "addi %[out], %[out], 1\n"
+                 ".endr\n"
+                 "addi %[laps], %[laps], -1\n"
+                 "bnez %[laps], 1b\n"
+                 : [out] "+r"(out), [laps] "+r"(laps)
+                 :
+                 : "memory");
 
     return out;
 }

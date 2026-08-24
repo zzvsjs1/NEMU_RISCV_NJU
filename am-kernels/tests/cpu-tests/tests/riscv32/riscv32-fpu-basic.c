@@ -14,8 +14,7 @@ volatile uint32_t rv32_fpu_basic_trap_count = 0;
  * usable F implementation, each four-byte FP instruction is skipped so that
  * the test can restore mtvec and report a normal check failure.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -40,8 +39,7 @@ extern void rv32_fpu_basic_trap_handler(void);
  * enter and leave through integer registers, while the local option enables
  * only the single-precision F instructions under test.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -109,8 +107,7 @@ static void test_basic_single_precision(void)
     write_mstatus((old_mstatus & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL);
 
     /* 1.5 + 2.25 = 3.75 exactly in binary32. */
-    sum = rv32_fpu_add_s_bits(UINT32_C(0x3fc00000),
-                             UINT32_C(0x40100000));
+    sum = rv32_fpu_add_s_bits(UINT32_C(0x3fc00000), UINT32_C(0x40100000));
 
     /*
      * FLW, FSW, and FMV.X.W are raw transfers.  They must preserve a

@@ -46,8 +46,7 @@ static void tracked_free(void *ptr)
     { \
         if (!(cond)) \
         { \
-            fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, \
-                    __LINE__, #cond); \
+            fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, #cond); \
             exit(1); \
         } \
     } while (0)
@@ -59,9 +58,14 @@ int SDL_OpenAudio(SDL_AudioSpec *desired, SDL_AudioSpec *obtained)
     return 0;
 }
 
-void SDL_CloseAudio(void) {}
+void SDL_CloseAudio(void)
+{
+}
 
-void SDL_PauseAudio(int pause_on) { (void)pause_on; }
+void SDL_PauseAudio(int pause_on)
+{
+    (void)pause_on;
+}
 
 void SDL_LockAudio(void)
 {

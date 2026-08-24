@@ -35,9 +35,7 @@ bool isa_difftest_checkregs(CPU_state *ref_r, vaddr_t pc)
     }
 
     same &= difftest_check_reg("eip", pc, ref_r->pc, cpu.pc);
-    same &= difftest_check_reg("eflags", pc,
-                               ref_r->eflags & X86_DIFFTEST_EFLAGS_MASK,
-                               cpu.eflags & X86_DIFFTEST_EFLAGS_MASK);
+    same &= difftest_check_reg("eflags", pc, ref_r->eflags & X86_DIFFTEST_EFLAGS_MASK, cpu.eflags & X86_DIFFTEST_EFLAGS_MASK);
     same &= difftest_check_reg("cs", pc, ref_r->cs, cpu.cs);
     return same;
 }

@@ -19,8 +19,7 @@ volatile uint32_t rv32_fpu_jit_trap_count = 0;
  * assertion failure during the TDD RED run. A completed implementation never
  * enters it.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".align 2\n"
     ".option push\n"
     ".option norvc\n"
@@ -135,10 +134,8 @@ asm(".section .text\n"
 
     ".option pop\n");
 
-extern uint32_t rv32_fpu_at_block_entry(uint32_t input,
-                                        uint32_t *counter);
-extern uint32_t rv32_fpu_after_integer_prefix(uint32_t input,
-                                              uint32_t *counter);
+extern uint32_t rv32_fpu_at_block_entry(uint32_t input, uint32_t *counter);
+extern uint32_t rv32_fpu_after_integer_prefix(uint32_t input, uint32_t *counter);
 extern void rv32_fpu_all_major_opcodes(const uint32_t *, uint32_t *);
 extern uint32_t rv32_fpu_gpr_cache_roundtrip(uint32_t input);
 
@@ -169,8 +166,7 @@ static void write_mtvec(uintptr_t value)
 static uintptr_t enable_initial_fp_state(void)
 {
     const uintptr_t old = read_mstatus();
-    const uintptr_t next =
-        (old & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL;
+    const uintptr_t next = (old & ~MSTATUS_FS_MASK) | MSTATUS_FS_INITIAL;
 
     write_mstatus(next);
     return old;
@@ -240,8 +236,7 @@ static void test_fpu_jit_fallback_boundaries(void)
     check(rv32_fpu_at_block_entry(one_point_five, &entry_counter) == three);
     check(entry_counter == 1);
 
-    check(rv32_fpu_after_integer_prefix(one_point_five,
-                                       &prefix_counter) == three);
+    check(rv32_fpu_after_integer_prefix(one_point_five, &prefix_counter) == three);
     check(prefix_counter == 1);
 
     /*

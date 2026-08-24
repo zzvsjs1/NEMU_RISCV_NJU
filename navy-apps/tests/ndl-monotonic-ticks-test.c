@@ -50,8 +50,7 @@ int main(void)
 
     if (ticks != 15 || clock_gettime_calls != 2 || gettimeofday_calls != 0)
     {
-        printf("ticks=%u clock_gettime_calls=%d gettimeofday_calls=%d\n",
-               ticks, clock_gettime_calls, gettimeofday_calls);
+        printf("ticks=%u clock_gettime_calls=%d gettimeofday_calls=%d\n", ticks, clock_gettime_calls, gettimeofday_calls);
         return 1;
     }
 

@@ -82,8 +82,7 @@ static void fill_screen(uint32_t colour)
 
 static bool in_target(const Target *target, int x, int y)
 {
-    return x >= target->x && x < target->x + target->w &&
-           y >= target->y && y < target->y + target->h;
+    return x >= target->x && x < target->x + target->w && y >= target->y && y < target->y + target->h;
 }
 
 static void draw_button_indicator(int index, int mask)
@@ -106,8 +105,7 @@ static void draw_scene(void)
     for (int i = 0; i < (int)LENGTH(targets); i++)
     {
         Target *target = &targets[i];
-        draw_rect(target->x, target->y, target->w, target->h,
-                  target->hit ? target->active : target->idle);
+        draw_rect(target->x, target->y, target->w, target->h, target->hit ? target->active : target->idle);
     }
 
     draw_button_indicator(0, AM_MOUSE_BUTTON_LEFT_MASK);
@@ -128,12 +126,10 @@ static void update_mouse_state(AM_INPUT_MOUSE_T mouse)
     if (mouse.type == AM_MOUSE_WHEEL)
     {
         wheel_total += mouse.wheel_y;
-        printf("mouse wheel total=%d delta=(%d,%d)\n",
-               wheel_total, mouse.wheel_x, mouse.wheel_y);
+        printf("mouse wheel total=%d delta=(%d,%d)\n", wheel_total, mouse.wheel_x, mouse.wheel_y);
     }
 
-    if (mouse.type == AM_MOUSE_BUTTON_DOWN &&
-        mouse.button == AM_MOUSE_BUTTON_LEFT)
+    if (mouse.type == AM_MOUSE_BUTTON_DOWN && mouse.button == AM_MOUSE_BUTTON_LEFT)
     {
         for (int i = 0; i < (int)LENGTH(targets); i++)
         {
@@ -179,9 +175,8 @@ void mouse_test(void)
             continue;
         }
 
-        printf("mouse %s x=%d y=%d button=%d buttons=%d wheel=(%d,%d)\n",
-               mouse_type_name(mouse.type), mouse.x, mouse.y, mouse.button,
-               mouse.buttons, mouse.wheel_x, mouse.wheel_y);
+        printf("mouse %s x=%d y=%d button=%d buttons=%d wheel=(%d,%d)\n", mouse_type_name(mouse.type), mouse.x, mouse.y, mouse.button, mouse.buttons,
+               mouse.wheel_x, mouse.wheel_y);
 
         update_mouse_state(mouse);
         draw_scene();

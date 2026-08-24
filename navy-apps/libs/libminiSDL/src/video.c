@@ -115,8 +115,7 @@ static int read_runtime_display_size(int *display_w, int *display_h)
     const int fd = open(SDL_DISPINFO_PATH, O_RDONLY);
     if (fd < 0)
     {
-        report_video_mode_error("SDL_SetVideoMode: cannot open %s to check the runtime display size",
-                                SDL_DISPINFO_PATH);
+        report_video_mode_error("SDL_SetVideoMode: cannot open %s to check the runtime display size", SDL_DISPINFO_PATH);
         return -1;
     }
 
@@ -126,25 +125,21 @@ static int read_runtime_display_size(int *display_w, int *display_h)
 
     if (nread < 0)
     {
-        report_video_mode_error("SDL_SetVideoMode: cannot read %s to check the runtime display size",
-                                SDL_DISPINFO_PATH);
+        report_video_mode_error("SDL_SetVideoMode: cannot read %s to check the runtime display size", SDL_DISPINFO_PATH);
         return -1;
     }
 
     if (close_ret != 0)
     {
-        report_video_mode_error("SDL_SetVideoMode: cannot close %s after checking the runtime display size",
-                                SDL_DISPINFO_PATH);
+        report_video_mode_error("SDL_SetVideoMode: cannot close %s after checking the runtime display size", SDL_DISPINFO_PATH);
         return -1;
     }
 
     buffer[nread] = '\0';
 
-    if (sscanf(buffer, "WIDTH:%d\nHEIGHT:%d\n", display_w, display_h) != 2 ||
-        *display_w <= 0 || *display_h <= 0)
+    if (sscanf(buffer, "WIDTH:%d\nHEIGHT:%d\n", display_w, display_h) != 2 || *display_w <= 0 || *display_h <= 0)
     {
-        report_video_mode_error("SDL_SetVideoMode: invalid display information from %s: %s",
-                                SDL_DISPINFO_PATH, buffer);
+        report_video_mode_error("SDL_SetVideoMode: invalid display information from %s: %s", SDL_DISPINFO_PATH, buffer);
         return -1;
     }
 
@@ -225,10 +220,7 @@ static void build_palette_argb_lut(const SDL_Palette *palette, uint32_t lut[256]
     for (int i = 0; i < ncolors; i++)
     {
         const SDL_Color c = palette->colors[i];
-        lut[i] = ((uint32_t)c.a << 24) |
-                 ((uint32_t)c.r << 16) |
-                 ((uint32_t)c.g << 8) |
-                 (uint32_t)c.b;
+        lut[i] = ((uint32_t)c.a << 24) | ((uint32_t)c.r << 16) | ((uint32_t)c.g << 8) | (uint32_t)c.b;
     }
 
     for (int i = ncolors; i < 256; i++)
@@ -245,8 +237,7 @@ static void build_palette_argb_lut(const SDL_Palette *palette, uint32_t lut[256]
 // If either srcrect or dstrect are NULL, the entire surface
 // (src or dst) is copied. The final blit rectangle is saved in
 // dstrect after all clipping is performed.
-void SDL_BlitSurface(SDL_Surface *src, SDL_Rect *srcrect,
-                     SDL_Surface *dst, SDL_Rect *dstrect)
+void SDL_BlitSurface(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_Rect *dstrect)
 {
     assert(src && dst);
     assert(src->format->BitsPerPixel == dst->format->BitsPerPixel);
@@ -674,8 +665,7 @@ static inline int maskToShift(uint32_t mask)
     }
 }
 
-SDL_Surface *SDL_CreateRGBSurface(uint32_t flags, int width, int height, int depth,
-                                  uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask)
+SDL_Surface *SDL_CreateRGBSurface(uint32_t flags, int width, int height, int depth, uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask)
 {
     if ((depth != 8 && depth != 32) || width < 0 || height < 0)
     {
@@ -780,16 +770,15 @@ SDL_Surface *SDL_CreateRGBSurface(uint32_t flags, int width, int height, int dep
     return s;
 }
 
-SDL_Surface *SDL_CreateRGBSurfaceFrom(void *pixels, int width, int height, int depth,
-                                      int pitch, uint32_t Rmask, uint32_t Gmask, uint32_t Bmask, uint32_t Amask)
+SDL_Surface *SDL_CreateRGBSurfaceFrom(void *pixels, int width, int height, int depth, int pitch, uint32_t Rmask, uint32_t Gmask, uint32_t Bmask,
+                                      uint32_t Amask)
 {
     /*
      * SDL_PREALLOC means ownership stays with the caller.  The surface metadata
      * still uses miniSDL's normal format allocation, but SDL_FreeSurface() must
      * leave the pixel storage alone.
      */
-    SDL_Surface *s = SDL_CreateRGBSurface(SDL_PREALLOC, width, height, depth,
-                                          Rmask, Gmask, Bmask, Amask);
+    SDL_Surface *s = SDL_CreateRGBSurface(SDL_PREALLOC, width, height, depth, Rmask, Gmask, Bmask, Amask);
     if (s == NULL)
     {
         return NULL;
@@ -840,8 +829,7 @@ SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, uint32_t flags)
         NDL_OpenCanvas(&width, &height);
     }
 
-    SDL_Surface *s = SDL_CreateRGBSurface(flags, width, height, bpp,
-                                          DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *s = SDL_CreateRGBSurface(flags, width, height, bpp, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
 
     if (flags & SDL_HWSURFACE)
     {
@@ -964,12 +952,8 @@ void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_
 
     for (int dy = clip_y0; dy < clip_y1; dy++)
     {
-        const uint8_t *src_rowp = (const uint8_t *)src->pixels +
-                                  (src_y + src_row) * src->pitch +
-                                  src_x * bpp;
-        uint8_t *dst_rowp = (uint8_t *)dst->pixels +
-                            dy * dst->pitch +
-                            clip_x0 * bpp;
+        const uint8_t *src_rowp = (const uint8_t *)src->pixels + (src_y + src_row) * src->pitch + src_x * bpp;
+        uint8_t *dst_rowp = (uint8_t *)dst->pixels + dy * dst->pitch + clip_x0 * bpp;
 
         int x_num = (clip_x0 - dst_x) * src_w;
         int src_col = x_num / dst_w;
@@ -977,9 +961,7 @@ void SDL_SoftStretch(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst, SDL_
 
         for (int dx = clip_x0; dx < clip_x1; dx++)
         {
-            memcpy(dst_rowp + (size_t)(dx - clip_x0) * (size_t)bpp,
-                   src_rowp + (size_t)src_col * (size_t)bpp,
-                   (size_t)bpp);
+            memcpy(dst_rowp + (size_t)(dx - clip_x0) * (size_t)bpp, src_rowp + (size_t)src_col * (size_t)bpp, (size_t)bpp);
 
             x_err += src_w;
             while (x_err >= dst_w)
@@ -1012,9 +994,7 @@ void SDL_SoftStretchUpdate(SDL_Surface *src, SDL_Rect *srcrect, SDL_Surface *dst
     assert(src->format);
     assert(dst->format);
 
-    if (!(dst->flags & SDL_HWSURFACE) ||
-        src->format->BitsPerPixel != 8 ||
-        dst->format->BitsPerPixel != 8)
+    if (!(dst->flags & SDL_HWSURFACE) || src->format->BitsPerPixel != 8 || dst->format->BitsPerPixel != 8)
     {
         SDL_SoftStretch(src, srcrect, dst, dstrect);
 
@@ -1158,9 +1138,7 @@ void SDL_SetPalette(SDL_Surface *s, int flags, SDL_Color *colors, int firstcolor
 {
     (void)flags;
 
-    if (s == NULL || s->format == NULL || s->format->palette == NULL ||
-        s->format->palette->colors == NULL ||
-        firstcolor < 0 || firstcolor > 256 ||
+    if (s == NULL || s->format == NULL || s->format->palette == NULL || s->format->palette->colors == NULL || firstcolor < 0 || firstcolor > 256 ||
         ncolors < 0 || ncolors > 256 - firstcolor)
     {
         return;
@@ -1176,8 +1154,7 @@ void SDL_SetPalette(SDL_Surface *s, int flags, SDL_Color *colors, int firstcolor
         return;
     }
 
-    memcpy(&s->format->palette->colors[firstcolor], colors,
-           sizeof(SDL_Color) * (size_t)ncolors);
+    memcpy(&s->format->palette->colors[firstcolor], colors, sizeof(SDL_Color) * (size_t)ncolors);
     s->format->palette->ncolors = 256;
 
     if (s->flags & SDL_HWSURFACE)
@@ -1198,16 +1175,13 @@ static uint8_t pixel_channel(uint32_t pixel, uint32_t mask, uint8_t shift)
 
 SDL_Surface *SDL_ConvertSurface(SDL_Surface *src, SDL_PixelFormat *fmt, uint32_t flags)
 {
-    if (src == NULL || src->format == NULL || fmt == NULL ||
-        src->format->BitsPerPixel != 32 || fmt->BitsPerPixel != 32 ||
+    if (src == NULL || src->format == NULL || fmt == NULL || src->format->BitsPerPixel != 32 || fmt->BitsPerPixel != 32 ||
         (src->pixels == NULL && src->w > 0 && src->h > 0))
     {
         return NULL;
     }
 
-    SDL_Surface *ret = SDL_CreateRGBSurface(flags & ~SDL_PREALLOC,
-                                            src->w, src->h, fmt->BitsPerPixel,
-                                            fmt->Rmask, fmt->Gmask, fmt->Bmask, fmt->Amask);
+    SDL_Surface *ret = SDL_CreateRGBSurface(flags & ~SDL_PREALLOC, src->w, src->h, fmt->BitsPerPixel, fmt->Rmask, fmt->Gmask, fmt->Bmask, fmt->Amask);
     if (ret == NULL)
     {
         return NULL;
@@ -1226,9 +1200,7 @@ SDL_Surface *SDL_ConvertSurface(SDL_Surface *src, SDL_PixelFormat *fmt, uint32_t
             const uint8_t r = pixel_channel(pixel, src->format->Rmask, src->format->Rshift);
             const uint8_t g = pixel_channel(pixel, src->format->Gmask, src->format->Gshift);
             const uint8_t b = pixel_channel(pixel, src->format->Bmask, src->format->Bshift);
-            const uint8_t a = src->format->Amask == 0
-                                  ? 0xff
-                                  : pixel_channel(pixel, src->format->Amask, src->format->Ashift);
+            const uint8_t a = src->format->Amask == 0 ? 0xff : pixel_channel(pixel, src->format->Amask, src->format->Ashift);
             const uint32_t mapped = SDL_MapRGBA(fmt, r, g, b, a);
 
             memcpy(dst_row + (size_t)x * sizeof(mapped), &mapped, sizeof(mapped));
@@ -1242,9 +1214,7 @@ uint32_t SDL_MapRGBA(SDL_PixelFormat *fmt, uint8_t r, uint8_t g, uint8_t b, uint
 {
     assert(fmt);
     assert(fmt->BytesPerPixel == 4);
-    uint32_t p = ((uint32_t)r << fmt->Rshift) |
-                 ((uint32_t)g << fmt->Gshift) |
-                 ((uint32_t)b << fmt->Bshift);
+    uint32_t p = ((uint32_t)r << fmt->Rshift) | ((uint32_t)g << fmt->Gshift) | ((uint32_t)b << fmt->Bshift);
 
     if (fmt->Amask)
         p |= ((uint32_t)a << fmt->Ashift);
@@ -1290,8 +1260,7 @@ int SDL_SaveBMP_RW(SDL_Surface *surface, SDL_RWops *rw, int freerw)
 {
     int ret = -1;
 
-    if (surface == NULL || surface->format == NULL || surface->pixels == NULL ||
-        rw == NULL || surface->w <= 0 || surface->h <= 0 ||
+    if (surface == NULL || surface->format == NULL || surface->pixels == NULL || rw == NULL || surface->w <= 0 || surface->h <= 0 ||
         surface->format->BytesPerPixel != 4)
     {
         if (freerw && rw != NULL)

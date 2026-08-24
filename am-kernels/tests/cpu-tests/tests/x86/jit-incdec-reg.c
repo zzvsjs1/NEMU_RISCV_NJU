@@ -1,48 +1,35 @@
 #include "trap.h"
 
-static uint32_t inc32_flags(uint32_t value, uint8_t carry_in,
-                            uint8_t *cf, uint8_t *zf, uint8_t *sf, uint8_t *of, uint8_t *pf)
+static uint32_t inc32_flags(uint32_t value, uint8_t carry_in, uint8_t *cf, uint8_t *zf, uint8_t *sf, uint8_t *of, uint8_t *pf)
 {
     uint32_t out = value;
     uint8_t carry = 0, zero = 0, sign = 0, overflow = 0, parity = 0;
 
     if (carry_in)
     {
-        asm volatile(
-            "stc\n\t"
-            "incl %[out]\n\t"
-            "setc %[cf]\n\t"
-            "setz %[zf]\n\t"
-            "sets %[sf]\n\t"
-            "seto %[of]\n\t"
-            "setp %[pf]"
-            : [out] "+r"(out),
-              [cf] "=qm"(carry),
-              [zf] "=qm"(zero),
-              [sf] "=qm"(sign),
-              [of] "=qm"(overflow),
-              [pf] "=qm"(parity)
-            :
-            : "cc");
+        asm volatile("stc\n\t"
+                     "incl %[out]\n\t"
+                     "setc %[cf]\n\t"
+                     "setz %[zf]\n\t"
+                     "sets %[sf]\n\t"
+                     "seto %[of]\n\t"
+                     "setp %[pf]"
+                     : [out] "+r"(out), [cf] "=qm"(carry), [zf] "=qm"(zero), [sf] "=qm"(sign), [of] "=qm"(overflow), [pf] "=qm"(parity)
+                     :
+                     : "cc");
     }
     else
     {
-        asm volatile(
-            "clc\n\t"
-            "incl %[out]\n\t"
-            "setc %[cf]\n\t"
-            "setz %[zf]\n\t"
-            "sets %[sf]\n\t"
-            "seto %[of]\n\t"
-            "setp %[pf]"
-            : [out] "+r"(out),
-              [cf] "=qm"(carry),
-              [zf] "=qm"(zero),
-              [sf] "=qm"(sign),
-              [of] "=qm"(overflow),
-              [pf] "=qm"(parity)
-            :
-            : "cc");
+        asm volatile("clc\n\t"
+                     "incl %[out]\n\t"
+                     "setc %[cf]\n\t"
+                     "setz %[zf]\n\t"
+                     "sets %[sf]\n\t"
+                     "seto %[of]\n\t"
+                     "setp %[pf]"
+                     : [out] "+r"(out), [cf] "=qm"(carry), [zf] "=qm"(zero), [sf] "=qm"(sign), [of] "=qm"(overflow), [pf] "=qm"(parity)
+                     :
+                     : "cc");
     }
 
     *cf = carry;
@@ -53,49 +40,36 @@ static uint32_t inc32_flags(uint32_t value, uint8_t carry_in,
     return out;
 }
 
-static uint32_t dec32_flags(uint32_t value, uint8_t carry_in,
-                            uint8_t *cf, uint8_t *zf, uint8_t *sf, uint8_t *of, uint8_t *pf)
+static uint32_t dec32_flags(uint32_t value, uint8_t carry_in, uint8_t *cf, uint8_t *zf, uint8_t *sf, uint8_t *of, uint8_t *pf)
 {
     uint32_t out = value;
     uint8_t carry = 0, zero = 0, sign = 0, overflow = 0, parity = 0;
 
     if (carry_in)
     {
-        asm volatile(
-            "stc\n\t"
-            "decl %[out]\n\t"
-            "setc %[cf]\n\t"
-            "setz %[zf]\n\t"
-            "sets %[sf]\n\t"
-            "seto %[of]\n\t"
-            "setp %[pf]"
-            : [out] "+r"(out),
-              [cf] "=qm"(carry),
-              [zf] "=qm"(zero),
-              [sf] "=qm"(sign),
-              [of] "=qm"(overflow),
-              [pf] "=qm"(parity)
-            :
-            : "cc");
+        asm volatile("stc\n\t"
+                     "decl %[out]\n\t"
+                     "setc %[cf]\n\t"
+                     "setz %[zf]\n\t"
+                     "sets %[sf]\n\t"
+                     "seto %[of]\n\t"
+                     "setp %[pf]"
+                     : [out] "+r"(out), [cf] "=qm"(carry), [zf] "=qm"(zero), [sf] "=qm"(sign), [of] "=qm"(overflow), [pf] "=qm"(parity)
+                     :
+                     : "cc");
     }
     else
     {
-        asm volatile(
-            "clc\n\t"
-            "decl %[out]\n\t"
-            "setc %[cf]\n\t"
-            "setz %[zf]\n\t"
-            "sets %[sf]\n\t"
-            "seto %[of]\n\t"
-            "setp %[pf]"
-            : [out] "+r"(out),
-              [cf] "=qm"(carry),
-              [zf] "=qm"(zero),
-              [sf] "=qm"(sign),
-              [of] "=qm"(overflow),
-              [pf] "=qm"(parity)
-            :
-            : "cc");
+        asm volatile("clc\n\t"
+                     "decl %[out]\n\t"
+                     "setc %[cf]\n\t"
+                     "setz %[zf]\n\t"
+                     "sets %[sf]\n\t"
+                     "seto %[of]\n\t"
+                     "setp %[pf]"
+                     : [out] "+r"(out), [cf] "=qm"(carry), [zf] "=qm"(zero), [sf] "=qm"(sign), [of] "=qm"(overflow), [pf] "=qm"(parity)
+                     :
+                     : "cc");
     }
 
     *cf = carry;

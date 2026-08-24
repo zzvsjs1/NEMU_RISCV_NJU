@@ -103,7 +103,8 @@ void suffixArray(int *s, int *SA, int n, int K)
         int i = GetI(); // pos of current offset 12 suffix
         int j = SA0[p]; // pos of current offset 0  suffix
 
-        if (SA12[t] < n0 ? leq(s[i], s12[SA12[t] + n0], s[j], s12[j / 3]) : leq(s[i], s[i + 1], s12[SA12[t] - n0 + 1], s[j], s[j + 1], s12[j / 3 + n0]))
+        if (SA12[t] < n0 ? leq(s[i], s12[SA12[t] + n0], s[j], s12[j / 3])
+                         : leq(s[i], s[i + 1], s12[SA12[t] - n0 + 1], s[j], s[j + 1], s12[j / 3 + n0]))
         { // suffix from SA12 is smaller
             SA[k] = i;
             t++;

@@ -36,10 +36,7 @@
 /*  Numeric helpers                                                           */
 /* -------------------------------------------------------------------------- */
 
-static int utoa_base_ulong(unsigned long value,
-                           char *buf,
-                           int base,
-                           int uppercase)
+static int utoa_base_ulong(unsigned long value, char *buf, int base, int uppercase)
 {
     /*
      * Plain int/long formatting stays on the native word size. On RV32 this
@@ -74,10 +71,7 @@ static int utoa_base_ulong(unsigned long value,
     return pos;
 }
 
-static int utoa_base_ull(unsigned long long value,
-                         char *buf,
-                         int base,
-                         int uppercase)
+static int utoa_base_ull(unsigned long long value, char *buf, int base, int uppercase)
 {
     static const char *digits_lc = "0123456789abcdef";
     static const char *digits_uc = "0123456789ABCDEF";
@@ -116,8 +110,7 @@ static int ltoa_dec_long(long value, char *buf)
         return 1;
     }
 
-    unsigned long v = (value < 0) ? (unsigned long)(-(value + 1)) + 1UL
-                                  : (unsigned long)value;
+    unsigned long v = (value < 0) ? (unsigned long)(-(value + 1)) + 1UL : (unsigned long)value;
     int neg = (value < 0);
 
     char tmp[64];
@@ -152,8 +145,7 @@ static int ltoa_dec_ll(long long value, char *buf)
         return 1;
     }
 
-    unsigned long long v = (value < 0) ? (unsigned long long)(-(value + 1)) + 1ULL
-                                       : (unsigned long long)value;
+    unsigned long long v = (value < 0) ? (unsigned long long)(-(value + 1)) + 1ULL : (unsigned long long)value;
     int neg = (value < 0);
 
     char tmp[64];
@@ -183,12 +175,7 @@ static int ltoa_dec_ll(long long value, char *buf)
 /*  Core writer helpers                                                       */
 /* -------------------------------------------------------------------------- */
 
-static void write_repeat(char ch,
-                         int count,
-                         char *out,
-                         size_t n,
-                         size_t *out_pos,
-                         size_t *total_written)
+static void write_repeat(char ch, int count, char *out, size_t n, size_t *out_pos, size_t *total_written)
 {
     /*
      * out_pos tracks the would-have-written position, while total_written is the
@@ -207,15 +194,7 @@ static void write_repeat(char ch,
     }
 }
 
-static void write_str(const char *s,
-                      int len,
-                      int width,
-                      int left_align,
-                      int zero_pad,
-                      char *out,
-                      size_t n,
-                      size_t *out_pos,
-                      size_t *total_written)
+static void write_str(const char *s, int len, int width, int left_align, int zero_pad, char *out, size_t n, size_t *out_pos, size_t *total_written)
 {
     int pad = (width > len) ? (width - len) : 0;
 
@@ -241,14 +220,7 @@ static void write_str(const char *s,
     }
 }
 
-static void write_signed_decimal(const char *s,
-                                 int len,
-                                 int width,
-                                 int left_align,
-                                 int zero_pad,
-                                 char *out,
-                                 size_t n,
-                                 size_t *out_pos,
+static void write_signed_decimal(const char *s, int len, int width, int left_align, int zero_pad, char *out, size_t n, size_t *out_pos,
                                  size_t *total_written)
 {
     /*
@@ -270,10 +242,7 @@ static void write_signed_decimal(const char *s,
 /*  vsnprintf                                                                 */
 /* -------------------------------------------------------------------------- */
 
-int vsnprintf(char *out,
-              size_t n,
-              const char *fmt,
-              va_list ap)
+int vsnprintf(char *out, size_t n, const char *fmt, va_list ap)
 {
     /*
      * The implementation follows the hosted snprintf rule: formatting continues
@@ -402,8 +371,7 @@ int vsnprintf(char *out,
             tmp[0] = (char)ch;
             tmp[1] = '\0';
             len = 1;
-            write_str(tmp, len, width, left_align, 0, out, n,
-                      &out_pos, &total_written);
+            write_str(tmp, len, width, left_align, 0, out, n, &out_pos, &total_written);
             break;
         }
 
@@ -417,8 +385,7 @@ int vsnprintf(char *out,
             }
 
             len = (int)strlen(s);
-            write_str(s, len, width, left_align, 0, out, n,
-                      &out_pos, &total_written);
+            write_str(s, len, width, left_align, 0, out, n, &out_pos, &total_written);
             break;
         }
 
@@ -450,8 +417,7 @@ int vsnprintf(char *out,
                 len = ltoa_dec_long(val, tmp);
             }
 
-            write_signed_decimal(tmp, len, width, left_align, zero_pad, out, n,
-                                 &out_pos, &total_written);
+            write_signed_decimal(tmp, len, width, left_align, zero_pad, out, n, &out_pos, &total_written);
             break;
         }
 
@@ -514,8 +480,7 @@ int vsnprintf(char *out,
                 len = utoa_base_ulong(val, tmp, base, upper);
             }
 
-            write_str(tmp, len, width, left_align, zero_pad, out, n,
-                      &out_pos, &total_written);
+            write_str(tmp, len, width, left_align, zero_pad, out, n, &out_pos, &total_written);
             break;
         }
 
@@ -531,8 +496,7 @@ int vsnprintf(char *out,
             int len_addr = utoa_base_ulong((unsigned long)addr, tmp + 2, 16, 0);
             len += len_addr;
 
-            write_str(tmp, len, width, left_align, zero_pad, out, n,
-                      &out_pos, &total_written);
+            write_str(tmp, len, width, left_align, zero_pad, out, n, &out_pos, &total_written);
             break;
         }
 
@@ -541,8 +505,7 @@ int vsnprintf(char *out,
             tmp[0] = '%';
             tmp[1] = '\0';
             len = 1;
-            write_str(tmp, len, width, left_align, 0, out, n,
-                      &out_pos, &total_written);
+            write_str(tmp, len, width, left_align, 0, out, n, &out_pos, &total_written);
             break;
         }
 
@@ -593,10 +556,7 @@ int vsnprintf(char *out,
 /*  Convenience wrappers                                                      */
 /* -------------------------------------------------------------------------- */
 
-int snprintf(char *out,
-             size_t n,
-             const char *fmt,
-             ...)
+int snprintf(char *out, size_t n, const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
@@ -605,9 +565,7 @@ int snprintf(char *out,
     return ret;
 }
 
-int sprintf(char *out,
-            const char *fmt,
-            ...)
+int sprintf(char *out, const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);

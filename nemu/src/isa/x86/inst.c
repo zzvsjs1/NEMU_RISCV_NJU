@@ -252,9 +252,7 @@ static void reg_write(int idx, int width, word_t data)
 /* Require CPL0 for instructions whose architecture requires kernel privilege in this subset. */
 static void require_kernel(Decode *s, const char *op)
 {
-    Assert((cpu.cs & X86_SELECTOR_RPL_MASK) == 0,
-           "x86 %s from CPL %u would raise #GP at pc = " FMT_WORD,
-           op, cpu.cs & X86_SELECTOR_RPL_MASK, s->pc);
+    Assert((cpu.cs & X86_SELECTOR_RPL_MASK) == 0, "x86 %s from CPL %u would raise #GP at pc = " FMT_WORD, op, cpu.cs & X86_SELECTOR_RPL_MASK, s->pc);
 }
 
 /*
@@ -301,9 +299,7 @@ void x86_seg_set_flat(int idx, uint16_t selector)
 /* Unpack the 32-bit descriptor base from the low and high descriptor dwords. */
 static uint32_t desc_base(uint32_t lo, uint32_t hi)
 {
-    return ((lo >> X86_WORD_BITS) & X86_WORD_MASK) |
-           ((hi & X86_BYTE_MASK) << X86_WORD_BITS) |
-           (hi & X86_DESC_BASE_HIGH_MASK);
+    return ((lo >> X86_WORD_BITS) & X86_WORD_MASK) | ((hi & X86_BYTE_MASK) << X86_WORD_BITS) | (hi & X86_DESC_BASE_HIGH_MASK);
 }
 
 /*
@@ -313,8 +309,7 @@ static uint32_t desc_base(uint32_t lo, uint32_t hi)
  */
 static uint32_t desc_limit(uint32_t lo, uint32_t hi)
 {
-    uint32_t limit = (lo & X86_WORD_MASK) |
-                     (((hi >> X86_DESC_LIMIT_HIGH_SHIFT) & X86_DESC_TYPE_MASK) << X86_DESC_LIMIT_HIGH_SHIFT);
+    uint32_t limit = (lo & X86_WORD_MASK) | (((hi >> X86_DESC_LIMIT_HIGH_SHIFT) & X86_DESC_TYPE_MASK) << X86_DESC_LIMIT_HIGH_SHIFT);
     if ((hi & (1u << X86_DESC_GRANULARITY_SHIFT)) != 0)
     {
         limit = (limit << X86_PAGE_SHIFT) | X86_PAGE_OFFSET_MASK;
@@ -331,8 +326,7 @@ void x86_seg_load_from_descriptor(int idx, uint16_t selector, uint32_t lo, uint3
     cpu.seg_cache[idx].limit = desc_limit(lo, hi);
     cpu.seg_cache[idx].attr = hi;
 
-    if (idx == X86_SREG_CS &&
-        (selector & X86_SELECTOR_RPL_MASK) != old_cpl)
+    if (idx == X86_SREG_CS && (selector & X86_SELECTOR_RPL_MASK) != old_cpl)
     {
         isa_jit_flush_data_tlb();
     }
@@ -341,14 +335,11 @@ void x86_seg_load_from_descriptor(int idx, uint16_t selector, uint32_t lo, uint3
 static uint32_t seg_linear(int idx, vaddr_t off, int len, const char *op)
 {
     uint32_t selector = *sreg_visible_ptr(idx);
-    Assert(selector != 0 || idx == X86_SREG_CS,
-           "x86 %s through a null segment register at offset " FMT_WORD, op, off);
+    Assert(selector != 0 || idx == X86_SREG_CS, "x86 %s through a null segment register at offset " FMT_WORD, op, off);
 
     uint64_t end = (uint64_t)(uint32_t)off + (uint64_t)len - 1u;
-    Assert(end <= cpu.seg_cache[idx].limit,
-           "x86 %s segment limit violation: selector %#x offset " FMT_WORD
-           " len %d limit %#x",
-           op, selector, off, len, cpu.seg_cache[idx].limit);
+    Assert(end <= cpu.seg_cache[idx].limit, "x86 %s segment limit violation: selector %#x offset " FMT_WORD " len %d limit %#x", op, selector, off,
+           len, cpu.seg_cache[idx].limit);
 
     return cpu.seg_cache[idx].base + (uint32_t)off;
 }
@@ -430,14 +421,12 @@ static void sreg_write(Decode *s, int idx, word_t data)
         return;
     }
 
-    Assert((selector & X86_SELECTOR_TI_MASK) == 0,
-           "x86 LDT selector %#x is not supported by this NEMU x86 segment subset at pc = " FMT_WORD,
+    Assert((selector & X86_SELECTOR_TI_MASK) == 0, "x86 LDT selector %#x is not supported by this NEMU x86 segment subset at pc = " FMT_WORD,
            selector, s->pc);
 
     uint32_t desc_off = (selector >> X86_SELECTOR_INDEX_SHIFT) * X86_DESC_SIZE;
-    Assert(desc_off + X86_DESC_LAST_BYTE <= cpu.gdtr_limit,
-           "x86 segment selector %#x exceeds GDT limit %#x at pc = " FMT_WORD,
-           selector, cpu.gdtr_limit, s->pc);
+    Assert(desc_off + X86_DESC_LAST_BYTE <= cpu.gdtr_limit, "x86 segment selector %#x exceeds GDT limit %#x at pc = " FMT_WORD, selector,
+           cpu.gdtr_limit, s->pc);
 
     vaddr_t desc_addr = cpu.gdtr_base + desc_off;
     uint32_t lo = x86_vaddr_read_kernel(desc_addr, X86_WIDTH_DWORD);
@@ -449,30 +438,22 @@ static void sreg_write(Decode *s, int idx, word_t data)
     bool code = (type & X86_DESC_CODE_TYPE) != 0;
     bool writable_or_readable = (type & X86_DESC_RW_TYPE) != 0;
 
-    Assert(present != 0, "x86 loads a non-present segment selector %#x at pc = " FMT_WORD,
-           selector, s->pc);
-    Assert(system != 0, "x86 loads system descriptor selector %#x into a data segment at pc = " FMT_WORD,
-           selector, s->pc);
+    Assert(present != 0, "x86 loads a non-present segment selector %#x at pc = " FMT_WORD, selector, s->pc);
+    Assert(system != 0, "x86 loads system descriptor selector %#x into a data segment at pc = " FMT_WORD, selector, s->pc);
 
     switch (idx)
     {
     case X86_SREG_ES:
     case X86_SREG_DS:
-        Assert(!code || writable_or_readable,
-               "x86 loads unreadable code selector %#x into a data segment at pc = " FMT_WORD,
-               selector, s->pc);
-        Assert(cpl <= (int)dpl && rpl <= (int)dpl,
-               "x86 loads selector %#x with DPL %u from CPL %d/RPL %d at pc = " FMT_WORD,
-               selector, dpl, cpl, rpl, s->pc);
+        Assert(!code || writable_or_readable, "x86 loads unreadable code selector %#x into a data segment at pc = " FMT_WORD, selector, s->pc);
+        Assert(cpl <= (int)dpl && rpl <= (int)dpl, "x86 loads selector %#x with DPL %u from CPL %d/RPL %d at pc = " FMT_WORD, selector, dpl, cpl, rpl,
+               s->pc);
         x86_seg_load_from_descriptor(idx, selector, lo, hi);
         return;
     case X86_SREG_SS:
-        Assert(!code && writable_or_readable,
-               "x86 loads non-writable selector %#x into SS at pc = " FMT_WORD,
-               selector, s->pc);
-        Assert(rpl == cpl && (int)dpl == cpl,
-               "x86 loads SS selector %#x with DPL %u from CPL %d/RPL %d at pc = " FMT_WORD,
-               selector, dpl, cpl, rpl, s->pc);
+        Assert(!code && writable_or_readable, "x86 loads non-writable selector %#x into SS at pc = " FMT_WORD, selector, s->pc);
+        Assert(rpl == cpl && (int)dpl == cpl, "x86 loads SS selector %#x with DPL %u from CPL %d/RPL %d at pc = " FMT_WORD, selector, dpl, cpl, rpl,
+               s->pc);
         x86_seg_load_from_descriptor(idx, selector, lo, hi);
         return;
     default:
@@ -492,11 +473,9 @@ static void load_seg_cache_from_gdt(int idx, uint16_t selector)
         return;
     }
 
-    Assert((selector & X86_SELECTOR_TI_MASK) == 0,
-           "x86 selector %#x uses the unsupported LDT table", selector);
+    Assert((selector & X86_SELECTOR_TI_MASK) == 0, "x86 selector %#x uses the unsupported LDT table", selector);
     uint32_t desc_off = (selector >> X86_SELECTOR_INDEX_SHIFT) * X86_DESC_SIZE;
-    Assert(desc_off + X86_DESC_LAST_BYTE <= cpu.gdtr_limit,
-           "x86 selector %#x exceeds GDT limit %#x", selector, cpu.gdtr_limit);
+    Assert(desc_off + X86_DESC_LAST_BYTE <= cpu.gdtr_limit, "x86 selector %#x exceeds GDT limit %#x", selector, cpu.gdtr_limit);
     vaddr_t desc_addr = cpu.gdtr_base + desc_off;
     uint32_t lo = x86_vaddr_read_kernel(desc_addr, X86_WIDTH_DWORD);
     uint32_t hi = x86_vaddr_read_kernel(desc_addr + X86_DESC_HIGH_OFFSET, X86_WIDTH_DWORD);
@@ -614,9 +593,7 @@ static word_t eflags_write_protected(word_t requested)
 static void require_io_privilege(Decode *s, const char *op)
 {
     int cpl = cpu.cs & X86_SELECTOR_RPL_MASK;
-    Assert(cpl <= x86_iopl(cpu.eflags),
-           "x86 %s from CPL %u with IOPL %u would raise #GP at pc = " FMT_WORD,
-           op, cpl, x86_iopl(cpu.eflags), s->pc);
+    Assert(cpl <= x86_iopl(cpu.eflags), "x86 %s from CPL %u with IOPL %u would raise #GP at pc = " FMT_WORD, op, cpl, x86_iopl(cpu.eflags), s->pc);
 }
 
 /* Shared CLI/STI gate; these instructions are allowed by IOPL, not only by CPL0. */
@@ -814,15 +791,17 @@ static word_t pop_width(int width)
     return val;
 }
 
-static word_t pop32() { return pop_width(X86_WIDTH_DWORD); }
+static word_t pop32()
+{
+    return pop_width(X86_WIDTH_DWORD);
+}
 
 /*
  * Decode the memory-address part of a ModR/M operand.  A SIB byte follows when
  * R/M selects ESP; mod then decides whether the displacement is absent, 8-bit,
  * or 32-bit.  A base register of -1 means absolute displacement-only addressing.
  */
-static void load_addr32(Decode *s, ModR_M *m, word_t *rm_addr,
-                        int *rm_seg, bool *addr_uses_esp)
+static void load_addr32(Decode *s, ModR_M *m, word_t *rm_addr, int *rm_seg, bool *addr_uses_esp)
 {
     assert(m->mod != 3);
 
@@ -955,8 +934,7 @@ static void load_addr16(Decode *s, ModR_M *m, word_t *rm_addr, int *rm_seg)
     *rm_addr = (uint16_t)(base + disp);
 }
 
-static void load_addr(Decode *s, ModR_M *m, word_t *rm_addr,
-                      int *rm_seg, bool *addr_uses_esp, bool addr_size_16)
+static void load_addr(Decode *s, ModR_M *m, word_t *rm_addr, int *rm_seg, bool *addr_uses_esp, bool addr_size_16)
 {
     if (addr_size_16)
     {
@@ -974,8 +952,7 @@ static void load_addr(Decode *s, ModR_M *m, word_t *rm_addr,
  * interpreter uses rm_reg == -1 as the memory sentinel; otherwise rm_reg is a
  * general-purpose register index.
  */
-static void decode_rm(Decode *s, int *rm_reg, word_t *rm_addr, int *rm_seg,
-                      bool *addr_uses_esp, int *reg, int width, bool addr_size_16)
+static void decode_rm(Decode *s, int *rm_reg, word_t *rm_addr, int *rm_seg, bool *addr_uses_esp, int *reg, int width, bool addr_size_16)
 {
     ModR_M m;
     m.val = x86_inst_fetch(s, X86_WIDTH_BYTE);
@@ -1024,8 +1001,7 @@ static inline void rm_write(int rm_reg, word_t rm_addr, int rm_seg, int width, w
 }
 
 /* Write r/m first, then commit flags, so a faulting memory destination leaves old EFLAGS visible. */
-static inline void rm_write_defer_flags(int rm_reg, word_t rm_addr, int rm_seg, int width,
-                                        word_t data, word_t old_eflags, word_t new_eflags)
+static inline void rm_write_defer_flags(int rm_reg, word_t rm_addr, int rm_seg, int width, word_t data, word_t old_eflags, word_t new_eflags)
 {
     /*
      * A memory write can raise #PF.  Intel fault semantics are restartable: the
@@ -1121,8 +1097,7 @@ enum
  * rs/src1 for source register/value, gp_idx for opcode-extension groups, addr
  * for memory operands, and imm for immediate/displacement operands.
  */
-static void decode_operand(Decode *s, uint8_t opcode, int *rd_, word_t *src1,
-                           word_t *addr, int *seg, bool *addr_uses_esp, int *rs, int *gp_idx,
+static void decode_operand(Decode *s, uint8_t opcode, int *rd_, word_t *src1, word_t *addr, int *seg, bool *addr_uses_esp, int *rs, int *gp_idx,
                            word_t *imm, int w, int type, bool addr_size_16)
 {
     switch (type)
@@ -1374,8 +1349,7 @@ static void shift_rm(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w,
 
         uint64_t operand_mask = width_mask(w);
         uint64_t ring_mask = (1ull << (bits + 1)) - 1ull;
-        uint64_t ring = ((uint64_t)(flag_get(FLAG_CF) ? 1u : 0u) << bits) |
-                        (mask_width(lhs, w) & operand_mask);
+        uint64_t ring = ((uint64_t)(flag_get(FLAG_CF) ? 1u : 0u) << bits) | (mask_width(lhs, w) & operand_mask);
 
         if (gp_idx == 2)
         {
@@ -1603,8 +1577,7 @@ static void iret32(Decode *s)
     int old_cpl = cpu.cs & X86_SELECTOR_RPL_MASK;
     int new_cpl = cs & X86_SELECTOR_RPL_MASK;
 
-    Assert(new_cpl >= old_cpl, "x86 iret from CPL %d to inner CPL %d would raise #GP at pc = " FMT_WORD,
-           old_cpl, new_cpl, s->pc);
+    Assert(new_cpl >= old_cpl, "x86 iret from CPL %d to inner CPL %d would raise #GP at pc = " FMT_WORD, old_cpl, new_cpl, s->pc);
 
     /*
      * Intel iret pops the saved user stack only when returning to a less
@@ -1673,8 +1646,7 @@ static void cr_write(Decode *s, int cr_idx, word_t data)
          * paging from the flat protected-mode reset state, so this rejects only
          * broken CR0 combinations while preserving the normal VME path.
          */
-        Assert((data & CR0_PG) == 0 || (data & CR0_PE) != 0,
-               "x86 mov to CR0 sets PG while PE is clear at pc = " FMT_WORD, s->pc);
+        Assert((data & CR0_PG) == 0 || (data & CR0_PE) != 0, "x86 mov to CR0 sets PG while PE is clear at pc = " FMT_WORD, s->pc);
         const uint32_t old_cr0_translation = cr0_translation_bits(cpu.cr0);
         cpu.cr0 = data;
 
@@ -1799,8 +1771,7 @@ static void ltr(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w)
 
     Assert((selector & ~X86_SELECTOR_RPL_MASK) != 0, "x86 ltr uses a null selector at pc = " FMT_WORD, s->pc);
     Assert((selector & X86_SELECTOR_TI_MASK) == 0, "x86 ltr selector %#x uses the unsupported LDT table", selector);
-    Assert(desc_off + X86_DESC_LAST_BYTE <= cpu.gdtr_limit,
-           "x86 ltr selector %#x exceeds GDT limit %#x", selector, cpu.gdtr_limit);
+    Assert(desc_off + X86_DESC_LAST_BYTE <= cpu.gdtr_limit, "x86 ltr selector %#x exceeds GDT limit %#x", selector, cpu.gdtr_limit);
 
     vaddr_t desc_addr = cpu.gdtr_base + desc_off;
     uint32_t lo = x86_vaddr_read_kernel(desc_addr, X86_WIDTH_DWORD);
@@ -1810,16 +1781,14 @@ static void ltr(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w)
     uint32_t present = (hi >> X86_DESC_PRESENT_SHIFT) & X86_ONE_BIT_MASK;
 
     Assert(present != 0, "x86 ltr selector %#x points to a non-present descriptor", selector);
-    Assert(system == 0 && type == X86_TSS_AVAILABLE_32,
-           "x86 ltr selector %#x uses unsupported descriptor type %#x", selector, type);
+    Assert(system == 0 && type == X86_TSS_AVAILABLE_32, "x86 ltr selector %#x uses unsupported descriptor type %#x", selector, type);
 
     /*
      * LTR is defined for an available TSS and changes the descriptor to busy in
      * memory.  AM loads TR once during CTE setup; marking the descriptor here keeps
      * subsequent accidental LTRs from silently reusing the same available TSS.
      */
-    x86_vaddr_write_kernel(desc_addr + X86_DESC_HIGH_OFFSET, X86_WIDTH_DWORD,
-                           hi | (X86_TSS_BUSY_TYPE_BIT << X86_DESC_TYPE_SHIFT));
+    x86_vaddr_write_kernel(desc_addr + X86_DESC_HIGH_OFFSET, X86_WIDTH_DWORD, hi | (X86_TSS_BUSY_TYPE_BIT << X86_DESC_TYPE_SHIFT));
     cpu.tr = selector;
     cpu.tss_base = desc_base(lo, hi);
     cpu.tss_limit = desc_limit(lo, hi);
@@ -1923,8 +1892,7 @@ static void gp3(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w, word
         }
         else if (w == X86_WIDTH_WORD)
         {
-            uint32_t dividend = ((uint32_t)Rr(R_EDX, X86_WIDTH_WORD) << X86_WORD_BITS) |
-                                Rr(R_EAX, X86_WIDTH_WORD);
+            uint32_t dividend = ((uint32_t)Rr(R_EDX, X86_WIDTH_WORD) << X86_WORD_BITS) | Rr(R_EAX, X86_WIDTH_WORD);
             uint16_t divisor = lhs;
             Assert(divisor != 0, "x86 div by zero at pc = " FMT_WORD, s->pc);
             uint32_t quotient = dividend / divisor;
@@ -1952,27 +1920,22 @@ static void gp3(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w, word
             int16_t dividend = (int16_t)Rr(R_EAX, X86_WIDTH_WORD);
             int8_t divisor = lhs;
             Assert(divisor != 0, "x86 idiv by zero at pc = " FMT_WORD, s->pc);
-            Assert(!(dividend == INT16_MIN && divisor == -1),
-                   "x86 idiv quotient overflow at pc = " FMT_WORD, s->pc);
+            Assert(!(dividend == INT16_MIN && divisor == -1), "x86 idiv quotient overflow at pc = " FMT_WORD, s->pc);
             int16_t quotient = dividend / divisor;
             int8_t remainder = dividend % divisor;
-            Assert(quotient >= INT8_MIN && quotient <= INT8_MAX,
-                   "x86 idiv quotient overflow at pc = " FMT_WORD, s->pc);
+            Assert(quotient >= INT8_MIN && quotient <= INT8_MAX, "x86 idiv quotient overflow at pc = " FMT_WORD, s->pc);
             Rw(R_AL, X86_WIDTH_BYTE, quotient);
             Rw(R_AH, X86_WIDTH_BYTE, remainder);
         }
         else if (w == X86_WIDTH_WORD)
         {
-            int32_t dividend = (int32_t)(((uint32_t)Rr(R_EDX, X86_WIDTH_WORD) << X86_WORD_BITS) |
-                                         Rr(R_EAX, X86_WIDTH_WORD));
+            int32_t dividend = (int32_t)(((uint32_t)Rr(R_EDX, X86_WIDTH_WORD) << X86_WORD_BITS) | Rr(R_EAX, X86_WIDTH_WORD));
             int16_t divisor = lhs;
             Assert(divisor != 0, "x86 idiv by zero at pc = " FMT_WORD, s->pc);
-            Assert(!(dividend == INT32_MIN && divisor == -1),
-                   "x86 idiv quotient overflow at pc = " FMT_WORD, s->pc);
+            Assert(!(dividend == INT32_MIN && divisor == -1), "x86 idiv quotient overflow at pc = " FMT_WORD, s->pc);
             int32_t quotient = dividend / divisor;
             int16_t remainder = dividend % divisor;
-            Assert(quotient >= INT16_MIN && quotient <= INT16_MAX,
-                   "x86 idiv quotient overflow at pc = " FMT_WORD, s->pc);
+            Assert(quotient >= INT16_MIN && quotient <= INT16_MAX, "x86 idiv quotient overflow at pc = " FMT_WORD, s->pc);
             Rw(R_EAX, X86_WIDTH_WORD, quotient);
             Rw(R_EDX, X86_WIDTH_WORD, remainder);
         }
@@ -1981,11 +1944,9 @@ static void gp3(Decode *s, int gp_idx, int rd, word_t addr, int seg, int w, word
             int64_t dividend = (int64_t)(int32_t)cpu.edx * X86_DWORD_BASE + cpu.eax;
             int32_t divisor = lhs;
             Assert(divisor != 0, "x86 idiv by zero at pc = " FMT_WORD, s->pc);
-            Assert(!(dividend == INT64_MIN && divisor == -1),
-                   "x86 idiv quotient overflow at pc = " FMT_WORD, s->pc);
+            Assert(!(dividend == INT64_MIN && divisor == -1), "x86 idiv quotient overflow at pc = " FMT_WORD, s->pc);
             int64_t quotient = dividend / divisor;
-            Assert(quotient >= INT32_MIN && quotient <= INT32_MAX,
-                   "x86 idiv quotient overflow at pc = " FMT_WORD, s->pc);
+            Assert(quotient >= INT32_MIN && quotient <= INT32_MAX, "x86 idiv quotient overflow at pc = " FMT_WORD, s->pc);
             cpu.eax = quotient;
             cpu.edx = dividend % divisor;
         }
@@ -2333,13 +2294,22 @@ again:
     INSTPAT("1000 1011", mov, E2G, 0, Rw(rd, w, RMr(rs, w)));
     INSTPAT("1000 1101", lea, E2G, 0, if (rs == -1) Rw(rd, w, addr); else INV(s->pc));
     INSTPAT("1000 1110", mov, E, 2, sreg_write(s, gp_idx, RMr(rd, w)));
-    INSTPAT("1000 1111", pop, E, 0, if (gp_idx == 0) { word_t data = pop_width(w); if (rd != -1) Rw(rd, w, data); else Mw(addr + (addr_uses_esp ? w : 0), seg, w, data); } else INV(s->pc));
+    INSTPAT(
+        "1000 1111", pop, E, 0, if (gp_idx == 0) {
+            word_t data = pop_width(w);
+            if (rd != -1)
+                Rw(rd, w, data);
+            else
+                Mw(addr + (addr_uses_esp ? w : 0), seg, w, data);
+        } else INV(s->pc));
 
     INSTPAT("1001 0???", xchg, r, 0, xchg_reg_eax(rd, w));
     INSTPAT("1001 1000", cbw_cwde, N, 0, cbw_cwde(is_operand_size_16));
     INSTPAT("1001 1001", cwd_cdq, N, 0, cwd_cdq(is_operand_size_16));
     INSTPAT("1001 1100", pushf, N, 0, push_width(is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD, cpu.eflags | X86_EFLAGS_FIXED_ONE));
-    INSTPAT("1001 1101", popf, N, 0, cpu.eflags = eflags_write_protected_width(pop_width(is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD), is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD));
+    INSTPAT("1001 1101", popf, N, 0,
+            cpu.eflags = eflags_write_protected_width(pop_width(is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD),
+                                                      is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD));
 
     INSTPAT("1010 0000", mov, O2a, 1, Rw(R_EAX, X86_WIDTH_BYTE, Mr(addr, seg, X86_WIDTH_BYTE)));
     INSTPAT("1010 0001", mov, O2a, 0, Rw(R_EAX, w, Mr(addr, seg, w)));
@@ -2355,23 +2325,43 @@ again:
 
     INSTPAT("1100 0000", shift, I2E, 1, shift_rm(s, gp_idx, rd, addr, seg, w, imm));
     INSTPAT("1100 0001", shift, Ib2E, 0, shift_rm(s, gp_idx, rd, addr, seg, w, imm));
-    INSTPAT("1100 0010", ret, I, 2, { int rw = is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD; word_t target = pop_width(rw); cpu.esp += imm; s->dnpc = control_target(target, rw); });
-    INSTPAT("1100 0011", ret, N, 0, { int rw = is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD; s->dnpc = control_target(pop_width(rw), rw); });
+    INSTPAT("1100 0010", ret, I, 2, {
+        int rw = is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD;
+        word_t target = pop_width(rw);
+        cpu.esp += imm;
+        s->dnpc = control_target(target, rw);
+    });
+    INSTPAT("1100 0011", ret, N, 0, {
+        int rw = is_operand_size_16 ? X86_WIDTH_WORD : X86_WIDTH_DWORD;
+        s->dnpc = control_target(pop_width(rw), rw);
+    });
     INSTPAT("1100 0110", mov, I2E, 1, RMw(imm));
     INSTPAT("1100 0111", mov, I2E, 0, RMw(imm));
-    INSTPAT("1100 1001", leave, N, 0, { cpu.esp = cpu.ebp; cpu.ebp = pop32(); });
-    INSTPAT("1100 1100", nemu_trap, N, 0, { difftest_skip_ref(); NEMUTRAP(s->pc, cpu.eax); });
+    INSTPAT("1100 1001", leave, N, 0, {
+        cpu.esp = cpu.ebp;
+        cpu.ebp = pop32();
+    });
+    INSTPAT("1100 1100", nemu_trap, N, 0, {
+        difftest_skip_ref();
+        NEMUTRAP(s->pc, cpu.eax);
+    });
     INSTPAT("1100 1101", int, I, 1, s->dnpc = isa_raise_intr_sw(imm, s->snpc));
     INSTPAT("1101 0000", shift, 1_E, 1, shift_rm(s, gp_idx, rd, addr, seg, w, src1));
     INSTPAT("1101 0001", shift, 1_E, 0, shift_rm(s, gp_idx, rd, addr, seg, w, src1));
     INSTPAT("1101 0010", shift, cl2E, 1, shift_rm(s, gp_idx, rd, addr, seg, w, src1));
     INSTPAT("1101 0011", shift, cl2E, 0, shift_rm(s, gp_idx, rd, addr, seg, w, src1));
-    INSTPAT("1101 0110", nemu_trap, N, 0, { difftest_skip_ref(); NEMUTRAP(s->pc, cpu.eax); });
+    INSTPAT("1101 0110", nemu_trap, N, 0, {
+        difftest_skip_ref();
+        NEMUTRAP(s->pc, cpu.eax);
+    });
     INSTPAT("1110 0100", in, P, 1, Rw(R_EAX, X86_WIDTH_BYTE, x86_pio_read(s, imm, X86_WIDTH_BYTE)));
     INSTPAT("1110 0101", in, P, 0, Rw(R_EAX, w, x86_pio_read(s, imm, w)));
     INSTPAT("1110 0110", out, P, 1, x86_pio_write(s, imm, X86_WIDTH_BYTE, Rr(R_EAX, X86_WIDTH_BYTE)));
     INSTPAT("1110 0111", out, P, 0, x86_pio_write(s, imm, w, Rr(R_EAX, w)));
-    INSTPAT("1110 1000", call, J, 0, { push_width(w, s->snpc); s->dnpc = branch_target(s->snpc, imm, w); });
+    INSTPAT("1110 1000", call, J, 0, {
+        push_width(w, s->snpc);
+        s->dnpc = branch_target(s->snpc, imm, w);
+    });
     INSTPAT("1110 1001", jmp, J, 0, s->dnpc = branch_target(s->snpc, imm, w));
     INSTPAT("1110 1011", jmp, J, 1, s->dnpc = s->snpc + imm);
     INSTPAT("1110 1100", in, N, 1, Rw(R_EAX, X86_WIDTH_BYTE, x86_pio_read(s, Rr(R_EDX, X86_WIDTH_WORD), X86_WIDTH_BYTE)));
@@ -2381,7 +2371,11 @@ again:
     INSTPAT("1111 0101", cmc, N, 0, flag_set(FLAG_CF, !flag_get(FLAG_CF)));
     INSTPAT("1111 1000", clc, N, 0, flag_set(FLAG_CF, false));
     INSTPAT("1111 1001", stc, N, 0, flag_set(FLAG_CF, true));
-    INSTPAT("1111 1010", cli, N, 0, { require_interrupt_flag_privilege(s, "cli"); flag_set(FLAG_IF, false); cpu.sti_shadow = 0; });
+    INSTPAT("1111 1010", cli, N, 0, {
+        require_interrupt_flag_privilege(s, "cli");
+        flag_set(FLAG_IF, false);
+        cpu.sti_shadow = 0;
+    });
     INSTPAT("1111 1011", sti, N, 0, {
         bool was_enabled = flag_get(FLAG_IF);
         require_interrupt_flag_privilege(s, "sti");

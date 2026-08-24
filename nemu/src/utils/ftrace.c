@@ -120,8 +120,7 @@ static bool load_elf32(FILE *fp, const Elf32_Ehdr *eh)
         Elf32_Shdr strtab = shdrs[symtab.sh_link];
         char *strs = malloc(strtab.sh_size);
         Elf32_Sym *syms = malloc(symtab.sh_size);
-        ok = strs != NULL && syms != NULL &&
-             read_at(fp, strtab.sh_offset, strs, strtab.sh_size) &&
+        ok = strs != NULL && syms != NULL && read_at(fp, strtab.sh_offset, strs, strtab.sh_size) &&
              read_at(fp, symtab.sh_offset, syms, symtab.sh_size);
 
         size_t n = symtab.sh_size / sizeof(Elf32_Sym);
@@ -130,9 +129,7 @@ static bool load_elf32(FILE *fp, const Elf32_Ehdr *eh)
         {
             /* ftrace only needs named function ranges, not objects or section symbols. */
 
-            if (ELF32_ST_TYPE(syms[j].st_info) == STT_FUNC &&
-                syms[j].st_name < strtab.sh_size &&
-                syms[j].st_value != 0)
+            if (ELF32_ST_TYPE(syms[j].st_info) == STT_FUNC && syms[j].st_name < strtab.sh_size && syms[j].st_value != 0)
             {
                 ok = add_symbol(syms[j].st_value, syms[j].st_size, strs + syms[j].st_name);
             }
@@ -170,8 +167,7 @@ static bool load_elf64(FILE *fp, const Elf64_Ehdr *eh)
         Elf64_Shdr strtab = shdrs[symtab.sh_link];
         char *strs = malloc(strtab.sh_size);
         Elf64_Sym *syms = malloc(symtab.sh_size);
-        ok = strs != NULL && syms != NULL &&
-             read_at(fp, strtab.sh_offset, strs, strtab.sh_size) &&
+        ok = strs != NULL && syms != NULL && read_at(fp, strtab.sh_offset, strs, strtab.sh_size) &&
              read_at(fp, symtab.sh_offset, syms, symtab.sh_size);
 
         size_t n = symtab.sh_size / sizeof(Elf64_Sym);
@@ -180,9 +176,7 @@ static bool load_elf64(FILE *fp, const Elf64_Ehdr *eh)
         {
             /* ftrace only needs named function ranges, not objects or section symbols. */
 
-            if (ELF64_ST_TYPE(syms[j].st_info) == STT_FUNC &&
-                syms[j].st_name < strtab.sh_size &&
-                syms[j].st_value != 0)
+            if (ELF64_ST_TYPE(syms[j].st_info) == STT_FUNC && syms[j].st_name < strtab.sh_size && syms[j].st_value != 0)
             {
                 ok = add_symbol(syms[j].st_value, syms[j].st_size, strs + syms[j].st_name);
             }
@@ -215,10 +209,7 @@ void ftrace_init(const char *elf_file)
 
     unsigned char ident[EI_NIDENT];
     /* Validate the ELF magic before reading class-specific headers. */
-    bool ok = read_at(fp, 0, ident, sizeof(ident)) &&
-              ident[EI_MAG0] == ELFMAG0 &&
-              ident[EI_MAG1] == ELFMAG1 &&
-              ident[EI_MAG2] == ELFMAG2 &&
+    bool ok = read_at(fp, 0, ident, sizeof(ident)) && ident[EI_MAG0] == ELFMAG0 && ident[EI_MAG1] == ELFMAG1 && ident[EI_MAG2] == ELFMAG2 &&
               ident[EI_MAG3] == ELFMAG3;
 
     if (ok && ident[EI_CLASS] == ELFCLASS32)
@@ -273,9 +264,15 @@ void ftrace_ret(vaddr_t pc)
     log_write(FMT_WORD ": %*sret  [%s]\n", pc, call_depth * 2, "", name);
 }
 #else
-void ftrace_init(const char *elf_file) {}
+void ftrace_init(const char *elf_file)
+{
+}
 
-void ftrace_call(vaddr_t pc, vaddr_t target) {}
+void ftrace_call(vaddr_t pc, vaddr_t target)
+{
+}
 
-void ftrace_ret(vaddr_t pc) {}
+void ftrace_ret(vaddr_t pc)
+{
+}
 #endif

@@ -8,8 +8,7 @@ volatile uint32_t unalign_saved_mcause = 0;
 volatile uint32_t unalign_saved_mtval = 0;
 volatile uint32_t unalign_restore_mtvec = 0;
 
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".option push\n"
     ".option norvc\n"
     ".align 2\n"

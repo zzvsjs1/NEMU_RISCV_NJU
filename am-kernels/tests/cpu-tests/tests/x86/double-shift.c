@@ -2,19 +2,13 @@
 
 static uint32_t shld32_cl(uint32_t dest, uint32_t src, uint8_t count)
 {
-    asm volatile("shldl %%cl, %2, %0"
-                 : "+r"(dest)
-                 : "c"(count), "r"(src)
-                 : "cc");
+    asm volatile("shldl %%cl, %2, %0" : "+r"(dest) : "c"(count), "r"(src) : "cc");
     return dest;
 }
 
 static uint32_t shrd32_cl(uint32_t dest, uint32_t src, uint8_t count)
 {
-    asm volatile("shrdl %%cl, %2, %0"
-                 : "+r"(dest)
-                 : "c"(count), "r"(src)
-                 : "cc");
+    asm volatile("shrdl %%cl, %2, %0" : "+r"(dest) : "c"(count), "r"(src) : "cc");
     return dest;
 }
 
@@ -32,19 +26,13 @@ static uint32_t shrd32_imm(uint32_t dest, uint32_t src)
 
 static uint16_t shld16_cl(uint16_t dest, uint16_t src, uint8_t count)
 {
-    asm volatile("shldw %%cl, %2, %0"
-                 : "+r"(dest)
-                 : "c"(count), "r"(src)
-                 : "cc");
+    asm volatile("shldw %%cl, %2, %0" : "+r"(dest) : "c"(count), "r"(src) : "cc");
     return dest;
 }
 
 static uint16_t shrd16_cl(uint16_t dest, uint16_t src, uint8_t count)
 {
-    asm volatile("shrdw %%cl, %2, %0"
-                 : "+r"(dest)
-                 : "c"(count), "r"(src)
-                 : "cc");
+    asm volatile("shrdw %%cl, %2, %0" : "+r"(dest) : "c"(count), "r"(src) : "cc");
     return dest;
 }
 

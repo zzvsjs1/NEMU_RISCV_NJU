@@ -16,8 +16,7 @@ volatile uint64_t rv64_csr_restore_mtvec = 0;
  * instruction, restores mtvec, and then forces MPP=M before MRET so tests that
  * deliberately enter U-mode can continue running the following C code.
  */
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".option push\n"
     ".option norvc\n"
     ".align 2\n"
@@ -174,16 +173,15 @@ static void test_mret_restores_machine_mstatus_fields(void)
     before &= ~(MSTATUS_MIE | MSTATUS_MPIE | MSTATUS_MPP_MASK);
     before |= MSTATUS_MPIE | MSTATUS_MPP_M | MSTATUS_MPRV;
 
-    asm volatile(
-        "csrw mstatus, %[before]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        "csrr %[after], mstatus\n"
-        : [after] "=&r"(after)
-        : [before] "r"(before)
-        : "t0", "memory");
+    asm volatile("csrw mstatus, %[before]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 "csrr %[after], mstatus\n"
+                 : [after] "=&r"(after)
+                 : [before] "r"(before)
+                 : "t0", "memory");
 
     write_mstatus(old_mstatus);
 
@@ -222,32 +220,24 @@ static void test_mstatus_write_normalises_uxl_and_sxl(void)
      */
     for (uintptr_t incoming = 0; incoming <= MSTATUS_XLEN_VALUE_MASK; incoming++)
     {
-        uintptr_t requested = (old_mstatus & ~xlen_fields_mask) |
-                              (incoming << MSTATUS_UXL_SHIFT) |
-                              (MSTATUS_XLEN_64 << MSTATUS_SXL_SHIFT);
+        uintptr_t requested = (old_mstatus & ~xlen_fields_mask) | (incoming << MSTATUS_UXL_SHIFT) | (MSTATUS_XLEN_64 << MSTATUS_SXL_SHIFT);
 
         write_mstatus(requested);
         uintptr_t observed = read_mstatus();
 
-        check(((observed & MSTATUS_UXL_MASK) >> MSTATUS_UXL_SHIFT) ==
-              MSTATUS_XLEN_64);
-        check(((observed & MSTATUS_SXL_MASK) >> MSTATUS_SXL_SHIFT) ==
-              MSTATUS_XLEN_64);
+        check(((observed & MSTATUS_UXL_MASK) >> MSTATUS_UXL_SHIFT) == MSTATUS_XLEN_64);
+        check(((observed & MSTATUS_SXL_MASK) >> MSTATUS_SXL_SHIFT) == MSTATUS_XLEN_64);
     }
 
     for (uintptr_t incoming = 0; incoming <= MSTATUS_XLEN_VALUE_MASK; incoming++)
     {
-        uintptr_t requested = (old_mstatus & ~xlen_fields_mask) |
-                              (MSTATUS_XLEN_64 << MSTATUS_UXL_SHIFT) |
-                              (incoming << MSTATUS_SXL_SHIFT);
+        uintptr_t requested = (old_mstatus & ~xlen_fields_mask) | (MSTATUS_XLEN_64 << MSTATUS_UXL_SHIFT) | (incoming << MSTATUS_SXL_SHIFT);
 
         write_mstatus(requested);
         uintptr_t observed = read_mstatus();
 
-        check(((observed & MSTATUS_UXL_MASK) >> MSTATUS_UXL_SHIFT) ==
-              MSTATUS_XLEN_64);
-        check(((observed & MSTATUS_SXL_MASK) >> MSTATUS_SXL_SHIFT) ==
-              MSTATUS_XLEN_64);
+        check(((observed & MSTATUS_UXL_MASK) >> MSTATUS_UXL_SHIFT) == MSTATUS_XLEN_64);
+        check(((observed & MSTATUS_SXL_MASK) >> MSTATUS_SXL_SHIFT) == MSTATUS_XLEN_64);
     }
 
     write_mstatus(old_mstatus);
@@ -262,17 +252,16 @@ static void test_user_mode_ecall_and_csr_faults(void)
     user_mstatus &= ~MSTATUS_MPP_MASK;
     user_mstatus |= MSTATUS_MPIE;
 
-    asm volatile(
-        "csrw mstatus, %[status]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        "li a7, 42\n"
-        "ecall\n"
-        :
-        : [status] "r"(user_mstatus)
-        : "t0", "a7", "memory");
+    asm volatile("csrw mstatus, %[status]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 "li a7, 42\n"
+                 "ecall\n"
+                 :
+                 : [status] "r"(user_mstatus)
+                 : "t0", "a7", "memory");
 
     write_mstatus(old_mstatus);
 
@@ -285,16 +274,15 @@ static void test_user_mode_ecall_and_csr_faults(void)
     user_mstatus &= ~MSTATUS_MPP_MASK;
     user_mstatus |= MSTATUS_MPIE;
 
-    asm volatile(
-        "csrw mstatus, %[status]\n"
-        "la t0, 1f\n"
-        "csrw mepc, t0\n"
-        "mret\n"
-        "1:\n"
-        "csrr t1, mtvec\n"
-        :
-        : [status] "r"(user_mstatus)
-        : "t0", "t1", "memory");
+    asm volatile("csrw mstatus, %[status]\n"
+                 "la t0, 1f\n"
+                 "csrw mepc, t0\n"
+                 "mret\n"
+                 "1:\n"
+                 "csrr t1, mtvec\n"
+                 :
+                 : [status] "r"(user_mstatus)
+                 : "t0", "t1", "memory");
 
     write_mstatus(old_mstatus);
 

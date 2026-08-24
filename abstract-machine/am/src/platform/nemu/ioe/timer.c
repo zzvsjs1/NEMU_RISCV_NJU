@@ -33,18 +33,7 @@ static bool isLeapYear(int year)
 static int daysInMonth(int year, int month)
 {
     static const int monthDays[12] = {
-        31,
-        28,
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
     };
 
     if (month == 2 && isLeapYear(year))

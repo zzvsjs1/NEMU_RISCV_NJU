@@ -29,41 +29,28 @@
         *dest = concat(c_, name)(*src1, imm); \
     }
 
-#define def_rtl_compute_reg_imm(name) \
-    def_rtl_compute_reg(name) \
-        def_rtl_compute_imm(name)
+#define def_rtl_compute_reg_imm(name) def_rtl_compute_reg(name) def_rtl_compute_imm(name)
 
 // compute
-def_rtl_compute_reg_imm(add)
-    def_rtl_compute_reg_imm(sub)
-        def_rtl_compute_reg_imm(and)
-            def_rtl_compute_reg_imm(or)
-                def_rtl_compute_reg_imm(xor)
-                    def_rtl_compute_reg_imm(sll)
-                        def_rtl_compute_reg_imm(srl)
-                            def_rtl_compute_reg_imm(sra)
+def_rtl_compute_reg_imm(add) def_rtl_compute_reg_imm(sub) def_rtl_compute_reg_imm(and) def_rtl_compute_reg_imm(or) def_rtl_compute_reg_imm(xor)
+    def_rtl_compute_reg_imm(sll) def_rtl_compute_reg_imm(srl) def_rtl_compute_reg_imm(sra)
 
 #ifdef CONFIG_ISA64
-                                def_rtl_compute_reg_imm(addw)
-                                    def_rtl_compute_reg_imm(subw)
-                                        def_rtl_compute_reg_imm(sllw)
-                                            def_rtl_compute_reg_imm(srlw)
-                                                def_rtl_compute_reg_imm(sraw)
+        def_rtl_compute_reg_imm(addw) def_rtl_compute_reg_imm(subw) def_rtl_compute_reg_imm(sllw) def_rtl_compute_reg_imm(srlw)
+            def_rtl_compute_reg_imm(sraw)
 #define rtl_addiw rtl_addwi
 #define rtl_slliw rtl_sllwi
 #define rtl_srliw rtl_srlwi
 #define rtl_sraiw rtl_srawi
 #endif
 
-                                                    static inline def_rtl(setrelop, uint32_t relop, rtlreg_t *dest,
-                                                                          const rtlreg_t *src1, const rtlreg_t *src2)
+                static inline def_rtl(setrelop, uint32_t relop, rtlreg_t *dest, const rtlreg_t *src1, const rtlreg_t *src2)
 {
     /* Convert a relation comparison into the architectural 0/1 integer result. */
     *dest = interpret_relop(relop, *src1, *src2);
 }
 
-static inline def_rtl(setrelopi, uint32_t relop, rtlreg_t *dest,
-                      const rtlreg_t *src1, sword_t imm)
+static inline def_rtl(setrelopi, uint32_t relop, rtlreg_t *dest, const rtlreg_t *src1, sword_t imm)
 {
     /* Immediate variant of setrelop; useful for instructions such as SLTI. */
     *dest = interpret_relop(relop, *src1, imm);
@@ -71,25 +58,14 @@ static inline def_rtl(setrelopi, uint32_t relop, rtlreg_t *dest,
 
 // mul/div
 
-def_rtl_compute_reg(mulu_lo)
-    def_rtl_compute_reg(mulu_hi)
-        def_rtl_compute_reg(muls_hi)
-            def_rtl_compute_reg(mulsu_hi)
-                def_rtl_compute_reg(divu_q)
-                    def_rtl_compute_reg(divu_r)
-                        def_rtl_compute_reg(divs_q)
-                            def_rtl_compute_reg(divs_r)
+def_rtl_compute_reg(mulu_lo) def_rtl_compute_reg(mulu_hi) def_rtl_compute_reg(muls_hi) def_rtl_compute_reg(mulsu_hi) def_rtl_compute_reg(divu_q)
+    def_rtl_compute_reg(divu_r) def_rtl_compute_reg(divs_q) def_rtl_compute_reg(divs_r)
 
 #ifdef CONFIG_ISA64
-                                def_rtl_compute_reg(mulw)
-                                    def_rtl_compute_reg(divw)
-                                        def_rtl_compute_reg(divuw)
-                                            def_rtl_compute_reg(remw)
-                                                def_rtl_compute_reg(remuw)
+        def_rtl_compute_reg(mulw) def_rtl_compute_reg(divw) def_rtl_compute_reg(divuw) def_rtl_compute_reg(remw) def_rtl_compute_reg(remuw)
 #endif
 
-                                                    static inline def_rtl(div64u_q, rtlreg_t *dest,
-                                                                          const rtlreg_t *src1_hi, const rtlreg_t *src1_lo, const rtlreg_t *src2)
+            static inline def_rtl(div64u_q, rtlreg_t *dest, const rtlreg_t *src1_hi, const rtlreg_t *src1_lo, const rtlreg_t *src2)
 {
     /*
      * Divide a 64-bit unsigned value built from two 32-bit halves.  Some 32-bit
@@ -101,8 +77,7 @@ def_rtl_compute_reg(mulu_lo)
     *dest = dividend / divisor;
 }
 
-static inline def_rtl(div64u_r, rtlreg_t *dest,
-                      const rtlreg_t *src1_hi, const rtlreg_t *src1_lo, const rtlreg_t *src2)
+static inline def_rtl(div64u_r, rtlreg_t *dest, const rtlreg_t *src1_hi, const rtlreg_t *src1_lo, const rtlreg_t *src2)
 {
     /* Remainder half of the unsigned 64-by-32 division helper above. */
     uint64_t dividend = ((uint64_t)(*src1_hi) << 32) | (*src1_lo);
@@ -110,8 +85,7 @@ static inline def_rtl(div64u_r, rtlreg_t *dest,
     *dest = dividend % divisor;
 }
 
-static inline def_rtl(div64s_q, rtlreg_t *dest,
-                      const rtlreg_t *src1_hi, const rtlreg_t *src1_lo, const rtlreg_t *src2)
+static inline def_rtl(div64s_q, rtlreg_t *dest, const rtlreg_t *src1_hi, const rtlreg_t *src1_lo, const rtlreg_t *src2)
 {
     /* Signed quotient for a 64-bit dividend assembled from high/low halves. */
     int64_t dividend = ((uint64_t)(*src1_hi) << 32) | (*src1_lo);
@@ -119,8 +93,7 @@ static inline def_rtl(div64s_q, rtlreg_t *dest,
     *dest = dividend / divisor;
 }
 
-static inline def_rtl(div64s_r, rtlreg_t *dest,
-                      const rtlreg_t *src1_hi, const rtlreg_t *src1_lo, const rtlreg_t *src2)
+static inline def_rtl(div64s_r, rtlreg_t *dest, const rtlreg_t *src1_hi, const rtlreg_t *src1_lo, const rtlreg_t *src2)
 {
     /* Signed remainder for the same 64-by-32 division form. */
     int64_t dividend = ((uint64_t)(*src1_hi) << 32) | (*src1_lo);
@@ -220,12 +193,7 @@ static inline def_rtl(jr, rtlreg_t *target)
     s->dnpc = *target;
 }
 
-static inline def_rtl(
-    jrelop,
-    const RELOP_TYPE relop,
-    const rtlreg_t *src1,
-    const rtlreg_t *src2,
-    vaddr_t target)
+static inline def_rtl(jrelop, const RELOP_TYPE relop, const rtlreg_t *src1, const rtlreg_t *src2, vaddr_t target)
 {
     /*
      * Conditional jump shared by table-interpreter ISAs.  If the relation is

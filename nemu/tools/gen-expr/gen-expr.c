@@ -23,13 +23,12 @@
 // this should be enough
 static char buf[65536] = {};
 static char code_buf[65536 + 128] = {}; // a little larger than `buf`
-static char *code_format =
-    "#include <stdio.h>\n"
-    "int main() { "
-    "  unsigned result = %s; "
-    "  printf(\"%%u\", result); "
-    "  return 0; "
-    "}";
+static char *code_format = "#include <stdio.h>\n"
+                           "int main() { "
+                           "  unsigned result = %s; "
+                           "  printf(\"%%u\", result); "
+                           "  return 0; "
+                           "}";
 
 static void gen_rand_expr()
 {

@@ -10,8 +10,7 @@ static struct EventHandler
     const char *pattern;
     int length;
     void (WindowManager::*handler)(const char *evt);
-} handlers[] = {
-    FOREACH_EVENT(DECL)};
+} handlers[] = {FOREACH_EVENT(DECL)};
 
 void WindowManager::handle_event(const char *evt)
 {

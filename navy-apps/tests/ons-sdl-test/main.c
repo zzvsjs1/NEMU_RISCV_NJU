@@ -197,8 +197,7 @@ static void check_image_rwops(void)
      * then IMG_Load_RW should accept a ramdisk BMP copied into memory. This is
      * the same split used by ONScripter asset loading.
      */
-    static const uint8_t png_sig[8] = {
-        0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+    static const uint8_t png_sig[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
 
     SDL_RWops *sig = SDL_RWFromMem((void *)png_sig, sizeof(png_sig));
     assert(sig != NULL);
@@ -236,9 +235,7 @@ static void check_savebmp_rwops(void)
      * file and closes the stream when requested, matching SDL_SaveBMP_RW(..., 1).
      */
     const char *path = "ons-sdl-savebmp-test.bmp";
-    SDL_Surface *surface = SDL_CreateRGBSurface(0, 2, 2, 32,
-                                                DEFAULT_RMASK, DEFAULT_GMASK,
-                                                DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *surface = SDL_CreateRGBSurface(0, 2, 2, 32, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
     assert(surface != NULL);
 
     uint32_t *pixels = (uint32_t *)surface->pixels;

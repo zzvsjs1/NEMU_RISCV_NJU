@@ -39,31 +39,30 @@ static struct rule
     const char *regex;
     int token_type;
     const char *t;
-} rules[] =
-    {
-        {"==", TK_EQ, "=="},
-        {"!=", TK_NE, "!="},
-        {"\\+", TK_ADD, "+"},
-        {"-", TK_MINUS, "-"},
-        {"\\*", TK_MUL, "\\"},
-        {"/", TK_DIV, "/"},
-        {"\\(", TK_L_BRACKET, "("},
-        {"\\)", TK_R_BRACKET, ")"},
-        // Numeric literals with optional unsigned suffix 'u' or 'U'.
-        {"0x[0-9a-fA-F]+[uU]?", TK_HEX_NUM, ""},
-        {"0b[01]+[uU]?", TK_B_NUM, ""},
-        {"[[:digit:]]+[uU]?", TK_DEC_NUM, ""},
-        {"&&", TK_LOGIC_AND, "&&"}, // Must before bitwise and
-        {"\\|\\|", TK_LOGIC_OR, "||"},
-        {"&", TK_BITWISE_AND, "&"},
-        {"\\|", TK_BITWISE_OR, "|"},
-        {"\\^", TK_XOR, "^"},
-        {"<=", TK_LE, "<="},
-        {">=", TK_GE, ">="},
-        {"<", TK_LESS, "<"},
-        {">", TK_GREATER, ">"},
-        {"%", TK_MOD, "%"},
-        {"\\$[a-zA-Z0-9]+", TK_REGS, "$"},
+} rules[] = {
+    {"==", TK_EQ, "=="},
+    {"!=", TK_NE, "!="},
+    {"\\+", TK_ADD, "+"},
+    {"-", TK_MINUS, "-"},
+    {"\\*", TK_MUL, "\\"},
+    {"/", TK_DIV, "/"},
+    {"\\(", TK_L_BRACKET, "("},
+    {"\\)", TK_R_BRACKET, ")"},
+    // Numeric literals with optional unsigned suffix 'u' or 'U'.
+    {"0x[0-9a-fA-F]+[uU]?", TK_HEX_NUM, ""},
+    {"0b[01]+[uU]?", TK_B_NUM, ""},
+    {"[[:digit:]]+[uU]?", TK_DEC_NUM, ""},
+    {"&&", TK_LOGIC_AND, "&&"}, // Must before bitwise and
+    {"\\|\\|", TK_LOGIC_OR, "||"},
+    {"&", TK_BITWISE_AND, "&"},
+    {"\\|", TK_BITWISE_OR, "|"},
+    {"\\^", TK_XOR, "^"},
+    {"<=", TK_LE, "<="},
+    {">=", TK_GE, ">="},
+    {"<", TK_LESS, "<"},
+    {">", TK_GREATER, ">"},
+    {"%", TK_MOD, "%"},
+    {"\\$[a-zA-Z0-9]+", TK_REGS, "$"},
 };
 
 #define NR_REGEX ARRLEN(rules)
@@ -109,7 +108,9 @@ static int numOfTokens = 0;
 
 static bool isBiOperator(const TokenType tk)
 {
-    return tk == TK_ADD || tk == TK_MINUS || tk == TK_EQ || tk == TK_NE || tk == TK_MUL || tk == TK_DIV || tk == TK_LOGIC_AND || tk == TK_LOGIC_OR || tk == TK_BITWISE_AND || tk == TK_BITWISE_OR || tk == TK_XOR || tk == TK_LE || tk == TK_GE || tk == TK_LESS || tk == TK_GREATER || tk == TK_MOD;
+    return tk == TK_ADD || tk == TK_MINUS || tk == TK_EQ || tk == TK_NE || tk == TK_MUL || tk == TK_DIV || tk == TK_LOGIC_AND || tk == TK_LOGIC_OR ||
+           tk == TK_BITWISE_AND || tk == TK_BITWISE_OR || tk == TK_XOR || tk == TK_LE || tk == TK_GE || tk == TK_LESS || tk == TK_GREATER ||
+           tk == TK_MOD;
 }
 
 static bool isUnaryOperator(const TokenType tk)
@@ -261,9 +262,7 @@ static bool make_token(char *e)
 
                 if (substr_len > MAXIMUM_STRING_SIZE)
                 {
-                    PRI_ERR("Since buffer size is only %d. The length for string %d is too long.\n",
-                            MAXIMUM_STRING_SIZE,
-                            substr_len);
+                    PRI_ERR("Since buffer size is only %d. The length for string %d is too long.\n", MAXIMUM_STRING_SIZE, substr_len);
 
                     return false;
                 }
@@ -607,8 +606,7 @@ static word_t eval(int start, int end, bool *success)
     if (end < start)
     {
         // Do not access tokens[start] or tokens[end] here, the range is invalid.
-        PRI_ERR("Invalid expression range: start=%d, end=%d, numOfTokens=%d\n",
-                start, end, numOfTokens);
+        PRI_ERR("Invalid expression range: start=%d, end=%d, numOfTokens=%d\n", start, end, numOfTokens);
         *success = false;
         return -1;
     }

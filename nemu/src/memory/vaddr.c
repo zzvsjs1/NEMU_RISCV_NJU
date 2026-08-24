@@ -11,11 +11,9 @@ static inline word_t rv32_effective_mem_priv(int type)
         return cpu.prvi;
     }
 
-    if (cpu.prvi == RISCV32_PRIV_M &&
-        (cpu.csr.mstatus & RISCV_MSTATUS_MPRV) != 0)
+    if (cpu.prvi == RISCV32_PRIV_M && (cpu.csr.mstatus & RISCV_MSTATUS_MPRV) != 0)
     {
-        return (cpu.csr.mstatus & RISCV_MSTATUS_MPP_MASK) >>
-               RISCV_MSTATUS_MPP_SHIFT;
+        return (cpu.csr.mstatus & RISCV_MSTATUS_MPP_MASK) >> RISCV_MSTATUS_MPP_SHIFT;
     }
 
     return cpu.prvi;
@@ -23,9 +21,7 @@ static inline word_t rv32_effective_mem_priv(int type)
 
 static inline bool rv32_mmu_direct_mode(int type)
 {
-    return likely((cpu.csr.satp & RISCV32_SATP_MODE_MASK) ==
-                      RISCV_SATP_MODE_BARE ||
-                  rv32_effective_mem_priv(type) == RISCV32_PRIV_M);
+    return likely((cpu.csr.satp & RISCV32_SATP_MODE_MASK) == RISCV_SATP_MODE_BARE || rv32_effective_mem_priv(type) == RISCV32_PRIV_M);
 }
 #endif
 
@@ -232,10 +228,8 @@ void vaddr_write(vaddr_t addr, int len, word_t data)
         {
             int first_len = PAGE_SIZE - (int)(addr & PAGE_MASK);
             int second_len = len - first_len;
-            paddr_t first_pa = translated_paddr_or_panic(addr, first_len,
-                                                         MEM_TYPE_WRITE, "vaddr_write");
-            paddr_t second_pa = translated_paddr_or_panic(addr + (vaddr_t)first_len, second_len,
-                                                          MEM_TYPE_WRITE, "vaddr_write");
+            paddr_t first_pa = translated_paddr_or_panic(addr, first_len, MEM_TYPE_WRITE, "vaddr_write");
+            paddr_t second_pa = translated_paddr_or_panic(addr + (vaddr_t)first_len, second_len, MEM_TYPE_WRITE, "vaddr_write");
 
             paddr_write(first_pa, first_len, data);
             paddr_write(second_pa, second_len, data >> (first_len * 8));

@@ -43,10 +43,8 @@ static void check_32_bit_negative_x_clip(void)
     for (uint32_t i = 0; i < sizeof(backing) / sizeof(backing[0]); i++)
         backing[i] = 1000u + i;
 
-    SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(&backing[4], 4, 3, 32,
-                                                    4 * (int)sizeof(uint32_t),
-                                                    DEFAULT_RMASK, DEFAULT_GMASK,
-                                                    DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *surface =
+        SDL_CreateRGBSurfaceFrom(&backing[4], 4, 3, 32, 4 * (int)sizeof(uint32_t), DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
     assert(surface != NULL);
 
     for (uint32_t i = 0; i < 12; i++)
@@ -73,9 +71,7 @@ static void check_8_bit_negative_x_clip(void)
     uint8_t backing[32];
     memset(backing, 0xee, sizeof(backing));
 
-    SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(&backing[4], 4, 3, 8, 4,
-                                                    DEFAULT_RMASK, DEFAULT_GMASK,
-                                                    DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(&backing[4], 4, 3, 8, 4, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
     assert(surface != NULL);
 
     for (uint8_t i = 0; i < 12; i++)

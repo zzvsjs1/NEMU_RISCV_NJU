@@ -333,8 +333,7 @@
 
 #define EXT_CSD_CARD_TYPE_HS_26 (1 << 0) /* Card can run at 26MHz */
 #define EXT_CSD_CARD_TYPE_HS_52 (1 << 1) /* Card can run at 52MHz */
-#define EXT_CSD_CARD_TYPE_HS (EXT_CSD_CARD_TYPE_HS_26 | \
-                              EXT_CSD_CARD_TYPE_HS_52)
+#define EXT_CSD_CARD_TYPE_HS (EXT_CSD_CARD_TYPE_HS_26 | EXT_CSD_CARD_TYPE_HS_52)
 #define EXT_CSD_CARD_TYPE_DDR_1_8V (1 << 2) /* Card can run at 52MHz */
                                             /* DDR mode @1.8V or 3V I/O */
 #define EXT_CSD_CARD_TYPE_DDR_1_2V (1 << 3) /* Card can run at 52MHz */
@@ -343,12 +342,10 @@
 #define EXT_CSD_CARD_TYPE_HS200_1_8V (1 << 4) /* Card can run at 200MHz */
 #define EXT_CSD_CARD_TYPE_HS200_1_2V (1 << 5) /* Card can run at 200MHz */
                                               /* SDR mode @1.2V I/O */
-#define EXT_CSD_CARD_TYPE_HS200 (EXT_CSD_CARD_TYPE_HS200_1_8V | \
-                                 EXT_CSD_CARD_TYPE_HS200_1_2V)
+#define EXT_CSD_CARD_TYPE_HS200 (EXT_CSD_CARD_TYPE_HS200_1_8V | EXT_CSD_CARD_TYPE_HS200_1_2V)
 #define EXT_CSD_CARD_TYPE_HS400_1_8V (1 << 6) /* Card can run at 200MHz DDR, 1.8V */
 #define EXT_CSD_CARD_TYPE_HS400_1_2V (1 << 7) /* Card can run at 200MHz DDR, 1.2V */
-#define EXT_CSD_CARD_TYPE_HS400 (EXT_CSD_CARD_TYPE_HS400_1_8V | \
-                                 EXT_CSD_CARD_TYPE_HS400_1_2V)
+#define EXT_CSD_CARD_TYPE_HS400 (EXT_CSD_CARD_TYPE_HS400_1_8V | EXT_CSD_CARD_TYPE_HS400_1_2V)
 #define EXT_CSD_CARD_TYPE_HS400ES (1 << 8) /* Card can run at HS400ES */
 
 #define EXT_CSD_BUS_WIDTH_1 0           /* Card is in 1 bit mode */

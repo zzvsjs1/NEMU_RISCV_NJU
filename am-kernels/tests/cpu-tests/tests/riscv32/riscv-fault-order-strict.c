@@ -8,8 +8,7 @@ volatile uint32_t fault_order_saved_mcause = 0;
 volatile uint32_t fault_order_saved_mtval = 0;
 volatile uint32_t fault_order_restore_mtvec = 0;
 
-asm(
-    ".section .text\n"
+asm(".section .text\n"
     ".option push\n"
     ".option norvc\n"
     ".align 2\n"
@@ -81,13 +80,12 @@ static void test_faulting_load_does_not_write_destination(void)
     uintptr_t after = 0;
 
     prepare_fault_order_trap();
-    asm volatile(
-        "li s1, 0x13579\n"
-        "lw s1, 0(%[bad])\n"
-        "mv %[after], s1\n"
-        : [after] "=&r"(after)
-        : [bad] "r"(bad)
-        : "s1", "memory");
+    asm volatile("li s1, 0x13579\n"
+                 "lw s1, 0(%[bad])\n"
+                 "mv %[after], s1\n"
+                 : [after] "=&r"(after)
+                 : [bad] "r"(bad)
+                 : "s1", "memory");
 
     check(fault_order_saved_mcause == 4u);
     check(fault_order_saved_mtval == bad);
@@ -104,10 +102,7 @@ static void test_faulting_store_does_not_write_memory(void)
 
     fault_order_word = 0x11223344u;
     prepare_fault_order_trap();
-    asm volatile("sw %[value], 0(%[bad])"
-                 :
-                 : [bad] "r"(bad), [value] "r"(0xaabbccddu)
-                 : "memory");
+    asm volatile("sw %[value], 0(%[bad])" : : [bad] "r"(bad), [value] "r"(0xaabbccddu) : "memory");
 
     check(fault_order_saved_mcause == 6u);
     check(fault_order_saved_mtval == bad);
@@ -126,17 +121,16 @@ static void test_jalr_rd_equal_rs1_traps_before_link_write(void)
     uintptr_t after = 0;
 
     prepare_fault_order_trap();
-    asm volatile(
-        "la s2, 1f\n"
-        "addi s2, s2, 2\n"
-        "mv %[bad], s2\n"
-        "mv %[before], s2\n"
-        "jalr s2, 0(s2)\n"
-        "1:\n"
-        "mv %[after], s2\n"
-        : [bad] "=&r"(bad), [before] "=&r"(before), [after] "=&r"(after)
-        :
-        : "s2", "memory");
+    asm volatile("la s2, 1f\n"
+                 "addi s2, s2, 2\n"
+                 "mv %[bad], s2\n"
+                 "mv %[before], s2\n"
+                 "jalr s2, 0(s2)\n"
+                 "1:\n"
+                 "mv %[after], s2\n"
+                 : [bad] "=&r"(bad), [before] "=&r"(before), [after] "=&r"(after)
+                 :
+                 : "s2", "memory");
 
     check(fault_order_saved_mcause == 0u);
     check(fault_order_saved_mtval == bad);

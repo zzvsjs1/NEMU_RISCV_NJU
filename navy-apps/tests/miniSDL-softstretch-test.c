@@ -44,22 +44,7 @@ static void check_scaled_pixels(SDL_Surface *dst)
      * displays.
      */
     static const uint8_t expected[16] = {
-        1,
-        1,
-        2,
-        2,
-        1,
-        1,
-        2,
-        2,
-        3,
-        3,
-        4,
-        4,
-        3,
-        3,
-        4,
-        4,
+        1, 1, 2, 2, 1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 4, 4,
     };
 
     assert(memcmp(dst->pixels, expected, sizeof(expected)) == 0);
@@ -67,12 +52,9 @@ static void check_scaled_pixels(SDL_Surface *dst)
 
 int main(void)
 {
-    SDL_Surface *src = SDL_CreateRGBSurface(0, 2, 2, 8,
-                                            DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
-    SDL_Surface *dst = SDL_CreateRGBSurface(0, 4, 4, 8,
-                                            DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
-    SDL_Surface *dst_null_rect = SDL_CreateRGBSurface(0, 4, 4, 8,
-                                                      DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *src = SDL_CreateRGBSurface(0, 2, 2, 8, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *dst = SDL_CreateRGBSurface(0, 4, 4, 8, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
+    SDL_Surface *dst_null_rect = SDL_CreateRGBSurface(0, 4, 4, 8, DEFAULT_RMASK, DEFAULT_GMASK, DEFAULT_BMASK, DEFAULT_AMASK);
 
     fill_source(src);
 

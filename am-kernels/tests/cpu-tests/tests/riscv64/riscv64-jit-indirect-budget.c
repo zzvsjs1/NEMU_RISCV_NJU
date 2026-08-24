@@ -18,37 +18,35 @@
  * Three short calls first compile, fill, and execute this exact PIC edge; the
  * long call must reject it before entering the already-compiled target.
  */
-__attribute__((noinline)) static uint64_t
-run_indirect_pic_budget_case(uint64_t laps)
+__attribute__((noinline)) static uint64_t run_indirect_pic_budget_case(uint64_t laps)
 {
     uint64_t out = 0;
 
-    asm volatile(
-        ".option push\n"
-        ".option norvc\n"
-        "  fence.i\n"
-        "1:\n"
-        ".rept 70\n"
-        "  addi %[out], %[out], 1\n"
-        ".endr\n"
-        "  addi %[laps], %[laps], -1\n"
-        "  bnez %[laps], 1b\n"
-        "  la t0, 2f\n"
-        "  jalr t1, 0(t0)\n"
-        "2:\n"
-        "  beq zero, zero, 3f\n"
-        ".rept 180\n"
-        "  addi %[out], %[out], 1\n"
-        ".endr\n"
-        "3:\n"
-        "  fence\n"
-        ".rept 179\n"
-        "  addi %[out], %[out], 1\n"
-        ".endr\n"
-        ".option pop\n"
-        : [out] "+&r"(out), [laps] "+&r"(laps)
-        :
-        : "t0", "t1", "memory");
+    asm volatile(".option push\n"
+                 ".option norvc\n"
+                 "  fence.i\n"
+                 "1:\n"
+                 ".rept 70\n"
+                 "  addi %[out], %[out], 1\n"
+                 ".endr\n"
+                 "  addi %[laps], %[laps], -1\n"
+                 "  bnez %[laps], 1b\n"
+                 "  la t0, 2f\n"
+                 "  jalr t1, 0(t0)\n"
+                 "2:\n"
+                 "  beq zero, zero, 3f\n"
+                 ".rept 180\n"
+                 "  addi %[out], %[out], 1\n"
+                 ".endr\n"
+                 "3:\n"
+                 "  fence\n"
+                 ".rept 179\n"
+                 "  addi %[out], %[out], 1\n"
+                 ".endr\n"
+                 ".option pop\n"
+                 : [out] "+&r"(out), [laps] "+&r"(laps)
+                 :
+                 : "t0", "t1", "memory");
 
     return out;
 }
