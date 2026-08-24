@@ -4,7 +4,7 @@ TabWidth: 4
 UseTab: Never
 BreakBeforeBraces: Allman
 AlignEscapedNewlines: DontAlign
-ColumnLimit: 140
+ColumnLimit: 150
 SortIncludes: Never
 ReflowComments: true
 SeparateDefinitionBlocks: Always

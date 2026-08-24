@@ -442,6 +442,54 @@ typedef enum
     RV64_JIT_COMPILE_HAS_TERMINAL_EXIT,
 } rv64_jit_compile_exit_state_t;
 
+/* Describe whether the block pre-scan proved a native self-backedge. */
+typedef enum
+{
+    JIT_BACKEDGE_NONE,
+    JIT_BACKEDGE_ORDINARY,
+    JIT_BACKEDGE_STABLE,
+} jit_backedge_mode_t;
+
+/* Immutable block-level inputs needed only while selecting one emitter. */
+typedef struct
+{
+    vaddr_t start_pc;
+    const uint8_t *loop_body_entry;
+    jit_backedge_mode_t backedge_mode;
+} jit_block_emit_plan_t;
+
+/* Values which change for each guest instruction sent to the dispatcher. */
+typedef struct
+{
+    uint32_t instr;
+    vaddr_t pc;
+    uint32_t completed_before;
+    bool source_uses_data_translation_state;
+} jit_instruction_emit_request_t;
+
+/* Successful stop kinds retain their distinct block publication semantics. */
+typedef enum
+{
+    JIT_INSTRUCTION_EMIT_FAILED = 0,
+    JIT_INSTRUCTION_EMIT_CONTINUE,
+    JIT_INSTRUCTION_EMIT_STOP_FP_MEMORY,
+    JIT_INSTRUCTION_EMIT_STOP_JUMP,
+    JIT_INSTRUCTION_EMIT_STOP_CHAINED_LOOP,
+} jit_instruction_emit_kind_t;
+
+/* Instruction-local effects which later direct links must guard. */
+typedef enum
+{
+    JIT_INSTRUCTION_EFFECT_NONE = 0,
+    JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION = 1u << 0,
+} jit_instruction_emit_effect_t;
+
+typedef struct
+{
+    jit_instruction_emit_kind_t kind;
+    uint32_t effects;
+} jit_instruction_emit_outcome_t;
+
 /* Everything needed to publish one fully emitted native region. */
 typedef struct
 {
@@ -663,6 +711,117 @@ static void jit_record_compilation_stats(const rv64_jit_publish_info_t *info,
     JIT_STAT_ADD(compiled_insns, info->compiled_insn_count);
 }
 
+static jit_instruction_emit_outcome_t jit_make_instruction_emit_outcome(jit_instruction_emit_kind_t kind, uint32_t effects)
+{
+    return (jit_instruction_emit_outcome_t){.kind = kind, .effects = effects};
+}
+
+/*
+ * Select and invoke the emitter for one guest instruction.
+ *
+ * This function deliberately owns only opcode selection. The caller still
+ * owns transactional rollback, source metadata, block-level state, instruction
+ * counting and publication. A failed emitter is therefore returned unchanged;
+ * the caller inspects the writer's attempt-wide overflow flag only after it has
+ * restored the instruction checkpoint.
+ */
+static jit_instruction_emit_outcome_t
+jit_emit_instruction(rv64_jit_writer_t *w,
+                     rv64_jit_reg_cache_t *regs,
+                     rv64_jit_mmio_route_builder_t *mmio_routes,
+                     const jit_block_emit_plan_t *plan,
+                     const jit_instruction_emit_request_t *request)
+{
+    const uint32_t opcode = request->instr & RV64_OPCODE_MASK;
+
+#ifdef CONFIG_RISCV_FPU
+    if (jit_opcode_is_fp(opcode))
+    {
+        bool fp_ends_block = false;
+
+        if (!rv64_jit_emit_fp_instr(w, regs, request->instr, request->pc, request->completed_before, &fp_ends_block))
+        {
+            return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_FAILED, JIT_INSTRUCTION_EFFECT_NONE);
+        }
+
+        const bool uses_data_translation = rv64_jit_decode_fp_memory(request->instr) != RV64_JIT_FP_MEMORY_INVALID &&
+                                           (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != RV64_JIT_SATP_MODE_BARE;
+
+        return jit_make_instruction_emit_outcome(
+            fp_ends_block ? JIT_INSTRUCTION_EMIT_STOP_FP_MEMORY : JIT_INSTRUCTION_EMIT_CONTINUE,
+            uses_data_translation ? JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION : JIT_INSTRUCTION_EFFECT_NONE);
+    }
+#endif
+
+    if (opcode == RV64_OPCODE_JAL || opcode == RV64_OPCODE_JALR)
+    {
+        if (!rv64_jit_emit_jump_instr(w, regs, request->instr, request->pc, request->completed_before, request->source_uses_data_translation_state))
+        {
+            return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_FAILED, JIT_INSTRUCTION_EFFECT_NONE);
+        }
+
+        return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_STOP_JUMP, JIT_INSTRUCTION_EFFECT_NONE);
+    }
+
+    if (opcode == RV64_OPCODE_LOAD)
+    {
+        /*
+         * A guarded load may side-exit with zero completed instructions when
+         * it is first in the block. The dispatcher then lets the interpreter
+         * execute the unsafe access.
+         */
+        if (!rv64_jit_emit_load_instr(w, regs, request->instr, request->pc, request->completed_before, mmio_routes))
+        {
+            return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_FAILED, JIT_INSTRUCTION_EFFECT_NONE);
+        }
+
+        return jit_make_instruction_emit_outcome(
+            JIT_INSTRUCTION_EMIT_CONTINUE,
+            (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != RV64_JIT_SATP_MODE_BARE
+                ? JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION : JIT_INSTRUCTION_EFFECT_NONE);
+    }
+
+    if (opcode == RV64_OPCODE_STORE)
+    {
+        /*
+         * Safe PMEM stores continue natively. Faulting, MMIO, source-writing
+         * and page-table-sensitive cases retain their established side exits.
+         */
+        if (!rv64_jit_emit_store_instr(w, regs, request->instr, request->pc, request->pc + RV64_INSN_SIZE, request->completed_before, mmio_routes))
+        {
+            return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_FAILED, JIT_INSTRUCTION_EFFECT_NONE);
+        }
+
+        return jit_make_instruction_emit_outcome(
+            JIT_INSTRUCTION_EMIT_CONTINUE,
+            (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != RV64_JIT_SATP_MODE_BARE
+                ? JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION : JIT_INSTRUCTION_EFFECT_NONE);
+    }
+
+    if (opcode == RV64_OPCODE_BRANCH)
+    {
+        const bool can_chain = plan->backedge_mode != JIT_BACKEDGE_NONE;
+        const bool stable = plan->backedge_mode == JIT_BACKEDGE_STABLE;
+        bool emitted_native_backedge = false;
+
+        if (!rv64_jit_emit_branch(w, regs, request->instr, request->pc, plan->start_pc, plan->loop_body_entry, can_chain, stable,
+                                  &emitted_native_backedge, request->completed_before + 1u, request->source_uses_data_translation_state))
+        {
+            return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_FAILED, JIT_INSTRUCTION_EFFECT_NONE);
+        }
+
+        return jit_make_instruction_emit_outcome(
+            emitted_native_backedge ? JIT_INSTRUCTION_EMIT_STOP_CHAINED_LOOP : JIT_INSTRUCTION_EMIT_CONTINUE, JIT_INSTRUCTION_EFFECT_NONE);
+    }
+
+    if (!rv64_jit_emit_instr(w, regs, request->instr, request->pc, request->completed_before + 1u))
+    {
+        return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_FAILED, JIT_INSTRUCTION_EFFECT_NONE);
+    }
+
+    return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_CONTINUE, JIT_INSTRUCTION_EFFECT_NONE);
+}
+
 /*
  * Compile one native region starting at the current guest PC.
  *
@@ -782,6 +941,19 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         loop_body_entry = w.cur;
     }
 
+    jit_backedge_mode_t backedge_mode = JIT_BACKEDGE_NONE;
+
+    if (loop_scan.found_self_backedge)
+    {
+        backedge_mode = loop_scan.stable_reg_count != 0 ? JIT_BACKEDGE_STABLE : JIT_BACKEDGE_ORDINARY;
+    }
+
+    const jit_block_emit_plan_t emit_plan = {
+        .start_pc = pc,
+        .loop_body_entry = loop_body_entry,
+        .backedge_mode = backedge_mode,
+    };
+
     vaddr_t guest_pc = pc;
     uint32_t compiled_insn_count = 0;
     rv64_jit_source_builder_t source = {0};
@@ -817,7 +989,6 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
 
         const uint32_t instr =
             (uint32_t)vaddr_ifetch(guest_pc, RV64_INSN_SIZE);
-        const uint32_t opcode = instr & RV64_OPCODE_MASK;
         uint32_t current_uses = 0;
         uint32_t current_defs = 0;
         bool current_terminal = false;
@@ -850,7 +1021,6 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
         };
         rv64_jit_emitter_checkpoint_capture(
             &instr_snapshot.emitter, &w, &regs, &mmio_routes);
-        bool stop_after_instruction = false;
 
         if (!rv64_jit_source_builder_append(&source, instruction_paddr,
                                             RV64_INSN_SIZE))
@@ -860,174 +1030,56 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
             break;
         }
 
-#ifdef CONFIG_RISCV_FPU
-        if (jit_opcode_is_fp(opcode))
-        {
-            bool fp_ends_block = false;
+        const jit_instruction_emit_request_t emit_request = {
+            .instr = instr,
+            .pc = guest_pc,
+            .completed_before = compiled_insn_count,
+            .source_uses_data_translation_state = needs_data_translation_guard,
+        };
+        const jit_instruction_emit_outcome_t emit_outcome = jit_emit_instruction(&w, &regs, &mmio_routes, &emit_plan, &emit_request);
 
-            if (!rv64_jit_emit_fp_instr(&w, &regs, instr, guest_pc, compiled_insn_count, &fp_ends_block))
-            {
-                if (!jit_handle_emit_failure(
-                        &w, &regs, &source, &ifetch_refs, &mmio_routes,
-                        &instr_snapshot, instr, &block_end_reason,
-                        arena_overflowed))
-                {
-                    rv64_jit_emitter_checkpoint_restore(
-                        &attempt_checkpoint, &w, &regs, &mmio_routes);
-                    return NULL;
-                }
-                break;
-            }
-
-            if (rv64_jit_decode_fp_memory(instr) !=
-                    RV64_JIT_FP_MEMORY_INVALID &&
-                (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) !=
-                    RV64_JIT_SATP_MODE_BARE)
-            {
-                needs_data_translation_guard = true;
-            }
-
-            if (fp_ends_block)
-            {
-                block_end_reason = RV64_JIT_BLOCK_END_FP_MEMORY;
-                exit_state = RV64_JIT_COMPILE_HAS_TERMINAL_EXIT;
-                stop_after_instruction = true;
-            }
-        }
-        else
-#endif
-            if (opcode == RV64_OPCODE_JAL || opcode == RV64_OPCODE_JALR)
-        {
-            if (!rv64_jit_emit_jump_instr(
-                    &w, &regs, instr, guest_pc, compiled_insn_count,
-                    needs_data_translation_guard))
-            {
-                if (!jit_handle_emit_failure(
-                        &w, &regs, &source, &ifetch_refs, &mmio_routes,
-                        &instr_snapshot, instr, &block_end_reason,
-                        arena_overflowed))
-                {
-                    rv64_jit_emitter_checkpoint_restore(
-                        &attempt_checkpoint, &w, &regs, &mmio_routes);
-                    return NULL;
-                }
-                break;
-            }
-
-            block_end_reason = RV64_JIT_BLOCK_END_JUMP;
-            exit_state = RV64_JIT_COMPILE_HAS_TERMINAL_EXIT;
-            stop_after_instruction = true;
-        }
-        else if (opcode == RV64_OPCODE_LOAD)
-        {
-            /*
-             * A guarded load may side-exit with zero completed instructions
-             * when it is the first block instruction and the runtime address is
-             * unsafe.  The dispatcher treats that as a miss-like fallback and
-             * lets the interpreter execute the load.
-             */
-            if (!rv64_jit_emit_load_instr(
-                    &w, &regs, instr, guest_pc, compiled_insn_count,
-                    &mmio_routes))
-            {
-                if (!jit_handle_emit_failure(
-                        &w, &regs, &source, &ifetch_refs, &mmio_routes,
-                        &instr_snapshot, instr, &block_end_reason,
-                        arena_overflowed))
-                {
-                    rv64_jit_emitter_checkpoint_restore(
-                        &attempt_checkpoint, &w, &regs, &mmio_routes);
-                    return NULL;
-                }
-                break;
-            }
-
-            if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) !=
-                RV64_JIT_SATP_MODE_BARE)
-            {
-                /*
-                 * MPRV, SUM, and MXR affect explicit data accesses, whereas
-                 * instruction fetch uses its own privilege state.  Direct links
-                 * must therefore guard this data-translation state separately.
-                 */
-                needs_data_translation_guard = true;
-            }
-        }
-        else if (opcode == RV64_OPCODE_STORE)
-        {
-            /*
-             * Safe PMEM data stores can continue in the native block.  Stores
-             * that may fault, hit MMIO, or touch source bytes side-exit before
-             * or immediately after the store so interpreter-visible ordering is
-             * preserved.
-             */
-            if (!rv64_jit_emit_store_instr(
-                    &w, &regs, instr, guest_pc,
-                    guest_pc + RV64_INSN_SIZE, compiled_insn_count,
-                    &mmio_routes))
-            {
-                if (!jit_handle_emit_failure(
-                        &w, &regs, &source, &ifetch_refs, &mmio_routes,
-                        &instr_snapshot, instr, &block_end_reason,
-                        arena_overflowed))
-                {
-                    rv64_jit_emitter_checkpoint_restore(
-                        &attempt_checkpoint, &w, &regs, &mmio_routes);
-                    return NULL;
-                }
-                break;
-            }
-
-            if ((cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) !=
-                RV64_JIT_SATP_MODE_BARE)
-            {
-                needs_data_translation_guard = true;
-            }
-        }
-        else if (opcode == RV64_OPCODE_BRANCH)
-        {
-            bool emitted_native_backedge = false;
-
-            if (!rv64_jit_emit_branch(
-                    &w, &regs, instr, guest_pc, pc, loop_body_entry,
-                    loop_scan.found_self_backedge,
-                    loop_scan.stable_reg_count != 0,
-                    &emitted_native_backedge,
-                    compiled_insn_count + 1u,
-                    needs_data_translation_guard))
-            {
-                if (!jit_handle_emit_failure(
-                        &w, &regs, &source, &ifetch_refs, &mmio_routes,
-                        &instr_snapshot, instr, &block_end_reason,
-                        arena_overflowed))
-                {
-                    rv64_jit_emitter_checkpoint_restore(
-                        &attempt_checkpoint, &w, &regs, &mmio_routes);
-                    return NULL;
-                }
-                break;
-            }
-
-            if (emitted_native_backedge)
-            {
-                block_end_reason = RV64_JIT_BLOCK_END_CHAINED_LOOP;
-                used_stable_loop = loop_scan.stable_reg_count != 0;
-                stop_after_instruction = true;
-            }
-        }
-        else if (!rv64_jit_emit_instr(&w, &regs, instr, guest_pc,
-                                      compiled_insn_count + 1u))
+        if (emit_outcome.kind == JIT_INSTRUCTION_EMIT_FAILED)
         {
             if (!jit_handle_emit_failure(
                     &w, &regs, &source, &ifetch_refs, &mmio_routes,
                     &instr_snapshot, instr, &block_end_reason,
                     arena_overflowed))
             {
-                rv64_jit_emitter_checkpoint_restore(
-                    &attempt_checkpoint, &w, &regs, &mmio_routes);
+                rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
                 return NULL;
             }
             break;
+        }
+
+        if ((emit_outcome.effects & JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION) != 0)
+        {
+            /*
+             * MPRV, SUM, and MXR affect explicit data accesses, whereas
+             * instruction fetch uses its own privilege state. Direct links
+             * must therefore guard data-translation state separately.
+             */
+            needs_data_translation_guard = true;
+        }
+
+        switch (emit_outcome.kind)
+        {
+        case JIT_INSTRUCTION_EMIT_CONTINUE:
+            break;
+        case JIT_INSTRUCTION_EMIT_STOP_FP_MEMORY:
+            block_end_reason = RV64_JIT_BLOCK_END_FP_MEMORY;
+            exit_state = RV64_JIT_COMPILE_HAS_TERMINAL_EXIT;
+            break;
+        case JIT_INSTRUCTION_EMIT_STOP_JUMP:
+            block_end_reason = RV64_JIT_BLOCK_END_JUMP;
+            exit_state = RV64_JIT_COMPILE_HAS_TERMINAL_EXIT;
+            break;
+        case JIT_INSTRUCTION_EMIT_STOP_CHAINED_LOOP:
+            block_end_reason = RV64_JIT_BLOCK_END_CHAINED_LOOP;
+            used_stable_loop = emit_plan.backedge_mode == JIT_BACKEDGE_STABLE;
+            break;
+        case JIT_INSTRUCTION_EMIT_FAILED:
+        default:
+            Assert(false, "jit: invalid RV64 instruction emit outcome %u", (unsigned)emit_outcome.kind);
         }
 
         guest_pc += RV64_INSN_SIZE;
@@ -1040,7 +1092,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc,
          * back to `loop_body_entry` without re-running the prologue or stable
          * register and counter preloads.
          */
-        if (stop_after_instruction)
+        if (emit_outcome.kind != JIT_INSTRUCTION_EMIT_CONTINUE)
         {
             break;
         }
