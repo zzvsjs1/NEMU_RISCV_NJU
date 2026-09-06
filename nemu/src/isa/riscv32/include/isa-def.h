@@ -312,6 +312,9 @@ enum
     RISCV64_MSTATUS_XLEN_ENCODING_64 = 2,
     RISCV64_MSTATUS_UXL_SHIFT = 32,
     RISCV64_MSTATUS_SXL_SHIFT = 34,
+    RISCV64_MSTATUS_UBE_BIT = 6,
+    RISCV64_MSTATUS_SBE_BIT = 36,
+    RISCV64_MSTATUS_MBE_BIT = 37,
     RISCV64_MSTATUS_GVA_BIT = 38,
 };
 
@@ -322,6 +325,10 @@ enum
 #define RISCV64_MSTATUS_UXL_VALUE ((uint64_t)RISCV64_MSTATUS_XLEN_ENCODING_64 << RISCV64_MSTATUS_UXL_SHIFT)
 #define RISCV64_MSTATUS_SXL_VALUE ((uint64_t)RISCV64_MSTATUS_XLEN_ENCODING_64 << RISCV64_MSTATUS_SXL_SHIFT)
 #define RISCV64_MSTATUS_UXL_SXL_VALUE (RISCV64_MSTATUS_UXL_VALUE | RISCV64_MSTATUS_SXL_VALUE)
+#define RISCV64_MSTATUS_UBE (UINT64_C(1) << RISCV64_MSTATUS_UBE_BIT)
+#define RISCV64_MSTATUS_SBE (UINT64_C(1) << RISCV64_MSTATUS_SBE_BIT)
+#define RISCV64_MSTATUS_MBE (UINT64_C(1) << RISCV64_MSTATUS_MBE_BIT)
+#define RISCV64_MSTATUS_ENDIAN_MASK (RISCV64_MSTATUS_UBE | RISCV64_MSTATUS_SBE | RISCV64_MSTATUS_MBE)
 #define RISCV64_MSTATUS_GVA (UINT64_C(1) << RISCV64_MSTATUS_GVA_BIT)
 #endif
 
@@ -529,6 +536,13 @@ static inline word_t riscv_mstatus_normalise(word_t value)
 #endif
 
 #ifdef CONFIG_RV64
+    /*
+     * Data accesses and page-table reads are always little-endian in this
+     * implementation.  The privileged ISA represents that fixed choice with
+     * read-only-zero UBE/SBE/MBE, rather than writable bits with no effect.
+     */
+    value &= ~(word_t)RISCV64_MSTATUS_ENDIAN_MASK;
+
     /*
      * UXL and SXL are WARL rather than ordinary writable bits.  Clear both
      * fields before inserting encoding 2 so guest values 1 and 3 cannot leave

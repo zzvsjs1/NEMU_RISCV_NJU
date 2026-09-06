@@ -14,13 +14,13 @@ static bool jit_opcode_is_fp(uint32_t opcode)
 {
     switch (opcode)
     {
-    case RV64_FP_OPCODE_LOAD:
-    case RV64_FP_OPCODE_STORE:
-    case RV64_FP_OPCODE_FMADD:
-    case RV64_FP_OPCODE_FMSUB:
-    case RV64_FP_OPCODE_FNMSUB:
-    case RV64_FP_OPCODE_FNMADD:
-    case RV64_FP_OPCODE_OP:
+    case RISCV_FP_OPCODE_LOAD:
+    case RISCV_FP_OPCODE_STORE:
+    case RISCV_FP_OPCODE_FMADD:
+    case RISCV_FP_OPCODE_FMSUB:
+    case RISCV_FP_OPCODE_FNMSUB:
+    case RISCV_FP_OPCODE_FNMADD:
+    case RISCV_FP_OPCODE_OP:
         return true;
     default:
         return false;
@@ -35,25 +35,25 @@ static bool jit_opcode_is_fp(uint32_t opcode)
  */
 static bool jit_opcode_may_be_in_loop_prescan(uint32_t instr)
 {
-    const uint32_t opcode = instr & RV64_OPCODE_MASK;
+    const uint32_t opcode = instr & RISCV_OPCODE_MASK;
 
     switch (opcode)
     {
-    case RV64_OPCODE_LOAD:
-    case RV64_OPCODE_STORE:
-    case RV64_OPCODE_OP_IMM:
-    case RV64_OPCODE_OP_IMM_32:
-    case RV64_OPCODE_OP:
-    case RV64_OPCODE_OP_32:
-    case RV64_OPCODE_AUIPC:
-    case RV64_OPCODE_LUI:
-    case RV64_OPCODE_BRANCH:
+    case RISCV_OPCODE_LOAD:
+    case RISCV_OPCODE_STORE:
+    case RISCV_OPCODE_OP_IMM:
+    case RISCV_OPCODE_OP_IMM_32:
+    case RISCV_OPCODE_OP:
+    case RISCV_OPCODE_OP_32:
+    case RISCV_OPCODE_AUIPC:
+    case RISCV_OPCODE_LUI:
+    case RISCV_OPCODE_BRANCH:
         return true;
 #ifdef CONFIG_RISCV_FPU
-    case RV64_FP_OPCODE_LOAD:
-    case RV64_FP_OPCODE_STORE:
+    case RISCV_FP_OPCODE_LOAD:
+    case RISCV_FP_OPCODE_STORE:
         return rv64_jit_decode_fp_memory(instr) != RV64_JIT_FP_MEMORY_INVALID;
-    case RV64_FP_OPCODE_OP:
+    case RISCV_FP_OPCODE_OP:
         return rv64_jit_decode_fp_exact(instr) != RV64_JIT_FP_EXACT_INVALID;
 #endif
     default:
@@ -72,7 +72,7 @@ typedef struct
 /* Add one non-zero architectural GPR to the stable-loop preload set. */
 static void jit_stable_loop_add_reg(uint32_t *reg_mask, uint32_t reg)
 {
-    if (reg != RV64_GPR_ZERO)
+    if (reg != RISCV_GPR_ZERO)
     {
         *reg_mask |= 1u << reg;
     }
@@ -84,32 +84,32 @@ static void jit_stable_loop_add_reg(uint32_t *reg_mask, uint32_t reg)
  */
 static bool jit_collect_stable_loop_regs(uint32_t instr, uint32_t *reg_mask)
 {
-    const uint32_t opcode = instr & RV64_OPCODE_MASK;
+    const uint32_t opcode = instr & RISCV_OPCODE_MASK;
 
     switch (opcode)
     {
-    case RV64_OPCODE_OP_IMM:
-    case RV64_OPCODE_OP_IMM_32:
+    case RISCV_OPCODE_OP_IMM:
+    case RISCV_OPCODE_OP_IMM_32:
         jit_stable_loop_add_reg(reg_mask, rv64_instr_rd(instr));
         jit_stable_loop_add_reg(reg_mask, rv64_instr_rs1(instr));
         return true;
-    case RV64_OPCODE_OP:
-    case RV64_OPCODE_OP_32:
+    case RISCV_OPCODE_OP:
+    case RISCV_OPCODE_OP_32:
         /*
          * Every full-width M funct3 is defined. OP-32 reserves funct3 1-3, so
          * reject those encodings before expanding the loop register cache.
          * All valid M members are now helper-free and leave R8 available for
          * the seventh loop-carried guest register.
          */
-        if (rv64_instr_funct7(instr) == RV64_FUNCT7_MULDIV && opcode == RV64_OPCODE_OP_32)
+        if (rv64_instr_funct7(instr) == RV64_FUNCT7_MULDIV && opcode == RISCV_OPCODE_OP_32)
         {
             switch (rv64_instr_funct3(instr))
             {
-            case RV64_FUNCT3_ADD_SUB: /* MULW */
-            case RV64_FUNCT3_XOR:     /* DIVW */
-            case RV64_FUNCT3_SRL_SRA: /* DIVUW */
-            case RV64_FUNCT3_OR:      /* REMW */
-            case RV64_FUNCT3_AND:     /* REMUW */
+            case RV64_M_FUNCT3_MUL:  /* MULW */
+            case RV64_M_FUNCT3_DIV:  /* DIVW */
+            case RV64_M_FUNCT3_DIVU: /* DIVUW */
+            case RV64_M_FUNCT3_REM:  /* REMW */
+            case RV64_M_FUNCT3_REMU: /* REMUW */
                 break;
             default:
                 return false;
@@ -120,24 +120,24 @@ static bool jit_collect_stable_loop_regs(uint32_t instr, uint32_t *reg_mask)
         jit_stable_loop_add_reg(reg_mask, rv64_instr_rs1(instr));
         jit_stable_loop_add_reg(reg_mask, rv64_instr_rs2(instr));
         return true;
-    case RV64_OPCODE_LUI:
-    case RV64_OPCODE_AUIPC:
+    case RISCV_OPCODE_LUI:
+    case RISCV_OPCODE_AUIPC:
         jit_stable_loop_add_reg(reg_mask, rv64_instr_rd(instr));
         return true;
-    case RV64_OPCODE_BRANCH:
+    case RISCV_OPCODE_BRANCH:
         jit_stable_loop_add_reg(reg_mask, rv64_instr_rs1(instr));
         jit_stable_loop_add_reg(reg_mask, rv64_instr_rs2(instr));
         return true;
 #ifdef CONFIG_RISCV_FPU
-    case RV64_FP_OPCODE_LOAD:
-    case RV64_FP_OPCODE_STORE:
+    case RISCV_FP_OPCODE_LOAD:
+    case RISCV_FP_OPCODE_STORE:
         /*
          * FP memory can form a native self-backedge, but its guards reserve R8
          * as scratch. Reject the seven-slot stable mapping while allowing the
          * ordinary six-slot loop cache selected by the completed pre-scan.
          */
         return false;
-    case RV64_FP_OPCODE_OP:
+    case RISCV_FP_OPCODE_OP:
         switch (rv64_jit_decode_fp_exact(instr))
         {
         case RV64_JIT_FP_EXACT_FMV_W_X:
@@ -190,9 +190,9 @@ static rv64_jit_loop_scan_t jit_prescan_self_backedge(vaddr_t pc, uint32_t max_i
             return result;
         }
 
-        const uint32_t instr = (uint32_t)vaddr_ifetch(candidate_pc, RV64_INSN_SIZE);
-        const uint32_t opcode = instr & RV64_OPCODE_MASK;
-        const bool is_self_backedge = opcode == RV64_OPCODE_BRANCH && candidate_pc + imm_b(instr) == pc;
+        const uint32_t instr = (uint32_t)vaddr_ifetch(candidate_pc, RISCV_BASE_INSN_BYTES);
+        const uint32_t opcode = instr & RISCV_OPCODE_MASK;
+        const bool is_self_backedge = opcode == RISCV_OPCODE_BRANCH && candidate_pc + imm_b(instr) == pc;
 
         if (!jit_opcode_may_be_in_loop_prescan(instr))
         {
@@ -205,7 +205,7 @@ static rv64_jit_loop_scan_t jit_prescan_self_backedge(vaddr_t pc, uint32_t max_i
          * neither architectural values nor the cached retired count are safe
          * there. Stable mapping is therefore limited to one terminal backedge.
          */
-        if (stable_mapping_eligible && opcode == RV64_OPCODE_BRANCH && !is_self_backedge)
+        if (stable_mapping_eligible && opcode == RISCV_OPCODE_BRANCH && !is_self_backedge)
         {
             stable_mapping_eligible = false;
         }
@@ -234,7 +234,7 @@ static rv64_jit_loop_scan_t jit_prescan_self_backedge(vaddr_t pc, uint32_t max_i
             return result;
         }
 
-        candidate_pc += RV64_INSN_SIZE;
+        candidate_pc += RISCV_BASE_INSN_BYTES;
         scanned_insn_count++;
     }
 
@@ -257,7 +257,7 @@ typedef struct
 /* Return the bit for one cacheable architectural GPR, excluding constant x0. */
 static uint32_t jit_gpr_mask_bit(uint32_t reg)
 {
-    return reg == RV64_GPR_ZERO ? 0 : 1u << reg;
+    return reg == RISCV_GPR_ZERO ? 0 : 1u << reg;
 }
 
 /*
@@ -269,7 +269,7 @@ static uint32_t jit_gpr_mask_bit(uint32_t reg)
  */
 static bool jit_decode_gpr_use_def(uint32_t instr, uint32_t *uses, uint32_t *defs, bool *terminal)
 {
-    const uint32_t opcode = instr & RV64_OPCODE_MASK;
+    const uint32_t opcode = instr & RISCV_OPCODE_MASK;
     const uint32_t rd_bit = jit_gpr_mask_bit(rv64_instr_rd(instr));
     const uint32_t rs1_bit = jit_gpr_mask_bit(rv64_instr_rs1(instr));
     const uint32_t rs2_bit = jit_gpr_mask_bit(rv64_instr_rs2(instr));
@@ -280,51 +280,51 @@ static bool jit_decode_gpr_use_def(uint32_t instr, uint32_t *uses, uint32_t *def
 
     switch (opcode)
     {
-    case RV64_OPCODE_OP_IMM:
-    case RV64_OPCODE_OP_IMM_32:
+    case RISCV_OPCODE_OP_IMM:
+    case RISCV_OPCODE_OP_IMM_32:
         *uses = rs1_bit;
         *defs = rd_bit;
         return true;
-    case RV64_OPCODE_OP:
-    case RV64_OPCODE_OP_32:
+    case RISCV_OPCODE_OP:
+    case RISCV_OPCODE_OP_32:
         *uses = rs1_bit | rs2_bit;
         *defs = rd_bit;
         return true;
-    case RV64_OPCODE_LOAD:
+    case RISCV_OPCODE_LOAD:
         *uses = rs1_bit;
         *defs = rd_bit;
         return true;
-    case RV64_OPCODE_STORE:
+    case RISCV_OPCODE_STORE:
         *uses = rs1_bit | rs2_bit;
         return true;
-    case RV64_OPCODE_BRANCH:
+    case RISCV_OPCODE_BRANCH:
         *uses = rs1_bit | rs2_bit;
         return true;
-    case RV64_OPCODE_JAL:
+    case RISCV_OPCODE_JAL:
         *defs = rd_bit;
         *terminal = true;
         return true;
-    case RV64_OPCODE_JALR:
+    case RISCV_OPCODE_JALR:
         *uses = rs1_bit;
         *defs = rd_bit;
         *terminal = true;
         return true;
-    case RV64_OPCODE_LUI:
-    case RV64_OPCODE_AUIPC:
+    case RISCV_OPCODE_LUI:
+    case RISCV_OPCODE_AUIPC:
         *defs = rd_bit;
         return true;
 #ifdef CONFIG_RISCV_FPU
-    case RV64_FP_OPCODE_LOAD:
-    case RV64_FP_OPCODE_STORE:
+    case RISCV_FP_OPCODE_LOAD:
+    case RISCV_FP_OPCODE_STORE:
         /* FP stores encode an FPR, not a GPR, in the rs2 field. */
         *uses = rs1_bit;
         return true;
-    case RV64_FP_OPCODE_FMADD:
-    case RV64_FP_OPCODE_FMSUB:
-    case RV64_FP_OPCODE_FNMSUB:
-    case RV64_FP_OPCODE_FNMADD:
+    case RISCV_FP_OPCODE_FMADD:
+    case RISCV_FP_OPCODE_FMSUB:
+    case RISCV_FP_OPCODE_FNMSUB:
+    case RISCV_FP_OPCODE_FNMADD:
         return true;
-    case RV64_FP_OPCODE_OP:
+    case RISCV_FP_OPCODE_OP:
         switch (rv64_jit_decode_fp_exact(instr))
         {
         case RV64_JIT_FP_EXACT_FMV_W_X:
@@ -372,7 +372,7 @@ static rv64_jit_gpr_liveness_scan_t jit_prescan_gpr_liveness(vaddr_t pc, uint32_
             break;
         }
 
-        const uint32_t instr = (uint32_t)vaddr_ifetch(candidate_pc, RV64_INSN_SIZE);
+        const uint32_t instr = (uint32_t)vaddr_ifetch(candidate_pc, RISCV_BASE_INSN_BYTES);
         rv64_jit_gpr_liveness_t *item = &scan.insns[scan.count];
         bool terminal = false;
 
@@ -388,7 +388,7 @@ static rv64_jit_gpr_liveness_scan_t jit_prescan_gpr_liveness(vaddr_t pc, uint32_
             break;
         }
 
-        candidate_pc += RV64_INSN_SIZE;
+        candidate_pc += RISCV_BASE_INSN_BYTES;
     }
 
     uint32_t live = 0;
@@ -465,27 +465,6 @@ typedef struct
     jit_instruction_emit_kind_t kind;
     uint32_t effects;
 } jit_instruction_emit_outcome_t;
-
-/* Everything needed to publish one fully emitted native region. */
-typedef struct
-{
-    vaddr_t start_pc;
-    vaddr_t next_pc;
-    paddr_t first_paddr;
-    bool uses_translated_ifetch;
-    bool needs_data_translation_guard;
-    uint32_t compiled_insn_count;
-    uint32_t stable_loop_reg_count;
-    const uint8_t *native_body_entry;
-    const uint8_t *chain_entry;
-    const uint8_t *native_code_end;
-    const uint8_t *allocation_end;
-    rv64_jit_link_t *link_records;
-    uint32_t link_count;
-    rv64_jit_indirect_pic_t *indirect_pic;
-    const rv64_jit_source_builder_t *source;
-    const rv64_jit_ifetch_ref_builder_t *ifetch_refs;
-} rv64_jit_publish_info_t;
 
 /*
  * An instruction contributes to the block only after its native bytes and
@@ -575,57 +554,6 @@ static bool jit_finalise_links(rv64_jit_writer_t *w, rv64_jit_link_builder_t *li
     return true;
 }
 
-/*
- * Publish generated code only after all bytes and dependency metadata exist.
- * The slot remains invalid while it is populated: synchronise the native
- * instruction cache, discard the previous owner, copy metadata, install
- * dependency references, and set `valid` last.  Finally advance arena usage so
- * a later compilation cannot overwrite the new block.
- */
-static rv64_jit_block_t *jit_publish_compiled_block(rv64_jit_writer_t *w, const rv64_jit_publish_info_t *info)
-{
-    Assert(info->native_code_end >= w->start && info->allocation_end >= info->native_code_end && info->allocation_end == w->cur,
-           "jit: invalid native-code/sidecar publication bounds");
-    __builtin___clear_cache((char *)w->start, (char *)info->native_code_end);
-
-    rv64_jit_block_t *block = rv64_jit_cache_slot(info->start_pc);
-    rv64_jit_block_discard(block);
-    *block = (rv64_jit_block_t){
-        .valid = false,
-        .translated = info->uses_translated_ifetch,
-        .uses_data_state = info->needs_data_translation_guard,
-        .generation = rv64_jit_allocate_block_generation(),
-        .pc = info->start_pc,
-        .satp = cpu.csr.satp,
-        .ifetch_state = rv64_jit_ifetch_state(),
-        .data_state = rv64_jit_data_tlb_state(MEM_TYPE_READ),
-        .ifetch_generation = rv64_jit_ifetch_generation,
-        .paddr_start = info->first_paddr,
-        .source_len = info->source->source_len,
-        .source_segment_count = info->source->segment_count,
-        .ifetch_pt_page_count = info->uses_translated_ifetch ? info->ifetch_refs->count : 0,
-        .insn_count = info->compiled_insn_count,
-        .entry = (rv64_jit_entry_t)w->start,
-        .body_entry = (rv64_jit_entry_t)info->native_body_entry,
-        .chain_entry = (rv64_jit_entry_t)info->chain_entry,
-        .outgoing_links = info->link_records,
-        .outgoing_link_count = info->link_count,
-        .indirect_pic = info->indirect_pic,
-    };
-    memcpy(block->source_segments, info->source->segments, sizeof(info->source->segments));
-    memcpy(block->ifetch_pt_pages, info->ifetch_refs->pages, block->ifetch_pt_page_count * sizeof(block->ifetch_pt_pages[0]));
-    rv64_jit_ifetch_refs_ref(block);
-    rv64_jit_source_chunks_ref(block);
-    rv64_jit_source_reverse_map_add(block);
-    block->valid = true;
-
-    rv64_jit_code_used = (size_t)(info->allocation_end - rv64_jit_code);
-    rv64_jit_links_source_published(block);
-    rv64_jit_links_target_published(block);
-    rv64_jit_perf_map_publish(block, w->start, (size_t)(info->native_code_end - w->start));
-    return block;
-}
-
 /* Record compile-time counters after publication has definitely succeeded. */
 static void jit_record_compilation_stats(const rv64_jit_publish_info_t *info, rv64_jit_block_end_reason_t end_reason)
 {
@@ -635,7 +563,7 @@ static void jit_record_compilation_stats(const rv64_jit_publish_info_t *info, rv
     if (info->uses_translated_ifetch)
     {
         JIT_STAT_INC(translated_blocks);
-        const vaddr_t last_pc = info->next_pc - RV64_INSN_SIZE;
+        const vaddr_t last_pc = info->next_pc - RISCV_BASE_INSN_BYTES;
 
         if (((info->start_pc ^ last_pc) & ~(vaddr_t)PAGE_MASK) != 0)
         {
@@ -681,7 +609,7 @@ static jit_instruction_emit_outcome_t jit_emit_instruction(rv64_jit_writer_t *w,
                                                            rv64_jit_mmio_route_builder_t *mmio_routes, const jit_block_emit_plan_t *plan,
                                                            const jit_instruction_emit_request_t *request)
 {
-    const uint32_t opcode = request->instr & RV64_OPCODE_MASK;
+    const uint32_t opcode = request->instr & RISCV_OPCODE_MASK;
 
 #ifdef CONFIG_RISCV_FPU
     if (jit_opcode_is_fp(opcode))
@@ -694,14 +622,14 @@ static jit_instruction_emit_outcome_t jit_emit_instruction(rv64_jit_writer_t *w,
         }
 
         const bool uses_data_translation = rv64_jit_decode_fp_memory(request->instr) != RV64_JIT_FP_MEMORY_INVALID &&
-                                           (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != RV64_JIT_SATP_MODE_BARE;
+                                           (cpu.csr.satp >> RISCV64_SATP_MODE_SHIFT) != RISCV_SATP_MODE_BARE;
 
         return jit_make_instruction_emit_outcome(fp_ends_block ? JIT_INSTRUCTION_EMIT_STOP_FP_MEMORY : JIT_INSTRUCTION_EMIT_CONTINUE,
                                                  uses_data_translation ? JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION : JIT_INSTRUCTION_EFFECT_NONE);
     }
 #endif
 
-    if (opcode == RV64_OPCODE_JAL || opcode == RV64_OPCODE_JALR)
+    if (opcode == RISCV_OPCODE_JAL || opcode == RISCV_OPCODE_JALR)
     {
         if (!rv64_jit_emit_jump_instr(w, regs, request->instr, request->pc, request->completed_before, request->source_uses_data_translation_state))
         {
@@ -711,7 +639,7 @@ static jit_instruction_emit_outcome_t jit_emit_instruction(rv64_jit_writer_t *w,
         return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_STOP_JUMP, JIT_INSTRUCTION_EFFECT_NONE);
     }
 
-    if (opcode == RV64_OPCODE_LOAD)
+    if (opcode == RISCV_OPCODE_LOAD)
     {
         /*
          * A guarded load may side-exit with zero completed instructions when
@@ -723,28 +651,29 @@ static jit_instruction_emit_outcome_t jit_emit_instruction(rv64_jit_writer_t *w,
             return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_FAILED, JIT_INSTRUCTION_EFFECT_NONE);
         }
 
-        return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_CONTINUE, (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != RV64_JIT_SATP_MODE_BARE
+        return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_CONTINUE, (cpu.csr.satp >> RISCV64_SATP_MODE_SHIFT) != RISCV_SATP_MODE_BARE
                                                                                     ? JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION
                                                                                     : JIT_INSTRUCTION_EFFECT_NONE);
     }
 
-    if (opcode == RV64_OPCODE_STORE)
+    if (opcode == RISCV_OPCODE_STORE)
     {
         /*
          * Safe PMEM stores continue natively. Faulting, MMIO, source-writing
          * and page-table-sensitive cases retain their established side exits.
          */
-        if (!rv64_jit_emit_store_instr(w, regs, request->instr, request->pc, request->pc + RV64_INSN_SIZE, request->completed_before, mmio_routes))
+        if (!rv64_jit_emit_store_instr(w, regs, request->instr, request->pc, request->pc + RISCV_BASE_INSN_BYTES,
+                                      request->completed_before, mmio_routes))
         {
             return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_FAILED, JIT_INSTRUCTION_EFFECT_NONE);
         }
 
-        return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_CONTINUE, (cpu.csr.satp >> RV64_JIT_SATP_MODE_SHIFT) != RV64_JIT_SATP_MODE_BARE
+        return jit_make_instruction_emit_outcome(JIT_INSTRUCTION_EMIT_CONTINUE, (cpu.csr.satp >> RISCV64_SATP_MODE_SHIFT) != RISCV_SATP_MODE_BARE
                                                                                     ? JIT_INSTRUCTION_EFFECT_DATA_TRANSLATION
                                                                                     : JIT_INSTRUCTION_EFFECT_NONE);
     }
 
-    if (opcode == RV64_OPCODE_BRANCH)
+    if (opcode == RISCV_OPCODE_BRANCH)
     {
         const bool can_chain = plan->backedge_mode != JIT_BACKEDGE_NONE;
         const bool stable = plan->backedge_mode == JIT_BACKEDGE_STABLE;
@@ -911,7 +840,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc, uint32_t max_insns, 
             break;
         }
 
-        const uint32_t instr = (uint32_t)vaddr_ifetch(guest_pc, RV64_INSN_SIZE);
+        const uint32_t instr = (uint32_t)vaddr_ifetch(guest_pc, RISCV_BASE_INSN_BYTES);
         uint32_t current_uses = 0;
         uint32_t current_defs = 0;
         bool current_terminal = false;
@@ -938,7 +867,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc, uint32_t max_insns, 
         };
         rv64_jit_emitter_checkpoint_capture(&instr_snapshot.emitter, &w, &regs, &mmio_routes);
 
-        if (!rv64_jit_source_builder_append(&source, instruction_paddr, RV64_INSN_SIZE))
+        if (!rv64_jit_source_builder_append(&source, instruction_paddr, RISCV_BASE_INSN_BYTES))
         {
             ifetch_refs = ifetch_refs_start;
             block_end_reason = RV64_JIT_BLOCK_END_SOURCE_BOUNDARY;
@@ -994,7 +923,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc, uint32_t max_insns, 
             Assert(false, "jit: invalid RV64 instruction emit outcome %u", (unsigned)emit_outcome.kind);
         }
 
-        guest_pc += RV64_INSN_SIZE;
+        guest_pc += RISCV_BASE_INSN_BYTES;
         compiled_insn_count++;
 
         /*
@@ -1027,14 +956,25 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc, uint32_t max_insns, 
      * avoids unreachable duplicate exits and prevents dead-byte emission from
      * rejecting an otherwise valid jump block.
      */
-    if (exit_state == RV64_JIT_COMPILE_NEEDS_FALLTHROUGH_EXIT &&
-        !(rv64_jit_direct_link_enabled()
-              ? rv64_jit_emit_direct_link_exit(&w, &regs, guest_pc, compiled_insn_count, needs_data_translation_guard, NULL)
-              : rv64_jit_emit_plain_block_exit(&w, &regs, guest_pc, compiled_insn_count)))
+    if (exit_state == RV64_JIT_COMPILE_NEEDS_FALLTHROUGH_EXIT)
     {
-        *arena_overflowed = w.overflowed;
-        rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
-        return NULL;
+        bool emitted_exit;
+
+        if (rv64_jit_direct_link_enabled())
+        {
+            emitted_exit = rv64_jit_emit_direct_link_exit(&w, &regs, guest_pc, compiled_insn_count, needs_data_translation_guard, NULL);
+        }
+        else
+        {
+            emitted_exit = rv64_jit_emit_plain_block_exit(&w, &regs, guest_pc, compiled_insn_count);
+        }
+
+        if (!emitted_exit)
+        {
+            *arena_overflowed = w.overflowed;
+            rv64_jit_emitter_checkpoint_restore(&attempt_checkpoint, &w, &regs, &mmio_routes);
+            return NULL;
+        }
     }
 
     /*
@@ -1113,7 +1053,7 @@ static rv64_jit_block_t *jit_compile_block_once(vaddr_t pc, uint32_t max_insns, 
         .ifetch_refs = &ifetch_refs,
     };
 
-    rv64_jit_block_t *block = jit_publish_compiled_block(&w, &publish_info);
+    rv64_jit_block_t *block = rv64_jit_publish_compiled_block(&w, &publish_info);
     jit_record_compilation_stats(&publish_info, block_end_reason);
     return block;
 }

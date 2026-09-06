@@ -40,6 +40,120 @@ static paddr_t mem_ret_pgaddr(paddr_t ret)
     return (paddr_t)(ret & ~(paddr_t)PAGE_MASK);
 }
 
+#ifdef CONFIG_RV64
+/* Resolve one page without changing trap CSRs or the caller's next PC. */
+static bool rv64_resolve_access(vaddr_t addr, int len, int type, paddr_t *paddr, vaddr_fault_t *fault)
+{
+    const int mmu = isa_mmu_check(addr, len, type);
+
+    if (mmu == MMU_DIRECT)
+    {
+        *paddr = (paddr_t)addr;
+        return true;
+    }
+
+    if (mmu == MMU_TRANSLATE)
+    {
+        const paddr_t ret = isa_mmu_translate(addr, len, type);
+
+        if (mem_ret_status(ret) == MEM_RET_OK)
+        {
+            *paddr = mem_ret_pgaddr(ret) | (paddr_t)(addr & PAGE_MASK);
+            return true;
+        }
+    }
+
+    fault->addr = addr;
+    fault->cause =
+        type == MEM_TYPE_IFETCH ? RISCV_CAUSE_INST_PAGE_FAULT : (type == MEM_TYPE_WRITE ? RISCV_CAUSE_STORE_PAGE_FAULT : RISCV_CAUSE_LOAD_PAGE_FAULT);
+    return false;
+}
+
+/*
+ * Validate both pages before physical reads or writes. Scalar RV64 instructions
+ * check natural alignment first, but keeping this boundary complete also makes
+ * split accesses report the faulting page without partially committing a store.
+ */
+static bool rv64_resolve_access_pages(vaddr_t addr, int len, int type, paddr_t *first, paddr_t *second, int *first_len, vaddr_fault_t *fault)
+{
+    assert(len > 0 && len <= (int)sizeof(word_t));
+    const int remaining = PAGE_SIZE - (int)(addr & PAGE_MASK);
+    *first_len = len < remaining ? len : remaining;
+
+    if (!rv64_resolve_access(addr, *first_len, type, first, fault))
+    {
+        return false;
+    }
+
+    return *first_len == len || rv64_resolve_access(addr + (vaddr_t)*first_len, len - *first_len, type, second, fault);
+}
+
+static bool rv64_try_read(vaddr_t addr, int len, int type, word_t *data, vaddr_fault_t *fault)
+{
+    paddr_t first = 0;
+    paddr_t second = 0;
+    int first_len = 0;
+
+    if (!rv64_resolve_access_pages(addr, len, type, &first, &second, &first_len, fault))
+    {
+        return false;
+    }
+
+    if (first_len == len)
+    {
+        *data = paddr_read(first, len);
+        return true;
+    }
+
+    word_t value = 0;
+
+    for (int i = 0; i < len; i++)
+    {
+        const paddr_t byte_addr = i < first_len ? first + (paddr_t)i : second + (paddr_t)(i - first_len);
+        value |= paddr_read(byte_addr, 1) << (i * 8);
+    }
+
+    *data = value;
+    return true;
+}
+
+bool vaddr_try_ifetch(vaddr_t addr, int len, word_t *data, vaddr_fault_t *fault)
+{
+    return rv64_try_read(addr, len, MEM_TYPE_IFETCH, data, fault);
+}
+
+bool vaddr_try_read(vaddr_t addr, int len, word_t *data, vaddr_fault_t *fault)
+{
+    return rv64_try_read(addr, len, MEM_TYPE_READ, data, fault);
+}
+
+bool vaddr_try_write(vaddr_t addr, int len, word_t data, vaddr_fault_t *fault)
+{
+    paddr_t first = 0;
+    paddr_t second = 0;
+    int first_len = 0;
+
+    if (!rv64_resolve_access_pages(addr, len, MEM_TYPE_WRITE, &first, &second, &first_len, fault))
+    {
+        return false;
+    }
+
+    if (first_len == len)
+    {
+        paddr_write(first, len, data);
+        return true;
+    }
+
+    for (int i = 0; i < len; i++)
+    {
+        const paddr_t byte_addr = i < first_len ? first + (paddr_t)i : second + (paddr_t)(i - first_len);
+        paddr_write(byte_addr, 1, data >> (i * 8));
+    }
+
+    return true;
+}
+#endif
+
 static void __attribute__((noreturn)) handle_translate_failure(int status, const char *caller)
 {
 #ifdef CONFIG_ISA_x86

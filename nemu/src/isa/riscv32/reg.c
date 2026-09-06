@@ -167,6 +167,23 @@ word_t getCSRValue(const word_t address)
  */
 void setCSRValue(const word_t address, word_t value)
 {
+#ifdef CONFIG_RV64
+    if (address == RISCV_CSR_SATP)
+    {
+        const word_t mode = (value & RISCV64_SATP_MODE_MASK) >> RISCV64_SATP_MODE_SHIFT;
+
+        /*
+         * Sv39 and Bare are the only implemented modes.  An unsupported MODE
+         * must discard the whole CSR write, including its ASID and root PPN;
+         * retaining only the old MODE would silently change an address space.
+         */
+        if (mode != RISCV_SATP_MODE_BARE && mode != RISCV64_SATP_MODE_SV39)
+        {
+            return;
+        }
+    }
+#endif
+
 #ifdef CONFIG_RISCV_FPU
     switch (address)
     {

@@ -12,6 +12,7 @@
 /*
  * RV64 JIT core: public hooks, runtime gates, global state, cache ownership,
  * executable arena management, invalidation entry points and statistics.
+ * See README.md beside this file for the RV64 maintenance and review guide.
  *
  * RISC-V64 x86-64 JIT design.
  *
@@ -110,7 +111,7 @@ static void jit_indirect_pic_downgrade(rv64_jit_indirect_pic_t *pic)
 }
 
 /* Allocate one process-unique, non-zero native block publication identity. */
-uint64_t rv64_jit_allocate_block_generation(void)
+static uint64_t jit_allocate_block_generation(void)
 {
     Assert(rv64_jit_next_block_generation != UINT64_MAX, "jit: RV64 block generation space exhausted");
     return rv64_jit_next_block_generation++;
@@ -217,7 +218,7 @@ bool isa_jit_invalidation_active = false;
 /* Record why one candidate instruction could not be emitted by this JIT. */
 void rv64_jit_stat_unsupported_opcode(uint32_t instr)
 {
-    const uint32_t opcode = instr & RV64_OPCODE_MASK;
+    const uint32_t opcode = instr & RISCV_OPCODE_MASK;
     JIT_STAT_INC(unsupported_by_opcode[opcode]);
 #if !RV64_JIT_STATS
     (void)opcode;
@@ -364,12 +365,38 @@ static void jit_link_unpatch(rv64_jit_link_t *link)
     }
 }
 
+/* Patched links enter only executable targets that need no translated-data guards. */
+static bool jit_link_target_is_executable(const rv64_jit_block_t *target)
+{
+    return target->valid && target->entry != NULL && target->chain_entry != NULL && !target->translated && !target->uses_data_state;
+}
+
+/* A slot collision may hold executable code for a different fetch context. */
+static bool jit_link_target_matches_context(const rv64_jit_link_t *link, const rv64_jit_block_t *target)
+{
+    return target->pc == link->target_pc && target->satp == link->target_satp && target->ifetch_state == link->target_ifetch_state;
+}
+
 /* Resolve one waiting source only when the slot holds its exact safe target. */
 static void jit_link_try_patch(rv64_jit_link_t *link, rv64_jit_block_t *target)
 {
-    if (link->patched || !link->patch_eligible || link->source == NULL || !link->source->valid || !target->valid || target->entry == NULL ||
-        target->chain_entry == NULL || target->translated || target->uses_data_state || target->pc != link->target_pc ||
-        target->satp != link->target_satp || target->ifetch_state != link->target_ifetch_state)
+    if (link->patched || !link->patch_eligible)
+    {
+        return;
+    }
+
+    /* Keep ownership guards before target inspection and preserve the null prerequisite. */
+    if (link->source == NULL || !link->source->valid)
+    {
+        return;
+    }
+
+    if (!jit_link_target_is_executable(target))
+    {
+        return;
+    }
+
+    if (!jit_link_target_matches_context(link, target))
     {
         return;
     }
@@ -579,6 +606,138 @@ void rv64_jit_links_reset(void)
     memset(rv64_jit_link_slot_heads, 0, sizeof(rv64_jit_link_slot_heads));
 }
 
+/* Release one cache slot and its source refs, if it owns source bytes. */
+void rv64_jit_block_discard(rv64_jit_block_t *block)
+{
+    const bool was_valid = block->valid;
+
+    /*
+     * Native selectors must stop reaching this generation before its metadata
+     * or arena bytes can be cleared. Source-owned records are removed from
+     * their target-slot lists by the same lifecycle hook.
+     */
+    rv64_jit_links_block_discard(block);
+
+    if (was_valid)
+    {
+        /*
+         * Make lazy PIC readers reject this publication before dependency
+         * metadata is released or its arena bytes can later be recycled.
+         */
+        block->valid = false;
+        block->generation = 0;
+
+        rv64_jit_block_dependencies_detach(block);
+    }
+
+    *block = (rv64_jit_block_t){0};
+}
+
+/*
+ * Publish generated code only after all bytes and dependency metadata exist.
+ * The slot remains invalid while it is populated: synchronise the native
+ * instruction cache, discard the previous owner, copy metadata, install
+ * dependency references, and set `valid` last.  Finally advance arena usage so
+ * a later compilation cannot overwrite the new block.
+ */
+rv64_jit_block_t *rv64_jit_publish_compiled_block(rv64_jit_writer_t *w, const rv64_jit_publish_info_t *info)
+{
+    Assert(info->native_code_end >= w->start && info->allocation_end >= info->native_code_end && info->allocation_end == w->cur,
+           "jit: invalid native-code/sidecar publication bounds");
+    __builtin___clear_cache((char *)w->start, (char *)info->native_code_end);
+
+    rv64_jit_block_t *block = rv64_jit_cache_slot(info->start_pc);
+    rv64_jit_block_discard(block);
+    *block = (rv64_jit_block_t){
+        .valid = false,
+        .translated = info->uses_translated_ifetch,
+        .uses_data_state = info->needs_data_translation_guard,
+        .generation = jit_allocate_block_generation(),
+        .pc = info->start_pc,
+        .satp = cpu.csr.satp,
+        .ifetch_state = rv64_jit_ifetch_state(),
+        .data_state = rv64_jit_data_tlb_state(MEM_TYPE_READ),
+        .ifetch_generation = rv64_jit_ifetch_generation,
+        .paddr_start = info->first_paddr,
+        .source_len = info->source->source_len,
+        .source_segment_count = info->source->segment_count,
+        .ifetch_pt_page_count = info->uses_translated_ifetch ? info->ifetch_refs->count : 0,
+        .insn_count = info->compiled_insn_count,
+        .entry = (rv64_jit_entry_t)w->start,
+        .body_entry = (rv64_jit_entry_t)info->native_body_entry,
+        .chain_entry = (rv64_jit_entry_t)info->chain_entry,
+        .outgoing_links = info->link_records,
+        .outgoing_link_count = info->link_count,
+        .indirect_pic = info->indirect_pic,
+    };
+    memcpy(block->source_segments, info->source->segments, sizeof(info->source->segments));
+    memcpy(block->ifetch_pt_pages, info->ifetch_refs->pages, block->ifetch_pt_page_count * sizeof(block->ifetch_pt_pages[0]));
+    rv64_jit_block_dependencies_attach(block);
+    block->valid = true;
+
+    rv64_jit_code_used = (size_t)(info->allocation_end - rv64_jit_code);
+    rv64_jit_links_source_published(block);
+    rv64_jit_links_target_published(block);
+    rv64_jit_perf_map_publish(block, w->start, (size_t)(info->native_code_end - w->start));
+    return block;
+}
+
+/* Publish a negative cache entry for a currently unsupported instruction. */
+void rv64_jit_mark_unsupported(vaddr_t pc, paddr_t paddr, bool translated)
+{
+    /* This counts the attempt, including failed translated-source revalidation. */
+    JIT_STAT_INC(blocks_unsupported);
+
+    rv64_jit_ifetch_ref_builder_t refs = {0};
+
+    if (translated)
+    {
+        paddr_t checked_paddr = 0;
+        bool checked_translated = false;
+
+        if (!rv64_jit_translate_ifetch_collect(pc, &checked_paddr, &checked_translated, &refs) || !checked_translated || checked_paddr != paddr)
+        {
+            return;
+        }
+    }
+
+    rv64_jit_block_t *block = rv64_jit_cache_slot(pc);
+    rv64_jit_block_discard(block);
+    /* Negative markers keep their existing single-threaded publication order. */
+    *block = (rv64_jit_block_t){
+        .valid = true,
+        .translated = translated,
+        .uses_data_state = false,
+        .pc = pc,
+        .satp = cpu.csr.satp,
+        .ifetch_state = rv64_jit_ifetch_state(),
+        .data_state = rv64_jit_data_tlb_state(MEM_TYPE_READ),
+        .ifetch_generation = rv64_jit_ifetch_generation,
+        .paddr_start = paddr,
+        .source_len = RISCV_BASE_INSN_BYTES,
+        .source_segment_count = 1,
+        .ifetch_pt_page_count = translated ? refs.count : 0,
+        .source_segments =
+            {
+                {
+                    .paddr_start = paddr,
+                    .source_offset = 0,
+                    .len = RISCV_BASE_INSN_BYTES,
+                },
+            },
+        .insn_count = 0,
+        .entry = NULL,
+        .body_entry = NULL,
+    };
+    memcpy(block->ifetch_pt_pages, refs.pages, block->ifetch_pt_page_count * sizeof(block->ifetch_pt_pages[0]));
+    /*
+     * Negative cache entries need source refs too.  If self-modifying code
+     * rewrites an unsupported instruction into a supported one, exact
+     * invalidation must remove this marker so the JIT can compile the new bytes.
+     */
+    rv64_jit_block_dependencies_attach(block);
+}
+
 /* Clear every published block when arena or broad machine state changes. */
 static void jit_cache_clear(void)
 {
@@ -759,6 +918,13 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
     }
 }
 
+/* Record one native entry only after it returned non-zero, budget-checked progress. */
+static inline void jit_record_native_progress(uint32_t ran)
+{
+    JIT_STAT_INC(blocks_executed);
+    JIT_STAT_ADD(executed_insns, ran);
+}
+
 /*
  * Execute cached or newly compiled native RV64 blocks within the given budgets.
  *
@@ -772,7 +938,6 @@ void isa_jit_invalidate_paddr(paddr_t addr, int len)
  * The tiny loop ABI uses `rv64_jit_entry_budget` and `rv64_jit_loop_extra` so generated
  * chained loops can stay native while still returning exact retired counts.
  */
-/* Execute cached or newly compiled native RV64 blocks within the given budgets. */
 bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed)
 {
     *executed = 0;
@@ -849,8 +1014,7 @@ bool isa_jit_exec(uint64_t remaining, uint32_t device_budget, uint32_t *executed
         }
 
         Assert(ran <= remaining_budget, "jit: invalid RV64 executed count %u", ran);
-        JIT_STAT_INC(blocks_executed);
-        JIT_STAT_ADD(executed_insns, ran);
+        jit_record_native_progress(ran);
         total += ran;
 
         if (cpu_boundary_requested)

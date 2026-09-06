@@ -70,7 +70,25 @@ void disassemble(char *str, int size, uint64_t pc, uint8_t *code, int nbyte)
 {
     cs_insn *insn;
     size_t count = cs_disasm_dl(handle, code, nbyte, pc, 0, &insn);
-    assert(count == 1);
+
+    if (count != 1)
+    {
+        /*
+         * Trace rendering must not abort an architectural illegal-instruction
+         * trap or NEMU's private exit instruction. The caller already printed
+         * the fetched bytes; retain those even when Capstone cannot describe
+         * this span as one instruction.
+         */
+        snprintf(str, size, "<unrecognised instruction>");
+
+        if (count != 0)
+        {
+            cs_free_dl(insn, count);
+        }
+
+        return;
+    }
+
     int ret = snprintf(str, size, "%s", insn->mnemonic);
 
     if (insn->op_str[0] != '\0')

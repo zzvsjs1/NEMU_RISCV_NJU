@@ -9,12 +9,14 @@ volatile uint64_t rv64_csr_saved_mcause = 0;
 volatile uint64_t rv64_csr_saved_mtval = 0;
 volatile uint64_t rv64_csr_saved_a7 = 0;
 volatile uint64_t rv64_csr_restore_mtvec = 0;
+volatile uint64_t rv64_csr_resume_pc = 0;
 
 /*
  * The handler is written without a C prologue so the test controls exactly
  * which registers are touched.  It records trap state, skips the faulting
- * instruction, restores mtvec, and then forces MPP=M before MRET so tests that
- * deliberately enter U-mode can continue running the following C code.
+ * instruction (or uses an explicitly requested resume PC), restores mtvec,
+ * and then forces MPP=M before MRET so tests that deliberately enter lower
+ * privilege can continue running the following C code.
  */
 asm(".section .text\n"
     ".option push\n"
@@ -36,8 +38,12 @@ asm(".section .text\n"
     "  la t0, rv64_csr_restore_mtvec\n"
     "  ld t1, 0(t0)\n"
     "  csrw mtvec, t1\n"
+    "  la t0, rv64_csr_resume_pc\n"
+    "  ld t0, 0(t0)\n"
+    "  bnez t0, 1f\n"
     "  csrr t0, mepc\n"
     "  addi t0, t0, 4\n"
+    "1:\n"
     "  csrw mepc, t0\n"
     "  csrr t0, mstatus\n"
     "  li t1, 0x1800\n"
@@ -53,9 +59,11 @@ enum
     MSTATUS_MIE = 1ull << 3,
     MSTATUS_MPIE = 1ull << 7,
     MSTATUS_MPP_MASK = 3ull << 11,
+    MSTATUS_MPP_S = 1ull << 11,
     MSTATUS_MPP_M = 3ull << 11,
     MSTATUS_MPRV = 1ull << 17,
     MSTATUS_SUM = 1ull << 18,
+    MSTATUS_TVM = 1ull << 20,
 };
 
 /*
@@ -72,6 +80,89 @@ enum
 #define MSTATUS_UXL_MASK (MSTATUS_XLEN_VALUE_MASK << MSTATUS_UXL_SHIFT)
 #define MSTATUS_SXL_MASK (MSTATUS_XLEN_VALUE_MASK << MSTATUS_SXL_SHIFT)
 #define MSTATUS_XLEN_64 2ull
+#define MSTATUS_UBE (1ull << 6)
+#define MSTATUS_SBE (1ull << 36)
+#define MSTATUS_MBE (1ull << 37)
+#define MSTATUS_ENDIAN_MASK (MSTATUS_UBE | MSTATUS_SBE | MSTATUS_MBE)
+#define SATP_MODE_SHIFT 60u
+#define SATP_MODE_MASK 15u
+#define SATP_MODE_SV39 8u
+#define SATP_ASID_SHIFT 44u
+#define SATP_SV39 ((uintptr_t)SATP_MODE_SV39 << SATP_MODE_SHIFT)
+
+enum
+{
+    SATP_PROBE_READ,
+    SATP_PROBE_SWAP,
+    SATP_PROBE_SET,
+    SATP_PROBE_CLEAR,
+    SATP_PROBE_SWAP_IMMEDIATE,
+    SATP_PROBE_SET_IMMEDIATE,
+    SATP_PROBE_CLEAR_IMMEDIATE,
+    SATP_PROBE_COUNT,
+    SATP_PROBE_DESTINATION_SENTINEL = 0x5a5,
+    CAUSE_ILLEGAL_INSTRUCTION = 2,
+    CAUSE_SUPERVISOR_ECALL = 9,
+};
+
+/*
+ * Each probe slot is a four-byte CSR instruction followed by a four-byte
+ * ECALL.  TVM should trap on the CSR; with TVM clear, ECALL returns control to
+ * M-mode after the successful access.  The handler's explicit resume PC skips
+ * both instructions, making the successful and trapping paths independently
+ * observable without relying on an accidental second trap.
+ *
+ * Arguments follow the guest ABI: a0=mstatus, a1=slot, a2=CSR source value.
+ * a7 is deliberately distinct from the source and remains a sentinel on traps.
+ */
+asm(".section .text\n"
+    ".option push\n"
+    ".option norvc\n"
+    ".align 2\n"
+    ".globl rv64_csr_probe_supervisor_satp\n"
+    "rv64_csr_probe_supervisor_satp:\n"
+    "  la t0, rv64_csr_satp_resume\n"
+    "  la t1, rv64_csr_resume_pc\n"
+    "  sd t0, 0(t1)\n"
+    "  la t0, rv64_csr_satp_probes\n"
+    "  slli a1, a1, 3\n"
+    "  add t0, t0, a1\n"
+    "  csrw mepc, t0\n"
+    "  csrw mstatus, a0\n"
+    "  li a7, 0x5a5\n"
+    "  mret\n"
+    "rv64_csr_satp_probes:\n"
+    "  csrr a7, satp\n"
+    "  ecall\n"
+    "  csrrw a7, satp, a2\n"
+    "  ecall\n"
+    "  csrrs a7, satp, a2\n"
+    "  ecall\n"
+    "  csrrc a7, satp, a2\n"
+    "  ecall\n"
+    "  csrrwi a7, satp, 0\n"
+    "  ecall\n"
+    "  csrrsi a7, satp, 0\n"
+    "  ecall\n"
+    "  csrrci a7, satp, 0\n"
+    "  ecall\n"
+    "rv64_csr_satp_resume:\n"
+    "  ret\n"
+    ".option pop\n");
+
+extern void rv64_csr_probe_supervisor_satp(uintptr_t status, uintptr_t operation, uintptr_t source);
+
+static inline uintptr_t read_satp(void)
+{
+    uintptr_t value;
+    asm volatile("csrr %0, satp" : "=r"(value));
+    return value;
+}
+
+static inline void write_satp(uintptr_t value)
+{
+    asm volatile("csrw satp, %0" : : "r"(value) : "memory");
+}
 
 static inline uintptr_t read_mstatus(void)
 {
@@ -115,6 +206,7 @@ static void prepare_trap(void)
     rv64_csr_saved_mcause = UINT64_MAX;
     rv64_csr_saved_mtval = UINT64_MAX;
     rv64_csr_saved_a7 = UINT64_MAX;
+    rv64_csr_resume_pc = 0;
     rv64_csr_restore_mtvec = read_mtvec();
     write_mtvec((uintptr_t)rv64_csr_trap_handler);
 }
@@ -151,7 +243,7 @@ static void test_m_mode_ecall_trap_entry(void)
     armed &= ~MSTATUS_MPIE;
     write_mstatus(armed);
 
-    asm volatile("li a7, 42; ecall" : : : "a7", "memory");
+    asm volatile("li a7, 42; ecall" : : : "t0", "t1", "a7", "memory");
 
     write_mstatus(old_mstatus);
 
@@ -243,6 +335,94 @@ static void test_mstatus_write_normalises_uxl_and_sxl(void)
     write_mstatus(old_mstatus);
 }
 
+static void test_satp_ignores_unsupported_modes(void)
+{
+    const uintptr_t saved_satp = read_satp();
+    const uintptr_t supported = SATP_SV39 | ((uintptr_t)0x1357 << SATP_ASID_SHIFT) | 0x80000u;
+
+    /*
+     * M-mode fetches stay physical while Sv39 is selected.  Give the retained
+     * value and each attempted write different ASIDs and PPNs, so changing
+     * either field despite rejecting MODE cannot pass this whole-CSR check.
+     */
+    write_satp(supported);
+    check(read_satp() == supported);
+
+    for (uintptr_t mode = 1; mode <= SATP_MODE_MASK; mode++)
+    {
+        if (mode == SATP_MODE_SV39)
+        {
+            continue;
+        }
+
+        const uintptr_t attempted = (mode << SATP_MODE_SHIFT) | ((uintptr_t)0x2468 << SATP_ASID_SHIFT) | 0x80001u;
+        uintptr_t old = 0;
+
+        asm volatile("csrrw %0, satp, %1" : "=r"(old) : "r"(attempted) : "memory");
+
+        check(old == supported);
+        check(read_satp() == supported);
+    }
+
+    write_satp(0);
+    check(read_satp() == 0);
+    write_satp(saved_satp);
+}
+
+static void test_mstatus_endianness_is_read_only_zero(void)
+{
+    const uintptr_t saved_mstatus = read_mstatus();
+    const uintptr_t requests[] = {MSTATUS_UBE, MSTATUS_SBE, MSTATUS_MBE, MSTATUS_ENDIAN_MASK};
+    const uint8_t bytes[4] __attribute__((aligned(4))) = {1, 2, 3, 4};
+
+    for (size_t request = 0; request < sizeof(requests) / sizeof(requests[0]); request++)
+    {
+        write_mstatus(saved_mstatus | requests[request]);
+        check((read_mstatus() & MSTATUS_ENDIAN_MASK) == 0);
+
+        /*
+         * The readback rule must agree with real memory execution.  Repeating
+         * the load also exercises cached native loads in JIT configurations.
+         */
+        for (unsigned iteration = 0; iteration < 16; iteration++)
+        {
+            uintptr_t value;
+            asm volatile("lw %0, 0(%1)" : "=r"(value) : "r"(bytes) : "memory");
+            check(value == 0x04030201u);
+        }
+    }
+
+    write_mstatus(saved_mstatus);
+}
+
+static void test_supervisor_satp_tvm_gate(void)
+{
+    const uintptr_t saved_mstatus = read_mstatus();
+    const uintptr_t saved_satp = read_satp();
+    const uintptr_t supervisor_status =
+        (saved_mstatus & ~(MSTATUS_MPP_MASK | MSTATUS_MPRV | MSTATUS_MIE | MSTATUS_MPIE | MSTATUS_TVM)) | MSTATUS_MPP_S;
+
+    /* Bare mode keeps the probe code and trap handler reachable in both modes. */
+    write_satp(0);
+
+    for (unsigned tvm = 0; tvm <= 1; tvm++)
+    {
+        for (uintptr_t operation = 0; operation < SATP_PROBE_COUNT; operation++)
+        {
+            prepare_trap();
+            rv64_csr_probe_supervisor_satp(supervisor_status | (tvm ? MSTATUS_TVM : 0), operation, tvm ? SATP_SV39 : 0);
+            write_mstatus(saved_mstatus);
+
+            check(rv64_csr_saved_mcause == (tvm ? CAUSE_ILLEGAL_INSTRUCTION : CAUSE_SUPERVISOR_ECALL));
+            check(rv64_csr_saved_a7 == (tvm ? SATP_PROBE_DESTINATION_SENTINEL : 0));
+            check((rv64_csr_saved_mstatus & MSTATUS_MPP_MASK) == MSTATUS_MPP_S);
+            check(read_satp() == 0);
+        }
+    }
+
+    write_satp(saved_satp);
+}
+
 static void test_user_mode_ecall_and_csr_faults(void)
 {
     uintptr_t old_mstatus = read_mstatus();
@@ -261,7 +441,7 @@ static void test_user_mode_ecall_and_csr_faults(void)
                  "ecall\n"
                  :
                  : [status] "r"(user_mstatus)
-                 : "t0", "a7", "memory");
+                 : "t0", "t1", "a7", "memory");
 
     write_mstatus(old_mstatus);
 
@@ -305,6 +485,9 @@ int main(void)
     test_mret_restores_machine_mstatus_fields();
     test_mstatus_write_normalises_reserved_mpp();
     test_mstatus_write_normalises_uxl_and_sxl();
+    test_satp_ignores_unsupported_modes();
+    test_mstatus_endianness_is_read_only_zero();
+    test_supervisor_satp_tvm_gate();
     test_user_mode_ecall_and_csr_faults();
     test_wfi_is_non_blocking_hint();
 #endif

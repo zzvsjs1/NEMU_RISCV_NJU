@@ -392,6 +392,41 @@ static bool fp_check_store_alignment(Decode *s, word_t address, int length)
     return true;
 }
 
+/* Preserve FP registers, fflags and FS when address translation faults. */
+static bool fp_read_memory(Decode *s, word_t address, int length, word_t *value)
+{
+#ifdef CONFIG_RV64
+    vaddr_fault_t fault;
+
+    if (!vaddr_try_read(address, length, value, &fault))
+    {
+        fp_raise_trap(s, fault.cause, fault.addr);
+        return false;
+    }
+#else
+    *value = vaddr_read(address, length);
+#endif
+
+    return true;
+}
+
+static bool fp_write_memory(Decode *s, word_t address, int length, word_t value)
+{
+#ifdef CONFIG_RV64
+    vaddr_fault_t fault;
+
+    if (!vaddr_try_write(address, length, value, &fault))
+    {
+        fp_raise_trap(s, fault.cause, fault.addr);
+        return false;
+    }
+#else
+    vaddr_write(address, length, value);
+#endif
+
+    return true;
+}
+
 #ifdef CONFIG_RISCV_D
 /*
  * The generic virtual-memory interface carries one `word_t`.  A single
@@ -402,22 +437,31 @@ static bool fp_check_store_alignment(Decode *s, word_t address, int length)
  * Chapter 22.3 guarantees atomic FLD/FSD execution only when XLEN is at least
  * 64, so the two RV32 accesses are a permitted implementation choice.
  */
-static uint64_t fp_load_doubleword(word_t address)
+static bool fp_load_doubleword(Decode *s, word_t address, uint64_t *value)
 {
 #ifdef CONFIG_RV64
-    return (uint64_t)vaddr_read(address, RISCV_FP64_BYTES);
+    word_t data;
+
+    if (!fp_read_memory(s, address, RISCV_FP64_BYTES, &data))
+    {
+        return false;
+    }
+
+    *value = data;
 #else
     const uint64_t low = (uint32_t)vaddr_read(address, RISCV_FP32_BYTES);
     const uint64_t high = (uint32_t)vaddr_read(address + RISCV_FP32_BYTES, RISCV_FP32_BYTES);
 
-    return low | (high << 32);
+    *value = low | (high << 32);
 #endif
+
+    return true;
 }
 
-static void fp_store_doubleword(word_t address, uint64_t value)
+static void fp_store_doubleword(Decode *s, word_t address, uint64_t value)
 {
 #ifdef CONFIG_RV64
-    vaddr_write(address, RISCV_FP64_BYTES, value);
+    fp_write_memory(s, address, RISCV_FP64_BYTES, value);
 #else
     vaddr_write(address, RISCV_FP32_BYTES, (uint32_t)value);
     vaddr_write(address + RISCV_FP32_BYTES, RISCV_FP32_BYTES, (uint32_t)(value >> 32));
@@ -550,10 +594,13 @@ static void fp_exec_load(Decode *s, uint32_t inst)
     case RISCV_FP_WIDTH_WORD: /* FLW */
         if (fp_check_load_alignment(s, address, RISCV_FP32_BYTES))
         {
-            const float32_t value = {
-                .v = (uint32_t)vaddr_read(address, RISCV_FP32_BYTES),
-            };
-            fp_write_s(rd, value);
+            word_t data;
+
+            if (fp_read_memory(s, address, RISCV_FP32_BYTES, &data))
+            {
+                const float32_t value = {.v = (uint32_t)data};
+                fp_write_s(rd, value);
+            }
         }
 
         return;
@@ -561,10 +608,13 @@ static void fp_exec_load(Decode *s, uint32_t inst)
     case RISCV_FP_WIDTH_DOUBLEWORD: /* FLD */
         if (fp_check_load_alignment(s, address, RISCV_FP64_BYTES))
         {
-            const float64_t value = {
-                .v = fp_load_doubleword(address),
-            };
-            fp_write_d(rd, value);
+            uint64_t data;
+
+            if (fp_load_doubleword(s, address, &data))
+            {
+                const float64_t value = {.v = data};
+                fp_write_d(rd, value);
+            }
         }
 
         return;
@@ -587,7 +637,7 @@ static void fp_exec_store(Decode *s, uint32_t inst)
         /* FSW transfers the raw low word without an unboxing check. */
         if (fp_check_store_alignment(s, address, RISCV_FP32_BYTES))
         {
-            vaddr_write(address, RISCV_FP32_BYTES, (uint32_t)value);
+            fp_write_memory(s, address, RISCV_FP32_BYTES, (uint32_t)value);
         }
 
         return;
@@ -596,7 +646,7 @@ static void fp_exec_store(Decode *s, uint32_t inst)
         /* FSD transfers every raw bit. */
         if (fp_check_store_alignment(s, address, RISCV_FP64_BYTES))
         {
-            fp_store_doubleword(address, (uint64_t)value);
+            fp_store_doubleword(s, address, (uint64_t)value);
         }
 
         return;

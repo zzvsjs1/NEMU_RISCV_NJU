@@ -15,8 +15,6 @@
 #include <utils.h>
 
 #define R(i) gpr(i)
-#define Mr vaddr_read
-#define Mw vaddr_write
 
 /*
  * RISC-V direct-interpreter design.
@@ -321,6 +319,69 @@ static inline bool riscv_check_store_alignment(Decode *s, word_t addr, int len)
     return true;
 }
 
+/* A failed load must not assign rd, including an address held in rd itself. */
+static void riscv_load(Decode *s, uint32_t rd, word_t addr, int len, bool sign_extend)
+{
+    if (!riscv_check_load_alignment(s, addr, len))
+    {
+        return;
+    }
+
+    word_t value;
+#ifdef CONFIG_RV64
+    vaddr_fault_t fault;
+
+    if (!vaddr_try_read(addr, len, &value, &fault))
+    {
+        riscv_raise_trap(s, fault.cause, fault.addr);
+        return;
+    }
+#else
+    value = vaddr_read(addr, len);
+#endif
+
+    /* Full-width LD already has its XLEN representation; narrower loads extend. */
+    if (sign_extend)
+    {
+        switch (len)
+        {
+        case 1:
+            value = (word_t)(sword_t)(int8_t)value;
+            break;
+        case 2:
+            value = (word_t)(sword_t)(int16_t)value;
+            break;
+        case 4:
+            value = (word_t)(sword_t)(int32_t)value;
+            break;
+        default:
+            break;
+        }
+    }
+
+    R(rd) = value;
+}
+
+/* Page translation finishes before the store can become externally visible. */
+static void riscv_store(Decode *s, word_t addr, int len, word_t value)
+{
+    if (!riscv_check_store_alignment(s, addr, len))
+    {
+        return;
+    }
+
+#ifdef CONFIG_RV64
+    vaddr_fault_t fault;
+
+    if (!vaddr_try_write(addr, len, value, &fault))
+    {
+        riscv_raise_trap(s, fault.cause, fault.addr);
+    }
+#else
+    vaddr_write(addr, len, value);
+#endif
+}
+
 /*
  * Check JAL, JALR, and taken-branch targets.  This implementation has no
  * compressed instructions, so IALIGN=32 and both low address bits must be zero.
@@ -354,6 +415,17 @@ static inline bool riscv_csr_access_ok(Decode *s, word_t addr, bool will_write)
     const word_t required_priv = (addr >> RISCV_CSR_PRIV_SHIFT) & RISCV_CSR_PRIV_MASK;
 
     if (!isCSRImplemented(addr) || cpu.prvi < required_priv || (will_write && !isCSRWriteable(addr)))
+    {
+        riscv_raise_trap(s, RISCV_CAUSE_ILLEGAL_INST, 0);
+        return false;
+    }
+
+    /*
+     * TVM intercepts every S-mode satp access, including read-only CSR forms.
+     * Check before reading the CSR or committing either a register or a CSR,
+     * so the trap leaves both destinations untouched.
+     */
+    if (addr == RISCV_CSR_SATP && cpu.prvi == RISCV_PRIV_S && (cpu.csr.mstatus & RISCV_MSTATUS_TVM) != 0)
     {
         riscv_raise_trap(s, RISCV_CAUSE_ILLEGAL_INST, 0);
         return false;
@@ -660,32 +732,32 @@ static int decode_exec(Decode *s)
      * Loads:
      * - LB/LH/LW sign-extend the loaded byte/halfword/word.
      * - LBU/LHU/LWU zero-extend their loaded value.
-     * - LH/LW/LD/LHU/LWU perform the natural-alignment check before rd is
-     *   touched, so a trap cannot partially commit a destination register.
+     * - Alignment and translation finish before rd is touched, so a trap
+     *   cannot partially commit a destination register, even for rd=x0.
      */
-    INSTPAT("??????? ????? ????? 000 ????? 00000 11", lb, I, R(rd) = SEXT(Mr(src1 + imm, 1), 8));
-    INSTPAT("??????? ????? ????? 001 ????? 00000 11", lh, I, if (riscv_check_load_alignment(s, src1 + imm, 2)) R(rd) = SEXT(Mr(src1 + imm, 2), 16));
-    INSTPAT("??????? ????? ????? 010 ????? 00000 11", lw, I, if (riscv_check_load_alignment(s, src1 + imm, 4)) R(rd) = SEXT(Mr(src1 + imm, 4), 32));
+    INSTPAT("??????? ????? ????? 000 ????? 00000 11", lb, I, riscv_load(s, rd, src1 + imm, 1, true));
+    INSTPAT("??????? ????? ????? 001 ????? 00000 11", lh, I, riscv_load(s, rd, src1 + imm, 2, true));
+    INSTPAT("??????? ????? ????? 010 ????? 00000 11", lw, I, riscv_load(s, rd, src1 + imm, 4, true));
 #ifdef CONFIG_RV64
-    INSTPAT("??????? ????? ????? 011 ????? 00000 11", ld, I, if (riscv_check_load_alignment(s, src1 + imm, 8)) R(rd) = Mr(src1 + imm, 8));
+    INSTPAT("??????? ????? ????? 011 ????? 00000 11", ld, I, riscv_load(s, rd, src1 + imm, 8, false));
 #endif
-    INSTPAT("??????? ????? ????? 100 ????? 00000 11", lbu, I, R(rd) = Mr(src1 + imm, 1));
-    INSTPAT("??????? ????? ????? 101 ????? 00000 11", lhu, I, if (riscv_check_load_alignment(s, src1 + imm, 2)) R(rd) = Mr(src1 + imm, 2));
+    INSTPAT("??????? ????? ????? 100 ????? 00000 11", lbu, I, riscv_load(s, rd, src1 + imm, 1, false));
+    INSTPAT("??????? ????? ????? 101 ????? 00000 11", lhu, I, riscv_load(s, rd, src1 + imm, 2, false));
 #ifdef CONFIG_RV64
-    INSTPAT("??????? ????? ????? 110 ????? 00000 11", lwu, I, if (riscv_check_load_alignment(s, src1 + imm, 4)) R(rd) = Mr(src1 + imm, 4));
+    INSTPAT("??????? ????? ????? 110 ????? 00000 11", lwu, I, riscv_load(s, rd, src1 + imm, 4, false));
 #endif
 
     /*
      * Stores:
      * - SB/SH/SW/SD write the low 8/16/32/64 bits of rs2 to memory.
-     * - Wider stores check alignment before vaddr_write() is called, so a
-     *   misaligned store raises the architectural trap without changing memory.
+     * - Alignment and translation finish before the physical write, so a
+     *   fault raises the architectural trap without changing memory.
      */
-    INSTPAT("??????? ????? ????? 000 ????? 01000 11", sb, S, Mw(src1 + imm, 1, src2));
-    INSTPAT("??????? ????? ????? 001 ????? 01000 11", sh, S, if (riscv_check_store_alignment(s, src1 + imm, 2)) Mw(src1 + imm, 2, src2));
-    INSTPAT("??????? ????? ????? 010 ????? 01000 11", sw, S, if (riscv_check_store_alignment(s, src1 + imm, 4)) Mw(src1 + imm, 4, src2));
+    INSTPAT("??????? ????? ????? 000 ????? 01000 11", sb, S, riscv_store(s, src1 + imm, 1, src2));
+    INSTPAT("??????? ????? ????? 001 ????? 01000 11", sh, S, riscv_store(s, src1 + imm, 2, src2));
+    INSTPAT("??????? ????? ????? 010 ????? 01000 11", sw, S, riscv_store(s, src1 + imm, 4, src2));
 #ifdef CONFIG_RV64
-    INSTPAT("??????? ????? ????? 011 ????? 01000 11", sd, S, if (riscv_check_store_alignment(s, src1 + imm, 8)) Mw(src1 + imm, 8, src2));
+    INSTPAT("??????? ????? ????? 011 ????? 01000 11", sd, S, riscv_store(s, src1 + imm, 8, src2));
 #endif
 
 #ifdef CONFIG_RISCV_FPU
@@ -1010,6 +1082,22 @@ static int decode_exec(Decode *s)
 /* Fetch one 32-bit RISC-V instruction and execute it through the direct matcher. */
 int isa_exec_once(Decode *s)
 {
+#ifdef CONFIG_RV64
+    word_t inst;
+    vaddr_fault_t fault;
+
+    if (!vaddr_try_ifetch(s->snpc, 4, &inst, &fault))
+    {
+        /* No instruction bits are valid on a fetch fault: do not enter decode. */
+        s->isa.inst = 0;
+        riscv_raise_trap(s, fault.cause, fault.addr);
+        return 0;
+    }
+
+    s->isa.inst = (uint32_t)inst;
+    s->snpc += 4;
+#else
     s->isa.inst = inst_fetch(&s->snpc, 4);
+#endif
     return decode_exec(s);
 }

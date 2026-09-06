@@ -32,13 +32,10 @@
 #endif
 
 /*
- * Retain the compact RV64 JIT vocabulary used throughout the emitter, while
- * deriving architectural values from the ISA-wide definitions.  This keeps
- * the JIT and interpreter decoders in agreement when the shared definitions
- * are audited or extended.
+ * Instruction widths, major opcodes, architectural registers and paging
+ * fields use the shared RISCV_* definitions directly.  The names below own
+ * JIT policy or encoding fields without an existing shared definition.
  */
-#define RV64_INSN_SIZE RISCV_BASE_INSN_BYTES
-#define RV64_OPCODE_MASK RISCV_OPCODE_MASK
 /*
  * This NEMU RV64 configuration does not implement the compressed C extension,
  * so the guest architecture has IALIGN=32.  JAL, JALR, and a taken conditional
@@ -46,34 +43,6 @@
  * zero.
  */
 #define RV64_IALIGN_MASK RISCV_IALIGN_32_MASK
-
-/* RISC-V opcodes used by this first native subset. */
-#define RV64_OPCODE_LOAD RISCV_OPCODE_LOAD
-#define RV64_OPCODE_OP_IMM RISCV_OPCODE_OP_IMM
-#define RV64_OPCODE_AUIPC RISCV_OPCODE_AUIPC
-#define RV64_OPCODE_OP_IMM_32 RISCV_OPCODE_OP_IMM_32
-#define RV64_OPCODE_STORE RISCV_OPCODE_STORE
-#define RV64_OPCODE_OP RISCV_OPCODE_OP
-#define RV64_OPCODE_LUI RISCV_OPCODE_LUI
-#define RV64_OPCODE_OP_32 RISCV_OPCODE_OP_32
-#define RV64_OPCODE_BRANCH RISCV_OPCODE_BRANCH
-#define RV64_OPCODE_JALR RISCV_OPCODE_JALR
-#define RV64_OPCODE_JAL RISCV_OPCODE_JAL
-
-/* Floating-point major opcodes lowered through the shared SoftFloat helper. */
-#define RV64_FP_OPCODE_LOAD RISCV_FP_OPCODE_LOAD
-#define RV64_FP_OPCODE_STORE RISCV_FP_OPCODE_STORE
-#define RV64_FP_OPCODE_FMADD RISCV_FP_OPCODE_FMADD
-#define RV64_FP_OPCODE_FMSUB RISCV_FP_OPCODE_FMSUB
-#define RV64_FP_OPCODE_FNMSUB RISCV_FP_OPCODE_FNMSUB
-#define RV64_FP_OPCODE_FNMADD RISCV_FP_OPCODE_FNMADD
-#define RV64_FP_OPCODE_OP RISCV_FP_OPCODE_OP
-
-/* Architectural register and JALR values used by generic emitter logic. */
-#define RV64_GPR_ZERO RISCV_GPR_ZERO
-#define RV64_GPR_LINK RISCV_GPR_LINK
-#define RV64_FUNCT3_JALR RISCV_JALR_FUNCT3
-#define RV64_JALR_TARGET_LSB_MASK RISCV_JALR_TARGET_LSB_MASK
 
 /* RISC-V funct3 values used by load, store, branch and integer emitters. */
 #define RV64_FUNCT3_LB 0x0u
@@ -101,6 +70,22 @@
 #define RV64_FUNCT3_SRL_SRA 0x5u
 #define RV64_FUNCT3_OR 0x6u
 #define RV64_FUNCT3_AND 0x7u
+
+/*
+ * M-extension funct3 fields, shared by full-width OP and valid OP-32 forms.
+ * OP-32 has only MULW and DIV[U]W/REM[U]W, reserving the three high-product
+ * encodings.  These unsigned instruction fields are separate from the
+ * RV64_JIT_M_OP_* counter identities: lowering maps to those identities
+ * explicitly so a word operation cannot accidentally count as a full-width one.
+ */
+#define RV64_M_FUNCT3_MUL 0x0u
+#define RV64_M_FUNCT3_MULH 0x1u
+#define RV64_M_FUNCT3_MULHSU 0x2u
+#define RV64_M_FUNCT3_MULHU 0x3u
+#define RV64_M_FUNCT3_DIV 0x4u
+#define RV64_M_FUNCT3_DIVU 0x5u
+#define RV64_M_FUNCT3_REM 0x6u
+#define RV64_M_FUNCT3_REMU 0x7u
 
 /* RISC-V funct6/funct7 values used to distinguish shift and OP variants. */
 #define RV64_FUNCT6_SHIFT_LOGICAL 0x00u
@@ -144,11 +129,10 @@
  * instructions.  Keep the formula explicit so the source metadata grows with
  * the trace limit instead of relying on an old basic-block constant.
  */
-#define RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS (((RV64_JIT_TRACE_MAX_INSNS * RV64_INSN_SIZE) + PAGE_SIZE - 1u) / PAGE_SIZE + 1u)
-#define RV64_JIT_SV39_LEVELS RISCV64_SV39_LEVELS
-#define RV64_JIT_BLOCK_MAX_IFETCH_PT_PAGES (RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS * RV64_JIT_SV39_LEVELS)
+#define RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS (((RV64_JIT_TRACE_MAX_INSNS * RISCV_BASE_INSN_BYTES) + PAGE_SIZE - 1u) / PAGE_SIZE + 1u)
+#define RV64_JIT_BLOCK_MAX_IFETCH_PT_PAGES (RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS * RISCV64_SV39_LEVELS)
 #define RV64_JIT_BLOCK_MAX_SOURCE_CHUNKS \
-    (((RV64_JIT_TRACE_MAX_INSNS * RV64_INSN_SIZE) + RV64_JIT_SOURCE_CHUNK_SIZE - 1u) / RV64_JIT_SOURCE_CHUNK_SIZE + \
+    (((RV64_JIT_TRACE_MAX_INSNS * RISCV_BASE_INSN_BYTES) + RV64_JIT_SOURCE_CHUNK_SIZE - 1u) / RV64_JIT_SOURCE_CHUNK_SIZE + \
      RV64_JIT_BLOCK_MAX_SOURCE_SEGMENTS)
 #define RV64_JIT_SOURCE_LINK_NULL 0u
 #define RV64_JIT_SOURCE_LINK_COUNT ((size_t)RV64_JIT_CACHE_SIZE * (size_t)RV64_JIT_BLOCK_MAX_SOURCE_CHUNKS + 1u)
@@ -239,66 +223,34 @@ _Static_assert(RV64_JIT_INDIRECT_PIC_WAYS == 2u, "RV64 JIT indirect PIC route AB
  */
 #define RV64_JIT_PMEM_PAGE_COUNT (((size_t)CONFIG_MSIZE + (size_t)PAGE_SIZE - 1u) / (size_t)PAGE_SIZE)
 
-/*
- * Keep the established JIT names for readable translation code, but source all
- * architectural paging values from the common Sv39 definitions.
- */
-#define RV64_JIT_SATP_MODE_SHIFT RISCV64_SATP_MODE_SHIFT
-#define RV64_JIT_SATP_MODE_BARE RISCV_SATP_MODE_BARE
-#define RV64_JIT_SATP_MODE_SV39 RISCV64_SATP_MODE_SV39
-#define RV64_JIT_SATP_PPN_MASK RISCV64_SATP_PPN_MASK
-#define RV64_JIT_SV39_VPN_BITS RISCV64_SV39_VPN_BITS
-#define RV64_JIT_SV39_VPN_MASK RISCV64_SV39_VPN_MASK
-#define RV64_JIT_SV39_VPN_SHIFT(level) (PAGE_SHIFT + (level) * RV64_JIT_SV39_VPN_BITS)
-#define RV64_JIT_SV39_CANONICAL_SIGN_BIT RISCV64_SV39_CANONICAL_SIGN_BIT
-#define RV64_JIT_SV39_CANONICAL_HIGH_SHIFT RISCV64_SV39_CANONICAL_HIGH_SHIFT
-#define RV64_JIT_SV39_CANONICAL_HIGH_BITS RISCV64_SV39_CANONICAL_HIGH_BITS
-#define RV64_JIT_SV39_LEVEL1_LOW_PPN_MASK RISCV64_SV39_LEVEL1_LOW_PPN_MASK
-#define RV64_JIT_SV39_LEVEL2_LOW_PPN_MASK RISCV64_SV39_LEVEL2_LOW_PPN_MASK
-#define RV64_JIT_PTE_SIZE RISCV64_SV39_PTE_BYTES
-#define RV64_JIT_PTE_V RISCV_PTE_V
-#define RV64_JIT_PTE_R RISCV_PTE_R
-#define RV64_JIT_PTE_W RISCV_PTE_W
-#define RV64_JIT_PTE_X RISCV_PTE_X
-#define RV64_JIT_PTE_U RISCV_PTE_U
-#define RV64_JIT_PTE_A RISCV_PTE_A
-#define RV64_JIT_PTE_D RISCV_PTE_D
-#define RV64_JIT_PTE_RWX RISCV_PTE_RWX
-#define RV64_JIT_PTE_NON_LEAF_RESERVED RISCV_PTE_NON_LEAF_RESERVED
-#define RV64_JIT_PTE_PPN_SHIFT RISCV_PTE_PPN_SHIFT
-#define RV64_JIT_PTE_PPN_MASK RISCV64_PTE_PPN_MASK
-/*
- * The RV64 JIT has no Svnapot, Svpbmt, or Svrsw60t59b support.  The high Sv39
- * PTE region therefore contains both unsupported extension fields and reserved
- * bits, all of which must fault rather than produce a cached translation.  Add
- * the relevant state to the JIT guards before enabling any of those extensions
- * in NEMU's architectural walker.
- */
-#define RV64_JIT_PTE_UNSUPPORTED_HIGH_MASK RISCV64_PTE_UNSUPPORTED_HIGH_MASK
-#define RV64_JIT_MSTATUS_MPRV RISCV_MSTATUS_MPRV
-#define RV64_JIT_MSTATUS_SUM RISCV_MSTATUS_SUM
-#define RV64_JIT_MSTATUS_MXR RISCV_MSTATUS_MXR
-#define RV64_JIT_MSTATUS_MPP_SHIFT RISCV_MSTATUS_MPP_SHIFT
-#define RV64_JIT_MSTATUS_MPP_MASK RISCV_MSTATUS_MPP_MASK
+/* Data-TLB fields consumed by both the C lookup and generated lookup guards. */
 #define RV64_JIT_DATA_TLB_READ 0x1u
 #define RV64_JIT_DATA_TLB_WRITE 0x2u
 #define RV64_JIT_DATA_TLB_ENTRY_SHIFT 6u
 #define RV64_JIT_DATA_TLB_VPN_MIX_SHIFT 9u
 #define RV64_JIT_DATA_TLB_SATP_MIX_SHIFT 12u
-#define RV64_JIT_DATA_TLB_STATE_PRIV_MASK 0x3u
-#define RV64_JIT_DATA_TLB_STATE_SUM (1u << 2)
-#define RV64_JIT_DATA_TLB_STATE_MXR (1u << 3)
 
 /*
- * The completed-store helpers return this one-bit ABI in EAX.  Zero asks
- * generated code to leave the current block because the store reached a CPU
- * boundary or invalidated compiled source or translation state; one proves
- * that execution may continue at the next guest instruction.
+ * The SysV AMD64 ABI returns this two-word load result in RAX (value) and
+ * RDX (success, exactly zero or one). A failed helper has no architectural
+ * effect; generated code tests success before assigning the guest destination.
+ */
+typedef struct
+{
+    uint64_t value;
+    uint64_t success;
+} rv64_jit_load_result_t;
+
+/*
+ * Store helpers return their outcome in EAX. Zero and one retain the existing
+ * completed-store ABI. Only the translated helper can return FAULT: no bytes
+ * were written, so the interpreter must execute the current PC, not next_pc.
  */
 enum
 {
     RV64_JIT_STORE_MUST_EXIT = 0,
     RV64_JIT_STORE_MAY_CONTINUE = 1,
+    RV64_JIT_STORE_FAULT = 2,
 };
 
 /*
@@ -590,7 +542,7 @@ typedef struct
     uint32_t state;
     uint32_t access;
     uint64_t pg_paddr;
-    uint64_t pt_pages[RV64_JIT_SV39_LEVELS];
+    uint64_t pt_pages[RISCV64_SV39_LEVELS];
     uint8_t pt_page_count;
     bool valid;
 } rv64_jit_data_tlb_entry_t;
@@ -617,13 +569,34 @@ typedef struct
     uint32_t count;
 } rv64_jit_ifetch_ref_builder_t;
 
+/* Everything needed to publish one fully emitted native region. */
+typedef struct
+{
+    vaddr_t start_pc;
+    vaddr_t next_pc;
+    paddr_t first_paddr;
+    bool uses_translated_ifetch;
+    bool needs_data_translation_guard;
+    uint32_t compiled_insn_count;
+    uint32_t stable_loop_reg_count;
+    const uint8_t *native_body_entry;
+    const uint8_t *chain_entry;
+    const uint8_t *native_code_end;
+    const uint8_t *allocation_end;
+    rv64_jit_link_t *link_records;
+    uint32_t link_count;
+    rv64_jit_indirect_pic_t *indirect_pic;
+    const rv64_jit_source_builder_t *source;
+    const rv64_jit_ifetch_ref_builder_t *ifetch_refs;
+} rv64_jit_publish_info_t;
+
 _Static_assert(sizeof(rv64_jit_data_tlb_entry_t) == (1u << RV64_JIT_DATA_TLB_ENTRY_SHIFT),
                "RV64 JIT data-TLB entry size must match the emitted index shift");
 _Static_assert(((CONFIG_MBASE | CONFIG_MSIZE) & PAGE_MASK) == 0, "RV64 JIT PMEM must be page aligned");
 _Static_assert((uint64_t)CONFIG_MSIZE <= (uint64_t)UINT32_MAX + 1u, "RV64 JIT inline PMEM offsets must fit in 32 bits");
 _Static_assert(RV64_JIT_PMEM_CHUNK_COUNT <= UINT32_MAX, "RV64 JIT source chunk indexes must fit in 32 bits");
 _Static_assert(RV64_JIT_SOURCE_LINK_COUNT <= UINT32_MAX, "RV64 JIT source-link frontier must fit in 32 bits");
-_Static_assert(RV64_JIT_DATA_TLB_SIZE *RV64_JIT_SV39_LEVELS < UINT16_MAX, "RV64 JIT data-TLB dependency refs must fit in 16 bits");
+_Static_assert(RV64_JIT_DATA_TLB_SIZE *RISCV64_SV39_LEVELS < UINT16_MAX, "RV64 JIT data-TLB dependency refs must fit in 16 bits");
 
 struct rv64_jit_block
 {
@@ -822,7 +795,7 @@ typedef struct
     uint64_t segmented_source_blocks;
     uint64_t trace_blocks;
     uint64_t trace_insns;
-    uint64_t unsupported_by_opcode[RV64_OPCODE_MASK + 1u];
+    uint64_t unsupported_by_opcode[RISCV_OPCODE_MASK + 1u];
     uint64_t block_end_by_reason[RV64_JIT_BLOCK_END_COUNT];
 
     /*
@@ -996,7 +969,7 @@ static inline uint32_t rv64_instr_shamt5(uint32_t instr)
  */
 static inline rv64_jit_fp_exact_op_t rv64_jit_decode_fp_exact(uint32_t instr)
 {
-    if ((instr & RV64_OPCODE_MASK) != RV64_FP_OPCODE_OP)
+    if ((instr & RISCV_OPCODE_MASK) != RISCV_FP_OPCODE_OP)
     {
         return RV64_JIT_FP_EXACT_INVALID;
     }
@@ -1065,10 +1038,10 @@ static inline rv64_jit_fp_exact_op_t rv64_jit_decode_fp_exact(uint32_t instr)
 /* Decode only the F/D memory widths implemented by the scalar interpreter. */
 static inline rv64_jit_fp_memory_op_t rv64_jit_decode_fp_memory(uint32_t instr)
 {
-    const uint32_t opcode = instr & RV64_OPCODE_MASK;
+    const uint32_t opcode = instr & RISCV_OPCODE_MASK;
     const uint32_t width = rv64_instr_funct3(instr);
 
-    if (opcode == RV64_FP_OPCODE_LOAD)
+    if (opcode == RISCV_FP_OPCODE_LOAD)
     {
         if (width == RV64_FUNCT3_LW)
         {
@@ -1081,7 +1054,7 @@ static inline rv64_jit_fp_memory_op_t rv64_jit_decode_fp_memory(uint32_t instr)
         }
 #endif
     }
-    else if (opcode == RV64_FP_OPCODE_STORE)
+    else if (opcode == RISCV_FP_OPCODE_STORE)
     {
         if (width == RV64_FUNCT3_SW)
         {
@@ -1261,13 +1234,13 @@ uint32_t rv64_jit_data_tlb_state(int type);
 bool rv64_jit_data_tlb_probe_read(vaddr_t addr, uint32_t len);
 bool rv64_jit_data_tlb_probe_write(vaddr_t addr, uint32_t len);
 uint32_t rv64_jit_ifetch_state(void);
-uint64_t rv64_jit_load_i8(vaddr_t addr);
-uint64_t rv64_jit_load_i16(vaddr_t addr);
-uint64_t rv64_jit_load_i32(vaddr_t addr);
-uint64_t rv64_jit_load_u64(vaddr_t addr);
-uint64_t rv64_jit_load_u8(vaddr_t addr);
-uint64_t rv64_jit_load_u16(vaddr_t addr);
-uint64_t rv64_jit_load_u32(vaddr_t addr);
+rv64_jit_load_result_t rv64_jit_load_i8(vaddr_t addr);
+rv64_jit_load_result_t rv64_jit_load_i16(vaddr_t addr);
+rv64_jit_load_result_t rv64_jit_load_i32(vaddr_t addr);
+rv64_jit_load_result_t rv64_jit_load_u64(vaddr_t addr);
+rv64_jit_load_result_t rv64_jit_load_u8(vaddr_t addr);
+rv64_jit_load_result_t rv64_jit_load_u16(vaddr_t addr);
+rv64_jit_load_result_t rv64_jit_load_u32(vaddr_t addr);
 uint64_t rv64_jit_load_bare_i8(paddr_t addr);
 uint64_t rv64_jit_load_bare_i16(paddr_t addr);
 uint64_t rv64_jit_load_bare_i32(paddr_t addr);
@@ -1281,18 +1254,17 @@ uint32_t rv64_jit_store_pmem_continue(paddr_t addr, uint32_t len, uint64_t data)
 size_t rv64_jit_align_up(size_t value, size_t align);
 bool rv64_jit_source_chunk_range(paddr_t addr, uint32_t len, size_t *first, size_t *last);
 bool rv64_jit_source_builder_append(rv64_jit_source_builder_t *source, paddr_t paddr, uint32_t len);
-void rv64_jit_ifetch_refs_ref(const rv64_jit_block_t *block);
 void rv64_jit_source_reverse_map_init(void);
 void rv64_jit_source_reverse_map_reset(void);
-void rv64_jit_source_reverse_map_add(rv64_jit_block_t *block);
-void rv64_jit_source_chunks_ref(const rv64_jit_block_t *block);
 bool rv64_jit_write_may_touch_source_chunk(paddr_t addr, int len);
+void rv64_jit_block_dependencies_attach(rv64_jit_block_t *block);
+void rv64_jit_block_dependencies_detach(rv64_jit_block_t *block);
 void rv64_jit_block_discard(rv64_jit_block_t *block);
+rv64_jit_block_t *rv64_jit_publish_compiled_block(rv64_jit_writer_t *w, const rv64_jit_publish_info_t *info);
 void rv64_jit_links_reset(void);
 void rv64_jit_links_source_published(rv64_jit_block_t *block);
 void rv64_jit_links_target_published(rv64_jit_block_t *block);
 void rv64_jit_links_block_discard(rv64_jit_block_t *block);
-uint64_t rv64_jit_allocate_block_generation(void);
 rv64_jit_entry_t rv64_jit_indirect_pic_refill(rv64_jit_indirect_pic_t *pic, vaddr_t target_pc, rv64_jit_block_t *target_slot);
 bool rv64_jit_block_source_overlaps(const rv64_jit_block_t *block, paddr_t addr, int len);
 rv64_jit_block_t *rv64_jit_cache_slot_context(vaddr_t pc, word_t satp, uint32_t ifetch_state);

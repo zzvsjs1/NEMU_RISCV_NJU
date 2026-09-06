@@ -217,7 +217,15 @@ static inline void fetch_decode_exec_updatepc(Decode *s)
     p += space_len;
 
     void disassemble(char *str, int size, uint64_t pc, uint8_t *code, int nbyte);
-    disassemble(p, s->logbuf + sizeof(s->logbuf) - p, s->pc, (uint8_t *)&s->isa.inst, ilen);
+    if (ilen == 0)
+    {
+        /* A checked fetch fault has no instruction bytes for the disassembler. */
+        snprintf(p, s->logbuf + sizeof(s->logbuf) - p, "<instruction fetch fault>");
+    }
+    else
+    {
+        disassemble(p, s->logbuf + sizeof(s->logbuf) - p, s->pc, (uint8_t *)&s->isa.inst, ilen);
+    }
 #endif
 }
 #endif

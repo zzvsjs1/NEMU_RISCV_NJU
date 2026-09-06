@@ -2334,6 +2334,19 @@ check_generic_only() {
   : "$1" "$2"
 }
 
+check_page_faults() {
+  local log=$1
+  local test_name=$2
+
+  # The guest checks exact trap state and recovery. These counters additionally
+  # prove that faulting accesses reached the native translated-memory paths.
+  require_positive_translated_blocks "$log" "$test_name"
+  require_positive_native_paged_loads "$log" "$test_name"
+  require_positive_native_paged_stores "$log" "$test_name"
+  require_positive_side_exit_reason "$log" "$test_name" "load-guard"
+  require_positive_side_exit_reason "$log" "$test_name" "store-guard"
+}
+
 check_stable_loop() {
   local log=$1
   local test_name=$2
@@ -2701,6 +2714,9 @@ run_jit_test riscv64-jit-sv39-remap check_translated_only
 run_jit_test riscv64-jit-sv39-cross-page check_sv39_cross_page
 run_jit_test riscv64-jit-mprv-ifetch check_translated_only
 run_jit_test riscv64-jit-reg-cache check_reg_cache
+run_jit_test riscv64-jit-x0-pressure check_generic_only
+run_jit_test riscv64-csr-trap check_generic_only
+run_jit_test riscv64-page-fault check_page_faults
 # These statistics-only hooks exercise source invalidation and an outer CPU
 # boundary on the first two bare MMIO stores, then poison allocator storage so
 # the initial VGACTL read proves device reset uses explicit initialisation.

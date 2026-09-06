@@ -8,6 +8,25 @@
  * RV64 JIT memory layer: Sv39 translation, data TLBs, instruction-fetch
  * dependency tracking, PMEM source-byte tracking and helper memory operations.
  */
+
+/*
+ * Only this layer packs the translation-state tag; generated code compares
+ * the complete tag returned by rv64_jit_data_tlb_state().  Keep its unsigned
+ * field masks here so consumers do not grow a second packing formula.
+ */
+#define RV64_JIT_DATA_TLB_STATE_PRIV_MASK 0x3u
+#define RV64_JIT_DATA_TLB_STATE_SUM (1u << 2)
+#define RV64_JIT_DATA_TLB_STATE_MXR (1u << 3)
+
+/*
+ * The RV64 JIT has no Svnapot, Svpbmt, or Svrsw60t59b support.  The high Sv39
+ * PTE region therefore contains both unsupported extension fields and reserved
+ * bits, all of which must fault rather than produce a cached translation.  Add
+ * the relevant state to the JIT guards before enabling any of those extensions
+ * in NEMU's architectural walker.
+ */
+#define RV64_JIT_PTE_UNSUPPORTED_HIGH_MASK RISCV64_PTE_UNSUPPORTED_HIGH_MASK
+
 /* Advance the generation that protects translated instruction-fetch mappings. */
 void rv64_jit_ifetch_generation_bump(void)
 {
@@ -217,9 +236,9 @@ bool rv64_jit_write_may_touch_ifetch_page_table(paddr_t addr, int len)
 /* Return the privilege level that the architecture uses for this data access. */
 static word_t jit_data_effective_priv(int type)
 {
-    if (type != MEM_TYPE_IFETCH && cpu.prvi == RISCV64_PRIV_M && (cpu.csr.mstatus & RV64_JIT_MSTATUS_MPRV) != 0)
+    if (type != MEM_TYPE_IFETCH && cpu.prvi == RISCV64_PRIV_M && (cpu.csr.mstatus & RISCV_MSTATUS_MPRV) != 0)
     {
-        return (cpu.csr.mstatus & RV64_JIT_MSTATUS_MPP_MASK) >> RV64_JIT_MSTATUS_MPP_SHIFT;
+        return (cpu.csr.mstatus & RISCV_MSTATUS_MPP_MASK) >> RISCV_MSTATUS_MPP_SHIFT;
     }
 
     return cpu.prvi;
@@ -236,12 +255,12 @@ uint32_t rv64_jit_data_tlb_state(int type)
      */
     uint32_t state = (uint32_t)jit_data_effective_priv(type) & RV64_JIT_DATA_TLB_STATE_PRIV_MASK;
 
-    if ((cpu.csr.mstatus & RV64_JIT_MSTATUS_SUM) != 0)
+    if ((cpu.csr.mstatus & RISCV_MSTATUS_SUM) != 0)
     {
         state |= RV64_JIT_DATA_TLB_STATE_SUM;
     }
 
-    if ((cpu.csr.mstatus & RV64_JIT_MSTATUS_MXR) != 0)
+    if ((cpu.csr.mstatus & RISCV_MSTATUS_MXR) != 0)
     {
         state |= RV64_JIT_DATA_TLB_STATE_MXR;
     }
@@ -262,16 +281,28 @@ uint32_t rv64_jit_ifetch_state(void)
 /* Return the satp mode field used by RV64 address translation. */
 static word_t jit_sv39_satp_mode(word_t satp)
 {
-    return satp >> RV64_JIT_SATP_MODE_SHIFT;
+    return satp >> RISCV64_SATP_MODE_SHIFT;
+}
+
+/*
+ * Sv39 leaves the page-offset bits below three adjacent VPN fields.  Level 0
+ * starts at PAGE_SHIFT; each higher level skips one more nine-bit field.
+ * Both walkers pass only levels 0, 1 and 2.  Keeping int arithmetic preserves
+ * the former expression's promotions, and the address being shifted remains
+ * an unsigned word_t at each caller.
+ */
+static inline int jit_sv39_vpn_shift(int level)
+{
+    return PAGE_SHIFT + level * RISCV64_SV39_VPN_BITS;
 }
 
 /* Return whether an Sv39 virtual address is canonical. */
 static bool jit_sv39_canonical(vaddr_t vaddr)
 {
-    const uint64_t sign = ((uint64_t)vaddr >> RV64_JIT_SV39_CANONICAL_SIGN_BIT) & 1u;
-    const uint64_t high = (uint64_t)vaddr >> RV64_JIT_SV39_CANONICAL_HIGH_SHIFT;
+    const uint64_t sign = ((uint64_t)vaddr >> RISCV64_SV39_CANONICAL_SIGN_BIT) & 1u;
+    const uint64_t high = (uint64_t)vaddr >> RISCV64_SV39_CANONICAL_HIGH_SHIFT;
 
-    return sign ? high == ((1ull << RV64_JIT_SV39_CANONICAL_HIGH_BITS) - 1ull) : high == 0;
+    return sign ? high == ((1ull << RISCV64_SV39_CANONICAL_HIGH_BITS) - 1ull) : high == 0;
 }
 
 /* Return whether an access is zero-length or crosses a 4 KiB translated page. */
@@ -284,20 +315,20 @@ static bool jit_sv39_cross_page(vaddr_t addr, uint32_t len)
 /* Validate the Sv39 PTE bits that are illegal before leaf/non-leaf selection. */
 static bool jit_sv39_pte_valid(word_t pte)
 {
-    return (pte & RV64_JIT_PTE_V) != 0 && (pte & (RV64_JIT_PTE_R | RV64_JIT_PTE_W)) != RV64_JIT_PTE_W &&
+    return (pte & RISCV_PTE_V) != 0 && (pte & (RISCV_PTE_R | RISCV_PTE_W)) != RISCV_PTE_W &&
            (pte & RV64_JIT_PTE_UNSUPPORTED_HIGH_MASK) == 0;
 }
 
 /* Return whether an Sv39 PTE is a leaf rather than the next-level pointer. */
 static bool jit_sv39_pte_leaf(word_t pte)
 {
-    return (pte & RV64_JIT_PTE_RWX) != 0;
+    return (pte & RISCV_PTE_RWX) != 0;
 }
 
 /* Extract the physical page number encoded in an Sv39 PTE. */
 static word_t jit_sv39_pte_ppn(word_t pte)
 {
-    return (pte >> RV64_JIT_PTE_PPN_SHIFT) & RV64_JIT_PTE_PPN_MASK;
+    return (pte >> RISCV_PTE_PPN_SHIFT) & RISCV64_PTE_PPN_MASK;
 }
 
 /* Check the low PPN fields that must be zero for legal Sv39 superpages. */
@@ -305,12 +336,12 @@ static bool jit_sv39_superpage_aligned(word_t ppn, int level)
 {
     if (level == 2)
     {
-        return (ppn & RV64_JIT_SV39_LEVEL2_LOW_PPN_MASK) == 0;
+        return (ppn & RISCV64_SV39_LEVEL2_LOW_PPN_MASK) == 0;
     }
 
     if (level == 1)
     {
-        return (ppn & RV64_JIT_SV39_LEVEL1_LOW_PPN_MASK) == 0;
+        return (ppn & RISCV64_SV39_LEVEL1_LOW_PPN_MASK) == 0;
     }
 
     return true;
@@ -319,7 +350,7 @@ static bool jit_sv39_superpage_aligned(word_t ppn, int level)
 /* Return whether the leaf PTE permits the effective privilege to touch it. */
 static bool jit_data_pte_allows_priv(word_t pte, word_t priv)
 {
-    const bool user_page = (pte & RV64_JIT_PTE_U) != 0;
+    const bool user_page = (pte & RISCV_PTE_U) != 0;
 
     if (priv == RISCV64_PRIV_U)
     {
@@ -328,7 +359,7 @@ static bool jit_data_pte_allows_priv(word_t pte, word_t priv)
 
     if (priv == RISCV64_PRIV_S)
     {
-        return !user_page || (cpu.csr.mstatus & RV64_JIT_MSTATUS_SUM) != 0;
+        return !user_page || (cpu.csr.mstatus & RISCV_MSTATUS_SUM) != 0;
     }
 
     return false;
@@ -346,19 +377,19 @@ static bool jit_data_pte_allows_priv(word_t pte, word_t priv)
  */
 static uint32_t jit_data_leaf_access(word_t pte, word_t priv)
 {
-    if (!jit_data_pte_allows_priv(pte, priv) || (pte & RV64_JIT_PTE_A) == 0)
+    if (!jit_data_pte_allows_priv(pte, priv) || (pte & RISCV_PTE_A) == 0)
     {
         return 0;
     }
 
     uint32_t access = 0;
 
-    if ((pte & RV64_JIT_PTE_R) != 0 || ((cpu.csr.mstatus & RV64_JIT_MSTATUS_MXR) != 0 && (pte & RV64_JIT_PTE_X) != 0))
+    if ((pte & RISCV_PTE_R) != 0 || ((cpu.csr.mstatus & RISCV_MSTATUS_MXR) != 0 && (pte & RISCV_PTE_X) != 0))
     {
         access |= RV64_JIT_DATA_TLB_READ;
     }
 
-    if ((pte & (RV64_JIT_PTE_W | RV64_JIT_PTE_D)) == (RV64_JIT_PTE_W | RV64_JIT_PTE_D))
+    if ((pte & (RISCV_PTE_W | RISCV_PTE_D)) == (RISCV_PTE_W | RISCV_PTE_D))
     {
         access |= RV64_JIT_DATA_TLB_WRITE;
     }
@@ -367,18 +398,18 @@ static uint32_t jit_data_leaf_access(word_t pte, word_t priv)
 }
 
 /* Combine a leaf PPN with lower VPN fields for 1 GiB/2 MiB Sv39 leaves. */
-static paddr_t jit_sv39_leaf_page_base(word_t ppn, const word_t vpn[RV64_JIT_SV39_LEVELS], int level)
+static paddr_t jit_sv39_leaf_page_base(word_t ppn, const word_t vpn[RISCV64_SV39_LEVELS], int level)
 {
     word_t pa_ppn = ppn;
 
     if (level >= 1)
     {
-        pa_ppn = (pa_ppn & ~RV64_JIT_SV39_LEVEL1_LOW_PPN_MASK) | vpn[0];
+        pa_ppn = (pa_ppn & ~RISCV64_SV39_LEVEL1_LOW_PPN_MASK) | vpn[0];
     }
 
     if (level >= 2)
     {
-        pa_ppn = (pa_ppn & ~RV64_JIT_SV39_LEVEL2_LOW_PPN_MASK) | (vpn[1] << RV64_JIT_SV39_VPN_BITS) | vpn[0];
+        pa_ppn = (pa_ppn & ~RISCV64_SV39_LEVEL2_LOW_PPN_MASK) | (vpn[1] << RISCV64_SV39_VPN_BITS) | vpn[0];
     }
 
     return (paddr_t)(pa_ppn << PAGE_SHIFT);
@@ -418,7 +449,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
     const word_t mode = jit_sv39_satp_mode(satp);
     const word_t priv = jit_data_effective_priv(type);
 
-    if (mode == RV64_JIT_SATP_MODE_BARE)
+    if (mode == RISCV_SATP_MODE_BARE)
     {
         const paddr_t direct = (paddr_t)addr;
 
@@ -431,7 +462,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
         return true;
     }
 
-    if (mode != RV64_JIT_SATP_MODE_SV39)
+    if (mode != RISCV64_SATP_MODE_SV39)
     {
         return false;
     }
@@ -482,26 +513,26 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
 
     JIT_STAT_INC(data_tlb_misses);
 
-    const word_t vpn[RV64_JIT_SV39_LEVELS] = {
-        ((word_t)addr >> RV64_JIT_SV39_VPN_SHIFT(0)) & RV64_JIT_SV39_VPN_MASK,
-        ((word_t)addr >> RV64_JIT_SV39_VPN_SHIFT(1)) & RV64_JIT_SV39_VPN_MASK,
-        ((word_t)addr >> RV64_JIT_SV39_VPN_SHIFT(2)) & RV64_JIT_SV39_VPN_MASK,
+    const word_t vpn[RISCV64_SV39_LEVELS] = {
+        ((word_t)addr >> jit_sv39_vpn_shift(0)) & RISCV64_SV39_VPN_MASK,
+        ((word_t)addr >> jit_sv39_vpn_shift(1)) & RISCV64_SV39_VPN_MASK,
+        ((word_t)addr >> jit_sv39_vpn_shift(2)) & RISCV64_SV39_VPN_MASK,
     };
-    paddr_t pt_base = (paddr_t)((satp & RV64_JIT_SATP_PPN_MASK) << PAGE_SHIFT);
-    paddr_t pt_pages[RV64_JIT_SV39_LEVELS] = {0};
+    paddr_t pt_base = (paddr_t)((satp & RISCV64_SATP_PPN_MASK) << PAGE_SHIFT);
+    paddr_t pt_pages[RISCV64_SV39_LEVELS] = {0};
     uint8_t pt_page_count = 0;
 
-    for (int level = (int)RV64_JIT_SV39_LEVELS - 1; level >= 0; --level)
+    for (int level = (int)RISCV64_SV39_LEVELS - 1; level >= 0; --level)
     {
-        const paddr_t pte_addr = pt_base + (paddr_t)(vpn[level] * RV64_JIT_PTE_SIZE);
+        const paddr_t pte_addr = pt_base + (paddr_t)(vpn[level] * RISCV64_SV39_PTE_BYTES);
 
-        if (!jit_data_pmem_range(pte_addr, RV64_JIT_PTE_SIZE))
+        if (!jit_data_pmem_range(pte_addr, RISCV64_SV39_PTE_BYTES))
         {
             return false;
         }
 
         pt_pages[pt_page_count++] = pt_base;
-        const word_t pte = (word_t)paddr_read(pte_addr, RV64_JIT_PTE_SIZE);
+        const word_t pte = (word_t)paddr_read(pte_addr, RISCV64_SV39_PTE_BYTES);
 
         if (!jit_sv39_pte_valid(pte))
         {
@@ -554,7 +585,7 @@ static bool jit_translate_pmem(vaddr_t addr, uint32_t len, int type, paddr_t *pa
             return true;
         }
 
-        if (level == 0 || (pte & RV64_JIT_PTE_NON_LEAF_RESERVED) != 0)
+        if (level == 0 || (pte & RISCV_PTE_NON_LEAF_RESERVED) != 0)
         {
             return false;
         }
@@ -589,14 +620,15 @@ bool rv64_jit_data_tlb_probe_write(vaddr_t addr, uint32_t len)
 /* Forward declaration: store helpers need source-chunk state defined below. */
 bool rv64_jit_write_may_touch_source_chunk(paddr_t addr, int len);
 
-/* Shared RV64 load helper that delegates translation and faults to vaddr_read(). */
-static uint64_t jit_load_vaddr_raw(vaddr_t addr, uint32_t len)
+/* A checked load returns data separately from whether the access completed. */
+static rv64_jit_load_result_t jit_load_vaddr_raw(vaddr_t addr, uint32_t len)
 {
     /*
      * The JIT data TLB only accepts cases where a strict Sv39 walk proves that
      * the final physical byte range is ordinary PMEM.  MMIO, faulting,
-     * cross-page, and otherwise ambiguous accesses fall back to vaddr_read(),
-     * which remains the architectural reference for visible failure behaviour.
+     * cross-page, and otherwise ambiguous accesses use the checked memory API.
+     * Faults leave trap delivery to the interpreter side exit; a successful
+     * access (including MMIO) must never be repeated by that side exit.
      */
     paddr_t paddr = 0;
 
@@ -605,10 +637,13 @@ static uint64_t jit_load_vaddr_raw(vaddr_t addr, uint32_t len)
     if (jit_translate_pmem(addr, len, MEM_TYPE_READ, &paddr))
     {
         JIT_STAT_INC(data_tlb_direct_loads);
-        return (uint64_t)host_read(guest_to_host(paddr), (int)len);
+        return (rv64_jit_load_result_t){.value = (uint64_t)host_read(guest_to_host(paddr), (int)len), .success = true};
     }
 
-    return (uint64_t)vaddr_read(addr, (int)len);
+    word_t value = 0;
+    vaddr_fault_t fault;
+    const bool success = vaddr_try_read(addr, (int)len, &value, &fault);
+    return (rv64_jit_load_result_t){.value = value, .success = success};
 }
 
 /*
@@ -625,45 +660,57 @@ static uint64_t jit_load_paddr_raw(paddr_t addr, uint32_t len)
 }
 
 /* Load one signed byte and sign-extend it to RV64 XLEN. */
-uint64_t rv64_jit_load_i8(vaddr_t addr)
+rv64_jit_load_result_t rv64_jit_load_i8(vaddr_t addr)
 {
-    return (uint64_t)(int64_t)(int8_t)jit_load_vaddr_raw(addr, 1);
+    rv64_jit_load_result_t result = jit_load_vaddr_raw(addr, 1);
+    result.value = (uint64_t)(int64_t)(int8_t)result.value;
+    return result;
 }
 
 /* Load one signed halfword and sign-extend it to RV64 XLEN. */
-uint64_t rv64_jit_load_i16(vaddr_t addr)
+rv64_jit_load_result_t rv64_jit_load_i16(vaddr_t addr)
 {
-    return (uint64_t)(int64_t)(int16_t)jit_load_vaddr_raw(addr, 2);
+    rv64_jit_load_result_t result = jit_load_vaddr_raw(addr, 2);
+    result.value = (uint64_t)(int64_t)(int16_t)result.value;
+    return result;
 }
 
 /* Load one signed word and sign-extend it to RV64 XLEN. */
-uint64_t rv64_jit_load_i32(vaddr_t addr)
+rv64_jit_load_result_t rv64_jit_load_i32(vaddr_t addr)
 {
-    return (uint64_t)(int64_t)(int32_t)jit_load_vaddr_raw(addr, 4);
+    rv64_jit_load_result_t result = jit_load_vaddr_raw(addr, 4);
+    result.value = (uint64_t)(int64_t)(int32_t)result.value;
+    return result;
 }
 
 /* Load one doubleword; RV64 LD already produces a full-width value. */
-uint64_t rv64_jit_load_u64(vaddr_t addr)
+rv64_jit_load_result_t rv64_jit_load_u64(vaddr_t addr)
 {
     return jit_load_vaddr_raw(addr, 8);
 }
 
 /* Load one unsigned byte and zero-extend it to RV64 XLEN. */
-uint64_t rv64_jit_load_u8(vaddr_t addr)
+rv64_jit_load_result_t rv64_jit_load_u8(vaddr_t addr)
 {
-    return jit_load_vaddr_raw(addr, 1) & 0xffu;
+    rv64_jit_load_result_t result = jit_load_vaddr_raw(addr, 1);
+    result.value = result.value & UINT8_MAX;
+    return result;
 }
 
 /* Load one unsigned halfword and zero-extend it to RV64 XLEN. */
-uint64_t rv64_jit_load_u16(vaddr_t addr)
+rv64_jit_load_result_t rv64_jit_load_u16(vaddr_t addr)
 {
-    return jit_load_vaddr_raw(addr, 2) & 0xffffu;
+    rv64_jit_load_result_t result = jit_load_vaddr_raw(addr, 2);
+    result.value = result.value & UINT16_MAX;
+    return result;
 }
 
 /* Load one unsigned word and zero-extend it to RV64 XLEN. */
-uint64_t rv64_jit_load_u32(vaddr_t addr)
+rv64_jit_load_result_t rv64_jit_load_u32(vaddr_t addr)
 {
-    return jit_load_vaddr_raw(addr, 4) & UINT32_MAX;
+    rv64_jit_load_result_t result = jit_load_vaddr_raw(addr, 4);
+    result.value = result.value & UINT32_MAX;
+    return result;
 }
 
 /* Load one signed Bare-mode MMIO byte and sign-extend it to RV64 XLEN. */
@@ -745,7 +792,8 @@ uint32_t rv64_jit_store_vaddr_continue(vaddr_t addr, uint32_t len, uint64_t data
      * A data-TLB hit skips the repeated page walk and commits through the
      * direct PMEM helper above. That helper invalidates only when the physical
      * bytes are tracked as source or page-table state. Anything not proven
-     * ordinary PMEM uses vaddr_write().
+     * ordinary PMEM uses vaddr_try_write(), which reports faults before any
+     * byte is committed.
      */
     paddr_t paddr = 0;
 
@@ -764,7 +812,13 @@ uint32_t rv64_jit_store_vaddr_continue(vaddr_t addr, uint32_t len, uint64_t data
         return result;
     }
 
-    vaddr_write(addr, (int)len, (word_t)data);
+    vaddr_fault_t fault;
+
+    if (!vaddr_try_write(addr, (int)len, (word_t)data, &fault))
+    {
+        return RV64_JIT_STORE_FAULT;
+    }
+
     return RV64_JIT_STORE_MUST_EXIT;
 }
 
@@ -846,7 +900,7 @@ uint32_t rv64_jit_store_bare_continue(paddr_t addr, uint32_t len, uint64_t data)
          * invalidation precisely reproduces an MMIO callback whose DMA target
          * overlaps the active native block.
          */
-        isa_jit_invalidate_paddr((paddr_t)cpu.pc, RV64_INSN_SIZE);
+        isa_jit_invalidate_paddr((paddr_t)cpu.pc, RISCV_BASE_INSN_BYTES);
     }
     else if (test_boundary_phase == 2u)
     {
@@ -1027,7 +1081,7 @@ static bool jit_ifetch_ref_builder_append(rv64_jit_ifetch_ref_builder_t *refs, p
 }
 
 /* Publish ifetch page-table refs owned by one translated native block. */
-void rv64_jit_ifetch_refs_ref(const rv64_jit_block_t *block)
+static void jit_ifetch_refs_ref(const rv64_jit_block_t *block)
 {
     for (uint32_t i = 0; i < block->ifetch_pt_page_count; i++)
     {
@@ -1050,7 +1104,7 @@ static void jit_ifetch_refs_replace(rv64_jit_block_t *block, const rv64_jit_ifet
     jit_ifetch_refs_unref(block);
     block->ifetch_pt_page_count = refs->count;
     memcpy(block->ifetch_pt_pages, refs->pages, refs->count * sizeof(refs->pages[0]));
-    rv64_jit_ifetch_refs_ref(block);
+    jit_ifetch_refs_ref(block);
 }
 
 /* Find the physical source byte expected at one virtual block offset. */
@@ -1177,7 +1231,7 @@ static uint32_t jit_block_index(const rv64_jit_block_t *block)
 }
 
 /* Add one block to every source chunk it references. */
-void rv64_jit_source_reverse_map_add(rv64_jit_block_t *block)
+static void jit_source_reverse_map_add(rv64_jit_block_t *block)
 {
     if (block->source_segment_count == 0)
     {
@@ -1263,7 +1317,7 @@ static void jit_source_reverse_map_remove(const rv64_jit_block_t *block)
 }
 
 /* Add source-ref counts for the physical bytes backing one native block. */
-void rv64_jit_source_chunks_ref(const rv64_jit_block_t *block)
+static void jit_source_chunks_ref(const rv64_jit_block_t *block)
 {
     for (uint32_t segment_idx = 0; segment_idx < block->source_segment_count; segment_idx++)
     {
@@ -1352,37 +1406,34 @@ bool rv64_jit_write_may_touch_source_chunk(paddr_t addr, int len)
     return false;
 }
 
-/* Release one cache slot and its source refs, if it owns source bytes. */
-void rv64_jit_block_discard(rv64_jit_block_t *block)
+/* Attach dependencies after the lifecycle owner has filled the complete slot. */
+void rv64_jit_block_dependencies_attach(rv64_jit_block_t *block)
 {
-    const bool was_valid = block->valid;
-
     /*
-     * Native selectors must stop reaching this generation before its metadata
-     * or arena bytes can be cleared. Source-owned records are removed from
-     * their target-slot lists by the same lifecycle hook.
+     * Native publications and unsupported markers both need translation and
+     * source dependencies.  Preserve the registration order before any links
+     * can expose a native publication to another block.
      */
-    rv64_jit_links_block_discard(block);
+    jit_ifetch_refs_ref(block);
+    jit_source_chunks_ref(block);
+    jit_source_reverse_map_add(block);
+}
 
-    if (was_valid)
+/* Detach dependencies after the lifecycle owner has made this slot invalid. */
+void rv64_jit_block_dependencies_detach(rv64_jit_block_t *block)
+{
+    /*
+     * The caller has already unpatched links and invalidated the publication.
+     * Keep the slot's source metadata intact until reverse-map removal and
+     * both refcount families have finished using it.
+     */
+    if (block->source_segment_count != 0)
     {
-        /*
-         * Make lazy PIC readers reject this publication before dependency
-         * metadata is released or its arena bytes can later be recycled.
-         */
-        block->valid = false;
-        block->generation = 0;
-
-        if (block->source_segment_count != 0)
-        {
-            jit_source_reverse_map_remove(block);
-            jit_source_chunks_unref(block);
-        }
-
-        jit_ifetch_refs_unref(block);
+        jit_source_reverse_map_remove(block);
+        jit_source_chunks_unref(block);
     }
 
-    *block = (rv64_jit_block_t){0};
+    jit_ifetch_refs_unref(block);
 }
 
 /*
@@ -1398,9 +1449,9 @@ void rv64_jit_block_discard(rv64_jit_block_t *block)
 /* Return whether this leaf PTE permits instruction fetch at the current priv. */
 static bool jit_ifetch_leaf_allows(word_t pte)
 {
-    const bool user_page = (pte & RV64_JIT_PTE_U) != 0;
+    const bool user_page = (pte & RISCV_PTE_U) != 0;
 
-    if ((pte & (RV64_JIT_PTE_A | RV64_JIT_PTE_X)) != (RV64_JIT_PTE_A | RV64_JIT_PTE_X))
+    if ((pte & (RISCV_PTE_A | RISCV_PTE_X)) != (RISCV_PTE_A | RISCV_PTE_X))
     {
         return false;
     }
@@ -1426,7 +1477,7 @@ static bool jit_ifetch_leaf_allows(word_t pte)
 bool rv64_jit_translate_ifetch_collect(vaddr_t pc, paddr_t *paddr, bool *translated, rv64_jit_ifetch_ref_builder_t *refs)
 {
     /* Only 32-bit base instructions are compiled; compressed fetch is fallback. */
-    const int mmu = isa_mmu_check(pc, RV64_INSN_SIZE, MEM_TYPE_IFETCH);
+    const int mmu = isa_mmu_check(pc, RISCV_BASE_INSN_BYTES, MEM_TYPE_IFETCH);
 
     if (mmu == MMU_DIRECT)
     {
@@ -1437,28 +1488,28 @@ bool rv64_jit_translate_ifetch_collect(vaddr_t pc, paddr_t *paddr, bool *transla
 
     if (mmu == MMU_TRANSLATE)
     {
-        if (!jit_sv39_canonical(pc) || jit_sv39_cross_page(pc, RV64_INSN_SIZE))
+        if (!jit_sv39_canonical(pc) || jit_sv39_cross_page(pc, RISCV_BASE_INSN_BYTES))
         {
             return false;
         }
 
-        const word_t vpn[RV64_JIT_SV39_LEVELS] = {
-            ((word_t)pc >> RV64_JIT_SV39_VPN_SHIFT(0)) & RV64_JIT_SV39_VPN_MASK,
-            ((word_t)pc >> RV64_JIT_SV39_VPN_SHIFT(1)) & RV64_JIT_SV39_VPN_MASK,
-            ((word_t)pc >> RV64_JIT_SV39_VPN_SHIFT(2)) & RV64_JIT_SV39_VPN_MASK,
+        const word_t vpn[RISCV64_SV39_LEVELS] = {
+            ((word_t)pc >> jit_sv39_vpn_shift(0)) & RISCV64_SV39_VPN_MASK,
+            ((word_t)pc >> jit_sv39_vpn_shift(1)) & RISCV64_SV39_VPN_MASK,
+            ((word_t)pc >> jit_sv39_vpn_shift(2)) & RISCV64_SV39_VPN_MASK,
         };
-        paddr_t pt_base = (paddr_t)((cpu.csr.satp & RV64_JIT_SATP_PPN_MASK) << PAGE_SHIFT);
+        paddr_t pt_base = (paddr_t)((cpu.csr.satp & RISCV64_SATP_PPN_MASK) << PAGE_SHIFT);
 
-        for (int level = (int)RV64_JIT_SV39_LEVELS - 1; level >= 0; --level)
+        for (int level = (int)RISCV64_SV39_LEVELS - 1; level >= 0; --level)
         {
-            const paddr_t pte_addr = pt_base + (paddr_t)(vpn[level] * RV64_JIT_PTE_SIZE);
+            const paddr_t pte_addr = pt_base + (paddr_t)(vpn[level] * RISCV64_SV39_PTE_BYTES);
 
-            if (!jit_data_pmem_range(pte_addr, RV64_JIT_PTE_SIZE) || (refs != NULL && !jit_ifetch_ref_builder_append(refs, pt_base)))
+            if (!jit_data_pmem_range(pte_addr, RISCV64_SV39_PTE_BYTES) || (refs != NULL && !jit_ifetch_ref_builder_append(refs, pt_base)))
             {
                 return false;
             }
 
-            const word_t pte = (word_t)paddr_read(pte_addr, RV64_JIT_PTE_SIZE);
+            const word_t pte = (word_t)paddr_read(pte_addr, RISCV64_SV39_PTE_BYTES);
 
             if (!jit_sv39_pte_valid(pte))
             {
@@ -1479,7 +1530,7 @@ bool rv64_jit_translate_ifetch_collect(vaddr_t pc, paddr_t *paddr, bool *transla
                 return true;
             }
 
-            if (level == 0 || (pte & RV64_JIT_PTE_NON_LEAF_RESERVED) != 0)
+            if (level == 0 || (pte & RISCV_PTE_NON_LEAF_RESERVED) != 0)
             {
                 return false;
             }
@@ -1553,62 +1604,6 @@ bool rv64_jit_block_matches(rv64_jit_block_t *block, vaddr_t pc)
     }
 
     return true;
-}
-
-/* Publish a negative cache entry for a currently unsupported instruction. */
-void rv64_jit_mark_unsupported(vaddr_t pc, paddr_t paddr, bool translated)
-{
-    JIT_STAT_INC(blocks_unsupported);
-
-    rv64_jit_ifetch_ref_builder_t refs = {0};
-
-    if (translated)
-    {
-        paddr_t checked_paddr = 0;
-        bool checked_translated = false;
-
-        if (!rv64_jit_translate_ifetch_collect(pc, &checked_paddr, &checked_translated, &refs) || !checked_translated || checked_paddr != paddr)
-        {
-            return;
-        }
-    }
-
-    rv64_jit_block_t *block = rv64_jit_cache_slot(pc);
-    rv64_jit_block_discard(block);
-    *block = (rv64_jit_block_t){
-        .valid = true,
-        .translated = translated,
-        .uses_data_state = false,
-        .pc = pc,
-        .satp = cpu.csr.satp,
-        .ifetch_state = rv64_jit_ifetch_state(),
-        .data_state = rv64_jit_data_tlb_state(MEM_TYPE_READ),
-        .ifetch_generation = rv64_jit_ifetch_generation,
-        .paddr_start = paddr,
-        .source_len = RV64_INSN_SIZE,
-        .source_segment_count = 1,
-        .ifetch_pt_page_count = translated ? refs.count : 0,
-        .source_segments =
-            {
-                {
-                    .paddr_start = paddr,
-                    .source_offset = 0,
-                    .len = RV64_INSN_SIZE,
-                },
-            },
-        .insn_count = 0,
-        .entry = NULL,
-        .body_entry = NULL,
-    };
-    memcpy(block->ifetch_pt_pages, refs.pages, block->ifetch_pt_page_count * sizeof(block->ifetch_pt_pages[0]));
-    /*
-     * Negative cache entries need source refs too.  If self-modifying code
-     * rewrites an unsupported instruction into a supported one, exact
-     * invalidation must remove this marker so the JIT can compile the new bytes.
-     */
-    rv64_jit_ifetch_refs_ref(block);
-    rv64_jit_source_chunks_ref(block);
-    rv64_jit_source_reverse_map_add(block);
 }
 
 #endif /* CONFIG_RV64 */
